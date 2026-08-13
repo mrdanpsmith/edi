@@ -29,4 +29,4 @@ Edi is a markdown editor. Frontend: CodeMirror 6 + Mermaid + spreadsheet formula
 - QtWebEngine hangs in containers with small `/dev/shm` / no GPU: set `QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage --disable-gpu"` (and `QTWEBENGINE_DISABLE_SANDBOX=1`) for any headless Qt run.
 - The `test` job must run `npm run build` before `pytest` (backend tests load `dist/index.html`).
 - `before_script` installs ~30 Qt runtime libs + Node 22 static tarball (needs `curl xz-utils ca-certificates`) into a fresh ubuntu:22.04 image; CI deps live only there, not on the host.
-- `release` job needs a `GITLAB_TOKEN` CI/CD variable (`api` scope, Maintainer) and publishes via `glab` on `v*` tags.
+- `release` job publishes via `glab` on `v*` tags, authenticated by CI auto-login with the built-in `CI_JOB_TOKEN` (JOB-TOKEN header). Do NOT set `GITLAB_TOKEN=$CI_JOB_TOKEN`: glab sends it as PRIVATE-TOKEN, which the Releases API rejects with 404. Requires the project setting "Allow CI job token to create releases" enabled.

@@ -129,7 +129,7 @@ npm run coverage       # frontend tests with coverage report
 
 1. All features are thoroughly tested using automated tests (Vitest for the frontend, `pytest` for the backend).
 2. Code is checked for duplication and poor quality using free, open static code analysis tools (ESLint and `tsc`).
-3. Versioning and tagging automatically results in releases being created by the GitLab CI pipeline (using the new `glab` tools, not the deprecated `release-cli`). See `.gitlab-ci.yml`; the `release` job requires a `GITLAB_TOKEN` CI/CD variable with `api` scope and Maintainer role.
+3. Versioning and tagging automatically results in releases being created by the GitLab CI pipeline (using the new `glab` tools, not the deprecated `release-cli`). See `.gitlab-ci.yml`; the `release` job authenticates with the built-in `CI_JOB_TOKEN` via glab CI auto-login (no `GITLAB_TOKEN` variable needed) and requires the project setting "Allow CI job token to create releases".
 4. All unnecessary files are `.gitignore`d.
 5. All files necessary for building the project can be installed via a simple script (`scripts/install-deps.sh`) so that a new developer or user can easily build the project from source.
 6. Linting is part of the standard checks.
