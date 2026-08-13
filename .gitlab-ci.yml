@@ -1,0 +1,91 @@
+# GitLab CI for Edi
+#
+# Requires the following CI/CD variables:
+#   GITLAB_TOKEN   a GitLab token with `api` scope and Maintainer role on this
+#                  project, used by the `release` job to publish releases via
+#                  the glab CLI. If you self-host GitLab, also set GITLAB_HOST.
+
+stages:
+  - check
+  - test
+  - build
+  - release
+
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+cache:
+  key:
+    files:
+      - package-lock.json
+      - src-tauri/Cargo.lock
+  paths:
+    - node_modules/
+    - .cargo/
+    - src-tauri/target/
+
+default:
+  # Ubuntu 22.04 (glibc 2.35) so the AppImage bundle runs on older systems.
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends
+      build-essential curl file jq pkg-config xvfb
+      libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
+      libayatana-appindicator3-dev librsvg2-dev
+    - curl -fsS https://nodejs.org/dist/v22.22.1/node-v22.22.1-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1
+    - if [ ! -x "$HOME/.cargo/bin/cargo" ]; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal;
+      fi
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - npm ci --no-audit --no-fund
+
+check:
+  stage: check
+  script:
+    - cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+    - npm run check
+
+test:
+  stage: test
+  script:
+    - cargo test --manifest-path src-tauri/Cargo.toml
+    - npm run coverage
+  coverage: '/All files[^|]*\|[^|]*\s+([\d.]+)/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: lcov
+        path: coverage/lcov.info
+
+build:
+  stage: build
+  artifacts:
+    name: edi-$CI_COMMIT_TAG
+    paths:
+      - src-tauri/target/release/bundle/
+    expire_in: 30 days
+  script:
+    - npm run tauri build
+
+release:
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  artifacts:
+    paths:
+      - src-tauri/target/release/bundle/
+    expire_in: never
+  script:
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - export GITLAB_TOKEN="$GITLAB_TOKEN"
+    - GLAB_VERSION=$(curl -sL https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest | jq -r '.tag_name')
+    - curl -sL "https://gitlab.com/gitlab-org/cli/-/releases/download/${GLAB_VERSION}/glab_${GLAB_VERSION#v}_Linux_x86_64.tar.gz" | tar -xz -C /tmp
+    - /tmp/bin/glab release create "$CI_COMMIT_TAG"
+      --name "Edi $CI_COMMIT_TAG"
+      --notes "Automated release for Edi $CI_COMMIT_TAG."
+      src-tauri/target/release/bundle/deb/*.deb
+      src-tauri/target/release/bundle/rpm/*.rpm
+      src-tauri/target/release/bundle/appimage/*.AppImage

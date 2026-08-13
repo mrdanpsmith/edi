@@ -1,0 +1,539 @@
+export const SPREADSHEET_PREFIX = '='
+
+type CellValue =
+  | { kind: 'number'; value: number }
+  | { kind: 'blank' }
+  | { kind: 'text' }
+  | { kind: 'set'; items: CellValue[] }
+  | { kind: 'error'; message: string }
+
+interface CellRef {
+  row: number
+  col: number
+}
+
+interface CellRange {
+  row1: number
+  col1: number
+  row2: number
+  col2: number
+}
+
+interface TableCell {
+  row: number
+  col: number
+  raw: string
+  formula: string
+}
+
+const CELL_REF = /^([A-Za-z]+)([1-9][0-9]*)$/
+const RANGE_REF = /^([A-Za-z]+)([1-9][0-9]*):([A-Za-z]+)([1-9][0-9]*)$/
+const NUMBER_RE = /^[+-]?(\d+(\.\d+)?|\.\d+)$/
+
+export function computeSpreadsheet(container: HTMLElement): void {
+  for (const table of Array.from(container.querySelectorAll('table'))) {
+    applyToTable(table)
+  }
+}
+
+function applyToTable(table: HTMLTableElement): void {
+  const rows = Array.from(table.querySelectorAll('tr'))
+  if (rows.length === 0) {
+    return
+  }
+  const grid = new SpreadsheetGrid()
+  const domCells: HTMLTableCellElement[][] = []
+  rows.forEach((tr, rowIndex) => {
+    const cells = Array.from(tr.children).filter(
+      (child): child is HTMLTableCellElement => child.tagName === 'TD' || child.tagName === 'TH',
+    )
+    domCells.push(cells)
+    cells.forEach((cell, colIndex) => {
+      grid.set(rowIndex + 1, colIndex + 1, cell.textContent ?? '')
+    })
+  })
+  for (const formulaCell of grid.formulaCells()) {
+    const visiting = new Set<string>()
+    const result = evaluateFormula(formulaCell.formula, grid, visiting)
+    const domCell = domCells[formulaCell.row - 1]?.[formulaCell.col - 1]
+    if (!domCell) {
+      continue
+    }
+    domCell.classList.add('spreadsheet-formula')
+    if (result.kind === 'error') {
+      domCell.textContent = result.message
+      domCell.classList.add('spreadsheet-error')
+    } else if (result.kind === 'number') {
+      domCell.textContent = formatNumber(result.value)
+    }
+    domCell.title = formulaCell.raw.trim()
+  }
+}
+
+export function formatNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    return '#VALUE!'
+  }
+  return String(Math.round(value * 10000) / 10000)
+}
+
+class SpreadsheetGrid {
+  private readonly cells = new Map<string, TableCell>()
+  private readonly formulas: TableCell[] = []
+
+  set(row: number, col: number, raw: string): void {
+    const trimmed = raw.trim()
+    const cell: TableCell = { row, col, raw, formula: '' }
+    if (trimmed.startsWith(SPREADSHEET_PREFIX)) {
+      cell.formula = trimmed.slice(1).trim()
+      this.formulas.push(cell)
+    }
+    this.cells.set(cellKey(row, col), cell)
+  }
+
+  get(row: number, col: number): TableCell | undefined {
+    return this.cells.get(cellKey(row, col))
+  }
+
+  formulaCells(): readonly TableCell[] {
+    return this.formulas
+  }
+}
+
+function evaluateFormula(formula: string, grid: SpreadsheetGrid, visiting: Set<string>): CellValue {
+  try {
+    return new FormulaParser(formula, grid, visiting).parse()
+  } catch {
+    return err('#ERROR!')
+  }
+}
+
+class FormulaParser {
+  private pos = 0
+
+  constructor(
+    private readonly source: string,
+    private readonly grid: SpreadsheetGrid,
+    private readonly visiting: Set<string>,
+  ) {}
+
+  parse(): CellValue {
+    const result = this.additive()
+    this.skipWs()
+    if (this.pos < this.source.length) {
+      return err('#ERROR!')
+    }
+    return result
+  }
+
+  private additive(): CellValue {
+    let left = this.multiplicative()
+    for (;;) {
+      this.skipWs()
+      if (this.match('+')) {
+        left = add(left, this.multiplicative())
+      } else if (this.match('-')) {
+        left = sub(left, this.multiplicative())
+      } else {
+        return left
+      }
+    }
+  }
+
+  private multiplicative(): CellValue {
+    let left = this.unary()
+    for (;;) {
+      this.skipWs()
+      if (this.match('*')) {
+        left = mul(left, this.unary())
+      } else if (this.match('/')) {
+        left = div(left, this.unary())
+      } else {
+        return left
+      }
+    }
+  }
+
+  private unary(): CellValue {
+    this.skipWs()
+    if (this.match('-')) {
+      return neg(this.unary())
+    }
+    if (this.match('+')) {
+      return this.unary()
+    }
+    return this.power()
+  }
+
+  private power(): CellValue {
+    const left = this.atom()
+    this.skipWs()
+    if (this.match('^')) {
+      return pow(left, this.unary())
+    }
+    return left
+  }
+
+  private atom(): CellValue {
+    this.skipWs()
+    if (this.match('(')) {
+      const inner = this.additive()
+      this.skipWs()
+      if (!this.match(')')) {
+        return err('#ERROR!')
+      }
+      return inner
+    }
+    const ch = this.peek()
+    if (ch !== undefined && (/[0-9]/.test(ch) || ch === '.')) {
+      return num(this.readNumber())
+    }
+    const start = this.pos
+    while (this.pos < this.source.length && /[A-Za-z0-9_.]/.test(this.source[this.pos]!)) {
+      this.pos++
+    }
+    const ident = this.source.slice(start, this.pos)
+    if (!ident) {
+      return err('#ERROR!')
+    }
+    this.skipWs()
+    if (this.match(':')) {
+      const start2 = this.pos
+      while (this.pos < this.source.length && /[A-Za-z0-9_.]/.test(this.source[this.pos]!)) {
+        this.pos++
+      }
+      const ident2 = this.source.slice(start2, this.pos)
+      const range = parseRange(`${ident}:${ident2}`)
+      if (!range) {
+        return err('#REF!')
+      }
+      return this.rangeValue(range)
+    }
+    if (this.peek() === '(') {
+      return this.functionCall(ident)
+    }
+    const ref = parseCellRef(ident)
+    if (!ref) {
+      return err('#NAME?')
+    }
+    return this.cellValue(ref.row, ref.col)
+  }
+
+  private functionCall(name: string): CellValue {
+    this.match('(')
+    const args: CellValue[] = []
+    this.skipWs()
+    if (this.peek() === ')') {
+      this.pos++
+      return applyFunction(name, args)
+    }
+    for (;;) {
+      args.push(this.additive())
+      this.skipWs()
+      if (this.match(',')) {
+        continue
+      }
+      if (this.match(')')) {
+        return applyFunction(name, args)
+      }
+      return err('#ERROR!')
+    }
+  }
+
+  private cellValue(row: number, col: number): CellValue {
+    const cell = this.grid.get(row, col)
+    if (!cell) {
+      return blank()
+    }
+    if (cell.formula) {
+      const key = cellKey(row, col)
+      if (this.visiting.has(key)) {
+        return err('#CYCLE!')
+      }
+      this.visiting.add(key)
+      const result = evaluateFormula(cell.formula, this.grid, this.visiting)
+      this.visiting.delete(key)
+      return result
+    }
+    return parseCellValue(cell.raw)
+  }
+
+  private rangeValue(range: CellRange): CellValue {
+    const items: CellValue[] = []
+    for (let row = range.row1; row <= range.row2; row++) {
+      for (let col = range.col1; col <= range.col2; col++) {
+        const value = this.cellValue(row, col)
+        if (value.kind === 'error') {
+          return value
+        }
+        items.push(value)
+      }
+    }
+    return setValue(items)
+  }
+
+  private readNumber(): number {
+    const start = this.pos
+    while (this.pos < this.source.length && /[0-9.]/.test(this.source[this.pos]!)) {
+      this.pos++
+    }
+    return Number(this.source.slice(start, this.pos))
+  }
+
+  private match(op: string): boolean {
+    if (this.source.startsWith(op, this.pos)) {
+      this.pos += op.length
+      return true
+    }
+    return false
+  }
+
+  private peek(): string | undefined {
+    return this.source[this.pos]
+  }
+
+  private skipWs(): void {
+    while (this.pos < this.source.length && /\s/.test(this.source[this.pos]!)) {
+      this.pos++
+    }
+  }
+}
+
+function applyFunction(name: string, args: CellValue[]): CellValue {
+  switch (name.toUpperCase()) {
+    case 'SUM':
+    case 'AVERAGE':
+    case 'AVG':
+    case 'MIN':
+    case 'MAX':
+    case 'COUNT':
+    case 'PRODUCT':
+      return aggregateFunction(name, args)
+    case 'ABS':
+      return scalarFunction(args, Math.abs)
+    case 'SQRT':
+      return scalarFunction(args, Math.sqrt)
+    case 'ROUND':
+      return roundFunction(args)
+    default:
+      return err('#NAME?')
+  }
+}
+
+function aggregateFunction(name: string, args: CellValue[]): CellValue {
+  const collected = collectNumbers(args)
+  if (typeof collected === 'string') {
+    return err(collected)
+  }
+  const values = collected
+  switch (name.toUpperCase()) {
+    case 'SUM':
+      return num(values.reduce((a, b) => a + b, 0))
+    case 'AVERAGE':
+    case 'AVG':
+      if (values.length === 0) {
+        return err('#DIV/0!')
+      }
+      return num(values.reduce((a, b) => a + b, 0) / values.length)
+    case 'MIN':
+      return num(values.length === 0 ? 0 : Math.min(...values))
+    case 'MAX':
+      return num(values.length === 0 ? 0 : Math.max(...values))
+    case 'COUNT':
+      return num(values.length)
+    case 'PRODUCT':
+      return num(values.reduce((a, b) => a * b, 1))
+    default:
+      return err('#NAME?')
+  }
+}
+
+function scalarFunction(args: CellValue[], fn: (n: number) => number): CellValue {
+  const first = args[0]
+  if (!first) {
+    return err('#VALUE!')
+  }
+  if (first.kind === 'error') {
+    return first
+  }
+  const value = toNumber(first)
+  if (value === null) {
+    return err('#VALUE!')
+  }
+  const result = fn(value)
+  return Number.isFinite(result) ? num(result) : err('#VALUE!')
+}
+
+function roundFunction(args: CellValue[]): CellValue {
+  const first = args[0]
+  if (!first) {
+    return err('#VALUE!')
+  }
+  if (first.kind === 'error') {
+    return first
+  }
+  const value = toNumber(first)
+  if (value === null) {
+    return err('#VALUE!')
+  }
+  const digits = args.length > 1 ? toNumber(args[1]) ?? 0 : 0
+  const factor = 10 ** digits
+  return num((Math.sign(value) * Math.round(Math.abs(value) * factor)) / factor)
+}
+
+function collectNumbers(args: CellValue[]): number[] | string {
+  const out: number[] = []
+  for (const arg of args) {
+    if (arg.kind === 'error') {
+      return arg.message
+    }
+    if (arg.kind === 'number') {
+      out.push(arg.value)
+      continue
+    }
+    if (arg.kind === 'set') {
+      for (const item of arg.items) {
+        if (item.kind === 'error') {
+          return item.message
+        }
+        if (item.kind === 'number') {
+          out.push(item.value)
+        }
+      }
+    }
+  }
+  return out
+}
+
+function binary(
+  left: CellValue,
+  right: CellValue,
+  op: (a: number, b: number) => number,
+  divZero = false,
+): CellValue {
+  if (left.kind === 'error') {
+    return left
+  }
+  if (right.kind === 'error') {
+    return right
+  }
+  if (left.kind === 'set' || right.kind === 'set') {
+    return err('#VALUE!')
+  }
+  const a = toNumber(left)
+  const b = toNumber(right)
+  if (a === null || b === null) {
+    return err('#VALUE!')
+  }
+  if (divZero && b === 0) {
+    return err('#DIV/0!')
+  }
+  const result = op(a, b)
+  return Number.isFinite(result) ? num(result) : err('#VALUE!')
+}
+
+const add = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a + b)
+const sub = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a - b)
+const mul = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a * b)
+const div = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a / b, true)
+const pow = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a ** b)
+
+function neg(value: CellValue): CellValue {
+  if (value.kind === 'error') {
+    return value
+  }
+  const n = toNumber(value)
+  if (n === null) {
+    return err('#VALUE!')
+  }
+  return num(-n)
+}
+
+function toNumber(value: CellValue): number | null {
+  if (value.kind === 'number') {
+    return value.value
+  }
+  if (value.kind === 'blank') {
+    return 0
+  }
+  return null
+}
+
+function parseCellValue(raw: string): CellValue {
+  const cleaned = raw.replace(/,/g, '').trim()
+  if (!cleaned) {
+    return blank()
+  }
+  if (NUMBER_RE.test(cleaned)) {
+    return num(Number(cleaned))
+  }
+  return text()
+}
+
+function parseCellRef(raw: string): CellRef | null {
+  const match = CELL_REF.exec(raw)
+  if (!match) {
+    return null
+  }
+  return { col: lettersToCol(match[1]!), row: Number(match[2]) }
+}
+
+function parseRange(raw: string): CellRange | null {
+  const match = RANGE_REF.exec(raw)
+  if (!match) {
+    return null
+  }
+  const col1 = lettersToCol(match[1]!)
+  const row1 = Number(match[2])
+  const col2 = lettersToCol(match[3]!)
+  const row2 = Number(match[4])
+  return {
+    row1: Math.min(row1, row2),
+    col1: Math.min(col1, col2),
+    row2: Math.max(row1, row2),
+    col2: Math.max(col1, col2),
+  }
+}
+
+function lettersToCol(letters: string): number {
+  let col = 0
+  for (const char of letters.toUpperCase()) {
+    col = col * 26 + (char.charCodeAt(0) - 64)
+  }
+  return col
+}
+
+function colToLetters(col: number): string {
+  let n = col
+  let letters = ''
+  while (n > 0) {
+    const rem = (n - 1) % 26
+    letters = String.fromCharCode(65 + rem) + letters
+    n = Math.floor((n - 1) / 26)
+  }
+  return letters
+}
+
+function cellKey(row: number, col: number): string {
+  return `${colToLetters(col)}${row}`
+}
+
+function num(value: number): CellValue {
+  return { kind: 'number', value }
+}
+
+function blank(): CellValue {
+  return { kind: 'blank' }
+}
+
+function text(): CellValue {
+  return { kind: 'text' }
+}
+
+function setValue(items: CellValue[]): CellValue {
+  return { kind: 'set', items }
+}
+
+function err(message: string): CellValue {
+  return { kind: 'error', message }
+}
