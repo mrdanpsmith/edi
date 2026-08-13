@@ -271,8 +271,6 @@ function registerShortcuts(): void {
   })
 }
 
-const CONFIRM_TIMEOUT_MS = 15000
-
 interface CloseRequestEvent {
   preventDefault: () => void
 }
@@ -282,22 +280,23 @@ async function requestQuit(event?: CloseRequestEvent): Promise<void> {
     await invoke('quit_app')
     return
   }
+  // Keep the Rust-side close watchdog informed that the frontend is still
+  // responsive while the confirmation dialog is open. If it stops heartbeating
+  // (hung dialog, broken webview) the watchdog force-quits after a grace
+  // period; a user who is simply taking their time is never auto-quit.
+  const heartbeat = window.setInterval(() => {
+    void invoke('quit_heartbeat')
+  }, 2000)
   let confirmed = false
   try {
-    // A hung native dialog must not trap the app forever: if the
-    // confirmation does not settle in time, quit anyway.
-    confirmed = await Promise.race([
-      confirmAction('Unsaved changes will be lost. Quit anyway?'),
-      new Promise<boolean>((resolve) =>
-        window.setTimeout(() => resolve(true), CONFIRM_TIMEOUT_MS),
-      ),
-    ])
+    confirmed = await confirmAction('Unsaved changes will be lost. Quit anyway?')
   } catch {
     confirmed = true
   }
+  window.clearInterval(heartbeat)
   if (!confirmed) {
     event?.preventDefault()
-    // Tell the Rust-side quit watchdog to stand down.
+    // Tell the Rust-side close watchdog to stand down.
     await invoke('cancel_quit')
     return
   }

@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::Manager;
 
@@ -13,9 +13,25 @@ const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 // "unsaved changes" dialog), telling the close watchdog to stand down.
 static QUIT_CANCELLED: AtomicBool = AtomicBool::new(false);
 
-// How long the frontend may take to confirm/cancel a quit before the
-// close watchdog forces the app to exit anyway.
+// Whether a watchdog thread is currently running.
+static QUIT_ARMED: AtomicBool = AtomicBool::new(false);
+
+// Absolute deadline (unix millis) the watchdog exits at unless it is
+// pushed back by a frontend heartbeat.
+static QUIT_DEADLINE: AtomicU64 = AtomicU64::new(0);
+
+// How long after the last frontend heartbeat the close watchdog waits
+// before force-quitting. The frontend heartbeats while its "unsaved
+// changes" dialog is open, so a user who is simply taking their time is
+// never force-quit; only a frontend that goes silent (the original
+// "cannot close the app" bug) triggers it.
 const QUIT_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
+}
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -182,6 +198,24 @@ fn is_supported_extension(path: &Path) -> bool {
     )
 }
 
+fn arm_quit_watchdog(app: tauri::AppHandle) {
+    if QUIT_ARMED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        if QUIT_CANCELLED.load(Ordering::Relaxed) {
+            QUIT_ARMED.store(false, Ordering::SeqCst);
+            return;
+        }
+        if now_millis() >= QUIT_DEADLINE.load(Ordering::Relaxed) {
+            QUIT_ARMED.store(false, Ordering::SeqCst);
+            app.exit(0);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    });
+}
+
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     // On Linux, destroying the last window does not reliably end the GTK
@@ -195,6 +229,18 @@ fn cancel_quit() {
     QUIT_CANCELLED.store(true, Ordering::Relaxed);
 }
 
+#[tauri::command]
+fn quit_heartbeat(app: tauri::AppHandle) {
+    if QUIT_CANCELLED.load(Ordering::Relaxed) {
+        return;
+    }
+    QUIT_DEADLINE.store(
+        now_millis() + QUIT_WATCHDOG_TIMEOUT.as_millis() as u64,
+        Ordering::Relaxed,
+    );
+    arm_quit_watchdog(app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -204,25 +250,23 @@ pub fn run() {
             write_text_file,
             run_code_block,
             quit_app,
-            cancel_quit
+            cancel_quit,
+            quit_heartbeat
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 // Safety net: the frontend is asked to confirm the quit. If it
-                // never replies (hung dialog, lost event, broken webview) the
-                // watchdog force-quits instead of trapping the user.
+                // never replies (hung dialog, lost event, broken webview) and
+                // stops heartbeating, the watchdog force-quits instead of
+                // trapping the user. While the frontend is responsive it keeps
+                // the deadline pushed back, so there is no auto-quit for a
+                // user who is merely taking their time.
                 QUIT_CANCELLED.store(false, Ordering::Relaxed);
-                let app = window.app_handle().clone();
-                std::thread::spawn(move || {
-                    let deadline = std::time::Instant::now() + QUIT_WATCHDOG_TIMEOUT;
-                    while std::time::Instant::now() < deadline {
-                        std::thread::sleep(Duration::from_millis(250));
-                        if QUIT_CANCELLED.load(Ordering::Relaxed) {
-                            return;
-                        }
-                    }
-                    app.exit(0);
-                });
+                QUIT_DEADLINE.store(
+                    now_millis() + QUIT_WATCHDOG_TIMEOUT.as_millis() as u64,
+                    Ordering::Relaxed,
+                );
+                arm_quit_watchdog(window.app_handle().clone());
             }
         })
         .run(tauri::generate_context!())
