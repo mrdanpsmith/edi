@@ -1,12 +1,23 @@
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+use tauri::Manager;
 
 pub const SUPPORTED_EXTENSIONS: [&str; 4] = ["md", "markdown", "txt", "mermaid"];
 
 const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(serde::Serialize)]
+// Set when the frontend rejects a quit (e.g. the user cancelled an
+// "unsaved changes" dialog), telling the close watchdog to stand down.
+static QUIT_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+// How long the frontend may take to confirm/cancel a quit before the
+// close watchdog forces the app to exit anyway.
+const QUIT_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodeResult {
     exit_code: Option<i32>,
@@ -15,34 +26,88 @@ struct CodeResult {
     timed_out: bool,
 }
 
-fn command_for(language: &str) -> Option<(&'static str, &'static [&'static str])> {
-    match language.to_ascii_lowercase().as_str() {
-        "python" | "py" => Some(("python3", &["-"])),
-        "sh" | "shell" => Some(("sh", &["-s"])),
-        "bash" => Some(("bash", &["-s"])),
-        "node" | "js" | "javascript" => Some(("node", &["-"])),
-        "ruby" | "rb" => Some(("ruby", &["-"])),
-        "perl" | "pl" => Some(("perl", &["-"])),
-        _ => None,
+fn basename(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+fn parse_shebang(line: &str) -> Option<Vec<String>> {
+    let rest = line.trim().strip_prefix("#!")?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let mut tokens: Vec<String> = rest.split_whitespace().map(str::to_string).collect();
+    if tokens[0].eq_ignore_ascii_case("env") || basename(&tokens[0]).eq_ignore_ascii_case("env") {
+        let interpreter_at = tokens[1..]
+            .iter()
+            .position(|token| !token.starts_with('-'))
+            .map(|index| index + 1)?;
+        return Some(tokens.split_off(interpreter_at));
+    }
+    tokens[0] = basename(&tokens[0]);
+    Some(tokens)
+}
+
+fn interpreter_command(interpreter: &str, flags: &[String]) -> Option<(String, Vec<String>)> {
+    let (program, stdin_arg) = match interpreter.to_ascii_lowercase().as_str() {
+        "python" | "python3" | "py" => ("python3", "-"),
+        "sh" | "shell" => ("sh", "-s"),
+        "bash" => ("bash", "-s"),
+        "node" | "js" | "javascript" => ("node", "-"),
+        "ruby" | "rb" => ("ruby", "-"),
+        "perl" | "pl" => ("perl", "-"),
+        _ => return None,
+    };
+    let mut args = flags.to_vec();
+    args.push(stdin_arg.to_string());
+    Some((program.to_string(), args))
+}
+
+fn strip_shebang_line(source: &str) -> String {
+    match source.find('\n') {
+        Some(end) if source[..end].trim_end_matches('\r').starts_with("#!") => {
+            source[end + 1..].to_string()
+        }
+        None if source.trim_end_matches('\r').starts_with("#!") => String::new(),
+        _ => source.to_string(),
     }
 }
 
 #[tauri::command]
-fn run_code_block(language: String, source: String) -> Result<CodeResult, String> {
-    let (program, args) =
-        command_for(&language).ok_or_else(|| format!("Unsupported language: {language}"))?;
+async fn run_code_block(shebang: String, source: String) -> Result<CodeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || run_code_block_blocking(shebang, source))
+        .await
+        .map_err(|err| format!("Code block task failed: {err}"))?
+}
 
-    let mut child = std::process::Command::new(program)
-        .args(args)
+fn run_code_block_blocking(shebang: String, source: String) -> Result<CodeResult, String> {
+    let parts = parse_shebang(&shebang).ok_or_else(|| format!("Invalid shebang: {shebang}"))?;
+    let (interpreter, flags) = parts
+        .split_first()
+        .ok_or_else(|| format!("Invalid shebang: {shebang}"))?;
+    let (program, args) = interpreter_command(interpreter, flags)
+        .ok_or_else(|| format!("Unsupported interpreter: {interpreter}"))?;
+
+    let mut command = std::process::Command::new(&program);
+    command
+        .args(&args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if program == "python3" {
+        // Portable AppImages bundle a Python runtime and export PYTHONHOME /
+        // PYTHONPATH pointing into the mount directory, which breaks the
+        // system interpreter Edi launches. Drop them for Python so the code
+        // block runs against a usable interpreter.
+        command.env_remove("PYTHONHOME").env_remove("PYTHONPATH");
+    }
+    let mut child = command
         .spawn()
         .map_err(|err| format!("Failed to start {program}: {err}"))?;
 
+    let run_source = strip_shebang_line(&source);
     if let Some(mut stdin) = child.stdin.take() {
         stdin
-            .write_all(source.as_bytes())
+            .write_all(run_source.as_bytes())
             .map_err(|err| format!("Failed to write to {program}: {err}"))?;
     }
 
@@ -117,6 +182,19 @@ fn is_supported_extension(path: &Path) -> bool {
     )
 }
 
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    // On Linux, destroying the last window does not reliably end the GTK
+    // event loop (the WebKit webview keeps it alive), so the app stays up and
+    // users end up killing it with Ctrl+C. Exit explicitly instead.
+    app.exit(0);
+}
+
+#[tauri::command]
+fn cancel_quit() {
+    QUIT_CANCELLED.store(true, Ordering::Relaxed);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -124,8 +202,29 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             write_text_file,
-            run_code_block
+            run_code_block,
+            quit_app,
+            cancel_quit
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                // Safety net: the frontend is asked to confirm the quit. If it
+                // never replies (hung dialog, lost event, broken webview) the
+                // watchdog force-quits instead of trapping the user.
+                QUIT_CANCELLED.store(false, Ordering::Relaxed);
+                let app = window.app_handle().clone();
+                std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + QUIT_WATCHDOG_TIMEOUT;
+                    while std::time::Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(250));
+                        if QUIT_CANCELLED.load(Ordering::Relaxed) {
+                            return;
+                        }
+                    }
+                    app.exit(0);
+                });
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -206,19 +305,68 @@ mod tests {
     }
 
     #[test]
-    fn maps_supported_languages() {
-        assert_eq!(command_for("python"), Some(("python3", &["-"] as &[&str])));
-        assert_eq!(command_for("sh"), Some(("sh", &["-s"] as &[&str])));
-        assert_eq!(command_for("bash"), Some(("bash", &["-s"] as &[&str])));
-        assert_eq!(command_for("node"), Some(("node", &["-"] as &[&str])));
-        assert_eq!(command_for("PYTHON"), Some(("python3", &["-"] as &[&str])));
-        assert!(command_for("brainfuck").is_none());
+    fn parses_shebang_forms() {
+        assert_eq!(
+            parse_shebang("#!/usr/bin/env python3"),
+            Some(vec!["python3".to_string()])
+        );
+        assert_eq!(
+            parse_shebang("#!/usr/bin/env python3 -u"),
+            Some(vec!["python3".to_string(), "-u".to_string()])
+        );
+        assert_eq!(
+            parse_shebang("#!/bin/bash -e"),
+            Some(vec!["bash".to_string(), "-e".to_string()])
+        );
+        assert_eq!(
+            parse_shebang("#!/usr/bin/python3"),
+            Some(vec!["python3".to_string()])
+        );
+        assert_eq!(parse_shebang("#!node"), Some(vec!["node".to_string()]));
+        assert_eq!(
+            parse_shebang("#!env node --harmony"),
+            Some(vec!["node".to_string(), "--harmony".to_string()])
+        );
+        assert_eq!(parse_shebang("#!"), None);
+        assert_eq!(parse_shebang("python"), None);
+    }
+
+    #[test]
+    fn maps_interpreters_to_commands() {
+        assert_eq!(
+            interpreter_command("python", &[]),
+            Some(("python3".to_string(), vec!["-".to_string()]))
+        );
+        assert_eq!(
+            interpreter_command("bash", &["-e".to_string()]),
+            Some(("bash".to_string(), vec!["-e".to_string(), "-s".to_string()]))
+        );
+        assert_eq!(
+            interpreter_command("SH", &[]),
+            Some(("sh".to_string(), vec!["-s".to_string()]))
+        );
+        assert!(interpreter_command("brainfuck", &[]).is_none());
+    }
+
+    #[test]
+    fn strips_leading_shebang_line() {
+        assert_eq!(
+            strip_shebang_line("#!/usr/bin/env python3\nprint(1)"),
+            "print(1)"
+        );
+        assert_eq!(
+            strip_shebang_line("#!/usr/bin/env python3\n\nprint(1)"),
+            "\nprint(1)"
+        );
+        assert_eq!(strip_shebang_line("#!/usr/bin/env python3"), "");
+        assert_eq!(strip_shebang_line("print(1)"), "print(1)");
+        assert_eq!(strip_shebang_line("#!/bin/sh\r\necho hi"), "echo hi");
     }
 
     #[test]
     fn runs_shell_code_block() {
-        let result =
-            run_code_block("sh".to_string(), "echo hello from edi".to_string()).expect("run ok");
+        let result = run_code_block_blocking("#!sh".to_string(), "echo hello from edi".to_string())
+            .expect("run ok");
         assert_eq!(result.exit_code, Some(0));
         assert_eq!(result.stdout.trim(), "hello from edi");
         assert!(result.stderr.is_empty());
@@ -226,9 +374,45 @@ mod tests {
     }
 
     #[test]
+    fn runs_env_shebang_block() {
+        let result = run_code_block_blocking(
+            "#!/usr/bin/env python3".to_string(),
+            "#!/usr/bin/env python3\nprint(21 * 2)".to_string(),
+        )
+        .expect("run ok");
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.trim(), "42");
+        assert!(result.stderr.is_empty());
+        assert!(!result.timed_out);
+    }
+
+    #[test]
+    fn ignores_appimage_python_environment() {
+        std::env::set_var("PYTHONHOME", "/tmp/.mount_Edi_0.FhNjoL/usr");
+        std::env::set_var("PYTHONPATH", "/tmp/.mount_Edi_0.FhNjoL/usr/share/pyshared/");
+
+        let result = run_code_block_blocking(
+            "#!/usr/bin/env python3".to_string(),
+            "import sys\nprint(sys.base_prefix)".to_string(),
+        )
+        .expect("run ok");
+
+        std::env::remove_var("PYTHONHOME");
+        std::env::remove_var("PYTHONPATH");
+
+        assert_eq!(result.exit_code, Some(0));
+        assert!(
+            !result.stdout.contains("mount_Edi"),
+            "python must ignore the AppImage's PYTHONHOME, got: {}",
+            result.stdout
+        );
+        assert!(!result.timed_out);
+    }
+
+    #[test]
     fn passes_source_via_stdin() {
-        let result = run_code_block(
-            "node".to_string(),
+        let result = run_code_block_blocking(
+            "#!node".to_string(),
             "console.log('hi from node')".to_string(),
         )
         .expect("run ok");
@@ -238,16 +422,24 @@ mod tests {
 
     #[test]
     fn captures_stderr_and_exit_code() {
-        let result = run_code_block("sh".to_string(), "echo oops >&2; exit 3\n".to_string())
-            .expect("run ok");
+        let result = run_code_block_blocking(
+            "#!/bin/sh".to_string(),
+            "echo oops >&2; exit 3\n".to_string(),
+        )
+        .expect("run ok");
         assert_eq!(result.exit_code, Some(3));
         assert!(result.stdout.is_empty());
         assert!(result.stderr.contains("oops"));
     }
 
     #[test]
-    fn rejects_unknown_languages() {
-        let result = run_code_block("brainfuck".to_string(), "+++".to_string());
+    fn rejects_invalid_and_unknown_shebangs() {
+        let result = run_code_block_blocking("#!brainfuck".to_string(), "+++".to_string());
         assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported interpreter"));
+
+        let result = run_code_block_blocking("#!".to_string(), "+++".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid shebang"));
     }
 }

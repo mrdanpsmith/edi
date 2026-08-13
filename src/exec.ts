@@ -2,7 +2,6 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { escapeHtml } from './preview'
 
-const EXEC_PATTERN = /^#!([A-Za-z0-9_+\-.]+)/
 const EXEC_TIMEOUT_SECONDS = 30
 
 export interface CodeResult {
@@ -19,13 +18,17 @@ interface CachedOutput {
 
 const outputCache = new Map<string, CachedOutput>()
 
-export function execLanguage(info: string): string | null {
-  const match = EXEC_PATTERN.exec(info.trim())
-  return match ? match[1]! : null
+export function execLanguage(info: string, source: string): string | null {
+  const infoLine = info.trim()
+  if (infoLine.startsWith('#!')) {
+    return infoLine
+  }
+  const firstLine = source.split('\n', 1)[0]!
+  return firstLine.startsWith('#!') ? firstLine : null
 }
 
-export function renderExecBlock(language: string, source: string): string {
-  return `<div class="exec-block" data-language="${escapeHtml(language)}">
+export function renderExecBlock(shebang: string, source: string): string {
+  return `<div class="exec-block" data-shebang="${escapeHtml(shebang)}">
     <pre class="exec-source"><code>${escapeHtml(source)}</code></pre>
     <div class="exec-toolbar"><button type="button" class="exec-run">Run</button></div>
     <pre class="exec-output" hidden></pre>
@@ -34,26 +37,26 @@ export function renderExecBlock(language: string, source: string): string {
 
 export function initExecBlocks(container: HTMLElement): void {
   for (const block of Array.from(container.querySelectorAll<HTMLElement>('.exec-block'))) {
-    const language = block.dataset['language'] ?? ''
+    const shebang = block.dataset['shebang'] ?? ''
     const source = block.querySelector<HTMLElement>('.exec-source code')?.textContent ?? ''
     const button = block.querySelector<HTMLButtonElement>('.exec-run')
     const output = block.querySelector<HTMLElement>('.exec-output')
     if (!button || !output) {
       continue
     }
-    const key = `${language}\u0000${source}`
+    const key = `${shebang}\u0000${source}`
     const cached = outputCache.get(key)
     if (cached) {
       showOutput(output, cached)
     }
     button.addEventListener('click', () => {
-      void runBlock(language, source, key, button, output)
+      void runBlock(shebang, source, key, button, output)
     })
   }
 }
 
 async function runBlock(
-  language: string,
+  shebang: string,
   source: string,
   key: string,
   button: HTMLButtonElement,
@@ -65,7 +68,7 @@ async function runBlock(
   output.textContent = ''
   output.classList.remove('exec-error')
   try {
-    const result = await invoke<CodeResult>('run_code_block', { language, source })
+    const result = await invoke<CodeResult>('run_code_block', { shebang, source })
     const cached: CachedOutput = { result }
     outputCache.set(key, cached)
     showOutput(output, cached)

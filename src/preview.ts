@@ -36,9 +36,9 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
     const source = escapeHtml(token.content)
     return `<div class="${MERMAID_CLASS}" data-state="pending"><noscript></noscript>${source}</div>`
   }
-  const language = execLanguage(info)
-  if (language) {
-    return renderExecBlock(language, token.content)
+  const shebang = execLanguage(info, token.content)
+  if (shebang) {
+    return renderExecBlock(shebang, token.content)
   }
   return defaultFenceRule!(tokens, idx, options, env, self)
 }

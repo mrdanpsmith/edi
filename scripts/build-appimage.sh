@@ -22,13 +22,14 @@ echo "==> Building build image ($IMAGE)"
 docker build -t "$IMAGE" -f "$ROOT/Dockerfile.appimage" "$ROOT"
 
 echo "==> Building AppImage inside $IMAGE"
-mkdir -p "$OUT_DIR" "$ROOT/.cache/cargo" "$ROOT/.cache/npm"
+mkdir -p "$OUT_DIR" "$ROOT/.cache/cargo" "$ROOT/.cache/npm" "$ROOT/.cache/appimage-node-modules"
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   -e HOME=/app/.cache/home \
   -e CARGO_HOME=/app/.cache/cargo \
   -e npm_config_cache=/app/.cache/npm \
   -v "$ROOT:/app" \
+  -v "$ROOT/.cache/appimage-node-modules:/app/node_modules" \
   "$IMAGE" \
   bash -c 'cd /app && npm ci --no-audit --no-fund && npm run tauri build -- --bundles appimage'
 

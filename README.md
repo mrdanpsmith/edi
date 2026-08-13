@@ -39,7 +39,7 @@ Supported: arithmetic (`+ - * / ^`), cell references (`B2`), ranges (`B2:C4`), a
 
 ### Executable code blocks
 
-A code fence whose info string starts with `#!` gets a **Run** button in the preview:
+A code block gets a **Run** button in the preview when its shebang line is written in the fence info string:
 
 ````markdown
 ```#!sh
@@ -47,7 +47,16 @@ echo "Hello from a code block!"
 ```
 ````
 
-Supported kernels: `#!python`, `#!sh`, `#!bash`, `#!node` (also `js`/`javascript`), `#!ruby`, and `#!perl`. Code runs locally with a 30-second timeout; stdout, stderr, and the exit code are shown in an output cell. Output is cached per block content, so re-rendering the preview does not re-execute it.
+or as the first line inside the block, exactly like a shell script:
+
+````markdown
+```
+#!/usr/bin/env python3
+print("Hello from Python!")
+```
+````
+
+The shebang is interpreted like a shell's, so all of these forms work: `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/python3`, `#!/usr/bin/env node`, and `#!node --harmony` (flags are passed through). Supported interpreters: `python`/`python3`/`py`, `sh`/`shell`, `bash`, `node`/`js`/`javascript`, `ruby`/`rb`, and `perl`/`pl`. Code runs locally with a 30-second timeout; stdout, stderr, and the exit code are shown in an output cell. Output is cached per block content, so re-rendering the preview does not re-execute it.
 
 ### Fragments
 

@@ -1,5 +1,7 @@
 import './styles.css'
 
+import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask } from '@tauri-apps/plugin-dialog'
 
 import { createEditor } from './editor'
@@ -60,10 +62,11 @@ Supports \`SUM\`, \`AVERAGE\`, \`MIN\`, \`MAX\`, \`COUNT\`, \`PRODUCT\`, \`ROUND
 
 ## Executable code blocks
 
-Start a code fence with \`#!\` to make it runnable:
+Add a shebang line like a shell script to make a code block runnable:
 
-\`\`\`#!sh
-echo "Hello from a code block!"
+\`\`\`
+#!/usr/bin/env python3
+print("Hello from Python!")
 \`\`\`
 
 ## Fragments
@@ -261,23 +264,53 @@ function registerShortcuts(): void {
     } else if (key === 'e' && event.shiftKey) {
       event.preventDefault()
       void exportHtml()
+    } else if (key === 'q') {
+      event.preventDefault()
+      void requestQuit()
     }
   })
+}
+
+const CONFIRM_TIMEOUT_MS = 15000
+
+interface CloseRequestEvent {
+  preventDefault: () => void
+}
+
+async function requestQuit(event?: CloseRequestEvent): Promise<void> {
+  if (!getDocState().dirty) {
+    await invoke('quit_app')
+    return
+  }
+  let confirmed = false
+  try {
+    // A hung native dialog must not trap the app forever: if the
+    // confirmation does not settle in time, quit anyway.
+    confirmed = await Promise.race([
+      confirmAction('Unsaved changes will be lost. Quit anyway?'),
+      new Promise<boolean>((resolve) =>
+        window.setTimeout(() => resolve(true), CONFIRM_TIMEOUT_MS),
+      ),
+    ])
+  } catch {
+    confirmed = true
+  }
+  if (!confirmed) {
+    event?.preventDefault()
+    // Tell the Rust-side quit watchdog to stand down.
+    await invoke('cancel_quit')
+    return
+  }
+  await invoke('quit_app')
 }
 
 function registerCloseGuard(): void {
   if (!hasTauri()) {
     return
   }
-  import('@tauri-apps/api/window')
-    .then(({ getCurrentWindow }) => {
-      getCurrentWindow().onCloseRequested(async (event) => {
-        if (getDocState().dirty && !(await confirmAction('Unsaved changes will be lost. Quit anyway?'))) {
-          event.preventDefault()
-        }
-      })
-    })
-    .catch(() => undefined)
+  getCurrentWindow().onCloseRequested(async (event) => {
+    await requestQuit(event)
+  })
 }
 
 const editor = createEditor(editorContainer, () => {

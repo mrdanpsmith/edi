@@ -37,7 +37,7 @@ describe('renderMarkdown', () => {
   it('renders executable code fences', () => {
     const html = renderMarkdown('```#!sh\necho hi\n```')
     expect(html).toContain('class="exec-block"')
-    expect(html).toContain('data-language="sh"')
+    expect(html).toContain('data-shebang="#!sh"')
     expect(html).toContain('echo hi')
   })
 
