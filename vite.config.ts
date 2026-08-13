@@ -9,7 +9,7 @@ export default defineConfig({
     exclude: ['**/node_modules/**', '**/.cache/**', '**/dist/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov'],
+      reporter: ['text', 'lcov', 'cobertura'],
       include: ['src/**'],
     },
   },
