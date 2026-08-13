@@ -91,7 +91,7 @@ build:
     # "SELFTEST_TIMEOUT" after 25s) and exit 0/1 accordingly; rely on the exit
     # code, not grep, so a timeout line can't be mistaken for success. The
     # outer `timeout` is only a last-resort backstop if the process hangs.
-    - timeout 60 ./dist-app/edi
+    - EDI_SELFTEST=1 timeout 60 ./dist-app/edi
 
 release:
   stage: release

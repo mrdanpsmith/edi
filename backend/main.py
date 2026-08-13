@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
@@ -64,9 +65,11 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
 
     QTimer.singleShot(3000, probe)
     QTimer.singleShot(5000, read)
-    QTimer.singleShot(
-        25000, lambda: (print("SELFTEST_TIMEOUT", flush=True), os._exit(1))
-    )
+    # A plain thread (not a QTimer) so the watchdog still fires even if the Qt
+    # event loop is wedged waiting on the renderer/GPU process.
+    threading.Timer(
+        25.0, lambda: (print("SELFTEST_TIMEOUT", flush=True), os._exit(1))
+    ).start()
 
 
 def main() -> int:
