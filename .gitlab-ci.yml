@@ -106,8 +106,10 @@ release:
     - export GITLAB_TOKEN="$GITLAB_TOKEN"
     - curl -sL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION#v}/downloads/glab_${GLAB_VERSION#v}_linux_amd64.tar.gz" | tar -xz -C /tmp
     # The runner checks out a shallow clone (depth 20), so fetch full history
-    # and all tags to build a changelog against the previous release.
-    - git fetch --tags --unshallow --prune
+    # and all tags to build a changelog against the previous release. If the
+    # repo is already complete (fewer commits than the depth), --unshallow
+    # errors and a plain tag fetch is enough.
+    - git fetch --tags --prune --unshallow 2>/dev/null || git fetch --tags --prune
     # Generate the changelog: every commit since the previous tag (or the full
     # history for the first release) as "- <short-hash> <subject>" lines. The
     # short hashes are auto-linked to commits by GitLab.
