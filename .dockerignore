@@ -1,0 +1,9 @@
+.git
+.venv
+node_modules
+dist
+target
+__pycache__
+*.pyc
+.pytest_cache
+.opencode

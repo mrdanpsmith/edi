@@ -3,12 +3,15 @@ node_modules/
 
 # Build outputs
 dist/
+dist-app/
 coverage/
 .cache/
+build/
 
-# Tauri / Rust
-src-tauri/target/
-src-tauri/gen/
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
 
 # Editor / OS
 .vscode/
@@ -19,3 +22,4 @@ src-tauri/gen/
 # Local environment
 .env
 .env.local
+.venv/

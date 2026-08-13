@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './bridge'
 
 import { escapeHtml } from './preview'
 
@@ -68,7 +68,7 @@ async function runBlock(
   output.textContent = ''
   output.classList.remove('exec-error')
   try {
-    const result = await invoke<CodeResult>('run_code_block', { shebang, source })
+    const result = await invoke<CodeResult>('runCodeBlock', { shebang, source })
     const cached: CachedOutput = { result }
     outputCache.set(key, cached)
     showOutput(output, cached)

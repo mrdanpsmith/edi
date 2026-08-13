@@ -5,14 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/check-node.mjs && tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run test",
-    "tauri": "tauri"
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
@@ -22,15 +24,12 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
     "@lezer/highlight": "^1.2.3",
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-dialog": "^2.7.2",
     "markdown-it": "^15.0.0",
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.16.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@tauri-apps/cli": "^2.11.4",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "^4.1.10",

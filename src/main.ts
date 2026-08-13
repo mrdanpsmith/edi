@@ -1,8 +1,6 @@
 import './styles.css'
 
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { ask } from '@tauri-apps/plugin-dialog'
+import { hasBridge, invoke } from './bridge'
 
 import { createEditor } from './editor'
 import { initExecBlocks } from './exec'
@@ -22,7 +20,7 @@ import { SplitLayout } from './layout'
 import { renderPendingMermaid } from './mermaid'
 import { renderPreview } from './preview'
 import { computeSpreadsheet } from './spreadsheet'
-import { getDocState, setDirty, setPath } from './state'
+import { getDocState, setDirty, setPath, subscribe } from './state'
 
 const RENDER_DEBOUNCE_MS = 300
 
@@ -99,14 +97,10 @@ const exportBtn = document.querySelector<HTMLButtonElement>('#export-btn')!
 let renderTimer: number | undefined
 
 function confirmAction(message: string): Promise<boolean> {
-  if (hasTauri()) {
-    return ask(message, { title: 'Edi', kind: 'warning' })
+  if (hasBridge()) {
+    return invoke<boolean>('confirm', { message })
   }
   return Promise.resolve(window.confirm(message))
-}
-
-function hasTauri(): boolean {
-  return '__TAURI_INTERNALS__' in window
 }
 
 function updateTitle(): void {
@@ -275,41 +269,15 @@ interface CloseRequestEvent {
   preventDefault: () => void
 }
 
-async function requestQuit(event?: CloseRequestEvent): Promise<void> {
-  if (!getDocState().dirty) {
-    await invoke('quit_app')
+function requestQuit(event?: CloseRequestEvent): void {
+  // The native shell owns the dirty check: its closeEvent prompts when the
+  // document is unsaved. Ask it to close and let it decide.
+  if (hasBridge()) {
+    void invoke('quit')
     return
   }
-  // Keep the Rust-side close watchdog informed that the frontend is still
-  // responsive while the confirmation dialog is open. If it stops heartbeating
-  // (hung dialog, broken webview) the watchdog force-quits after a grace
-  // period; a user who is simply taking their time is never auto-quit.
-  const heartbeat = window.setInterval(() => {
-    void invoke('quit_heartbeat')
-  }, 2000)
-  let confirmed = false
-  try {
-    confirmed = await confirmAction('Unsaved changes will be lost. Quit anyway?')
-  } catch {
-    confirmed = true
-  }
-  window.clearInterval(heartbeat)
-  if (!confirmed) {
-    event?.preventDefault()
-    // Tell the Rust-side close watchdog to stand down.
-    await invoke('cancel_quit')
-    return
-  }
-  await invoke('quit_app')
-}
-
-function registerCloseGuard(): void {
-  if (!hasTauri()) {
-    return
-  }
-  getCurrentWindow().onCloseRequested(async (event) => {
-    await requestQuit(event)
-  })
+  event?.preventDefault()
+  window.close()
 }
 
 const editor = createEditor(editorContainer, () => {
@@ -344,12 +312,17 @@ previewBtn.addEventListener('click', () => {
   previewBtn.setAttribute('aria-pressed', String(layout.isPreviewVisible()))
 })
 
+function syncDirty(): void {
+  void invoke('setDirty', { dirty: getDocState().dirty }).catch(() => undefined)
+}
+
 function init(): void {
   editor.setValue(WELCOME_DOCUMENT)
   updateTitle()
   updateStatus()
   registerShortcuts()
-  registerCloseGuard()
+  subscribe(syncDirty)
+  syncDirty()
   void renderPreviewNow()
 }
 

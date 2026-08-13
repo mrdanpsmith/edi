@@ -1,3 +1,6 @@
+// Generates the Edi app icon (scripts/assets/app-icon.png), used for the
+// PySide6 window/taskbar icon. Pure Node, no build tooling needed:
+//   node scripts/generate-icon.mjs
 import { deflateSync, crc32 } from 'node:zlib'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'

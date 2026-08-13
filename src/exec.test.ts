@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }))
 
-vi.mock('@tauri-apps/api/core', () => ({
+vi.mock('./bridge', () => ({
   invoke: mockInvoke,
 }))
 
@@ -61,7 +61,7 @@ describe('initExecBlocks', () => {
     const output = container.querySelector<HTMLElement>('.exec-output')!
     expect(output.textContent).toBe('hello')
     expect(output.hidden).toBe(false)
-    expect(mockInvoke).toHaveBeenCalledWith('run_code_block', {
+    expect(mockInvoke).toHaveBeenCalledWith('runCodeBlock', {
       shebang: '#!sh',
       source: 'echo hello',
     })

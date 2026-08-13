@@ -7,11 +7,11 @@ Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets
 
 ## Status
 
-Implemented: a Tauri 2 desktop app with a CodeMirror 6 markdown editor and a live, resizable, toggleable preview that renders Mermaid diagrams, computes spreadsheet formulas in tables, runs `#!` code blocks, saves and inserts text fragments, and exports the rendered document as a self-contained HTML file.
+Implemented: a Python desktop app (PySide6 + QtWebEngine) with a CodeMirror 6 markdown editor and a live, resizable, toggleable preview that renders Mermaid diagrams, computes spreadsheet formulas in tables, runs `#!` code blocks, saves and inserts text fragments, and exports the rendered document as a self-contained HTML file.
 
 | Feature | Status |
 | --- | --- |
-| Fast, small-footprint editor (Tauri 2 + OS webview) | Done |
+| Fast, small-footprint editor (Python + QtWebEngine) | Done |
 | Markdown editing with syntax highlighting | Done |
 | Live preview as you type (debounced, resizable, toggleable) | Done |
 | In-line Mermaid diagrams | Done |
@@ -20,6 +20,12 @@ Implemented: a Tauri 2 desktop app with a CodeMirror 6 markdown editor and a liv
 | Executable code blocks (`#!` kernel syntax) | Done |
 | Copy/paste fragments | Done |
 | HTML export | Done |
+
+## Architecture
+
+- **Frontend**: CodeMirror 6 + Mermaid + spreadsheet formulas in TypeScript, built with Vite into a single static `dist/`.
+- **Backend**: Python 3 + PySide6 (QtWidgets / QtWebEngine). A native `QWebEngineView` hosts the frontend; the page talks to Python through `QWebChannel` (`backend/bridge.py`), which provides file dialogs, file IO, and code-block execution.
+- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too.
 
 ## Features
 
@@ -68,7 +74,7 @@ Select any text (or a whole line) and press `Ctrl+Shift+F` / `Ctrl+Shift+K` to s
 
 ## Building from source
 
-Requirements: a Linux desktop (Tauri builds against WebKitGTK), Node.js 20+, and a Rust toolchain.
+Requirements: Python 3.10+ (with `venv`), Node.js 20+, and a Linux desktop with X11/Wayland and OpenGL.
 
 The easiest path is the dependency script (Ubuntu/Debian):
 
@@ -76,38 +82,36 @@ The easiest path is the dependency script (Ubuntu/Debian):
 ./scripts/install-deps.sh
 ```
 
-This installs the Rust toolchain, system libraries (`libwebkit2gtk-4.1-dev`, GTK3, libsoup, librsvg), and npm dependencies.
+This sets up the Python virtualenv (`.venv/`, including PySide6), installs npm dependencies, and generates the app icon.
 
 ### Development
 
-```sh
-npm run tauri dev
-```
-
-### Production build
+Build the frontend, then run the Python shell:
 
 ```sh
-npm run tauri build
+npm run build
+.venv/bin/python run_edi.py
 ```
 
-Bundles are written to `src-tauri/target/release/bundle/`.
+### Portable single-file binary
 
-> **Portable AppImage:** an AppImage built on a modern distro bundles libraries
-> that require that distro's glibc, so it will not run on older systems. Use
-> `scripts/build-appimage.sh` to build the AppImage inside an Ubuntu 22.04
-> (glibc 2.35) container — this is also what the CI pipeline does:
+`scripts/build-pyzip.sh` builds the frontend and bundles the app into a single
+executable inside an Ubuntu 22.04 container (glibc 2.35), so the result also
+runs on older desktop Linux systems. The host Node/Python versions do not
+matter — everything is pinned inside Docker.
 
 ```sh
-./scripts/build-appimage.sh
+./scripts/build-pyzip.sh
 ```
+
+Output: `./dist-app/edi` (smoke-tested offscreen before reporting success).
 
 ## Checks and tests
 
 ```sh
-npm run check        # typecheck + eslint + unit tests
-npm run coverage     # unit tests with coverage report
-cargo test           # Rust backend tests (run in src-tauri/)
-cargo clippy -- -D warnings
+npm run check          # typecheck + eslint + frontend unit tests
+.venv/bin/pytest tests/   # backend tests (PySide6, offscreen)
+npm run coverage       # frontend tests with coverage report
 ```
 
 ## Keyboard shortcuts
@@ -123,8 +127,8 @@ cargo clippy -- -D warnings
 
 ## Development process
 
-1. All features are thoroughly tested using automated tests (Vitest for the frontend, `cargo test` for the backend).
-2. Code is checked for duplication and poor quality using free, open static code analysis tools (ESLint, `tsc`, and `cargo clippy`).
+1. All features are thoroughly tested using automated tests (Vitest for the frontend, `pytest` for the backend).
+2. Code is checked for duplication and poor quality using free, open static code analysis tools (ESLint and `tsc`).
 3. Versioning and tagging automatically results in releases being created by the GitLab CI pipeline (using the new `glab` tools, not the deprecated `release-cli`). See `.gitlab-ci.yml`; the `release` job requires a `GITLAB_TOKEN` CI/CD variable with `api` scope and Maintainer role.
 4. All unnecessary files are `.gitignore`d.
 5. All files necessary for building the project can be installed via a simple script (`scripts/install-deps.sh`) so that a new developer or user can easily build the project from source.
