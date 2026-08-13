@@ -90,7 +90,8 @@ def _xlsx_cell_xml(ref: str, t: str, value: str) -> str:
     if t == "inlineStr":
         return f'<c r="{ref}" t="inlineStr"><is><t>{value}</t></is></c>'
     inner = f"<v>{value}</v>"
-    return f'<c r="{ref}"{f" t=\"{t}\"" if t else ""}>{inner}</c>'
+    attr = f' t="{t}"' if t else ""
+    return f'<c r="{ref}"{attr}>{inner}</c>'
 
 
 def test_csv_basic(tmp_path):
