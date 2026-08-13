@@ -44,3 +44,7 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
 export async function pickExportPath(defaultName: string): Promise<string | null> {
   return invoke<string | null>('pickExportPath', { defaultName })
 }
+
+export async function pickImportPath(): Promise<string | null> {
+  return invoke<string | null>('pickImportPath', {})
+}

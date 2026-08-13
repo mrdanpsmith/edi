@@ -12,20 +12,8 @@
         <span id="app-name" aria-hidden="true">Edi</span>
         <span id="doc-title" title=""></span>
         <span id="dirty-indicator" title="Unsaved changes" hidden>*</span>
-        <nav id="toolbar-actions" aria-label="File actions">
-          <button id="open-btn" type="button" title="Open (Ctrl+O)">Open</button>
-          <button id="save-btn" type="button" title="Save (Ctrl+S)">Save</button>
-          <button id="save-as-btn" type="button" title="Save As (Ctrl+Shift+S)">Save As</button>
-          <span class="toolbar-separator" aria-hidden="true"></span>
-          <button id="export-btn" type="button" title="Export preview as HTML (Ctrl+Shift+E)">Export HTML</button>
-          <span class="toolbar-separator" aria-hidden="true"></span>
-          <button id="fragments-btn" type="button" title="Fragments (Ctrl+Shift+F)">Fragments</button>
-          <span class="toolbar-separator" aria-hidden="true"></span>
-          <button id="preview-btn" type="button" title="Toggle preview (Ctrl+Shift+P)" aria-pressed="true">
-            Preview
-          </button>
-        </nav>
       </header>
+      <nav id="tabbar" role="tablist" aria-label="Documents"></nav>
       <main id="workspace">
         <section id="editor-pane" aria-label="Editor">
           <div id="editor-container"></div>
@@ -41,24 +29,6 @@
       </footer>
     </div>
     <noscript>Edi requires JavaScript to run.</noscript>
-    <dialog id="fragments-dialog" aria-label="Fragments">
-      <form method="dialog">
-        <div class="dialog-header">
-          <h2>Fragments</h2>
-          <button id="fragments-close" type="button" aria-label="Close">×</button>
-        </div>
-        <div class="dialog-body">
-          <div class="fragment-save">
-            <input id="fragment-name" type="text" placeholder="Fragment name" aria-label="Fragment name" />
-            <button id="fragment-save" type="button">Save selection</button>
-          </div>
-          <ul id="fragment-list" class="fragment-list"></ul>
-          <p id="fragment-empty" class="dialog-empty" hidden>
-            No fragments yet. Select text in the editor, then save it as a fragment.
-          </p>
-        </div>
-      </form>
-    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

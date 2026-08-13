@@ -18,10 +18,12 @@ from __future__ import annotations
 import json
 import threading
 
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt, Signal, Slot
+from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
+from PySide6.QtGui import QGuiApplication
 
 from .exec import run_code_block
 from .files import read_text_file, write_text_file
+from .tables import parse_table_file
 
 
 class Bridge(QObject):
@@ -35,10 +37,14 @@ class Bridge(QObject):
             "pickOpenPath": self._pick_open_path,
             "pickSavePath": self._pick_save_path,
             "pickExportPath": self._pick_export_path,
+            "pickImportPath": self._pick_import_path,
             "readTextFile": self._read_text_file,
             "writeTextFile": self._write_text_file,
+            "parseTableFile": self._parse_table_file,
+            "copyTable": self._copy_table,
             "runCodeBlock": self._run_code_block,
             "setDirty": self._set_dirty,
+            "setMenuState": self._set_menu_state,
             "quit": self._quit,
             "ping": self._ping,
         }
@@ -77,6 +83,32 @@ class Bridge(QObject):
             str(args.get("defaultName", "Untitled")),
             lambda path: self._reply(request_id, path or None),
         )
+
+    def _pick_import_path(self, request_id: int, _args: dict) -> None:
+        self._window.pick_import_path(lambda path: self._reply(request_id, path or None))
+
+    def _parse_table_file(self, request_id: int, args: dict) -> None:
+        path = args.get("path")
+        if not path:
+            self._reply_error(request_id, "Missing path")
+            return
+
+        def work() -> None:
+            try:
+                result = parse_table_file(str(path))
+            except Exception as exc:  # noqa: BLE001
+                self._reply_error(request_id, str(exc))
+            else:
+                self._reply(request_id, result)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _copy_table(self, request_id: int, args: dict) -> None:
+        mime = QMimeData()
+        mime.setHtml(str(args.get("html") or ""))
+        mime.setText(str(args.get("plain") or ""))
+        QGuiApplication.clipboard().setMimeData(mime)
+        self._reply(request_id, None)
 
     def _read_text_file(self, request_id: int, args: dict) -> None:
         path = args.get("path")
@@ -126,6 +158,13 @@ class Bridge(QObject):
 
     def _set_dirty(self, request_id: int, args: dict) -> None:
         self._window.set_dirty(bool(args.get("dirty")))
+        self._reply(request_id, None)
+
+    def _set_menu_state(self, request_id: int, args: dict) -> None:
+        self._window.update_menu_state(
+            can_revert=bool(args.get("canRevert")),
+            preview_visible=bool(args.get("previewVisible")),
+        )
         self._reply(request_id, None)
 
     def _quit(self, request_id: int, _args: dict) -> None:

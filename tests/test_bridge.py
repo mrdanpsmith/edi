@@ -21,6 +21,8 @@ class StubWindow(QObject):
         self.dirty = False
         self.closed = False
         self.confirm_messages: list[str] = []
+        self.can_revert = False
+        self.preview_visible = True
 
     def confirm(self, message, callback=None) -> None:
         self.confirm_messages.append(message)
@@ -29,6 +31,10 @@ class StubWindow(QObject):
 
     def set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
+
+    def update_menu_state(self, can_revert=False, preview_visible=True) -> None:
+        self.can_revert = can_revert
+        self.preview_visible = preview_visible
 
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
@@ -41,6 +47,10 @@ class StubWindow(QObject):
     def pick_export_path(self, default_name, callback=None) -> None:
         if callback is not None:
             callback(f"/tmp/{default_name}.html")
+
+    def pick_import_path(self, callback=None) -> None:
+        if callback is not None:
+            callback("/tmp/table.csv")
 
     def close(self) -> None:
         self.closed = True
@@ -97,6 +107,71 @@ def test_set_dirty(bridge):
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.dirty is True
+
+
+def test_set_menu_state(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "setMenuState", {"canRevert": True, "previewVisible": False})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert window.can_revert is True
+    assert window.preview_visible is False
+
+
+def test_pick_import_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "pickImportPath")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == "/tmp/table.csv"
+
+
+def test_parse_table_file_csv(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    target = tmp_path / "data.csv"
+    target.write_text("a,b\n1,2\n", encoding="utf-8")
+
+    _invoke(bridge_obj, "parseTableFile", {"path": str(target)}, 30)
+    message = _wait_for(lambda: result.get(30))
+    assert message["ok"] is True
+    assert message["data"]["name"] == "data"
+    assert message["data"]["rows"] == [["a", "b"], ["1", "2"]]
+
+
+def test_parse_table_file_missing_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "parseTableFile", {}, 31)
+    message = _wait_for(lambda: result.get(31))
+    assert message["ok"] is False
+    assert "Missing path" in message["error"]
+
+
+def test_parse_table_file_bad_file(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    target = tmp_path / "broken.ods"
+    target.write_bytes(b"not a zip archive")
+    _invoke(bridge_obj, "parseTableFile", {"path": str(target)}, 32)
+    message = _wait_for(lambda: result.get(32))
+    assert message["ok"] is False
+
+
+def test_copy_table_sets_clipboard(bridge):
+    from PySide6.QtGui import QGuiApplication
+
+    bridge_obj, _window, result = bridge
+    _invoke(
+        bridge_obj,
+        "copyTable",
+        {"html": "<table><tr><td>x</td></tr></table>", "plain": "x"},
+        40,
+    )
+    message = _wait_for(lambda: result.get(40))
+    assert message["ok"] is True
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime.hasText()
+    assert mime.text() == "x"
+    assert mime.hasHtml()
+    assert "<table>" in mime.html()
 
 
 def test_confirm_uses_window(bridge):

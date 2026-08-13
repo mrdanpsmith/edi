@@ -18,6 +18,7 @@ declare global {
       transport: unknown,
       callback: (channel: { objects: { bridge: BridgeObject } }) => void,
     ) => unknown
+    ediMenuCommand?: (command: string) => void
   }
 }
 

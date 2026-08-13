@@ -1,6 +1,6 @@
 import './styles.css'
 
-import { hasBridge, invoke } from './bridge'
+import { confirmAction, hasBridge, invoke } from './bridge'
 
 import { createEditor } from './editor'
 import { initExecBlocks } from './exec'
@@ -9,18 +9,22 @@ import {
   fileName,
   isSupportedFile,
   pickExportPath,
+  pickImportPath,
   pickOpenPath,
   pickSavePath,
   readTextFile,
   UNTITLED,
   writeTextFile,
 } from './files'
-import { bindFragmentDialog, listFragments, saveFragment } from './fragments'
+import { parseTableFile, toMarkdownTable } from './import'
 import { SplitLayout } from './layout'
+import { bindMenuCommands } from './menus'
 import { renderPendingMermaid } from './mermaid'
 import { renderPreview } from './preview'
 import { computeSpreadsheet } from './spreadsheet'
-import { getDocState, setDirty, setPath, subscribe } from './state'
+import { getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
+import { Tabs } from './tabs'
+import { attachTableCopyControls, previewExportBody } from './tablecopy'
 
 const RENDER_DEBOUNCE_MS = 300
 
@@ -31,9 +35,10 @@ Edi is a fast markdown editor with a live preview, Mermaid diagrams, in-line spr
 ## Getting started
 
 - Type on the left, see the result on the right.
-- Press \`Ctrl+Shift+P\` to toggle the preview, or drag the divider to resize it.
-- Open and save files with \`Ctrl+O\`, \`Ctrl+S\`, and \`Ctrl+Shift+S\`.
-- Export the rendered document as a self-contained HTML file with \`Ctrl+Shift+E\`.
+- Use the **File** and **View** menus for document actions and the preview.
+- Open several documents side by side in tabs (\`Ctrl+N\` for a new tab, \`Ctrl+W\` to close one).
+- Import a spreadsheet with \`File → Import Spreadsheet\` to add it as a table.
+- Hover a table in the preview and press **Copy** to paste it into Word, email, or Excel.
 
 ## Mermaid diagrams
 
@@ -67,17 +72,15 @@ Add a shebang line like a shell script to make a code block runnable:
 print("Hello from Python!")
 \`\`\`
 
-## Fragments
-
-Select any text and press \`Ctrl+Shift+F\` (or \`Ctrl+Shift+K\`) to save it as a named fragment, then re-insert it anywhere.
-
 ## Tasks
 
 - [x] Fast editing
 - [x] Spreadsheet tables
 - [x] Executable code blocks
-- [x] Copy/paste fragments
 - [x] HTML export
+- [x] Multiple tabs
+- [x] Spreadsheet import
+- [x] Copy tables to the clipboard
 `
 
 const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
@@ -89,43 +92,60 @@ const docTitle = document.querySelector<HTMLElement>('#doc-title')!
 const dirtyIndicator = document.querySelector<HTMLElement>('#dirty-indicator')!
 const statusLeft = document.querySelector<HTMLElement>('#status-left')!
 const statusRight = document.querySelector<HTMLElement>('#status-right')!
-const previewBtn = document.querySelector<HTMLButtonElement>('#preview-btn')!
-const fragmentsBtn = document.querySelector<HTMLButtonElement>('#fragments-btn')!
-const fragmentsDialog = document.querySelector<HTMLDialogElement>('#fragments-dialog')!
-const exportBtn = document.querySelector<HTMLButtonElement>('#export-btn')!
+const tabbar = document.querySelector<HTMLElement>('#tabbar')!
 
 let renderTimer: number | undefined
 
-function confirmAction(message: string): Promise<boolean> {
-  if (hasBridge()) {
-    return invoke<boolean>('confirm', { message })
-  }
-  return Promise.resolve(window.confirm(message))
-}
+const editor = createEditor(editorContainer, () => {
+  setActiveDirty(true)
+  updateStatus()
+  schedulePreview()
+})
+
+const layout = new SplitLayout(workspace, previewPane, divider)
+
+const tabs = new Tabs(tabbar, editor.view, {
+  onNewTab: () => openNewTab(),
+  onCloseTab: (id) => void closeTab(id),
+  onActivate: () => afterActivate(),
+})
 
 function updateTitle(): void {
-  const { path, dirty } = getDocState()
-  const name = path ? path.split('/').pop()! : UNTITLED
+  const active = getActive()
+  const name = active?.path ? active.path.split('/').pop()! : UNTITLED
   docTitle.textContent = name
-  docTitle.title = path ?? ''
-  dirtyIndicator.hidden = !dirty
-  document.title = `${dirty ? '* ' : ''}${name} — Edi`
+  docTitle.title = active?.path ?? ''
+  dirtyIndicator.hidden = !active?.dirty
+  document.title = `${active?.dirty ? '* ' : ''}${name} — Edi`
 }
 
 function updateStatus(): void {
-  const { path } = getDocState()
-  statusLeft.textContent = path ?? UNTITLED
+  const active = getActive()
+  statusLeft.textContent = active?.path ?? UNTITLED
   const text = editor.getValue()
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
 }
 
-function selectionOrLine(): string {
-  const { from, to } = editor.view.state.selection.main
-  if (from !== to) {
-    return editor.view.state.sliceDoc(from, to)
-  }
-  return editor.view.state.doc.lineAt(from).text
+function afterActivate(): void {
+  updateTitle()
+  updateStatus()
+  syncDirty()
+  syncMenuState()
+  void renderPreviewNow()
+  editor.focus()
+}
+
+function syncDirty(): void {
+  void invoke('setDirty', { dirty: isAnyDirty() }).catch(() => undefined)
+}
+
+function syncMenuState(): void {
+  const active = getActive()
+  void invoke('setMenuState', {
+    canRevert: Boolean(active?.path),
+    previewVisible: layout.isPreviewVisible(),
+  }).catch(() => undefined)
 }
 
 function insertText(text: string): void {
@@ -133,20 +153,30 @@ function insertText(text: string): void {
   editor.view.focus()
 }
 
+function insertTable(markdown: string): void {
+  insertText(`\n${markdown}\n`)
+}
+
 function flashStatus(message: string): void {
   statusLeft.textContent = message
   window.setTimeout(() => updateStatus(), 3000)
 }
 
+function togglePreview(): void {
+  layout.togglePreview()
+  syncMenuState()
+}
+
 async function exportHtml(): Promise<void> {
   await renderPreviewNow()
-  const base = getDocState().path ? fileName(getDocState().path!) : UNTITLED
+  const active = getActive()
+  const base = active?.path ? fileName(active.path) : UNTITLED
   const path = await pickExportPath(base)
   if (!path) {
     return
   }
   try {
-    await writeTextFile(path, buildExportHtml(fileName(path), previewContainer.innerHTML))
+    await writeTextFile(path, buildExportHtml(fileName(path), previewExportBody(previewContainer)))
     flashStatus(`Exported ${path}`)
   } catch (error) {
     reportError(`Failed to export ${path}`, error)
@@ -165,32 +195,44 @@ async function renderPreviewNow(): Promise<void> {
   previewContainer.innerHTML = renderPreview(editor.getValue())
   previewContainer.scrollTop = Math.min(scrollTop, previewContainer.scrollHeight)
   computeSpreadsheet(previewContainer)
+  attachTableCopyControls(previewContainer, { onCopied: () => flashStatus('Table copied to clipboard') })
   initExecBlocks(previewContainer)
   await renderPendingMermaid(previewContainer)
 }
 
-async function openFile(): Promise<void> {
-  if (getDocState().dirty && !(await confirmAction('Discard unsaved changes and open a new file?'))) {
+function openNewTab(): void {
+  tabs.addSession()
+}
+
+async function closeTab(id: string): Promise<void> {
+  const session = getState().sessions.find((entry) => entry.id === id)
+  if (
+    session?.dirty &&
+    !(await confirmAction('Discard unsaved changes and close this document?'))
+  ) {
     return
   }
+  tabs.close(id)
+}
+
+async function openFile(): Promise<void> {
   const path = await pickOpenPath()
   if (!path) {
     return
   }
   try {
     const content = await readTextFile(path)
-    editor.setValue(content)
-    setPath(path)
-    setDirty(false)
-    updateStatus()
-    await renderPreviewNow()
+    tabs.addSession(content)
+    setActivePath(path)
+    afterActivate()
   } catch (error) {
     reportError(`Failed to open ${path}`, error)
   }
 }
 
 async function saveFile(): Promise<void> {
-  let path = getDocState().path
+  const active = getActive()
+  let path = active?.path ?? null
   if (!path) {
     path = await pickSavePath(UNTITLED)
     if (!path) {
@@ -201,7 +243,7 @@ async function saveFile(): Promise<void> {
 }
 
 async function saveFileAs(): Promise<void> {
-  const current = getDocState().path
+  const current = getActive()?.path ?? null
   const defaultName = current ? current.split('/').pop()! : UNTITLED
   const path = await pickSavePath(defaultName)
   if (!path) {
@@ -212,17 +254,55 @@ async function saveFileAs(): Promise<void> {
 
 async function saveTo(path: string): Promise<void> {
   if (!isSupportedFile(path)) {
-    await confirmAction(
-      `"${path}" does not have a supported extension.\n\nContinue anyway?`,
-    )
+    await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`)
   }
   try {
     await writeTextFile(path, editor.getValue())
-    setPath(path)
-    setDirty(false)
+    setActivePath(path)
+    setActiveDirty(false)
+    updateTitle()
     updateStatus()
+    syncDirty()
+    syncMenuState()
   } catch (error) {
     reportError(`Failed to save ${path}`, error)
+  }
+}
+
+async function revertFile(): Promise<void> {
+  const active = getActive()
+  const path = active?.path ?? null
+  if (!path) {
+    return
+  }
+  if (
+    active?.dirty &&
+    !(await confirmAction('Discard unsaved changes and revert to the saved version?'))
+  ) {
+    return
+  }
+  try {
+    const content = await readTextFile(path)
+    editor.setValue(content)
+    setActiveDirty(false)
+    tabs.snapshotActive()
+    afterActivate()
+  } catch (error) {
+    reportError(`Failed to revert ${path}`, error)
+  }
+}
+
+async function importTable(): Promise<void> {
+  const path = await pickImportPath()
+  if (!path) {
+    return
+  }
+  try {
+    const table = await parseTableFile(path)
+    insertTable(toMarkdownTable(table.rows))
+    flashStatus(`Imported ${table.name}`)
+  } catch (error) {
+    reportError(`Failed to import ${path}`, error)
   }
 }
 
@@ -237,7 +317,13 @@ function registerShortcuts(): void {
       return
     }
     const key = event.key.toLowerCase()
-    if (key === 'o') {
+    if (key === 'n') {
+      event.preventDefault()
+      openNewTab()
+    } else if (key === 'w') {
+      event.preventDefault()
+      void closeTab(tabs.activeId)
+    } else if (key === 'o') {
       event.preventDefault()
       void openFile()
     } else if (key === 's' && event.shiftKey) {
@@ -248,13 +334,7 @@ function registerShortcuts(): void {
       void saveFile()
     } else if (key === 'p' && event.shiftKey) {
       event.preventDefault()
-      layout.togglePreview()
-    } else if (key === 'f' && event.shiftKey) {
-      event.preventDefault()
-      fragments.open()
-    } else if (key === 'k' && event.shiftKey) {
-      event.preventDefault()
-      fragments.open()
+      togglePreview()
     } else if (key === 'e' && event.shiftKey) {
       event.preventDefault()
       void exportHtml()
@@ -270,7 +350,7 @@ interface CloseRequestEvent {
 }
 
 function requestQuit(event?: CloseRequestEvent): void {
-  // The native shell owns the dirty check: its closeEvent prompts when the
+  // The native shell owns the dirty check: its closeEvent prompts when any
   // document is unsaved. Ask it to close and let it decide.
   if (hasBridge()) {
     void invoke('quit')
@@ -280,50 +360,23 @@ function requestQuit(event?: CloseRequestEvent): void {
   window.close()
 }
 
-const editor = createEditor(editorContainer, () => {
-  setDirty(true)
-  updateStatus()
-  schedulePreview()
-})
-
-const layout = new SplitLayout(workspace, previewPane, divider)
-
-const fragments = bindFragmentDialog(fragmentsDialog, {
-  onInsert(name) {
-    const fragment = listFragments().find((fragment) => fragment.name === name)
-    if (fragment) {
-      insertText(fragment.content)
-    }
-  },
-  onSaveSelection(name) {
-    saveFragment(name, selectionOrLine())
-  },
-})
-
-document.querySelector('#open-btn')!.addEventListener('click', () => void openFile())
-document.querySelector('#save-btn')!.addEventListener('click', () => void saveFile())
-document.querySelector('#save-as-btn')!.addEventListener('click', () => void saveFileAs())
-fragmentsBtn.addEventListener('click', () => {
-  fragments.open()
-})
-exportBtn.addEventListener('click', () => void exportHtml())
-previewBtn.addEventListener('click', () => {
-  layout.togglePreview()
-  previewBtn.setAttribute('aria-pressed', String(layout.isPreviewVisible()))
-})
-
-function syncDirty(): void {
-  void invoke('setDirty', { dirty: getDocState().dirty }).catch(() => undefined)
-}
-
 function init(): void {
   editor.setValue(WELCOME_DOCUMENT)
-  updateTitle()
-  updateStatus()
+  tabs.snapshotActive()
   registerShortcuts()
-  subscribe(syncDirty)
+  bindMenuCommands({
+    new: () => openNewTab(),
+    open: () => void openFile(),
+    save: () => void saveFile(),
+    saveAs: () => void saveFileAs(),
+    revert: () => void revertFile(),
+    importTable: () => void importTable(),
+    export: () => void exportHtml(),
+    togglePreview: () => togglePreview(),
+  })
+  subscribe(() => syncDirty())
   syncDirty()
-  void renderPreviewNow()
+  afterActivate()
 }
 
 init()

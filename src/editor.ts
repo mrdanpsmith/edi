@@ -8,6 +8,16 @@ import { EditorView, keymap, lineNumbers } from '@codemirror/view'
 
 export type ChangeHandler = (view: EditorView) => void
 
+let suppressChange = false
+
+export function suppressChangeNotifications(): void {
+  suppressChange = true
+}
+
+export function restoreChangeNotifications(): void {
+  suppressChange = false
+}
+
 const highlight = HighlightStyle.define([
   { tag: tags.heading, color: 'var(--md-heading)', fontWeight: '600' },
   { tag: tags.strong, fontWeight: '700' },
@@ -69,22 +79,15 @@ const theme = EditorView.theme({
   },
 })
 
-export interface EdiEditor {
-  view: EditorView
-  getValue(): string
-  setValue(value: string): void
-  focus(): void
-}
-
-export function createEditor(parent: HTMLElement, onChange: ChangeHandler): EdiEditor {
-  let suppressChange = false
-
-  const state = EditorState.create({
-    doc: '',
+export function createEditorState(doc: string): EditorState {
+  return EditorState.create({
+    doc,
     extensions: [
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !suppressChange) {
-          onChange(update.view)
+          // Wired in createEditor; the listener closure is patched there so
+          // setState-driven tab switches don't mark sessions dirty.
+          notifyChange(update.view)
         }
       }),
       lineNumbers(),
@@ -97,8 +100,24 @@ export function createEditor(parent: HTMLElement, onChange: ChangeHandler): EdiE
       EditorState.tabSize.of(2),
     ],
   })
+}
 
-  const view = new EditorView({ state, parent })
+export interface EdiEditor {
+  view: EditorView
+  getValue(): string
+  setValue(value: string): void
+  focus(): void
+}
+
+let notifyChange: ChangeHandler = () => undefined
+
+export function createEditor(parent: HTMLElement, onChange: ChangeHandler): EdiEditor {
+  notifyChange = onChange
+
+  const view = new EditorView({
+    state: createEditorState(''),
+    parent,
+  })
 
   return {
     view,

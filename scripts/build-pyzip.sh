@@ -33,9 +33,13 @@ mkdir -p "$ROOT/dist-app"
 docker run --rm -v "$ROOT/dist-app:/out" edi-pyzip:jammy
 
 # --- 2. Smoke-test the binary (no display needed) --------------------------
+# Headless QtWebEngine runs need software rendering and no /dev/shm: the GPU
+# process otherwise tries to init GL with the 22.04-bundled Mesa against the
+# host's newer stack and crashes (SIGTRAP, "failed to bind extensions").
 print_step "Verifying binary via the offscreen smoke test"
 QT_QPA_PLATFORM=offscreen \
 QTWEBENGINE_DISABLE_SANDBOX=1 \
+QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage --disable-gpu" \
 EDI_SELFTEST=1 \
 timeout 60 "$ROOT/dist-app/edi"
 

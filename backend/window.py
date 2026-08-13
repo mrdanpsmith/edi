@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QUrl, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -67,12 +68,15 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(icon)
         self._dirty = False
         self._allow_close = False
+        self._revert_action = None
+        self._preview_action = None
 
         self._bridge = Bridge(self)
         self._web = QWebEngineView()
         self._web.setPage(QWebEnginePage(self._web))
         self._setup_web()
         self.setCentralWidget(self._web)
+        self._build_menus()
 
     def _setup_web(self) -> None:
         settings = self._web.settings()
@@ -93,6 +97,67 @@ class MainWindow(QMainWindow):
         self._web.page().scripts().insert(script)
 
         self._web.load(QUrl.fromLocalFile(str(DIST_DIR / "index.html")))
+
+    def _build_menus(self) -> None:
+        menubar = self.menuBar()
+
+        # Keep Python references: PySide6 hands ownership of addMenu() results
+        # to Python, and dropping them garbage-collects the C++ menus.
+        self._file_menu = menubar.addMenu("&File")
+        file_menu = self._file_menu
+        for label, command in (
+            ("&New\tCtrl+N", "new"),
+            ("&Open…\tCtrl+O", "open"),
+            ("&Save\tCtrl+S", "save"),
+            ("Save &As…\tCtrl+Shift+S", "saveAs"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
+            file_menu.addAction(action)
+
+        self._revert_action = QAction("&Revert", self)
+        self._revert_action.setEnabled(False)
+        self._revert_action.triggered.connect(
+            lambda _checked=False: self._menu_command("revert")
+        )
+        file_menu.addAction(self._revert_action)
+
+        file_menu.addSeparator()
+
+        import_action = QAction("&Import Spreadsheet…", self)
+        import_action.triggered.connect(
+            lambda _checked=False: self._menu_command("importTable")
+        )
+        file_menu.addAction(import_action)
+
+        export_action = QAction("&Export HTML…\tCtrl+Shift+E", self)
+        export_action.triggered.connect(lambda _checked=False: self._menu_command("export"))
+        file_menu.addAction(export_action)
+
+        file_menu.addSeparator()
+
+        quit_action = QAction("&Quit\tCtrl+Q", self)
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
+        self._view_menu = menubar.addMenu("&View")
+        view_menu = self._view_menu
+        self._preview_action = QAction("&Preview\tCtrl+Shift+P", self)
+        self._preview_action.setCheckable(True)
+        self._preview_action.setChecked(True)
+        self._preview_action.triggered.connect(
+            lambda _checked=False: self._menu_command("togglePreview")
+        )
+        view_menu.addAction(self._preview_action)
+
+    def _menu_command(self, command: str) -> None:
+        self._web.page().runJavaScript(f"window.ediMenuCommand({json.dumps(command)})")
+
+    def update_menu_state(self, can_revert: bool, preview_visible: bool) -> None:
+        if self._revert_action is not None:
+            self._revert_action.setEnabled(can_revert)
+        if self._preview_action is not None:
+            self._preview_action.setChecked(preview_visible)
 
     def set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
@@ -168,6 +233,19 @@ class MainWindow(QMainWindow):
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
         dialog.setNameFilter("HTML documents (*.html *.htm);;All files (*)")
         dialog.selectFile(f"{default_name}.html")
+        self._run_dialog(dialog, callback)
+
+    def pick_import_path(self, callback=None) -> None:
+        dialog = QFileDialog(self, "Import spreadsheet")
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilter(
+            "Spreadsheets (*.csv *.tsv *.ods *.xlsx *.xlsm);;"
+            "CSV / TSV (*.csv *.tsv *.txt);;"
+            "ODS (*.ods);;"
+            "Excel (*.xlsx *.xlsm);;"
+            "All files (*)"
+        )
         self._run_dialog(dialog, callback)
 
     def closeEvent(self, event) -> None:

@@ -7,7 +7,7 @@ Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets
 
 ## Status
 
-Implemented: a Python desktop app (PySide6 + QtWebEngine) with a CodeMirror 6 markdown editor and a live, resizable, toggleable preview that renders Mermaid diagrams, computes spreadsheet formulas in tables, runs `#!` code blocks, saves and inserts text fragments, and exports the rendered document as a self-contained HTML file.
+Implemented: a Python desktop app (PySide6 + QtWebEngine) with a CodeMirror 6 markdown editor and a live, resizable, toggleable preview that renders Mermaid diagrams, computes spreadsheet formulas in tables, runs `#!` code blocks, imports spreadsheets, copies tables to the clipboard, and exports the rendered document as a self-contained HTML file.
 
 | Feature | Status |
 | --- | --- |
@@ -15,10 +15,13 @@ Implemented: a Python desktop app (PySide6 + QtWebEngine) with a CodeMirror 6 ma
 | Markdown editing with syntax highlighting | Done |
 | Live preview as you type (debounced, resizable, toggleable) | Done |
 | In-line Mermaid diagrams | Done |
-| Open / Save / Save As | Done |
+| Open / Save / Save As / Revert | Done |
+| Multiple documents in tabs | Done |
+| Native menus (File / View) | Done |
 | In-line spreadsheet capabilities | Done |
+| Spreadsheet import (CSV / TSV / ODS / XLSX) | Done |
+| Copy preview tables to the clipboard (Word / email / Excel) | Done |
 | Executable code blocks (`#!` kernel syntax) | Done |
-| Copy/paste fragments | Done |
 | HTML export | Done |
 
 ## Architecture
@@ -64,9 +67,24 @@ print("Hello from Python!")
 
 The shebang is interpreted like a shell's, so all of these forms work: `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/python3`, `#!/usr/bin/env node`, and `#!node --harmony` (flags are passed through). Supported interpreters: `python`/`python3`/`py`, `sh`/`shell`, `bash`, `node`/`js`/`javascript`, `ruby`/`rb`, and `perl`/`pl`. Code runs locally with a 30-second timeout; stdout, stderr, and the exit code are shown in an output cell. Output is cached per block content, so re-rendering the preview does not re-execute it.
 
-### Fragments
+### Tabs
 
-Select any text (or a whole line) and press `Ctrl+Shift+F` / `Ctrl+Shift+K` to save it as a named fragment, then re-insert it anywhere. Fragments persist between sessions and are managed in the *Fragments* dialog.
+Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Each tab keeps its own undo history and scroll position. `File → Open` always opens the file in a new tab, and closing a tab with unsaved changes asks for confirmation first.
+
+### Menus
+
+Document actions live in a native menu bar instead of toolbar buttons:
+
+- **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Import Spreadsheet, Export HTML, Quit.
+- **View**: Preview (toggle, default on).
+
+### Spreadsheet import
+
+`File → Import Spreadsheet` (or the shortcut-free menu item) reads a CSV, TSV, ODS, or XLSX file and inserts it at the cursor as a markdown table. Cell contents, shared strings, repeated rows/columns, and formula results are preserved.
+
+### Copy tables
+
+Every table in the preview has a **Copy** button. Pressing it puts both an HTML and a plain-text (tab-separated) version of the table on the clipboard, so it pastes correctly into Word documents, emails, and Excel spreadsheets.
 
 ### HTML export
 
@@ -114,16 +132,32 @@ npm run check          # typecheck + eslint + frontend unit tests
 npm run coverage       # frontend tests with coverage report
 ```
 
+## Versioning
+
+Manage the version tracked in `package.json`, `package-lock.json`, and `backend/__init__.py`:
+
+```sh
+./scripts/version.sh current   # print the current version
+./scripts/version.sh set 0.2.0 # set an explicit version
+./scripts/version.sh bump patch   # or minor / major to auto-increment
+./scripts/version.sh check     # verify all declarations agree
+./scripts/version.sh tag       # create annotated git tag v<current-version>
+```
+
+`set`/`bump` update all three files and print the git commands to commit and push; pushing the `vX.Y.Z` tag triggers the GitLab CI `release` job.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+O` | Open file |
+| `Ctrl+N` | New tab |
+| `Ctrl+W` | Close tab |
+| `Ctrl+O` | Open file (in a new tab) |
 | `Ctrl+S` | Save |
 | `Ctrl+Shift+S` | Save As |
 | `Ctrl+Shift+P` | Toggle preview |
 | `Ctrl+Shift+E` | Export preview as HTML |
-| `Ctrl+Shift+F` / `Ctrl+Shift+K` | Save a fragment / open fragments |
+| `Ctrl+Q` | Quit |
 
 ## Development process
 

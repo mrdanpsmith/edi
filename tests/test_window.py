@@ -218,3 +218,128 @@ def test_pick_open_path_cancel_returns_none(visible, qtbot):
 
     qtbot.waitUntil(fetched, timeout=3000)
     assert result["value"] == "null"
+
+
+def test_pick_import_path_cancel_returns_none(visible, qtbot):
+    window = visible
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__importResult = 'pending';"
+        "window.bridge.result.connect(function (payload) {"
+        "  var message = JSON.parse(payload);"
+        "  if (message.id === 3001) window.__importResult = message.ok ? message.data : message.error;"
+        "});"
+        "window.bridge.invoke('pickImportPath', 3001, '{}');"
+        "true",
+        lambda _v: None,
+    )
+
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    QApplication.activeModalWidget().reject()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "JSON.stringify(window.__importResult)", lambda v: result.__setitem__("value", v)
+        )
+        return (
+            "value" in result and result["value"] is not None and result["value"] != '"pending"'
+        )
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "null"
+
+
+def test_menu_bar_has_file_and_view_menus(visible, qtbot):
+    window = visible
+    menubar = window.menuBar()
+    titles = [action.text() for action in menubar.actions()]
+    assert "&File" in titles
+    assert "&View" in titles
+
+    file_labels = [action.text() for action in window._file_menu.actions()]
+    assert "&New\tCtrl+N" in file_labels
+    assert "&Open…\tCtrl+O" in file_labels
+    assert "&Save\tCtrl+S" in file_labels
+    assert "Save &As…\tCtrl+Shift+S" in file_labels
+    assert "&Revert" in file_labels
+    assert "&Import Spreadsheet…" in file_labels
+    assert "&Export HTML…\tCtrl+Shift+E" in file_labels
+    assert "&Quit\tCtrl+Q" in file_labels
+
+    preview_actions = [
+        action
+        for action in window._view_menu.actions()
+        if action.text().startswith("&Preview")
+    ]
+    assert preview_actions
+    assert preview_actions[0].isCheckable()
+    assert preview_actions[0].isChecked() is True
+
+
+def test_update_menu_state_toggles_actions(visible, qtbot):
+    window = visible
+    assert window._revert_action.isEnabled() is False
+    assert window._preview_action.isChecked() is True
+
+    window.update_menu_state(can_revert=True, preview_visible=False)
+    assert window._revert_action.isEnabled() is True
+    assert window._preview_action.isChecked() is False
+
+    window.update_menu_state(can_revert=False, preview_visible=True)
+    assert window._revert_action.isEnabled() is False
+    assert window._preview_action.isChecked() is True
+
+
+def test_menu_action_invokes_js_command(visible, qtbot):
+    window = visible
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__menuCmd = null;"
+        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
+        "true",
+        lambda _v: None,
+    )
+
+    file_menu = window._file_menu
+    open_action = next(action for action in file_menu.actions() if "Open" in action.text())
+    open_action.trigger()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "window.__menuCmd", lambda v: result.__setitem__("value", v)
+        )
+        return result.get("value") is not None
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "open"
+
+
+def test_view_menu_action_invokes_js_command(visible, qtbot):
+    window = visible
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__menuCmd = null;"
+        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
+        "true",
+        lambda _v: None,
+    )
+
+    view_menu = window._view_menu
+    preview_action = next(
+        action for action in view_menu.actions() if action.text().startswith("&Preview")
+    )
+    preview_action.trigger()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "window.__menuCmd", lambda v: result.__setitem__("value", v)
+        )
+        return result.get("value") is not None
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "togglePreview"

@@ -73,6 +73,15 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
 
 
 def main() -> int:
+    if os.environ.get("EDI_SELFTEST"):
+        # Headless smoke tests must never touch the GPU: QtWebEngine's GPU
+        # process otherwise tries to init GL with the 22.04-bundled Mesa
+        # against the host's newer stack and crashes before the page loads.
+        # The flags must be in the environment before QApplication is created.
+        os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+        os.environ.setdefault(
+            "QTWEBENGINE_CHROMIUM_FLAGS", "--disable-dev-shm-usage --disable-gpu"
+        )
     app = QApplication(sys.argv)
     app.setApplicationName("Edi")
     app.setOrganizationName("Edi")
