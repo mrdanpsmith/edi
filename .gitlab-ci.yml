@@ -19,6 +19,7 @@ variables:
   PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
   NODE_MAJOR: "22"
   NODE_VERSION: "22.22.1"
+  GLAB_VERSION: "v1.113.0"
   QT_QPA_PLATFORM: "offscreen"
   QTWEBENGINE_DISABLE_SANDBOX: "1"
   # Chromium in containers: /dev/shm is tiny and the GPU is absent, so
@@ -41,7 +42,7 @@ default:
   image: ubuntu:22.04
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends
-      curl xz-utils ca-certificates
+      curl xz-utils ca-certificates git
       python3 python3-venv libpython3.10 binutils
       libegl1 libgl1 libglib2.0-0 libdbus-1-3 libfontconfig1
       libxkbcommon0 libnss3 libnspr4 libxcomposite1 libxdamage1 libxrandr2
@@ -103,9 +104,21 @@ release:
     expire_in: never
   script:
     - export GITLAB_TOKEN="$GITLAB_TOKEN"
-    - GLAB_VERSION=$(curl -sL https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest | jq -r '.tag_name')
-    - curl -sL "https://gitlab.com/gitlab-org/cli/-/releases/download/${GLAB_VERSION}/glab_${GLAB_VERSION#v}_Linux_x86_64.tar.gz" | tar -xz -C /tmp
+    - curl -sL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION#v}/downloads/glab_${GLAB_VERSION#v}_linux_amd64.tar.gz" | tar -xz -C /tmp
+    # The runner checks out a shallow clone (depth 20), so fetch full history
+    # and all tags to build a changelog against the previous release.
+    - git fetch --tags --unshallow --prune
+    # Generate the changelog: every commit since the previous tag (or the full
+    # history for the first release) as "- <short-hash> <subject>" lines. The
+    # short hashes are auto-linked to commits by GitLab.
+    - |
+      PREV_TAG=$(git describe --abbrev=0 --tags "${CI_COMMIT_TAG}^" 2>/dev/null || true)
+      RANGE="${CI_COMMIT_TAG}"
+      [ -n "$PREV_TAG" ] && RANGE="${PREV_TAG}..${CI_COMMIT_TAG}"
+      printf '## Changes in %s\n\n' "$CI_COMMIT_TAG" > /tmp/CHANGELOG.md
+      git log --pretty=format:'- %h %s' "$RANGE" >> /tmp/CHANGELOG.md
+      printf '\n' >> /tmp/CHANGELOG.md
     - /tmp/bin/glab release create "$CI_COMMIT_TAG"
       --name "Edi $CI_COMMIT_TAG"
-      --notes "Automated release for Edi $CI_COMMIT_TAG."
+      --notes-file /tmp/CHANGELOG.md
       dist-app/edi
