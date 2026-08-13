@@ -13,7 +13,7 @@ Edi is a markdown editor. Frontend: CodeMirror 6 + Mermaid + spreadsheet formula
 ## Testing quirks
 
 - Qt must run offscreen headlessly: `QT_QPA_PLATFORM=offscreen` + `QTWEBENGINE_DISABLE_SANDBOX=1`. `tests/conftest.py` sets these via `os.environ.setdefault` *before* importing PySide6 — never import PySide6 before the env is set.
-- QtWebEngine `runJavaScript` does **not** await Promises. The packaged-binary smoke test (`EDI_SELFTEST=1`, offscreen) reads sync JS snapshots (`window.__selftest`) at fixed timers and prints one `SELFTEST {...}` line, then exits. It must not depend on async values or the bridge being ready.
+- QtWebEngine `runJavaScript` does **not** await Promises. The packaged-binary smoke test (`EDI_SELFTEST=1`, offscreen) probes sync JS snapshots (`window.__selftest`) and, once the page finishes loading, prints one `SELFTEST {...}` line and exits 0. A 25s watchdog prints `SELFTEST_TIMEOUT` and exits 1. It uses `os._exit` to skip Qt teardown (a wedged renderer can otherwise hang the process and swallow output) and must not depend on async values or the bridge being ready.
 - `pyproject.toml` sets `pythonpath=["."]`, so run pytest from the repo root; running it elsewhere breaks `import backend`.
 
 ## Distribution (hard-won constraints — do not break)

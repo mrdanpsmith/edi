@@ -51,6 +51,7 @@ default:
       libgssapi-krb5-2 fonts-dejavu-core
       libpcsclite1 libpulse0 libwayland-cursor0 libwayland-egl1
       libwayland-server0
+      libgl1-mesa-dri libegl-mesa0 libglx-mesa0
     - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
     - python3 -m venv .venv
     - .venv/bin/pip install -r requirements.txt
@@ -86,7 +87,11 @@ build:
     - npm run build
     - .venv/bin/pip install --no-cache-dir "pyinstaller==6.22.0"
     - .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
-    - timeout 120 ./dist-app/edi | grep 'SELFTEST'
+    # EDI_SELFTEST=1 makes the binary print "SELFTEST {...}" (or
+    # "SELFTEST_TIMEOUT" after 25s) and exit 0/1 accordingly; rely on the exit
+    # code, not grep, so a timeout line can't be mistaken for success. The
+    # outer `timeout` is only a last-resort backstop if the process hangs.
+    - timeout 60 ./dist-app/edi
 
 release:
   stage: release

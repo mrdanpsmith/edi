@@ -35,22 +35,38 @@ _PROBE_JS = """
 def _run_selftest(app: QApplication, window: MainWindow) -> None:
     """Smoke-test a packaged build: webview rendered + bridge round-trip.
 
-    Fires the probe after the webview has had time to boot, prints the
-    snapshot a little later, then quits. The quit timer guarantees the app
-    never hangs in a broken environment.
+    Fires the probe after the webview has had time to boot, waits for the page
+    to finish loading (``loadFinished``), then reads the snapshot back. Prints
+    a single ``SELFTEST {...}`` line and exits 0 on success; a short watchdog
+    exits 1 with ``SELFTEST_TIMEOUT`` if the page never loads. All exit paths
+    bypass normal Qt/Python teardown (``os._exit``) so a wedged renderer cannot
+    hang the smoke test or swallow buffered output.
     """
 
+    page = window._web.page()
+    loaded = {"ok": False}
+    page.loadFinished.connect(lambda ok: loaded.__setitem__("ok", ok))
+
     def probe() -> None:
-        window._web.page().runJavaScript(_PROBE_JS, lambda _v: None)
+        page.runJavaScript(_PROBE_JS, lambda _v: None)
 
     def read() -> None:
-        window._web.page().runJavaScript(
-            "JSON.stringify(window.__selftest)", lambda v: print("SELFTEST", v)
-        )
+        if not loaded["ok"]:
+            QTimer.singleShot(3000, read)
+            return
 
-    QTimer.singleShot(5000, probe)
-    QTimer.singleShot(9000, read)
-    QTimer.singleShot(12000, app.quit)
+        def on_done(v: object) -> None:
+            ok = isinstance(v, str) and '"cm":true' in v and '"mermaid":true' in v
+            print("SELFTEST", v, flush=True)
+            os._exit(0 if ok else 1)
+
+        page.runJavaScript("JSON.stringify(window.__selftest)", on_done)
+
+    QTimer.singleShot(3000, probe)
+    QTimer.singleShot(5000, read)
+    QTimer.singleShot(
+        25000, lambda: (print("SELFTEST_TIMEOUT", flush=True), os._exit(1))
+    )
 
 
 def main() -> int:
