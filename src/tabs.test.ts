@@ -105,6 +105,20 @@ describe('Tabs', () => {
     expect(getActive()?.id).toBe(first)
   })
 
+  it('switches tabs when a tab is clicked', () => {
+    const { tabs, tabbar, view } = setup()
+    const first = getActive()!.id
+    tabs.addSession('second doc')
+    const second = getActive()!.id
+    const tabEls = tabbar.querySelectorAll<HTMLElement>('.tab')
+    tabEls[0]!.click()
+    expect(getActive()?.id).toBe(first)
+    expect(docText(view)).toBe('')
+    tabEls[1]!.click()
+    expect(getActive()?.id).toBe(second)
+    expect(docText(view)).toBe('second doc')
+  })
+
   it('creates a fresh tab when the last one closes', () => {
     const { tabs, view } = setup()
     tabs.close(getActive()!.id)

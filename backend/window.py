@@ -124,12 +124,6 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        import_action = QAction("&Import Spreadsheet…", self)
-        import_action.triggered.connect(
-            lambda _checked=False: self._menu_command("importTable")
-        )
-        file_menu.addAction(import_action)
-
         export_action = QAction("&Export HTML…\tCtrl+Shift+E", self)
         export_action.triggered.connect(lambda _checked=False: self._menu_command("export"))
         file_menu.addAction(export_action)
@@ -139,6 +133,14 @@ class MainWindow(QMainWindow):
         quit_action = QAction("&Quit\tCtrl+Q", self)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
+
+        self._insert_menu = menubar.addMenu("&Insert")
+        insert_menu = self._insert_menu
+        import_action = QAction("&Spreadsheet…", self)
+        import_action.triggered.connect(
+            lambda _checked=False: self._menu_command("importTable")
+        )
+        insert_menu.addAction(import_action)
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu

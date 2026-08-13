@@ -75,12 +75,13 @@ Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Eac
 
 Document actions live in a native menu bar instead of toolbar buttons:
 
-- **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Import Spreadsheet, Export HTML, Quit.
+- **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
+- **Insert**: Spreadsheet.
 - **View**: Preview (toggle, default on).
 
 ### Spreadsheet import
 
-`File → Import Spreadsheet` (or the shortcut-free menu item) reads a CSV, TSV, ODS, or XLSX file and inserts it at the cursor as a markdown table. Cell contents, shared strings, repeated rows/columns, and formula results are preserved.
+`Insert → Spreadsheet` reads a CSV, TSV, ODS, or XLSX file and inserts it at the cursor as a markdown table. Cell contents, shared strings, repeated rows/columns, and formula results are preserved.
 
 ### Copy tables
 

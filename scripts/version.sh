@@ -141,6 +141,11 @@ cmd_tag() {
     echo "error: refusing to tag while version declarations are inconsistent" >&2
     exit 1
   fi
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "error: refusing to tag with uncommitted changes" >&2
+    echo "  commit (or stash) your work first, then run ./scripts/version.sh tag" >&2
+    exit 1
+  fi
   local version
   version="$(get_version)"
   if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then

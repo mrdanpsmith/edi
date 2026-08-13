@@ -131,11 +131,11 @@ export class Tabs {
         this.callbacks.onCloseTab(session.id)
       })
 
-      tab.addEventListener('click', () => this.callbacks.onActivate(session.id))
+      tab.addEventListener('click', () => this.activate(session.id))
       tab.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          this.callbacks.onActivate(session.id)
+          this.activate(session.id)
         }
       })
 

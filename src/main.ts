@@ -37,7 +37,7 @@ Edi is a fast markdown editor with a live preview, Mermaid diagrams, in-line spr
 - Type on the left, see the result on the right.
 - Use the **File** and **View** menus for document actions and the preview.
 - Open several documents side by side in tabs (\`Ctrl+N\` for a new tab, \`Ctrl+W\` to close one).
-- Import a spreadsheet with \`File → Import Spreadsheet\` to add it as a table.
+- Import a spreadsheet with \`Insert → Spreadsheet\` to add it as a table.
 - Hover a table in the preview and press **Copy** to paste it into Word, email, or Excel.
 
 ## Mermaid diagrams

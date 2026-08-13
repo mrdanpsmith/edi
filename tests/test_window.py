@@ -252,11 +252,12 @@ def test_pick_import_path_cancel_returns_none(visible, qtbot):
     assert result["value"] == "null"
 
 
-def test_menu_bar_has_file_and_view_menus(visible, qtbot):
+def test_menu_bar_has_file_insert_and_view_menus(visible, qtbot):
     window = visible
     menubar = window.menuBar()
     titles = [action.text() for action in menubar.actions()]
     assert "&File" in titles
+    assert "&Insert" in titles
     assert "&View" in titles
 
     file_labels = [action.text() for action in window._file_menu.actions()]
@@ -265,9 +266,11 @@ def test_menu_bar_has_file_and_view_menus(visible, qtbot):
     assert "&Save\tCtrl+S" in file_labels
     assert "Save &As…\tCtrl+Shift+S" in file_labels
     assert "&Revert" in file_labels
-    assert "&Import Spreadsheet…" in file_labels
     assert "&Export HTML…\tCtrl+Shift+E" in file_labels
     assert "&Quit\tCtrl+Q" in file_labels
+
+    insert_labels = [action.text() for action in window._insert_menu.actions()]
+    assert insert_labels == ["&Spreadsheet…"]
 
     preview_actions = [
         action

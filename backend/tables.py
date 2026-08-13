@@ -1,6 +1,6 @@
 """Parse CSV / ODS / XLSX spreadsheets into rows of cell text.
 
-Used by the "Import Spreadsheet" feature: the frontend picks a file, the
+Used by the "Insert → Spreadsheet" feature: the frontend picks a file, the
 backend parses it on a worker thread, and the rows are turned into a markdown
 table in the page.
 """
