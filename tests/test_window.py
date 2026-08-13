@@ -4,11 +4,14 @@ One session-scoped window is used for the whole suite so QtWebEngine only
 boots once.
 """
 
+from __future__ import annotations
+
 import time
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from backend.window import MainWindow
+from backend.window import DIST_DIR, MainWindow
 
 import pytest
 
@@ -25,6 +28,11 @@ def _pump_until(condition, timeout=8.0):
 
 @pytest.fixture(scope="session")
 def window(qapp):
+    if not (DIST_DIR / "index.html").is_file():
+        pytest.fail(
+            f"frontend build not found at {DIST_DIR / 'index.html'}; "
+            "run `npm run build` before the backend tests"
+        )
     win = MainWindow()
     win.resize(1280, 800)
     win.show()

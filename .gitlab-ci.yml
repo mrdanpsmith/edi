@@ -44,6 +44,8 @@ default:
       libxcb-icccm4 libxcb-shape0 libxcb-keysyms1 libxcb-xinerama0
       libxcb-render-util0 libxkbfile1 libxtst6 libxfixes3 libkrb5-3
       libgssapi-krb5-2 fonts-dejavu-core
+      libpcsclite1 libpulse0 libwayland-cursor0 libwayland-egl1
+      libwayland-server0
     - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
     - python3 -m venv .venv
     - .venv/bin/pip install -r requirements.txt
@@ -58,6 +60,7 @@ test:
   stage: test
   script:
     - npm run coverage
+    - npm run build
     - .venv/bin/pytest tests/
   coverage: '/All files[^|]*\|[^|]*\s+([\d.]+)/'
   artifacts:
