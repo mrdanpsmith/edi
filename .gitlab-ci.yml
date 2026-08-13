@@ -21,6 +21,11 @@ variables:
   NODE_VERSION: "22.22.1"
   QT_QPA_PLATFORM: "offscreen"
   QTWEBENGINE_DISABLE_SANDBOX: "1"
+  # Chromium in containers: /dev/shm is tiny and the GPU is absent, so
+  # QtWebEngine can hang while loading pages. Force software rendering and
+  # temp-file-backed shared memory.
+  QTWEBENGINE_CHROMIUM_FLAGS: "--disable-dev-shm-usage --disable-gpu"
+  PYTHONUNBUFFERED: "1"
 
 cache:
   key:
@@ -81,7 +86,7 @@ build:
     - npm run build
     - .venv/bin/pip install --no-cache-dir "pyinstaller==6.22.0"
     - .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
-    - timeout 90 ./dist-app/edi | grep 'SELFTEST'
+    - timeout 120 ./dist-app/edi | grep 'SELFTEST'
 
 release:
   stage: release

@@ -75,6 +75,7 @@ COPY scripts/assets/ scripts/assets/
 # containerized smoke test (no display needed), override instead:
 #   docker run --rm -e QT_QPA_PLATFORM=offscreen -e EDI_SELFTEST=1 edi:latest
 ENV QT_QPA_PLATFORM=xcb \
-    QTWEBENGINE_DISABLE_SANDBOX=1
+    QTWEBENGINE_DISABLE_SANDBOX=1 \
+    QTWEBENGINE_CHROMIUM_FLAGS=--disable-dev-shm-usage
 
 CMD [".venv/bin/python", "run_edi.py"]
