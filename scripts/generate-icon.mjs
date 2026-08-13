@@ -48,20 +48,22 @@ for (let y = 0; y < SIZE; y++) {
       const b = Math.round(218 - 90 * t)
 
       // Stylized "E" from bars
-      const barLeft = 0.24 * SIZE
-      const barRight = 0.76 * SIZE
-      const top = 0.2 * SIZE
-      const barHeight = 0.13 * SIZE
-      const gap = (SIZE - 2 * top - 3 * barHeight) / 2
+      const spineX = 0.30 * SIZE
+      const spineW = 0.10 * SIZE
+      const top = 0.25 * SIZE
+      const barH = 0.10 * SIZE
+      const gap = 0.10 * SIZE
+      const bottom = top + 3 * barH + 2 * gap
 
-      const inVertical = x >= barLeft && x <= barLeft + 0.14 * SIZE
-      const inBar =
-        (y >= top && y <= top + barHeight) ||
-        (y >= top + barHeight + gap && y <= top + 2 * barHeight + gap) ||
-        (y >= top + 2 * (barHeight + gap) && y <= top + 2 * barHeight + 2 * gap + barHeight)
-      const inHorizontal = x >= barLeft && x <= barRight && inBar
+      const inSpine = x >= spineX && x <= spineX + spineW && y >= top && y <= bottom
+      const topBar = y >= top && y <= top + barH
+      const middleBar = y >= top + barH + gap && y <= top + 2 * barH + gap
+      const bottomBar = y >= bottom - barH && y <= bottom
+      const barRight = (middleBar ? 0.60 : 0.70) * SIZE
+      const inBar = topBar || middleBar || bottomBar
+      const inHorizontal = x >= spineX && x <= barRight && inBar
 
-      if (inVertical || inHorizontal) {
+      if (inSpine || inHorizontal) {
         pixel = hex(255, 255, 255, 255)
       } else {
         pixel = hex(r, g, b, 255)

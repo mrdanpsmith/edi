@@ -9,9 +9,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QLabel, QMessageBox
 
-from backend.window import DIST_DIR, MainWindow
+from backend.window import DIST_DIR, MainWindow, __version__
 
 import pytest
 
@@ -252,13 +252,14 @@ def test_pick_import_path_cancel_returns_none(visible, qtbot):
     assert result["value"] == "null"
 
 
-def test_menu_bar_has_file_insert_and_view_menus(visible, qtbot):
+def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     window = visible
     menubar = window.menuBar()
     titles = [action.text() for action in menubar.actions()]
     assert "&File" in titles
     assert "&Insert" in titles
     assert "&View" in titles
+    assert "&Help" in titles
 
     file_labels = [action.text() for action in window._file_menu.actions()]
     assert "&New\tCtrl+N" in file_labels
@@ -271,6 +272,9 @@ def test_menu_bar_has_file_insert_and_view_menus(visible, qtbot):
 
     insert_labels = [action.text() for action in window._insert_menu.actions()]
     assert insert_labels == ["&Spreadsheet…"]
+
+    help_labels = [action.text() for action in window._help_menu.actions()]
+    assert help_labels == ["&About Edi…"]
 
     preview_actions = [
         action
@@ -346,3 +350,33 @@ def test_view_menu_action_invokes_js_command(visible, qtbot):
 
     qtbot.waitUntil(fetched, timeout=3000)
     assert result["value"] == "togglePreview"
+
+
+def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):
+    window = visible
+    about_action = next(
+        action for action in window._help_menu.actions() if "About" in action.text()
+    )
+    about_action.trigger()
+
+    dialog = {"value": None}
+
+    def active_dialog():
+        widget = QApplication.activeModalWidget()
+        if isinstance(widget, QDialog):
+            dialog["value"] = widget
+            return True
+        return False
+
+    qtbot.waitUntil(active_dialog, timeout=3000)
+    box = dialog["value"]
+    assert box.windowTitle() == "About Edi"
+
+    labels = box.findChildren(QLabel)
+    texts = {label.text() for label in labels}
+    assert "Edi" in texts
+    assert f"Version {__version__}" in texts
+    assert any(label.pixmap() is not None and not label.pixmap().isNull() for label in labels)
+
+    box.accept()
+    qtbot.waitUntil(lambda: QApplication.activeModalWidget() is None, timeout=2000)

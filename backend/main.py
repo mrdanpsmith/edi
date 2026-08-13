@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -58,8 +59,16 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
 
         def on_done(v: object) -> None:
             ok = isinstance(v, str) and '"cm":true' in v and '"mermaid":true' in v
-            print("SELFTEST", v, flush=True)
-            os._exit(0 if ok else 1)
+            icon_ok = load_app_icon() is not None
+            data: dict = {}
+            if isinstance(v, str):
+                try:
+                    data = json.loads(v)
+                except json.JSONDecodeError:
+                    pass
+            data["icon"] = icon_ok
+            print("SELFTEST", json.dumps(data), flush=True)
+            os._exit(0 if ok and icon_ok else 1)
 
         page.runJavaScript("JSON.stringify(window.__selftest)", on_done)
 
@@ -85,6 +94,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Edi")
     app.setOrganizationName("Edi")
+    app.setDesktopFileName("edi")
     icon = load_app_icon()
     if icon is not None:
         app.setWindowIcon(icon)

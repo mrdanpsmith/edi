@@ -125,6 +125,20 @@ matter — everything is pinned inside Docker.
 
 Output: `./dist-app/edi` (smoke-tested offscreen before reporting success).
 
+#### Desktop integration (icon in dock/taskbar)
+
+On Linux (especially Wayland) the dock icon comes from a `.desktop` file, not
+the window icon — running the bare binary alone can therefore show a generic
+gear. Install the icon and desktop entry for the current user:
+
+```sh
+./scripts/install-desktop.sh [path/to/edi]   # defaults to ./dist-app/edi
+```
+
+This installs `edi.png` into `~/.local/share/icons/hicolor` and an
+`edi.desktop` entry into `~/.local/share/applications` (respecting
+`XDG_DATA_HOME`). Log out and back in if the gear persists.
+
 ## Checks and tests
 
 ```sh

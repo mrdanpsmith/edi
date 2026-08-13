@@ -7,12 +7,21 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QUrl, Qt
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QVBoxLayout,
+)
 
+from . import __version__
 from .bridge import Bridge
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
@@ -42,6 +51,41 @@ def load_app_icon() -> QIcon | None:
         return None
     icon = QIcon(str(icon_path))
     return icon if not icon.isNull() else None
+
+
+def _find_logo() -> Path | None:
+    """Locate the about-dialog logo (source tree or packaged)."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    candidates = [
+        Path(meipass) / "assets" / "edi-logo.png" if meipass else None,
+        Path(__file__).resolve().parent.parent / "assets" / "edi-logo.png",
+        Path(meipass) / "assets" / "app-icon.png" if meipass else None,
+        Path(__file__).resolve().parent.parent / "scripts" / "assets" / "app-icon.png",
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            return candidate
+    return None
+
+
+def load_about_logo(max_size: int = 180) -> QPixmap | None:
+    """Return the about-dialog logo scaled to fit ``max_size``, or ``None``.
+
+    Falls back to the app icon so the dialog still shows a graphic even if the
+    dedicated logo is missing (e.g. an older packaged build).
+    """
+    logo_path = _find_logo()
+    if logo_path is None:
+        return None
+    pixmap = QPixmap(str(logo_path))
+    if pixmap.isNull():
+        return None
+    return pixmap.scaled(
+        max_size,
+        max_size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
 
 
 def _load_qwebchannel_js() -> str:
@@ -151,6 +195,55 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("togglePreview")
         )
         view_menu.addAction(self._preview_action)
+
+        self._help_menu = menubar.addMenu("&Help")
+        help_menu = self._help_menu
+        about_action = QAction("&About Edi…", self)
+        about_action.triggered.connect(lambda _checked=False: self._show_about())
+        help_menu.addAction(about_action)
+
+    def _show_about(self) -> None:
+        """Open the non-blocking About dialog: logo, version, description."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About Edi")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(28, 20, 28, 16)
+        layout.setSpacing(6)
+
+        pixmap = load_about_logo()
+        if pixmap is not None:
+            logo = QLabel()
+            logo.setPixmap(pixmap)
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(logo)
+
+        title = QLabel("Edi")
+        title_font = title.font()
+        title_font.setPointSize(18)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        version = QLabel(f"Version {__version__}")
+        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version)
+
+        description = QLabel(
+            "A fast markdown editor with live preview, Mermaid diagrams, "
+            "spreadsheet tables, executable code blocks, and more."
+        )
+        description.setWordWrap(True)
+        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(description)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        dialog.open()
 
     def _menu_command(self, command: str) -> None:
         self._web.page().runJavaScript(f"window.ediMenuCommand({json.dumps(command)})")

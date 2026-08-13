@@ -21,7 +21,7 @@ Edi is a markdown editor. Frontend: CodeMirror 6 + Mermaid + spreadsheet formula
 
 - The shipped binary MUST be built on **Ubuntu 22.04 (glibc 2.35)** so it runs on older desktop Linux. `scripts/build-pyzip.sh` pins everything inside Docker for this; host-built binaries are not portable and must not be shipped.
 - **`libstdc++.so.6` must never be bundled** (`edi.spec` filters it out). Bundling the 22.04 copy crashes on newer host Mesa/LLVM drivers with `GLIBCXX_3.4.32 not found`.
-- The app icon (`scripts/assets/app-icon.png`) is generated from `scripts/generate-icon.mjs` and bundled via `edi.spec` `datas`. `backend/window.py` `load_app_icon()` guards `sys._MEIPASS` (built binary vs. source run) — keep that guard.
+- The app icon (`scripts/assets/app-icon.png`) is generated from `scripts/generate-icon.mjs` and bundled via `edi.spec` `datas`. `backend/window.py` `load_app_icon()` guards `sys._MEIPASS` (built binary vs. source run) — keep that guard. The about-dialog logo (`assets/edi-logo.png`) is bundled the same way (`_find_logo()` falls back to the app icon).
 - `PySide6==6.11.1` and other pins live in `requirements.txt`; keep PySide6 pinned (Qt releases break the WebEngine hooks).
 
 ## CI (`.gitlab-ci.yml`)
@@ -31,3 +31,4 @@ Edi is a markdown editor. Frontend: CodeMirror 6 + Mermaid + spreadsheet formula
 - The `test` job must run `npm run build` before `pytest` (backend tests load `dist/index.html`).
 - `before_script` installs ~30 Qt runtime libs + Node 22 static tarball (needs `curl xz-utils ca-certificates`) into a fresh ubuntu:22.04 image; CI deps live only there, not on the host.
 - `release` job publishes via `glab` on `v*` tags, authenticated by CI auto-login with the built-in `CI_JOB_TOKEN` (JOB-TOKEN header). Do NOT set `GITLAB_TOKEN=$CI_JOB_TOKEN`: glab sends it as PRIVATE-TOKEN, which the Releases API rejects with 404. Requires the project setting "Allow CI job token to create releases" enabled.
+- Linux dock/taskbar icon comes from a `.desktop` file (not the window icon), so the bare binary shows a generic gear without one. `scripts/install-desktop.sh` installs `~/.local/share/icons/hicolor/512x512/apps/edi.png` + `~/.local/share/applications/edi.desktop` (template `scripts/assets/edi.desktop`, `Exec` substituted); `app.setDesktopFileName("edi")` in `backend/main.py` hints the WM to match it.
