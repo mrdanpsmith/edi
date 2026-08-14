@@ -94,7 +94,12 @@ build-image:
     # ("Cache export is not supported for the docker driver"); use the
     # docker-container (BuildKit-in-a-container) driver instead.
     - docker buildx create --name edi-builder --driver docker-container --use --bootstrap
+    # Must pass -f Dockerfile.ci explicitly: the repo also contains a plain
+    # "Dockerfile" (the app's container image), which buildx would build by
+    # default -- an image with no node and a venv at /app/.venv instead of
+    # /opt/edi/venv.
     - docker buildx build --push --progress=plain
+      -f Dockerfile.ci
       -t "$CI_REGISTRY_IMAGE/edi-builder:jammy"
       --cache-from "type=registry,ref=$CI_REGISTRY_IMAGE/edi-builder:cache"
       --cache-to "type=registry,ref=$CI_REGISTRY_IMAGE/edi-builder:cache,mode=max"
