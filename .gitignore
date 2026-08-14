@@ -5,6 +5,8 @@ node_modules/
 dist/
 dist-app/
 coverage/
+coverage-py/
+.coverage
 .cache/
 build/
 .npm/

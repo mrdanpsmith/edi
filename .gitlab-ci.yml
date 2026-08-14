@@ -3,9 +3,9 @@
 # All jobs run in a pre-built builder image (`edi-builder:jammy`) pushed to the
 # project's container registry by the `build-image` job: Ubuntu 22.04 (glibc
 # 2.35) with the Qt runtime libs, Node 22, and a venv at /opt/edi/venv holding
-# PySide6==6.11.1, pyinstaller==6.22.0, pytest, pytest-qt. Building that image
-# is the single expensive setup step; it is cached in the registry (buildx
-# cache) and only rebuilt when Dockerfile.ci / requirements.txt change.
+# PySide6==6.11.1, pyinstaller==6.22.0, pytest, pytest-qt, pytest-cov. Building
+# that image is the single expensive setup step; it is cached in the registry
+# (buildx cache) and only rebuilt when Dockerfile.ci / requirements.txt change.
 #
 # Jobs link the baked venv into the checkout (`ln -s /opt/edi/venv .venv`)
 # because scripts/package-linux.sh hardcodes $ROOT/.venv. The venv is a
@@ -113,8 +113,8 @@ test:
     - *setup_venv
     - npm ci --no-audit --no-fund
   # The whole quality gate lives here: lint + typecheck before the unit tests
-  # (coverage) and backend pytest, so branch/MR pipelines get full feedback
-  # from a single job.
+  # (coverage) and backend pytest (which also reports coverage via pytest-cov),
+  # so branch/MR pipelines get full feedback from a single job.
   script:
     - npm run lint
     - npm run typecheck
@@ -126,8 +126,12 @@ test:
     when: always
     reports:
       coverage_report:
+        # Merge both cobertura reports into one set of MR diff annotations:
+        # frontend (src/, from `npm run coverage`) and backend (backend/, from
+        # pytest-cov via pyproject.toml addopts). GitLab merges wildcard
+        # matches, so keep the two output paths consistent here.
         coverage_format: cobertura
-        path: coverage/cobertura-coverage.xml
+        path: '**/cobertura-coverage.xml'
 
 # The PyInstaller binary only matters for releases; bundle it on v* tags only,
 # not on the default branch or MR pushes.

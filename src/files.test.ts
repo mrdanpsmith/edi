@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   dirname,
@@ -7,8 +7,88 @@ import {
   imageReference,
   isAbsolutePath,
   isSupportedFile,
+  pickExportPath,
+  pickImageImportPath,
+  pickImportPath,
+  pickOpenPath,
+  pickSavePath,
+  pickTextImportPath,
+  readAnyTextFile,
+  readTextFile,
   UNTITLED,
+  writeTextFile,
 } from './files'
+
+vi.mock('./bridge', () => ({
+  invoke: vi.fn(),
+}))
+
+import { invoke } from './bridge'
+
+beforeEach(() => {
+  vi.mocked(invoke).mockReset()
+})
+
+describe('bridge wrappers', () => {
+  it('readTextFile passes the path to the bridge', async () => {
+    vi.mocked(invoke).mockResolvedValue('hello')
+    await expect(readTextFile('/tmp/a.md')).resolves.toBe('hello')
+    expect(invoke).toHaveBeenCalledWith('readTextFile', { path: '/tmp/a.md' })
+  })
+
+  it('readAnyTextFile passes the path to the bridge', async () => {
+    vi.mocked(invoke).mockResolvedValue('raw')
+    await expect(readAnyTextFile('/tmp/a.log')).resolves.toBe('raw')
+    expect(invoke).toHaveBeenCalledWith('readAnyTextFile', { path: '/tmp/a.log' })
+  })
+
+  it('writeTextFile passes the path and content to the bridge', async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined)
+    await expect(writeTextFile('/tmp/a.md', 'body')).resolves.toBeUndefined()
+    expect(invoke).toHaveBeenCalledWith('writeTextFile', { path: '/tmp/a.md', content: 'body' })
+  })
+
+  it('pickOpenPath resolves to null when the user cancels', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+    await expect(pickOpenPath()).resolves.toBeNull()
+    expect(invoke).toHaveBeenCalledWith('pickOpenPath', {})
+  })
+
+  it('pickOpenPath resolves to a chosen path', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/notes.md')
+    await expect(pickOpenPath()).resolves.toBe('/tmp/notes.md')
+  })
+
+  it('pickSavePath passes the default name', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/Untitled.md')
+    await expect(pickSavePath('Untitled.md')).resolves.toBe('/tmp/Untitled.md')
+    expect(invoke).toHaveBeenCalledWith('pickSavePath', { defaultName: 'Untitled.md' })
+  })
+
+  it('pickExportPath passes the default name', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/out.html')
+    await expect(pickExportPath('out.html')).resolves.toBe('/tmp/out.html')
+    expect(invoke).toHaveBeenCalledWith('pickExportPath', { defaultName: 'out.html' })
+  })
+
+  it('pickImportPath resolves a path', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/data.csv')
+    await expect(pickImportPath()).resolves.toBe('/tmp/data.csv')
+    expect(invoke).toHaveBeenCalledWith('pickImportPath', {})
+  })
+
+  it('pickTextImportPath resolves a path', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/data.txt')
+    await expect(pickTextImportPath()).resolves.toBe('/tmp/data.txt')
+    expect(invoke).toHaveBeenCalledWith('pickTextImportPath', {})
+  })
+
+  it('pickImageImportPath resolves a path', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/pic.png')
+    await expect(pickImageImportPath()).resolves.toBe('/tmp/pic.png')
+    expect(invoke).toHaveBeenCalledWith('pickImageImportPath', {})
+  })
+})
 
 describe('fileExtension', () => {
   it('returns the lowercase extension', () => {

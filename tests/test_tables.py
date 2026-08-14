@@ -215,3 +215,117 @@ def test_unsupported_extension(tmp_path):
 def test_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         parse_table_file(str(tmp_path / "nope.csv"))
+
+
+def test_detect_delimiter_skips_blank_lines(tmp_path):
+    target = tmp_path / "blank.csv"
+    target.write_text("\n\na,b\n1,2\n", encoding="utf-8")
+    assert parse_table_file(str(target))["rows"] == [[], [], ["a", "b"], ["1", "2"]]
+
+
+def test_detect_delimiter_all_blank_returns_comma(tmp_path):
+    target = tmp_path / "blankonly.csv"
+    target.write_text("\n\n", encoding="utf-8")
+    assert parse_table_file(str(target))["rows"] == []
+
+
+def test_ods_without_tables_uses_stem(tmp_path):
+    content = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<office:document-content {ODS_NS}>'
+        "<office:body><office:spreadsheet></office:spreadsheet></office:body>"
+        "</office:document-content>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("content.xml", content)
+    target = tmp_path / "empty.ods"
+    target.write_bytes(buffer.getvalue())
+    result = parse_table_file(str(target))
+    assert result["name"] == "empty"
+    assert result["rows"] == []
+
+
+def test_ods_cells_without_text_and_non_cell_child(tmp_path):
+    content = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<office:document-content {ODS_NS}>'
+        "<office:body><office:spreadsheet>"
+        '<table:table table:name="Raw">'
+        "<table:table-row>"
+        '<text:p>ignored stray</text:p>'
+        '<table:table-cell office:value-type="string" office:string-value="S"/>'
+        '<table:table-cell office:value-type="float" office:value="3.5"/>'
+        "<table:table-cell/>"
+        "</table:table-row>"
+        "</table:table>"
+        "</office:spreadsheet></office:body>"
+        "</office:document-content>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("content.xml", content)
+    target = tmp_path / "raw.ods"
+    target.write_bytes(buffer.getvalue())
+    assert parse_table_file(str(target))["rows"] == [["S", "3.5"]]
+
+
+def test_ods_trims_trailing_empty_rows(tmp_path):
+    target = tmp_path / "trail.ods"
+    target.write_bytes(_ods_bytes([[("float", "1", 1)], [("float", "", 1)]]))
+    assert parse_table_file(str(target))["rows"] == [["1"]]
+
+
+def test_xlsx_no_worksheet_returns_sheet_name_only(tmp_path):
+    workbook_xml = (
+        f'<workbook xmlns="{XLSX_NS}">'
+        '<sheets><sheet name="Blank" sheetId="1"/></sheets></workbook>'
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/workbook.xml", workbook_xml)
+    target = tmp_path / "empty.xlsx"
+    target.write_bytes(buffer.getvalue())
+    result = parse_table_file(str(target))
+    assert result["name"] == "Blank"
+    assert result["rows"] == []
+
+
+def test_xlsx_without_workbook_uses_stem(tmp_path):
+    sheet_xml = (
+        f'<worksheet xmlns="{XLSX_NS}"><sheetData>'
+        '<row><c r="A1"><v>1</v></c></row>'
+        "</sheetData></worksheet>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    target = tmp_path / "rowsonly.xlsx"
+    target.write_bytes(buffer.getvalue())
+    result = parse_table_file(str(target))
+    assert result["name"] == "rowsonly"
+    assert result["rows"] == [["1"]]
+
+
+def test_xlsx_worksheet_without_sheetdata(tmp_path):
+    sheet_xml = f'<worksheet xmlns="{XLSX_NS}"/>'
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    target = tmp_path / "nosheet.xlsx"
+    target.write_bytes(buffer.getvalue())
+    assert parse_table_file(str(target))["rows"] == []
+
+
+def test_xlsx_inline_str_without_is_and_cell_without_ref(tmp_path):
+    sheet_xml = (
+        f'<worksheet xmlns="{XLSX_NS}"><sheetData>'
+        '<row><c t="inlineStr"/><c t="s"><v>5</v></c></row>'
+        "</sheetData></worksheet>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    target = tmp_path / "odd.xlsx"
+    target.write_bytes(buffer.getvalue())
+    assert parse_table_file(str(target))["rows"] == [["", "5"]]

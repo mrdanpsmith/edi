@@ -1,3 +1,4 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+addopts = "--cov=backend --cov-report=term-missing --cov-report=xml:coverage-py/cobertura-coverage.xml"

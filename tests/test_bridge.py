@@ -337,3 +337,100 @@ def test_run_code_block_direct():
     result = run_code_block("#!/usr/bin/env python3", "print('direct')")
     assert result["stdout"].strip() == "direct"
     assert result["exitCode"] == 0
+
+
+def test_invalid_payload_replies_error(bridge):
+    bridge_obj, _window, result = bridge
+    bridge_obj.invoke("ping", 1, "{not json")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is False
+    assert "Invalid payload" in message["error"]
+
+
+def test_handler_exception_replies_error(bridge, monkeypatch):
+    bridge_obj, window, result = bridge
+
+    def boom(_message, _callback=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(window, "confirm", boom)
+    _invoke(bridge_obj, "confirm", {"message": "x"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is False
+    assert "boom" in message["error"]
+
+
+def test_pick_save_path_replies_default_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "pickSavePath", {"defaultName": "notes"}, 60)
+    message = _wait_for(lambda: result.get(60))
+    assert message["ok"] is True
+    assert message["data"] == "/tmp/notes.md"
+
+
+def test_pick_export_path_replies_default_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "pickExportPath", {"defaultName": "out"}, 61)
+    message = _wait_for(lambda: result.get(61))
+    assert message["ok"] is True
+    assert message["data"] == "/tmp/out.html"
+
+
+def test_read_text_file_missing_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "readTextFile", {}, 62)
+    message = _wait_for(lambda: result.get(62))
+    assert message["ok"] is False
+    assert "Missing path" in message["error"]
+
+
+def test_read_any_text_file_missing_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "readAnyTextFile", {}, 63)
+    message = _wait_for(lambda: result.get(63))
+    assert message["ok"] is False
+    assert "Missing path" in message["error"]
+
+
+def test_read_any_text_file_error(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "readAnyTextFile", {"path": "/nonexistent/notes.log"}, 64)
+    message = _wait_for(lambda: result.get(64))
+    assert message["ok"] is False
+
+
+def test_write_text_file_missing_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "writeTextFile", {}, 65)
+    message = _wait_for(lambda: result.get(65))
+    assert message["ok"] is False
+    assert "Missing path" in message["error"]
+
+
+def test_write_text_file_error(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    _invoke(
+        bridge_obj,
+        "writeTextFile",
+        {"path": str(blocker / "sub" / "out.md"), "content": "x"},
+        66,
+    )
+    message = _wait_for(lambda: result.get(66))
+    assert message["ok"] is False
+
+
+def test_parse_shebang_env_without_interpreter_returns_none():
+    assert parse_shebang("#!/usr/bin/env -S") is None
+
+
+def test_run_code_block_empty_shebang_raises():
+    with pytest.raises(ValueError, match="Invalid shebang"):
+        run_code_block("#!", "print('x')")
+
+
+def test_run_code_block_interpreter_not_found(monkeypatch):
+    monkeypatch.setitem(exec_module._INTERPRETERS, "edi", ("edi-nonexistent", "-"))
+    with pytest.raises(ValueError, match="Failed to start"):
+        run_code_block("#!edi", "print('x')")

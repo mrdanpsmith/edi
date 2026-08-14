@@ -5,6 +5,5 @@ dist
 target
 __pycache__
 *.pyc
-*.xcf
 .pytest_cache
 .opencode

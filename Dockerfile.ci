@@ -5,6 +5,9 @@
 # portable to older desktop Linux. Built+published by the `build-image` job
 # (`.gitlab-ci.yml`) and referenced as `$CI_REGISTRY_IMAGE/edi-builder:jammy`.
 #
+# Baked in: PySide6, pyinstaller, pytest, pytest-qt, pytest-cov, Node 22, and
+# the Qt runtime libs.
+#
 #   docker build -f Dockerfile.ci -t edi-builder:jammy .
 #
 # Jobs link the baked venv into the checkout with `ln -s /opt/edi/venv .venv`.
@@ -49,8 +52,9 @@ RUN python3 -m venv /opt/edi/venv \
         "PySide6==${PYSIDE6_VERSION}" \
         "pyinstaller==${PYINSTALLER_VERSION}" \
         pytest \
-        pytest-qt
+        pytest-qt \
+        pytest-cov
 
 # Sanity: the whole point is that imports resolve at job time.
 RUN /opt/edi/venv/bin/python -c \
-        "import PySide6, PyInstaller, pytest, pytestqt; print('edi-builder OK', PySide6.__version__)"
+        "import PySide6, PyInstaller, pytest, pytestqt, pytest_cov; print('edi-builder OK', PySide6.__version__)"

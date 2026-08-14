@@ -134,4 +134,48 @@ describe('Tabs', () => {
     tabs.activate(first!)
     expect(activeIds.at(-1)).toBe(first)
   })
+
+  it('ignores activating the already-active tab', () => {
+    const { tabs, activeIds } = setup()
+    const id = getActive()!.id
+    const before = activeIds.length
+    tabs.activate(id)
+    expect(activeIds.length).toBe(before)
+    expect(getActive()?.id).toBe(id)
+  })
+
+  it('ignores activating a tab that does not exist', () => {
+    const { tabs, view } = setup()
+    tabs.addSession('second doc')
+    tabs.activate('does-not-exist')
+    expect(getActive()?.id).not.toBe('does-not-exist')
+    expect(docText(view)).toBe('second doc')
+  })
+
+  it('activates a tab with Enter or Space', () => {
+    const { tabs, tabbar } = setup()
+    const first = getActive()!.id
+    tabs.addSession('second doc')
+    const second = getActive()!.id
+
+    const tabEls = tabbar.querySelectorAll<HTMLElement>('.tab')
+    tabEls[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(getActive()?.id).toBe(first)
+    tabEls[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    expect(getActive()?.id).toBe(second)
+  })
+
+  it('closes a tab from its close button', () => {
+    const { tabs, tabbar } = setup()
+    const first = getActive()!.id
+    tabs.addSession('second doc')
+    const second = getActive()!.id
+
+    const closeButtons = tabbar.querySelectorAll<HTMLButtonElement>('.tab-close')
+    closeButtons[0]!.click()
+    expect(getState().sessions).toHaveLength(1)
+    expect(getState().sessions[0]!.id).toBe(second)
+    expect(getActive()?.id).toBe(second)
+    expect(first).not.toBe(second)
+  })
 })

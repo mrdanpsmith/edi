@@ -6,11 +6,16 @@ boots once.
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
+from PySide6.QtCore import QEvent, QPointF, QUrl, Qt
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QLabel, QMessageBox
 
+import backend.window as window_module
 from backend.window import DIST_DIR, MainWindow, __version__
 
 import pytest
@@ -452,3 +457,207 @@ def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):
 
     box.accept()
     qtbot.waitUntil(lambda: QApplication.activeModalWidget() is None, timeout=2000)
+
+
+def test_page_allows_non_main_frame_navigation(visible):
+    page = visible._web.page()
+    assert (
+        page.acceptNavigationRequest(
+            QUrl("https://example.com/iframe"),
+            QWebEnginePage.NavigationType.NavigationTypeLinkClicked,
+            False,
+        )
+        is True
+    )
+
+
+def test_load_app_icon_none_when_no_icon_file(monkeypatch):
+    monkeypatch.setattr(window_module, "_find_icon", lambda: None)
+    assert window_module.load_app_icon() is None
+
+
+def test_load_about_logo_none_when_no_icon_file(monkeypatch):
+    monkeypatch.setattr(window_module, "_find_icon", lambda: None)
+    assert window_module.load_about_logo() is None
+
+
+def test_load_about_logo_none_when_pixmap_null(monkeypatch, tmp_path):
+    bogus = tmp_path / "bogus.png"
+    bogus.write_bytes(b"not a png")
+    monkeypatch.setattr(window_module, "_find_icon", lambda: bogus)
+    assert window_module.load_about_logo() is None
+
+
+def test_load_qwebchannel_js_raises_without_vendored_or_resource(monkeypatch):
+    monkeypatch.setattr(window_module, "_QWEBCHANNEL_JS", Path("/nonexistent/qwebchannel.js"))
+
+    class _FakeQFile:
+        class OpenModeFlag:
+            ReadOnly = 0
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def open(self, *_args, **_kwargs):
+            return False
+
+        def readAll(self):
+            return b""
+
+    monkeypatch.setattr(window_module, "QFile", _FakeQFile)
+    with pytest.raises(FileNotFoundError, match="qwebchannel.js"):
+        window_module._load_qwebchannel_js()
+
+
+def test_load_qwebchannel_js_uses_resource_fallback(monkeypatch):
+    monkeypatch.setattr(window_module, "_QWEBCHANNEL_JS", Path("/nonexistent/qwebchannel.js"))
+
+    class _FakeQFile:
+        class OpenModeFlag:
+            ReadOnly = 0
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def open(self, *_args, **_kwargs):
+            return True
+
+        def readAll(self):
+            return b"resource qwebchannel js"
+
+    monkeypatch.setattr(window_module, "QFile", _FakeQFile)
+    assert window_module._load_qwebchannel_js() == "resource qwebchannel js"
+
+
+def test_find_icon_returns_none_when_no_candidates(monkeypatch):
+    monkeypatch.setattr(sys, "_MEIPASS", "/nonexistent/meipass", raising=False)
+    monkeypatch.setattr(Path, "is_file", lambda _self: False)
+    assert window_module._find_icon() is None
+    assert window_module.load_app_icon() is None
+    assert window_module.load_about_logo() is None
+
+
+def test_open_external_url_falls_back_to_desktop_service(visible, monkeypatch):
+    window = visible
+    captured = {}
+
+    class _FakeDesktop:
+        @staticmethod
+        def openUrl(url):
+            captured["url"] = url.toString()
+
+    monkeypatch.setattr(window_module, "_xdg_open", lambda _url: False)
+    monkeypatch.setattr(window_module, "QDesktopServices", _FakeDesktop)
+    window.open_external_url("https://example.com/x")
+    assert captured["url"] == "https://example.com/x"
+
+
+def test_is_dirty_reflects_set_dirty(visible):
+    window = visible
+    window.set_dirty(True)
+    assert window.is_dirty() is True
+    window.set_dirty(False)
+    assert window.is_dirty() is False
+
+
+def test_pick_save_path_cancel_returns_none(visible, qtbot):
+    window = visible
+    result = {}
+    window.pick_save_path("notes", lambda path: result.__setitem__("path", path))
+
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    QApplication.activeModalWidget().reject()
+    qtbot.waitUntil(lambda: "path" in result, timeout=3000)
+    assert result["path"] is None
+
+
+def test_pick_export_path_cancel_returns_none(visible, qtbot):
+    window = visible
+    result = {}
+    window.pick_export_path("out", lambda path: result.__setitem__("path", path))
+
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    QApplication.activeModalWidget().reject()
+    qtbot.waitUntil(lambda: "path" in result, timeout=3000)
+    assert result["path"] is None
+
+
+def test_pick_text_import_path_cancel_returns_none(visible, qtbot):
+    window = visible
+    result = {}
+    window.pick_text_import_path(lambda path: result.__setitem__("path", path))
+
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    QApplication.activeModalWidget().reject()
+    qtbot.waitUntil(lambda: "path" in result, timeout=3000)
+    assert result["path"] is None
+
+
+def test_about_dialog_drag_and_release(visible):
+    dialog = window_module._AboutDialog(visible)
+
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(50, 30),
+        QPointF(500, 400),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    dialog.mousePressEvent(press)
+    assert press.isAccepted()
+    assert dialog._drag_offset is not None
+
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(80, 60),
+        QPointF(530, 430),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    dialog.mouseMoveEvent(move)
+    assert move.isAccepted()
+
+    release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(80, 60),
+        QPointF(530, 430),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    dialog.mouseReleaseEvent(release)
+    assert dialog._drag_offset is None
+
+
+def test_about_dialog_non_drag_mouse_events(visible):
+    dialog = window_module._AboutDialog(visible)
+
+    right_press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(5, 5),
+        QPointF(5, 5),
+        Qt.MouseButton.RightButton,
+        Qt.MouseButton.RightButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    dialog.mousePressEvent(right_press)
+    assert dialog._drag_offset is None
+
+    no_button_move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(5, 5),
+        QPointF(5, 5),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    dialog.mouseMoveEvent(no_button_move)
+    assert dialog._drag_offset is None
