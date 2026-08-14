@@ -199,13 +199,6 @@ release:
       optional: true
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
-  artifacts:
-    paths:
-      - dist-app/edi_*.deb
-      - dist-app/edi-*.rpm
-      - dist-app/edi-*.tar.gz
-      - dist-app/Edi-*.AppImage
-    expire_in: never
   # GLAB_ENABLE_CI_AUTOLOGIN makes glab authenticate with the predefined
   # CI_JOB_TOKEN (JOB-TOKEN header) instead of a PRIVATE-TOKEN.
   variables:
