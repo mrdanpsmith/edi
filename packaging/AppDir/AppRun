@@ -1,0 +1,3 @@
+#!/bin/sh
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+exec "$(dirname "$SELF")/usr/bin/edi" "$@"

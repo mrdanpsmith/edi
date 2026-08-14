@@ -139,6 +139,33 @@ This installs `edi.png` into `~/.local/share/icons/hicolor` and an
 `edi.desktop` entry into `~/.local/share/applications` (respecting
 `XDG_DATA_HOME`). Log out and back in if the gear persists.
 
+### Linux packages (.deb / .rpm / .AppImage / .tar.gz)
+
+Each `vX.Y.Z` release publishes four versioned artifacts (the CI `package` job
+wraps the onefile binary — it never rebuilds it, so the glibc 2.35 portability
+guarantee is inherited):
+
+| Artifact | Format | Install |
+| --- | --- | --- |
+| `edi_X.Y.Z_amd64.deb` | Debian/Ubuntu | `sudo apt install ./edi_X.Y.Z_amd64.deb` |
+| `edi-X.Y.Z-1.x86_64.rpm` | Fedora/RHEL/openSUSE | `sudo dnf install ./edi-X.Y.Z-1.x86_64.rpm` |
+| `Edi-X.Y.Z-x86_64.AppImage` | self-contained desktop app | `chmod +x && ./Edi-X.Y.Z-x86_64.AppImage` |
+| `edi-X.Y.Z-linux-x86_64.tar.gz` | portable archive | extract; run `./edi` or `./install.sh` |
+
+The packages install the binary, the desktop entry, and the hicolor icon set
+system-wide, so the dock/taskbar icon works out of the box (see above for the
+bare-binary alternative).
+
+Build all four from an existing binary locally:
+
+```sh
+./scripts/package-linux.sh [path/to/edi] [version]
+```
+
+Requires `dpkg-deb`, `rpmbuild` (`sudo apt-get install rpm`), and `curl`; the
+tarball's `install.sh` and the .deb are also what `install-desktop.sh` covers
+for the bare binary.
+
 ## Checks and tests
 
 ```sh

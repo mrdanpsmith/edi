@@ -1,0 +1,12 @@
+Package: edi
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Dan P. Smith <mrdanpsmith@gmail.com>
+Section: editors
+Priority: optional
+Homepage: https://gitlab.com/mrdanpsmith/edi
+Depends: @DEPENDS@
+Description: Markdown editor with live preview, code, Mermaid diagrams, and spreadsheets
+ Edi is a markdown editor with a live preview, syntax-highlighted code
+ blocks, Mermaid diagram rendering, and spreadsheet-style tables with
+ formulas. It runs QtWebEngine in a native PySide6 window.

@@ -1,0 +1,31 @@
+Name:           edi
+Version:        @VERSION@
+Release:        1
+Summary:        Markdown editor with live preview, code, Mermaid diagrams, and spreadsheets
+
+License:        GPL-3.0-or-later
+URL:            https://gitlab.com/mrdanpsmith/edi
+BuildArch:      x86_64
+Requires:       @REQUIRES@
+
+# The shipped binary is prebuilt (PyInstaller); rpmbuild must not try to
+# generate or strip debug info from it.
+%global _debug_package 0
+
+%description
+Edi is a markdown editor with a live preview, syntax-highlighted code
+blocks, Mermaid diagram rendering, and spreadsheet-style tables with
+formulas. It runs QtWebEngine in a native PySide6 window.
+
+%install
+rm -rf %{buildroot}
+mkdir -p %{buildroot}
+cp -a %{_sourcedir}/usr %{buildroot}/
+chmod 0755 %{buildroot}/usr/bin/edi
+
+%files
+/usr/bin/edi
+/usr/share/applications/edi.desktop
+/usr/share/icons/hicolor/*/apps/edi.png
+/usr/share/doc/edi/copyright
+/usr/share/doc/edi/README.md

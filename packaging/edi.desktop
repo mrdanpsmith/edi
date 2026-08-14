@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Edi
+GenericName=Markdown Editor
+Comment=Markdown editor with live preview, code, Mermaid diagrams, and spreadsheets
+Exec=edi
+Icon=edi
+Terminal=false
+Categories=Utility;TextEditor;
+StartupNotify=false

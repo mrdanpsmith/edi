@@ -16,6 +16,7 @@ stages:
   - check
   - test
   - build
+  - package
   - release
 
 variables:
@@ -97,13 +98,36 @@ build:
     # outer `timeout` is only a last-resort backstop if the process hangs.
     - EDI_SELFTEST=1 timeout 60 ./dist-app/edi
 
+# Wraps the onefile binary into versioned .deb/.rpm/.tar.gz/.AppImage
+# artifacts (scripts/package-linux.sh). Runs only on v* tags; the names embed
+# the release version from the tag (e.g. v0.2.4 -> edi_0.2.4_amd64.deb).
+package:
+  stage: package
+  needs:
+    - build
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  artifacts:
+    paths:
+      - dist-app/edi_*.deb
+      - dist-app/edi-*.rpm
+      - dist-app/edi-*.tar.gz
+      - dist-app/Edi-*.AppImage
+    expire_in: never
+  script:
+    - apt-get install -y --no-install-recommends rpm
+    - ./scripts/package-linux.sh dist-app/edi "${CI_COMMIT_TAG#v}"
+
 release:
   stage: release
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
   artifacts:
     paths:
-      - dist-app/edi
+      - dist-app/edi_*.deb
+      - dist-app/edi-*.rpm
+      - dist-app/edi-*.tar.gz
+      - dist-app/Edi-*.AppImage
     expire_in: never
   # GLAB_ENABLE_CI_AUTOLOGIN makes glab authenticate with the predefined
   # CI_JOB_TOKEN (JOB-TOKEN header) instead of a PRIVATE-TOKEN.
@@ -116,6 +140,13 @@ release:
     # repo is already complete (fewer commits than the depth), --unshallow
     # errors and a plain tag fetch is enough.
     - git fetch --tags --prune --unshallow 2>/dev/null || git fetch --tags --prune
+    # Refuse to publish if the tag does not match the version declared in
+    # package.json / backend/__init__.py (kept in sync by scripts/version.sh).
+    - |
+      if [ "${CI_COMMIT_TAG}" != "v$(./scripts/version.sh current)" ]; then
+        echo "error: tag ${CI_COMMIT_TAG} does not match declared version $(./scripts/version.sh current)" >&2
+        exit 1
+      fi
     # Generate the changelog: every commit since the previous tag (or the full
     # history for the first release) as "- <short-hash> <subject>" lines. The
     # short hashes are auto-linked to commits by GitLab.
@@ -127,11 +158,14 @@ release:
       git log --pretty=format:'- %h %s' "$RANGE" >> /tmp/CHANGELOG.md
       printf '\n' >> /tmp/CHANGELOG.md
     # A CI job token can access the Releases/Packages APIs but not the generic
-    # /uploads endpoint (401 Unauthorized), so glab publishes the binary to the
-    # generic package registry instead and links it to the release as an asset.
+    # /uploads endpoint (401 Unauthorized), so glab publishes the artifacts to
+    # the generic package registry instead and links them to the release.
     - /tmp/bin/glab release create "$CI_COMMIT_TAG"
       --name "Edi $CI_COMMIT_TAG"
       --notes-file /tmp/CHANGELOG.md
       --ref "$CI_COMMIT_SHA"
       --use-package-registry
-      dist-app/edi
+      dist-app/edi_*.deb
+      dist-app/edi-*.rpm
+      dist-app/edi-*.tar.gz
+      dist-app/Edi-*.AppImage
