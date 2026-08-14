@@ -252,6 +252,39 @@ def test_pick_import_path_cancel_returns_none(visible, qtbot):
     assert result["value"] == "null"
 
 
+def test_pick_image_import_path_cancel_returns_none(visible, qtbot):
+    window = visible
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__imageImportResult = 'pending';"
+        "window.bridge.result.connect(function (payload) {"
+        "  var message = JSON.parse(payload);"
+        "  if (message.id === 3002) window.__imageImportResult = message.ok ? message.data : message.error;"
+        "});"
+        "window.bridge.invoke('pickImageImportPath', 3002, '{}');"
+        "true",
+        lambda _v: None,
+    )
+
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    QApplication.activeModalWidget().reject()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "JSON.stringify(window.__imageImportResult)",
+            lambda v: result.__setitem__("value", v),
+        )
+        return (
+            "value" in result and result["value"] is not None and result["value"] != '"pending"'
+        )
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "null"
+
+
 def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     window = visible
     menubar = window.menuBar()
@@ -271,7 +304,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "&Quit\tCtrl+Q" in file_labels
 
     insert_labels = [action.text() for action in window._insert_menu.actions()]
-    assert insert_labels == ["&Spreadsheet…"]
+    assert insert_labels == ["&Spreadsheet…", "&Text File…", "&Image…"]
 
     help_labels = [action.text() for action in window._help_menu.actions()]
     assert help_labels == ["&About Edi…"]
@@ -285,19 +318,31 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert preview_actions[0].isCheckable()
     assert preview_actions[0].isChecked() is True
 
+    formatting_actions = [
+        action
+        for action in window._view_menu.actions()
+        if action.text().startswith("&Formatting")
+    ]
+    assert formatting_actions
+    assert formatting_actions[0].isCheckable()
+    assert formatting_actions[0].isChecked() is True
+
 
 def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
     assert window._revert_action.isEnabled() is False
     assert window._preview_action.isChecked() is True
+    assert window._formatting_action.isChecked() is True
 
-    window.update_menu_state(can_revert=True, preview_visible=False)
+    window.update_menu_state(can_revert=True, preview_visible=False, formatting_visible=False)
     assert window._revert_action.isEnabled() is True
     assert window._preview_action.isChecked() is False
+    assert window._formatting_action.isChecked() is False
 
-    window.update_menu_state(can_revert=False, preview_visible=True)
+    window.update_menu_state(can_revert=False, preview_visible=True, formatting_visible=True)
     assert window._revert_action.isEnabled() is False
     assert window._preview_action.isChecked() is True
+    assert window._formatting_action.isChecked() is True
 
 
 def test_menu_action_invokes_js_command(visible, qtbot):
@@ -350,6 +395,33 @@ def test_view_menu_action_invokes_js_command(visible, qtbot):
 
     qtbot.waitUntil(fetched, timeout=3000)
     assert result["value"] == "togglePreview"
+
+
+def test_view_menu_formatting_action_invokes_js_command(visible, qtbot):
+    window = visible
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__menuCmd = null;"
+        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
+        "true",
+        lambda _v: None,
+    )
+
+    view_menu = window._view_menu
+    formatting_action = next(
+        action for action in view_menu.actions() if action.text().startswith("&Formatting")
+    )
+    formatting_action.trigger()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "window.__menuCmd", lambda v: result.__setitem__("value", v)
+        )
+        return result.get("value") is not None
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "toggleFormatting"
 
 
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):

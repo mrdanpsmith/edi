@@ -23,6 +23,7 @@ class StubWindow(QObject):
         self.confirm_messages: list[str] = []
         self.can_revert = False
         self.preview_visible = True
+        self.formatting_visible = True
 
     def confirm(self, message, callback=None) -> None:
         self.confirm_messages.append(message)
@@ -32,9 +33,10 @@ class StubWindow(QObject):
     def set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
 
-    def update_menu_state(self, can_revert=False, preview_visible=True) -> None:
+    def update_menu_state(self, can_revert=False, preview_visible=True, formatting_visible=True) -> None:
         self.can_revert = can_revert
         self.preview_visible = preview_visible
+        self.formatting_visible = formatting_visible
 
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
@@ -51,6 +53,14 @@ class StubWindow(QObject):
     def pick_import_path(self, callback=None) -> None:
         if callback is not None:
             callback("/tmp/table.csv")
+
+    def pick_text_import_path(self, callback=None) -> None:
+        if callback is not None:
+            callback("/tmp/notes.txt")
+
+    def pick_image_import_path(self, callback=None) -> None:
+        if callback is not None:
+            callback("/tmp/pic.png")
 
     def close(self) -> None:
         self.closed = True
@@ -111,11 +121,16 @@ def test_set_dirty(bridge):
 
 def test_set_menu_state(bridge):
     bridge_obj, window, result = bridge
-    _invoke(bridge_obj, "setMenuState", {"canRevert": True, "previewVisible": False})
+    _invoke(
+        bridge_obj,
+        "setMenuState",
+        {"canRevert": True, "previewVisible": False, "formattingVisible": False},
+    )
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.can_revert is True
     assert window.preview_visible is False
+    assert window.formatting_visible is False
 
 
 def test_pick_import_path(bridge):
@@ -124,6 +139,32 @@ def test_pick_import_path(bridge):
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert message["data"] == "/tmp/table.csv"
+
+
+def test_pick_text_import_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "pickTextImportPath")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == "/tmp/notes.txt"
+
+
+def test_pick_image_import_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "pickImageImportPath")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == "/tmp/pic.png"
+
+
+def test_read_any_text_file(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    target = tmp_path / "notes.log"
+    target.write_text("log line", encoding="utf-8")
+    _invoke(bridge_obj, "readAnyTextFile", {"path": str(target)}, request_id=2)
+    message = _wait_for(lambda: result.get(2))
+    assert message["ok"] is True
+    assert message["data"] == "log line"
 
 
 def test_parse_table_file_csv(bridge, tmp_path):

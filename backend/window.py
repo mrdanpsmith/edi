@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         self._allow_close = False
         self._revert_action = None
         self._preview_action = None
+        self._formatting_action = None
 
         self._bridge = Bridge(self)
         self._web = QWebEngineView()
@@ -185,6 +186,16 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("importTable")
         )
         insert_menu.addAction(import_action)
+        text_action = QAction("&Text File…", self)
+        text_action.triggered.connect(
+            lambda _checked=False: self._menu_command("importText")
+        )
+        insert_menu.addAction(text_action)
+        image_action = QAction("&Image…", self)
+        image_action.triggered.connect(
+            lambda _checked=False: self._menu_command("insertImage")
+        )
+        insert_menu.addAction(image_action)
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu
@@ -195,6 +206,14 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("togglePreview")
         )
         view_menu.addAction(self._preview_action)
+
+        self._formatting_action = QAction("&Formatting Toolbar", self)
+        self._formatting_action.setCheckable(True)
+        self._formatting_action.setChecked(True)
+        self._formatting_action.triggered.connect(
+            lambda _checked=False: self._menu_command("toggleFormatting")
+        )
+        view_menu.addAction(self._formatting_action)
 
         self._help_menu = menubar.addMenu("&Help")
         help_menu = self._help_menu
@@ -248,11 +267,13 @@ class MainWindow(QMainWindow):
     def _menu_command(self, command: str) -> None:
         self._web.page().runJavaScript(f"window.ediMenuCommand({json.dumps(command)})")
 
-    def update_menu_state(self, can_revert: bool, preview_visible: bool) -> None:
+    def update_menu_state(self, can_revert: bool, preview_visible: bool, formatting_visible: bool) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
         if self._preview_action is not None:
             self._preview_action.setChecked(preview_visible)
+        if self._formatting_action is not None:
+            self._formatting_action.setChecked(formatting_visible)
 
     def set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
@@ -339,6 +360,26 @@ class MainWindow(QMainWindow):
             "CSV / TSV (*.csv *.tsv *.txt);;"
             "ODS (*.ods);;"
             "Excel (*.xlsx *.xlsm);;"
+            "All files (*)"
+        )
+        self._run_dialog(dialog, callback)
+
+    def pick_text_import_path(self, callback=None) -> None:
+        dialog = QFileDialog(self, "Insert text file")
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilter(
+            "Markdown / text files (*.md *.markdown *.txt *.mermaid *.log);;"
+            "All files (*)"
+        )
+        self._run_dialog(dialog, callback)
+
+    def pick_image_import_path(self, callback=None) -> None:
+        dialog = QFileDialog(self, "Insert image")
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilter(
+            "Images (*.png *.jpg *.jpeg *.gif *.svg *.webp *.bmp);;"
             "All files (*)"
         )
         self._run_dialog(dialog, callback)

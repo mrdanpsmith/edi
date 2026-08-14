@@ -137,6 +137,74 @@ body.resizing {
   height: 4px;
 }
 
+#formatbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 0 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+#formatbar[hidden] {
+  display: none;
+}
+
+.fmt-btn {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fmt-btn svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.fmt-btn.fmt-bold {
+  font-weight: 700;
+}
+
+.fmt-btn.fmt-italic {
+  font-style: italic;
+}
+
+.fmt-btn.fmt-strike {
+  text-decoration: line-through;
+}
+
+.fmt-btn.fmt-heading {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.fmt-btn:hover {
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.fmt-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .tab {
   display: flex;
   align-items: center;

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { fileExtension, fileName, isAbsolutePath, isSupportedFile, UNTITLED } from './files'
+import {
+  dirname,
+  fileExtension,
+  fileName,
+  imageReference,
+  isAbsolutePath,
+  isSupportedFile,
+  UNTITLED,
+} from './files'
 
 describe('fileExtension', () => {
   it('returns the lowercase extension', () => {
@@ -43,6 +51,32 @@ describe('isAbsolutePath', () => {
   it('detects absolute paths', () => {
     expect(isAbsolutePath('/tmp/a.md')).toBe(true)
     expect(isAbsolutePath('a.md')).toBe(false)
+  })
+})
+
+describe('dirname', () => {
+  it('returns the parent directory', () => {
+    expect(dirname('/home/user/docs/notes.md')).toBe('/home/user/docs')
+  })
+
+  it('returns the root for a top-level path', () => {
+    expect(dirname('/notes.md')).toBe('/')
+  })
+})
+
+describe('imageReference', () => {
+  it('uses a relative path when the image is inside the doc directory', () => {
+    expect(imageReference('/docs/notes.md', '/docs/img/pic.png')).toBe('img/pic.png')
+  })
+
+  it('keeps the absolute path when the image is elsewhere', () => {
+    expect(imageReference('/docs/notes.md', '/home/user/Pictures/pic.png')).toBe(
+      '/home/user/Pictures/pic.png',
+    )
+  })
+
+  it('keeps the absolute path for an unsaved document', () => {
+    expect(imageReference(null, '/home/user/pic.png')).toBe('/home/user/pic.png')
   })
 })
 

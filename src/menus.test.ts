@@ -2,18 +2,39 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { bindMenuCommands } from './menus'
 
+function makeHandlers() {
+  return {
+    new: vi.fn(),
+    open: vi.fn(),
+    save: vi.fn(),
+    saveAs: vi.fn(),
+    revert: vi.fn(),
+    importTable: vi.fn(),
+    importText: vi.fn(),
+    insertImage: vi.fn(),
+    export: vi.fn(),
+    togglePreview: vi.fn(),
+    toggleFormatting: vi.fn(),
+  }
+}
+
+const COMMANDS = [
+  'new',
+  'open',
+  'save',
+  'saveAs',
+  'revert',
+  'importTable',
+  'importText',
+  'insertImage',
+  'export',
+  'togglePreview',
+  'toggleFormatting',
+]
+
 describe('bindMenuCommands', () => {
   it('registers a global command dispatcher', () => {
-    const handlers = {
-      new: vi.fn(),
-      open: vi.fn(),
-      save: vi.fn(),
-      saveAs: vi.fn(),
-      revert: vi.fn(),
-      importTable: vi.fn(),
-      export: vi.fn(),
-      togglePreview: vi.fn(),
-    }
+    const handlers = makeHandlers()
     bindMenuCommands(handlers)
     expect(window.ediMenuCommand).toBeTypeOf('function')
     window.ediMenuCommand?.('open')
@@ -22,46 +43,18 @@ describe('bindMenuCommands', () => {
   })
 
   it('dispatches every command to its handler', () => {
-    const handlers = {
-      new: vi.fn(),
-      open: vi.fn(),
-      save: vi.fn(),
-      saveAs: vi.fn(),
-      revert: vi.fn(),
-      importTable: vi.fn(),
-      export: vi.fn(),
-      togglePreview: vi.fn(),
-    }
+    const handlers = makeHandlers()
     bindMenuCommands(handlers)
-    const commands = [
-      'new',
-      'open',
-      'save',
-      'saveAs',
-      'revert',
-      'importTable',
-      'export',
-      'togglePreview',
-    ]
-    for (const command of commands) {
+    for (const command of COMMANDS) {
       window.ediMenuCommand?.(command)
     }
-    for (const command of commands) {
+    for (const command of COMMANDS) {
       expect(handlers[command as keyof typeof handlers]).toHaveBeenCalledTimes(1)
     }
   })
 
   it('ignores unknown commands', () => {
-    const handlers = {
-      new: vi.fn(),
-      open: vi.fn(),
-      save: vi.fn(),
-      saveAs: vi.fn(),
-      revert: vi.fn(),
-      importTable: vi.fn(),
-      export: vi.fn(),
-      togglePreview: vi.fn(),
-    }
+    const handlers = makeHandlers()
     bindMenuCommands(handlers)
     expect(() => window.ediMenuCommand?.('nope')).not.toThrow()
     expect(handlers.open).not.toHaveBeenCalled()

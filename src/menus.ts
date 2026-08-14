@@ -5,8 +5,11 @@ export interface MenuCommands {
   saveAs: () => void
   revert: () => void
   importTable: () => void
+  importText: () => void
+  insertImage: () => void
   export: () => void
   togglePreview: () => void
+  toggleFormatting: () => void
 }
 
 export function bindMenuCommands(handlers: MenuCommands): void {

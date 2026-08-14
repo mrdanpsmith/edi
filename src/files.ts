@@ -25,8 +25,28 @@ export function isAbsolutePath(path: string): boolean {
   return path.startsWith('/')
 }
 
+export function dirname(path: string): string {
+  const index = path.lastIndexOf('/')
+  return index > 0 ? path.slice(0, index) : '/'
+}
+
+export function imageReference(docPath: string | null, imagePath: string): string {
+  if (!docPath) {
+    return imagePath
+  }
+  const docDir = dirname(docPath)
+  if (imagePath.startsWith(`${docDir}/`)) {
+    return imagePath.slice(docDir.length + 1)
+  }
+  return imagePath
+}
+
 export async function readTextFile(path: string): Promise<string> {
   return invoke<string>('readTextFile', { path })
+}
+
+export async function readAnyTextFile(path: string): Promise<string> {
+  return invoke<string>('readAnyTextFile', { path })
 }
 
 export async function writeTextFile(path: string, content: string): Promise<void> {
@@ -47,4 +67,12 @@ export async function pickExportPath(defaultName: string): Promise<string | null
 
 export async function pickImportPath(): Promise<string | null> {
   return invoke<string | null>('pickImportPath', {})
+}
+
+export async function pickTextImportPath(): Promise<string | null> {
+  return invoke<string | null>('pickTextImportPath', {})
+}
+
+export async function pickImageImportPath(): Promise<string | null> {
+  return invoke<string | null>('pickImageImportPath', {})
 }

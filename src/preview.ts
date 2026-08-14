@@ -27,6 +27,29 @@ const md = new MarkdownIt({
 
 md.use(taskLists, { enabled: true, label: true, labelAfter: true })
 
+export interface PreviewEnv {
+  docDir?: string
+}
+
+type MarkdownEnv = Parameters<typeof md.render>[1]
+
+export function resolveImageSrc(src: string, docDir: string | undefined): string {
+  if (!docDir || src.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('#')) {
+    return src
+  }
+  return `${docDir}/${src}`
+}
+
+const defaultImageRule = md.renderer.rules.image?.bind(md.renderer.rules)
+
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  const src = String(token.attrGet('src') ?? '')
+  const docDir = (env as PreviewEnv).docDir
+  token.attrSet('src', resolveImageSrc(src, docDir))
+  return defaultImageRule!(tokens, idx, options, env, self)
+}
+
 const defaultFenceRule = md.renderer.rules.fence?.bind(md.renderer.rules)
 
 md.renderer.rules.fence = (tokens, idx, options, env, self) => {
@@ -43,12 +66,12 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   return defaultFenceRule!(tokens, idx, options, env, self)
 }
 
-export function renderMarkdown(source: string): string {
-  return md.render(source)
+export function renderMarkdown(source: string, env: PreviewEnv = {}): string {
+  return md.render(source, env as MarkdownEnv)
 }
 
-export function renderPreview(source: string): string {
-  return `<article class="md-preview">${renderMarkdown(source)}</article>`
+export function renderPreview(source: string, env: PreviewEnv = {}): string {
+  return `<article class="md-preview">${renderMarkdown(source, env)}</article>`
 }
 
 export function collectPendingMermaid(container: HTMLElement): HTMLElement[] {

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { collectPendingMermaid, renderMarkdown, renderPreview } from './preview'
+import {
+  collectPendingMermaid,
+  renderMarkdown,
+  renderPreview,
+  resolveImageSrc,
+} from './preview'
 
 describe('renderMarkdown', () => {
   it('renders headings', () => {
@@ -44,6 +49,35 @@ describe('renderMarkdown', () => {
   it('wraps output in a preview article', () => {
     expect(renderPreview('# T').startsWith('<article class="md-preview">')).toBe(true)
     expect(renderPreview('# T').endsWith('</article>')).toBe(true)
+  })
+})
+
+describe('resolveImageSrc', () => {
+  it('leaves the src unchanged without a doc dir', () => {
+    expect(resolveImageSrc('img/pic.png', undefined)).toBe('img/pic.png')
+  })
+
+  it('joins relative srcs against the doc dir', () => {
+    expect(resolveImageSrc('img/pic.png', '/home/user/docs')).toBe('/home/user/docs/img/pic.png')
+    expect(resolveImageSrc('./pic.png', '/docs')).toBe('/docs/./pic.png')
+    expect(resolveImageSrc('../pic.png', '/docs/sub')).toBe('/docs/sub/../pic.png')
+  })
+
+  it('leaves absolute, scheme, and anchor srcs untouched', () => {
+    expect(resolveImageSrc('/home/user/pic.png', '/docs')).toBe('/home/user/pic.png')
+    expect(resolveImageSrc('data:image/png;base64,AAAA', '/docs')).toBe('data:image/png;base64,AAAA')
+    expect(resolveImageSrc('https://e.com/a.png', '/docs')).toBe('https://e.com/a.png')
+    expect(resolveImageSrc('#anchor', '/docs')).toBe('#anchor')
+  })
+
+  it('renders relative image srcs resolved against the doc dir', () => {
+    const html = renderMarkdown('![pic](img/pic.png)', { docDir: '/home/user/docs' })
+    expect(html).toContain('src="/home/user/docs/img/pic.png"')
+  })
+
+  it('keeps absolute image srcs in rendered output', () => {
+    const html = renderMarkdown('![pic](/home/user/pic.png)', { docDir: '/home/user/docs' })
+    expect(html).toContain('src="/home/user/pic.png"')
   })
 })
 

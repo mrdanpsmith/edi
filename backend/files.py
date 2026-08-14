@@ -24,6 +24,14 @@ def read_text_file(path: str) -> str:
     return target.read_text(encoding="utf-8")
 
 
+def read_any_text_file(path: str) -> str:
+    """Read any text file, regardless of extension (used for inserts)."""
+    target = Path(path)
+    if not target.is_file():
+        raise FileNotFoundError(f"Not a file: {path}")
+    return target.read_text(encoding="utf-8")
+
+
 def write_text_file(path: str, content: str) -> None:
     target = Path(path)
     if target.parent and str(target.parent) != ".":

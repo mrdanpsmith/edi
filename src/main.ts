@@ -6,16 +6,22 @@ import { createEditor } from './editor'
 import { initExecBlocks } from './exec'
 import { buildExportHtml } from './export'
 import {
+  dirname,
   fileName,
+  imageReference,
   isSupportedFile,
   pickExportPath,
+  pickImageImportPath,
   pickImportPath,
   pickOpenPath,
   pickSavePath,
+  pickTextImportPath,
+  readAnyTextFile,
   readTextFile,
   UNTITLED,
   writeTextFile,
 } from './files'
+import { FormatToolbar } from './formatToolbar'
 import { parseTableFile, toMarkdownTable } from './import'
 import { SplitLayout } from './layout'
 import { bindMenuCommands } from './menus'
@@ -36,8 +42,9 @@ Edi is a fast markdown editor with a live preview, Mermaid diagrams, in-line spr
 
 - Type on the left, see the result on the right.
 - Use the **File** and **View** menus for document actions and the preview.
+- Format text with the toolbar above the editor (\`Ctrl+B\` bold, \`Ctrl+I\` italic), or hide it via \`View → Formatting Toolbar\`.
 - Open several documents side by side in tabs (\`Ctrl+N\` for a new tab, \`Ctrl+W\` to close one).
-- Import a spreadsheet with \`Insert → Spreadsheet\` to add it as a table.
+- Insert a spreadsheet, text file, or image with \`Insert → …\`.
 - Hover a table in the preview and press **Copy** to paste it into Word, email, or Excel.
 
 ## Mermaid diagrams
@@ -80,6 +87,9 @@ print("Hello from Python!")
 - [x] HTML export
 - [x] Multiple tabs
 - [x] Spreadsheet import
+- [x] Text-file import
+- [x] Image insertion
+- [x] Formatting toolbar
 - [x] Copy tables to the clipboard
 `
 
@@ -88,6 +98,7 @@ const previewContainer = document.querySelector<HTMLElement>('#preview-container
 const workspace = document.querySelector<HTMLElement>('#workspace')!
 const previewPane = document.querySelector<HTMLElement>('#preview-pane')!
 const divider = document.querySelector<HTMLElement>('#divider')!
+const formatBar = document.querySelector<HTMLElement>('#formatbar')!
 const docTitle = document.querySelector<HTMLElement>('#doc-title')!
 const dirtyIndicator = document.querySelector<HTMLElement>('#dirty-indicator')!
 const statusLeft = document.querySelector<HTMLElement>('#status-left')!
@@ -101,6 +112,8 @@ const editor = createEditor(editorContainer, () => {
   updateStatus()
   schedulePreview()
 })
+
+const formatToolbar = new FormatToolbar(formatBar, editor.view)
 
 const layout = new SplitLayout(workspace, previewPane, divider)
 
@@ -145,6 +158,7 @@ function syncMenuState(): void {
   void invoke('setMenuState', {
     canRevert: Boolean(active?.path),
     previewVisible: layout.isPreviewVisible(),
+    formattingVisible: formatToolbar.isVisible(),
   }).catch(() => undefined)
 }
 
@@ -164,6 +178,11 @@ function flashStatus(message: string): void {
 
 function togglePreview(): void {
   layout.togglePreview()
+  syncMenuState()
+}
+
+function toggleFormatting(): void {
+  formatToolbar.toggle()
   syncMenuState()
 }
 
@@ -192,7 +211,10 @@ function schedulePreview(): void {
 
 async function renderPreviewNow(): Promise<void> {
   const scrollTop = previewContainer.scrollTop
-  previewContainer.innerHTML = renderPreview(editor.getValue())
+  const active = getActive()
+  previewContainer.innerHTML = renderPreview(editor.getValue(), {
+    docDir: active?.path ? dirname(active.path) : undefined,
+  })
   previewContainer.scrollTop = Math.min(scrollTop, previewContainer.scrollHeight)
   computeSpreadsheet(previewContainer)
   attachTableCopyControls(previewContainer, { onCopied: () => flashStatus('Table copied to clipboard') })
@@ -306,6 +328,31 @@ async function importTable(): Promise<void> {
   }
 }
 
+async function importTextFile(): Promise<void> {
+  const path = await pickTextImportPath()
+  if (!path) {
+    return
+  }
+  try {
+    const content = await readAnyTextFile(path)
+    insertText(`\n${content}\n`)
+    flashStatus(`Inserted ${fileName(path)}`)
+  } catch (error) {
+    reportError(`Failed to insert ${path}`, error)
+  }
+}
+
+async function insertImage(): Promise<void> {
+  const path = await pickImageImportPath()
+  if (!path) {
+    return
+  }
+  const reference = imageReference(getActive()?.path ?? null, path)
+  const destination = /[ ()]/u.test(reference) ? `<${reference}>` : reference
+  insertText(`\n![${fileName(path)}](${destination})\n`)
+  flashStatus(`Inserted ${fileName(path)}`)
+}
+
 function reportError(message: string, error: unknown): void {
   const detail = error instanceof Error ? `\n\n${error.message}` : ''
   void confirmAction(`${message}${detail}`)
@@ -371,8 +418,11 @@ function init(): void {
     saveAs: () => void saveFileAs(),
     revert: () => void revertFile(),
     importTable: () => void importTable(),
+    importText: () => void importTextFile(),
+    insertImage: () => void insertImage(),
     export: () => void exportHtml(),
     togglePreview: () => togglePreview(),
+    toggleFormatting: () => toggleFormatting(),
   })
   subscribe(() => syncDirty())
   syncDirty()

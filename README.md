@@ -20,6 +20,8 @@ Implemented: a Python desktop app (PySide6 + QtWebEngine) with a CodeMirror 6 ma
 | Native menus (File / View) | Done |
 | In-line spreadsheet capabilities | Done |
 | Spreadsheet import (CSV / TSV / ODS / XLSX) | Done |
+| Text-file and image insertion | Done |
+| Formatting toolbar (bold, italic, headings, lists, links, …) | Done |
 | Copy preview tables to the clipboard (Word / email / Excel) | Done |
 | Executable code blocks (`#!` kernel syntax) | Done |
 | HTML export | Done |
@@ -76,12 +78,20 @@ Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Eac
 Document actions live in a native menu bar instead of toolbar buttons:
 
 - **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
-- **Insert**: Spreadsheet.
-- **View**: Preview (toggle, default on).
+- **Insert**: Spreadsheet, Text File, Image.
+- **View**: Preview (toggle, default on), Formatting Toolbar (toggle, default on).
 
 ### Spreadsheet import
 
 `Insert → Spreadsheet` reads a CSV, TSV, ODS, or XLSX file and inserts it at the cursor as a markdown table. Cell contents, shared strings, repeated rows/columns, and formula results are preserved.
+
+### Text-file and image insertion
+
+`Insert → Text File` reads any text file and inserts it at the cursor. `Insert → Image` picks an image and inserts a markdown image reference: relative to the document when the image lives inside its folder (so the document stays portable), otherwise absolute. The preview resolves relative image paths against the active document's directory so images always display.
+
+### Formatting toolbar
+
+The toolbar above the editor toggles markdown formatting on the selection: **bold**, *italic*, strikethrough, H1/H2, blockquote, inline code, fenced code blocks, task/bullet/numbered lists, horizontal rules, and links. `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` trigger bold, italic, and strikethrough. Hide it anytime via `View → Formatting Toolbar`.
 
 ### Copy tables
 

@@ -6,6 +6,8 @@ import { tags } from '@lezer/highlight'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers } from '@codemirror/view'
 
+import { runFormat, toggleBold, toggleItalic, toggleStrikethrough } from './format'
+
 export type ChangeHandler = (view: EditorView) => void
 
 let suppressChange = false
@@ -92,7 +94,14 @@ export function createEditorState(doc: string): EditorState {
       }),
       lineNumbers(),
       history(),
-      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+      keymap.of([
+        { key: 'Mod-b', run: (view) => runFormat(view, toggleBold) },
+        { key: 'Mod-i', run: (view) => runFormat(view, toggleItalic) },
+        { key: 'Mod-Shift-x', run: (view) => runFormat(view, toggleStrikethrough) },
+        ...defaultKeymap,
+        ...historyKeymap,
+        indentWithTab,
+      ]),
       markdown({ codeLanguages: languages }),
       syntaxHighlighting(highlight),
       theme,
