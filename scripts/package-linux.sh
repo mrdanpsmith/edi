@@ -18,7 +18,7 @@
 #   edi-<ver>-linux-x86_64.tar.gz
 #   Edi-<ver>-x86_64.AppImage
 #
-# Requires: dpkg-deb, rpmbuild (apt-get install rpm), tar, curl, a venv
+# Requires: dpkg-deb, rpmbuild (apt-get install rpm), file, tar, curl, a venv
 # python with PySide6 for icon scaling, and network for the appimagetool
 # download. dpkg-deb output is forced to xz so old apt versions can read it.
 #
@@ -26,6 +26,18 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+for tool in dpkg-deb curl tar; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "error: $tool not found (apt-get install -y $tool)" >&2
+    exit 1
+  fi
+done
+if ! command -v file >/dev/null 2>&1; then
+  echo "error: file not found; appimagetool and rpm's brp scripts require it" >&2
+  echo "  install with: apt-get install -y file" >&2
+  exit 1
+fi
 
 BIN="${1:-$ROOT/dist-app/edi}"
 if [ ! -x "$BIN" ]; then

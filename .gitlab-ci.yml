@@ -115,7 +115,9 @@ package:
       - dist-app/Edi-*.AppImage
     expire_in: never
   script:
-    - apt-get install -y --no-install-recommends rpm
+    # rpmbuild for the .rpm; `file` is required by appimagetool and by rpm's
+    # post-build brp scripts (it is not installed by default on the runner).
+    - apt-get install -y --no-install-recommends rpm file
     - ./scripts/package-linux.sh dist-app/edi "${CI_COMMIT_TAG#v}"
 
 release:
