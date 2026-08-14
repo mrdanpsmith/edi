@@ -32,7 +32,6 @@ a = Analysis(
         ('dist', 'dist'),
         ('backend/qwebchannel.js', 'backend'),
         ('scripts/assets/app-icon.png', 'assets'),
-        ('assets/edi-logo.png', 'assets'),
     ],
     hiddenimports=[],
     hookspath=[],

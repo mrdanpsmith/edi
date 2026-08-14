@@ -25,6 +25,10 @@ export function getActive(): SessionMeta | undefined {
   return sessions.find((session) => session.id === activeId)
 }
 
+export function findSessionByPath(path: string): SessionMeta | undefined {
+  return sessions.find((session) => session.path === path)
+}
+
 export function subscribe(listener: Listener): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)

@@ -25,7 +25,6 @@
   --md-code-keyword: #cf222e;
   --md-code-string: #0a3069;
 
-  --shadow-toolbar: 0 1px 0 var(--border);
   --preview-bg: #fafbfc;
   --exec-bg: #0d1117;
   --exec-fg: #e6edf3;
@@ -87,37 +86,6 @@ body.resizing {
 #app {
   display: flex;
   flex-direction: column;
-}
-
-#toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 12px;
-  background: var(--surface);
-  border-bottom: var(--shadow-toolbar);
-  flex: none;
-}
-
-#app-name {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--accent);
-}
-
-#doc-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  min-width: 0;
-}
-
-#dirty-indicator {
-  color: var(--danger);
-  font-weight: 700;
-  flex: none;
 }
 
 #tabbar {

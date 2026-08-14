@@ -40,6 +40,27 @@ export function resolveImageSrc(src: string, docDir: string | undefined): string
   return `${docDir}/${src}`
 }
 
+export type LinkTarget =
+  | { kind: 'external'; url: string }
+  | { kind: 'local'; path: string }
+  | { kind: 'fragment' }
+
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
+
+export function resolveLinkHref(href: string, docDir: string | undefined): LinkTarget {
+  if (href.startsWith('#')) {
+    return { kind: 'fragment' }
+  }
+  if (SCHEME_RE.test(href)) {
+    return { kind: 'external', url: href }
+  }
+  const path = href.split('#')[0] ?? href
+  if (!docDir || path.startsWith('/')) {
+    return { kind: 'local', path }
+  }
+  return { kind: 'local', path: `${docDir}/${path}` }
+}
+
 const defaultImageRule = md.renderer.rules.image?.bind(md.renderer.rules)
 
 md.renderer.rules.image = (tokens, idx, options, env, self) => {

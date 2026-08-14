@@ -46,6 +46,7 @@ class Bridge(QObject):
             "parseTableFile": self._parse_table_file,
             "copyTable": self._copy_table,
             "runCodeBlock": self._run_code_block,
+            "openUrl": self._open_url,
             "setDirty": self._set_dirty,
             "setMenuState": self._set_menu_state,
             "quit": self._quit,
@@ -180,6 +181,14 @@ class Bridge(QObject):
                 self._reply(request_id, result)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _open_url(self, request_id: int, args: dict) -> None:
+        url = str(args.get("url") or "")
+        if not url:
+            self._reply_error(request_id, "Missing url")
+            return
+        self._window.open_external_url(url)
+        self._reply(request_id, None)
 
     def _set_dirty(self, request_id: int, args: dict) -> None:
         self._window.set_dirty(bool(args.get("dirty")))

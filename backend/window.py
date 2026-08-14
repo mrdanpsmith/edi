@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QFile, QUrl, Qt
-from PySide6.QtGui import QAction, QIcon, QPixmap
+from PySide6.QtCore import QFile, QPoint, QUrl, Qt
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -29,6 +31,61 @@ DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 CONFIRM_QUIT_MESSAGE = "Unsaved changes will be lost. Quit anyway?"
 
 _QWEBCHANNEL_JS = Path(__file__).resolve().parent / "qwebchannel.js"
+
+
+class _AppPage(QWebEnginePage):
+    """Webview page that never lets the main frame leave the app.
+
+    Link clicks are intercepted in the frontend (they open in the system
+    browser or an Edi tab), but this is a backstop so no middle-click,
+    keyboard, or JS-initiated navigation can replace the editor UI.
+    """
+
+    def acceptNavigationRequest(self, url: QUrl, _navigation_type, is_main_frame: bool) -> bool:
+        if is_main_frame:
+            return url.toLocalFile() == str(DIST_DIR / "index.html")
+        return True
+
+
+def _child_env() -> dict[str, str]:
+    """Environment for spawned children, minus the PyInstaller bundle path.
+
+    The onefile bootloader exports ``LD_LIBRARY_PATH`` pointing at the
+    extraction dir full of Ubuntu 22.04 libraries. A browser child inherits it
+    and loads those older libs instead of the host's system ones, breaking
+    e.g. Waterfox with ``Couldn't load XPCOM``. Strip it so children behave
+    like a plain terminal launch.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("LD_LIBRARY_PATH", "LD_PRELOAD")
+    }
+
+
+def _xdg_open(url: str) -> bool:
+    """Spawn the system ``xdg-open`` handler for ``url``; True if it started.
+
+    ``QDesktopServices.openUrl`` cannot be given a custom environment, and the
+    PyInstaller onefile bootloader exports ``LD_LIBRARY_PATH`` pointing at the
+    bundled Ubuntu 22.04 libraries — a browser spawned with that inherited
+    path breaks (e.g. Waterfox's "Couldn't load XPCOM"). ``xdg-open`` is the
+    same handler QDesktopServices uses on Linux, but it can be run with a
+    sanitized environment. stdio is discarded so a failing handler cannot
+    flood Edi's console.
+    """
+    try:
+        subprocess.Popen(
+            ["xdg-open", url],
+            env=_child_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        return False
+    return True
 
 
 def _find_icon() -> Path | None:
@@ -53,31 +110,16 @@ def load_app_icon() -> QIcon | None:
     return icon if not icon.isNull() else None
 
 
-def _find_logo() -> Path | None:
-    """Locate the about-dialog logo (source tree or packaged)."""
-    meipass = getattr(sys, "_MEIPASS", None)
-    candidates = [
-        Path(meipass) / "assets" / "edi-logo.png" if meipass else None,
-        Path(__file__).resolve().parent.parent / "assets" / "edi-logo.png",
-        Path(meipass) / "assets" / "app-icon.png" if meipass else None,
-        Path(__file__).resolve().parent.parent / "scripts" / "assets" / "app-icon.png",
-    ]
-    for candidate in candidates:
-        if candidate is not None and candidate.is_file():
-            return candidate
-    return None
-
-
 def load_about_logo(max_size: int = 180) -> QPixmap | None:
-    """Return the about-dialog logo scaled to fit ``max_size``, or ``None``.
+    """Return the app icon scaled to fit ``max_size``, or ``None``.
 
-    Falls back to the app icon so the dialog still shows a graphic even if the
-    dedicated logo is missing (e.g. an older packaged build).
+    The about dialog reuses the window/taskbar artwork so Edi has a single
+    icon; the dedicated ``assets/edi-logo.png`` was removed.
     """
-    logo_path = _find_logo()
-    if logo_path is None:
+    icon_path = _find_icon()
+    if icon_path is None:
         return None
-    pixmap = QPixmap(str(logo_path))
+    pixmap = QPixmap(str(icon_path))
     if pixmap.isNull():
         return None
     return pixmap.scaled(
@@ -103,6 +145,79 @@ def _load_qwebchannel_js() -> str:
     raise FileNotFoundError("qwebchannel.js not found (vendored copy or Qt resource)")
 
 
+class _AboutDialog(QDialog):
+    """Frameless About dialog: logo, title, version, description.
+
+    Frameless so the window-manager titlebar (with its minimize/maximize/close
+    buttons) can never clip the title text; drag the dialog body to move it,
+    Ok or Escape to close it.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setWindowTitle("About Edi")
+        self.setWindowModality(Qt.WindowModality.WindowModal)
+        self._drag_offset: QPoint | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 16)
+        layout.setSpacing(6)
+
+        pixmap = load_about_logo()
+        if pixmap is not None:
+            logo = QLabel()
+            logo.setPixmap(pixmap)
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(logo)
+
+        title = QLabel("Edi")
+        title_font = title.font()
+        title_font.setPointSize(18)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        version = QLabel(f"Version {__version__}")
+        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version)
+
+        description = QLabel(
+            "A fast markdown editor with live preview, Mermaid diagrams, "
+            "spreadsheet tables, executable code blocks, and more."
+        )
+        description.setWordWrap(True)
+        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(description)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.setMinimumWidth(360)
+        self.adjustSize()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -118,7 +233,7 @@ class MainWindow(QMainWindow):
 
         self._bridge = Bridge(self)
         self._web = QWebEngineView()
-        self._web.setPage(QWebEnginePage(self._web))
+        self._web.setPage(_AppPage(self._web))
         self._setup_web()
         self.setCentralWidget(self._web)
         self._build_menus()
@@ -223,49 +338,21 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         """Open the non-blocking About dialog: logo, version, description."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("About Edi")
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(28, 20, 28, 16)
-        layout.setSpacing(6)
-
-        pixmap = load_about_logo()
-        if pixmap is not None:
-            logo = QLabel()
-            logo.setPixmap(pixmap)
-            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(logo)
-
-        title = QLabel("Edi")
-        title_font = title.font()
-        title_font.setPointSize(18)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-
-        version = QLabel(f"Version {__version__}")
-        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(version)
-
-        description = QLabel(
-            "A fast markdown editor with live preview, Mermaid diagrams, "
-            "spreadsheet tables, executable code blocks, and more."
-        )
-        description.setWordWrap(True)
-        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(description)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        buttons.accepted.connect(dialog.accept)
-        layout.addWidget(buttons, alignment=Qt.AlignmentFlag.AlignCenter)
-
+        dialog = _AboutDialog(self)
         dialog.open()
 
     def _menu_command(self, command: str) -> None:
         self._web.page().runJavaScript(f"window.ediMenuCommand({json.dumps(command)})")
+
+    def open_external_url(self, url: str) -> None:
+        """Open ``url`` in the system default application (usually a browser).
+
+        ``xdg-open`` is used instead of ``QDesktopServices.openUrl`` so the
+        handler runs with a sanitized environment (see ``_xdg_open``), falling
+        back to the desktop service if the helper is unavailable.
+        """
+        if not _xdg_open(url):
+            QDesktopServices.openUrl(QUrl(url))
 
     def update_menu_state(self, can_revert: bool, preview_visible: bool, formatting_visible: bool) -> None:
         if self._revert_action is not None:

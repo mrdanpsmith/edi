@@ -4,6 +4,7 @@ import {
   activateSession,
   closeSession,
   createSession,
+  findSessionByPath,
   getActive,
   getState,
   isAnyDirty,
@@ -59,6 +60,16 @@ describe('state session store', () => {
     setActivePath('/tmp/a.md')
     setActiveDirty(true)
     expect(getState().sessions[0]).toMatchObject({ id, path: '/tmp/a.md', dirty: true })
+  })
+
+  it('finds an open session by path', () => {
+    createSession()
+    setActivePath('/tmp/a.md')
+    createSession()
+    setActivePath('/tmp/b.md')
+    expect(findSessionByPath('/tmp/b.md')?.id).toBe(getActive()?.id)
+    expect(findSessionByPath('/tmp/a.md')?.path).toBe('/tmp/a.md')
+    expect(findSessionByPath('/tmp/missing.md')).toBeUndefined()
   })
 
   it('reports dirty across sessions', () => {

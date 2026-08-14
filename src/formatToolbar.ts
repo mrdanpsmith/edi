@@ -99,11 +99,11 @@ const BUTTONS: ButtonSpec[] = [
     label: 'Numbered list',
     title: 'Numbered list',
     markup: icon(
-      '<text x="3" y="5" text-anchor="middle" font-size="6.5" font-family="var(--font-sans)" ' +
+      '<text x="3" y="4.5" text-anchor="middle" font-size="5.5" font-family="var(--font-sans)" ' +
         'stroke="none" fill="currentColor">1</text>' +
-        '<text x="3" y="9" text-anchor="middle" font-size="6.5" font-family="var(--font-sans)" ' +
+        '<text x="3" y="9" text-anchor="middle" font-size="5.5" font-family="var(--font-sans)" ' +
         'stroke="none" fill="currentColor">2</text>' +
-        '<text x="3" y="13" text-anchor="middle" font-size="6.5" font-family="var(--font-sans)" ' +
+        '<text x="3" y="13.5" text-anchor="middle" font-size="5.5" font-family="var(--font-sans)" ' +
         'stroke="none" fill="currentColor">3</text>' +
         BULLET_LINES,
     ),

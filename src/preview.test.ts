@@ -5,6 +5,7 @@ import {
   renderMarkdown,
   renderPreview,
   resolveImageSrc,
+  resolveLinkHref,
 } from './preview'
 
 describe('renderMarkdown', () => {
@@ -78,6 +79,45 @@ describe('resolveImageSrc', () => {
   it('keeps absolute image srcs in rendered output', () => {
     const html = renderMarkdown('![pic](/home/user/pic.png)', { docDir: '/home/user/docs' })
     expect(html).toContain('src="/home/user/pic.png"')
+  })
+})
+
+describe('resolveLinkHref', () => {
+  it('classifies fragment links', () => {
+    expect(resolveLinkHref('#section', '/docs')).toEqual({ kind: 'fragment' })
+  })
+
+  it('classifies scheme links as external', () => {
+    expect(resolveLinkHref('https://example.com', '/docs')).toEqual({
+      kind: 'external',
+      url: 'https://example.com',
+    })
+    expect(resolveLinkHref('mailto:a@b.c', undefined)).toEqual({ kind: 'external', url: 'mailto:a@b.c' })
+  })
+
+  it('resolves relative links against the doc dir', () => {
+    expect(resolveLinkHref('notes.md', '/home/user/docs')).toEqual({
+      kind: 'local',
+      path: '/home/user/docs/notes.md',
+    })
+  })
+
+  it('keeps absolute local paths untouched', () => {
+    expect(resolveLinkHref('/home/user/other.md', '/docs')).toEqual({
+      kind: 'local',
+      path: '/home/user/other.md',
+    })
+    expect(resolveLinkHref('/home/user/other.md', undefined)).toEqual({
+      kind: 'local',
+      path: '/home/user/other.md',
+    })
+  })
+
+  it('strips fragments from local link paths', () => {
+    expect(resolveLinkHref('notes.md#sec', '/docs')).toEqual({
+      kind: 'local',
+      path: '/docs/notes.md',
+    })
   })
 })
 

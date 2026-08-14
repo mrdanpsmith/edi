@@ -24,6 +24,7 @@ class StubWindow(QObject):
         self.can_revert = False
         self.preview_visible = True
         self.formatting_visible = True
+        self.opened_urls: list[str] = []
 
     def confirm(self, message, callback=None) -> None:
         self.confirm_messages.append(message)
@@ -64,6 +65,9 @@ class StubWindow(QObject):
 
     def close(self) -> None:
         self.closed = True
+
+    def open_external_url(self, url: str) -> None:
+        self.opened_urls.append(url)
 
 
 @pytest.fixture
@@ -230,6 +234,22 @@ def test_quit_closes_window(bridge):
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.closed is True
+
+
+def test_open_url_forwards_to_window(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "openUrl", {"url": "https://example.com/a"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert window.opened_urls == ["https://example.com/a"]
+
+
+def test_open_url_missing_url_errors(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "openUrl", {})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is False
+    assert "Missing url" in message["error"]
 
 
 def test_write_and_read_round_trip(bridge, tmp_path):

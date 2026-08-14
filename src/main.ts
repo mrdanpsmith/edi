@@ -26,9 +26,9 @@ import { parseTableFile, toMarkdownTable } from './import'
 import { SplitLayout } from './layout'
 import { bindMenuCommands } from './menus'
 import { renderPendingMermaid } from './mermaid'
-import { renderPreview } from './preview'
+import { renderPreview, resolveLinkHref, type LinkTarget } from './preview'
 import { computeSpreadsheet } from './spreadsheet'
-import { getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
+import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { Tabs } from './tabs'
 import { attachTableCopyControls, previewExportBody } from './tablecopy'
 
@@ -99,8 +99,6 @@ const workspace = document.querySelector<HTMLElement>('#workspace')!
 const previewPane = document.querySelector<HTMLElement>('#preview-pane')!
 const divider = document.querySelector<HTMLElement>('#divider')!
 const formatBar = document.querySelector<HTMLElement>('#formatbar')!
-const docTitle = document.querySelector<HTMLElement>('#doc-title')!
-const dirtyIndicator = document.querySelector<HTMLElement>('#dirty-indicator')!
 const statusLeft = document.querySelector<HTMLElement>('#status-left')!
 const statusRight = document.querySelector<HTMLElement>('#status-right')!
 const tabbar = document.querySelector<HTMLElement>('#tabbar')!
@@ -126,9 +124,6 @@ const tabs = new Tabs(tabbar, editor.view, {
 function updateTitle(): void {
   const active = getActive()
   const name = active?.path ? active.path.split('/').pop()! : UNTITLED
-  docTitle.textContent = name
-  docTitle.title = active?.path ?? ''
-  dirtyIndicator.hidden = !active?.dirty
   document.title = `${active?.dirty ? '* ' : ''}${name} — Edi`
 }
 
@@ -242,6 +237,16 @@ async function openFile(): Promise<void> {
   if (!path) {
     return
   }
+  await openDocument(path)
+}
+
+async function openDocument(path: string): Promise<void> {
+  const existing = findSessionByPath(path)
+  if (existing) {
+    tabs.activate(existing.id)
+    afterActivate()
+    return
+  }
   try {
     const content = await readTextFile(path)
     tabs.addSession(content)
@@ -250,6 +255,49 @@ async function openFile(): Promise<void> {
   } catch (error) {
     reportError(`Failed to open ${path}`, error)
   }
+}
+
+function openLink(target: LinkTarget): void {
+  if (target.kind === 'fragment') {
+    return
+  }
+  if (target.kind === 'external') {
+    void openExternalUrl(target.url)
+    return
+  }
+  if (isSupportedFile(target.path)) {
+    void openDocument(target.path)
+    return
+  }
+  void openExternalUrl(`file://${target.path}`)
+}
+
+function openExternalUrl(url: string): void {
+  if (hasBridge()) {
+    void invoke('openUrl', { url }).catch(() => undefined)
+    return
+  }
+  window.open(url, '_blank', 'noopener')
+}
+
+function bindPreviewLinks(): void {
+  previewContainer.addEventListener('click', (event) => {
+    const anchor = (event.target as Element | null)?.closest?.('a[href]')
+    if (!anchor) {
+      return
+    }
+    const href = anchor.getAttribute('href')
+    if (!href) {
+      return
+    }
+    const active = getActive()
+    const target = resolveLinkHref(href, active?.path ? dirname(active.path) : undefined)
+    if (target.kind === 'fragment') {
+      return
+    }
+    event.preventDefault()
+    openLink(target)
+  })
 }
 
 async function saveFile(): Promise<void> {
@@ -411,6 +459,7 @@ function init(): void {
   editor.setValue(WELCOME_DOCUMENT)
   tabs.snapshotActive()
   registerShortcuts()
+  bindPreviewLinks()
   bindMenuCommands({
     new: () => openNewTab(),
     open: () => void openFile(),
