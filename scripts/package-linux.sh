@@ -217,7 +217,10 @@ if [ ! -x "$TOOL" ]; then
 fi
 (
   cd "$STAGE"
-  APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$RPM_ARCH" VERSION="$VER" "$TOOL" "$APPDIR"
+  # zstd level 15 (mksquashfs default) is slow on the ~180 MB payload; level 1
+  # is a few percent larger but several times faster to pack.
+  APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$RPM_ARCH" VERSION="$VER" "$TOOL" \
+    --mksquashfs-opt -Xcompression-level --mksquashfs-opt 1 "$APPDIR"
 ) >/dev/null
 APPIMAGE_FILE=$(find "$STAGE" -maxdepth 1 -name "*.AppImage" | head -1)
 if [ -z "$APPIMAGE_FILE" ]; then

@@ -7,6 +7,7 @@ dist-app/
 coverage/
 .cache/
 build/
+.npm/
 
 # Python
 __pycache__/

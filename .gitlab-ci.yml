@@ -1,8 +1,21 @@
 # GitLab CI for Edi
 #
-# The runtime image is Ubuntu 22.04 (glibc 2.35) so the packaged binary runs on
-# older desktop Linux systems. Python 3.10 comes from apt; Node 22 is fetched
-# as a static tarball.
+# All jobs run in a pre-built builder image (`edi-builder:jammy`) pushed to the
+# project's container registry by the `build-image` job: Ubuntu 22.04 (glibc
+# 2.35) with the Qt runtime libs, Node 22, and a venv at /opt/edi/venv holding
+# PySide6==6.11.1, pyinstaller==6.22.0, pytest, pytest-qt. Building that image
+# is the single expensive setup step; it is cached in the registry (buildx
+# cache) and only rebuilt when Dockerfile.ci / requirements.txt change.
+#
+# Jobs link the baked venv into the checkout (`ln -s /opt/edi/venv .venv`)
+# because scripts/package-linux.sh hardcodes $ROOT/.venv. The venv is a
+# read-only image layer — never pip-install into it at job time; bake changes
+# into the image instead.
+#
+# The runtime binary is built inside the SAME glibc 2.35 base (Dockerfile.pyzip)
+# so the packaged binary runs on older desktop Linux. glibc compatibility is
+# guaranteed by construction: the `build` job's environment is the same
+# ubuntu:22.04 as Dockerfile.pyzip.
 #
 # The `release` job authenticates glab via CI auto-login: it uses the built-in
 # CI_JOB_TOKEN (JOB-TOKEN header) because a GITLAB_TOKEN personal access token
@@ -13,6 +26,7 @@
 # enabled (Settings > CI/CD > Token access; enabled by default on new projects).
 
 stages:
+  - prepare
   - check
   - test
   - build
@@ -20,12 +34,10 @@ stages:
   - release
 
 variables:
-  PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
   # Cache npm's registry cache (project-local) instead of node_modules/: npm ci
   # deletes node_modules anyway, and the npm cache makes the reinstall offline.
+  # There is no pip cache anymore — the venv is baked into the builder image.
   NPM_CONFIG_CACHE: $CI_PROJECT_DIR/.npm
-  NODE_MAJOR: "22"
-  NODE_VERSION: "22.22.1"
   GLAB_VERSION: "v1.113.0"
   QT_QPA_PLATFORM: "offscreen"
   QTWEBENGINE_DISABLE_SANDBOX: "1"
@@ -35,51 +47,58 @@ variables:
   QTWEBENGINE_CHROMIUM_FLAGS: "--disable-dev-shm-usage --disable-gpu"
   PYTHONUNBUFFERED: "1"
 
-# Only package-manager caches (npm + pip) are kept: node_modules/ and .venv/
-# are rebuilt deterministically from those caches each job. Caching them too
-# would exceed GitLab's per-project cache size limit (~1 GB on shared runners)
-# and force a full miss + re-install on every pipeline.
 cache:
   key:
     files:
       - package-lock.json
-      - requirements.txt
   paths:
     - .npm/
-    - .cache/pip/
 
 default:
-  image: ubuntu:22.04
+  # Populated by build-image (prepare stage). `needs: {job: build-image,
+  # optional: true}` lets pipelines skip the build when nothing changed; the
+  # registry copy persists between pipelines. NOTE: fork/MR pipelines that run
+  # before the image exists in the fork's registry will fail to pull it.
+  image: $CI_REGISTRY_IMAGE/edi-builder:jammy
 
-.setup_node: &setup_node
-  # Enough for typecheck/lint/unit tests (vitest runs in jsdom, no Qt needed).
-  - apt-get update && apt-get install -y --no-install-recommends
-    curl xz-utils ca-certificates git
-  - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
-  - npm ci --no-audit --no-fund
+# Link the baked venv into the checkout; used by every Qt/PySide6 job.
+.setup_venv: &setup_venv
+  - ln -s /opt/edi/venv .venv
 
-.setup_full: &setup_full
-  # Full stack for the Qt/PySide6 jobs (backend tests, PyInstaller, packaging).
-  - apt-get update && apt-get install -y --no-install-recommends
-    curl xz-utils ca-certificates git
-    python3 python3-venv libpython3.10 binutils
-    libegl1 libgl1 libglib2.0-0 libdbus-1-3 libfontconfig1
-    libxkbcommon0 libnss3 libnspr4 libxcomposite1 libxdamage1 libxrandr2
-    libgbm1 libasound2 libxcb-cursor0 libxkbcommon-x11-0 libxcb-xkb1
-    libxcb-icccm4 libxcb-shape0 libxcb-keysyms1 libxcb-xinerama0
-    libxcb-render-util0 libxkbfile1 libxtst6 libxfixes3 libkrb5-3
-    libgssapi-krb5-2 fonts-dejavu-core
-    libpcsclite1 libpulse0 libwayland-cursor0 libwayland-egl1
-    libwayland-server0
-    libgl1-mesa-dri libegl-mesa0 libglx-mesa0
-  - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
-  - python3 -m venv .venv
-  - .venv/bin/pip install -r requirements.txt
-  - npm ci --no-audit --no-fund
+# Builds and pushes the shared builder image so downstream jobs skip apt/Node/
+# venv setup. Runs on the default branch when the image definition changes;
+# the registry buildx cache keeps rebuilds fast. To force a rebuild, touch
+# Dockerfile.ci or requirements.txt. (No `when: manual` fallback: a paused
+# manual job would block every `needs` dependent via the DAG.)
+build-image:
+  stage: prepare
+  image: docker:27-dind
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - Dockerfile.ci
+        - requirements.txt
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker buildx build --push --progress=plain
+      -t "$CI_REGISTRY_IMAGE/edi-builder:jammy"
+      --cache-from "type=registry,ref=$CI_REGISTRY_IMAGE/edi-builder:cache"
+      --cache-to "type=registry,ref=$CI_REGISTRY_IMAGE/edi-builder:cache,mode=max"
+      .
 
 check:
   stage: check
-  before_script: *setup_node
+  needs:
+    - job: build-image
+      optional: true
+  before_script:
+    - npm ci --no-audit --no-fund
   # Unit tests are skipped here; the `test` job runs them with coverage.
   script:
     - npm run typecheck
@@ -87,7 +106,13 @@ check:
 
 test:
   stage: test
-  before_script: *setup_full
+  needs:
+    - check
+    - job: build-image
+      optional: true
+  before_script:
+    - *setup_venv
+    - npm ci --no-audit --no-fund
   script:
     - npm run coverage
     - npm run build
@@ -101,10 +126,18 @@ test:
         path: coverage/cobertura-coverage.xml
 
 # The PyInstaller build only matters for releases and the default branch; do
-# not spend ~5 min of runner time bundling on every branch/MR push.
+# not spend ~3 min of runner time bundling on every branch/MR push.
 build:
   stage: build
-  before_script: *setup_full
+  # build depends only on check passing (npm run build typechecks too) — running
+  # it in parallel with `test` cuts ~1.5 min off the tag-pipeline critical path.
+  needs:
+    - check
+    - job: build-image
+      optional: true
+  before_script:
+    - *setup_venv
+    - npm ci --no-audit --no-fund
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -115,7 +148,6 @@ build:
     expire_in: 30 days
   script:
     - npm run build
-    - .venv/bin/pip install --no-cache-dir "pyinstaller==6.22.0"
     # PKG archive at zlib level 6 (default is 9): ~2x faster pack step for a
     # negligible size difference, and the release packages compress again anyway.
     - PYINSTALLER_ZLIB_COMPRESSION_LEVEL=6 .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
@@ -130,9 +162,12 @@ build:
 # the release version from the tag (e.g. v0.2.4 -> edi_0.2.4_amd64.deb).
 package:
   stage: package
-  before_script: *setup_full
+  before_script:
+    - *setup_venv
   needs:
     - build
+    - job: build-image
+      optional: true
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
   artifacts:
@@ -143,19 +178,16 @@ package:
       - dist-app/Edi-*.AppImage
     expire_in: never
   script:
-    # rpmbuild for the .rpm; `file` is required by appimagetool and by rpm's
-    # post-build brp scripts (it is not installed by default on the runner).
-    - apt-get install -y --no-install-recommends rpm file
     - ./scripts/package-linux.sh dist-app/edi "${CI_COMMIT_TAG#v}"
 
 release:
   stage: release
-  # Only needs node (version.sh) + git for the changelog; no Qt stack, venv,
-  # or npm install. Runs rarely (tag pushes), so keep the setup minimal.
-  before_script:
-    - apt-get update && apt-get install -y --no-install-recommends
-      curl xz-utils ca-certificates git
-    - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
+  # Only needs bash (version.sh) + git for the changelog + curl for glab — all
+  # in the builder image. Runs rarely (tag pushes), so keep it light.
+  needs:
+    - package
+    - job: build-image
+      optional: true
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
   artifacts:
