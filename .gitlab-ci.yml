@@ -27,7 +27,6 @@
 
 stages:
   - prepare
-  - check
   - test
   - build
   - package
@@ -67,11 +66,12 @@ default:
 
 # Builds and pushes the shared builder image so downstream jobs skip apt/Node/
 # venv setup. Runs on the default branch when the image definition OR the CI
-# config itself changes (the job lives in .gitlab-ci.yml), and on every tag
-# pipeline (so a release self-bootstraps the image if it is missing); the
-# registry buildx cache keeps rebuilds fast. To force a rebuild, touch
-# Dockerfile.ci or requirements.txt. (No `when: manual` fallback: a
-# paused manual job would block every `needs` dependent via the DAG.)
+# config itself changes (the job lives in .gitlab-ci.yml); the registry buildx
+# cache keeps rebuilds fast. To force a rebuild, touch Dockerfile.ci or
+# requirements.txt. It does NOT run on tag pipelines: main rebuilds the image
+# whenever its definition changes, so a release tag (cut after main passes)
+# always finds it. (No `when: manual` fallback: a paused manual job would
+# block every `needs` dependent via the DAG.)
 build-image:
   stage: prepare
   image: docker:27-dind
@@ -87,7 +87,6 @@ build-image:
         - Dockerfile.ci
         - requirements.txt
         - .gitlab-ci.yml
-    - if: '$CI_COMMIT_TAG'
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
     # The default "docker" buildx driver cannot export a registry cache
@@ -105,28 +104,20 @@ build-image:
       --cache-to "type=registry,ref=$CI_REGISTRY_IMAGE/edi-builder:cache,mode=max"
       .
 
-check:
-  stage: check
-  needs:
-    - job: build-image
-      optional: true
-  before_script:
-    - npm ci --no-audit --no-fund
-  # Unit tests are skipped here; the `test` job runs them with coverage.
-  script:
-    - npm run typecheck
-    - npm run lint
-
 test:
   stage: test
   needs:
-    - check
     - job: build-image
       optional: true
   before_script:
     - *setup_venv
     - npm ci --no-audit --no-fund
+  # The whole quality gate lives here: lint + typecheck before the unit tests
+  # (coverage) and backend pytest, so branch/MR pipelines get full feedback
+  # from a single job.
   script:
+    - npm run lint
+    - npm run typecheck
     - npm run coverage
     - npm run build
     - .venv/bin/pytest tests/
@@ -138,14 +129,14 @@ test:
         coverage_format: cobertura
         path: coverage/cobertura-coverage.xml
 
-# The PyInstaller build only matters for releases and the default branch; do
-# not spend ~3 min of runner time bundling on every branch/MR push.
+# The PyInstaller binary only matters for releases; bundle it on v* tags only,
+# not on the default branch or MR pushes.
 build:
   stage: build
-  # build depends only on check passing (npm run build typechecks too) — running
-  # it in parallel with `test` cuts ~1.5 min off the tag-pipeline critical path.
+  # build is deliberately decoupled from `test` (parallel, both waiting only on
+  # build-image): npm run build typechecks, and npm run lint keeps the release
+  # gated on style. Runs in parallel with `test` on the tag pipeline.
   needs:
-    - check
     - job: build-image
       optional: true
   before_script:
@@ -153,17 +144,18 @@ build:
     - npm ci --no-audit --no-fund
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   artifacts:
     name: edi-$CI_COMMIT_TAG
     paths:
       - dist-app/edi
     expire_in: 30 days
   script:
+    - npm run lint
     - npm run build
-    # PKG archive at zlib level 6 (default is 9): ~2x faster pack step for a
-    # negligible size difference, and the release packages compress again anyway.
-    - PYINSTALLER_ZLIB_COMPRESSION_LEVEL=6 .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
+    # PKG archive at zlib level 1 (default is 9, level 6 was ~2x): ~3x faster
+    # pack step; the binary grows ~18 MiB but every release wrapper (.deb/.rpm/
+    # .tar.gz/.AppImage) recompresses it anyway.
+    - PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1 .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
     # EDI_SELFTEST=1 makes the binary print "SELFTEST {...}" (or
     # "SELFTEST_TIMEOUT" after 25s) and exit 0/1 accordingly; rely on the exit
     # code, not grep, so a timeout line can't be mistaken for success. The

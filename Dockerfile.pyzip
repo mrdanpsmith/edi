@@ -82,7 +82,7 @@ COPY edi.spec .
 COPY scripts/assets/ scripts/assets/
 COPY assets/ assets/
 
-RUN PYINSTALLER_ZLIB_COMPRESSION_LEVEL=6 .venv/bin/pyinstaller --clean \
+RUN PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1 .venv/bin/pyinstaller --clean \
     --distpath dist-app \
     --workpath build \
     edi.spec
