@@ -2,11 +2,14 @@
 #
 # PyInstaller spec for the portable onefile Edi build (see Dockerfile.pyzip).
 #
-# libstdc++.so.6 is intentionally NOT bundled: the copy from the Ubuntu 22.04
-# builder is older than the one on newer desktops, and bundling it makes host
-# GPU/driver libraries (libLLVM, radeonsi, mesa EGL) fail to load with
-# "GLIBCXX_x.y.z not found" during dlopen. The host's libstdc++ is always >=
-# the 22.04 one, so relying on it is safe for glibc 2.35+ systems.
+# libstdc++.so.6 and libgbm.so.1 are intentionally NOT bundled: the copies from
+# the Ubuntu 22.04 builder are older than the ones on newer desktops, and
+# bundling them makes host Mesa/LLVM fail during dlopen -- libstdc++ with
+# "GLIBCXX_x.y.z not found", and libgbm (Mesa's buffer manager) with
+# "did not find extension DRI_Mesa version 1" / "EGL: Failed to initialize GBM
+# device" in QtWebEngine's GPU process. The host always ships its own
+# libstdc++/libgbm (glibc 2.35+ systems, plus the libgbm1 package dependency),
+# so relying on them is safe.
 
 a = Analysis(
     ['run_edi.py'],
@@ -26,7 +29,8 @@ a = Analysis(
     noarchive=False,
 )
 
-a.binaries = [b for b in a.binaries if b[0] != 'libstdc++.so.6']
+GL_HOST_DEPS = {'libstdc++.so.6', 'libgbm.so.1'}
+a.binaries = [b for b in a.binaries if b[0] not in GL_HOST_DEPS]
 
 pyz = PYZ(a.pure)
 

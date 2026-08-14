@@ -20,7 +20,7 @@ Edi is a markdown editor. Frontend: CodeMirror 6 + Mermaid + spreadsheet formula
 ## Distribution (hard-won constraints — do not break)
 
 - The shipped binary MUST be built on **Ubuntu 22.04 (glibc 2.35)** so it runs on older desktop Linux. `scripts/build-pyzip.sh` pins everything inside Docker for this; host-built binaries are not portable and must not be shipped.
-- **`libstdc++.so.6` must never be bundled** (`edi.spec` filters it out). Bundling the 22.04 copy crashes on newer host Mesa/LLVM drivers with `GLIBCXX_3.4.32 not found`.
+- **`libstdc++.so.6` and `libgbm.so.1` must never be bundled** (`edi.spec` `GL_HOST_DEPS` filters them out). Bundling the 22.04 copies breaks host Mesa/LLVM loading: libstdc++ crashes with `GLIBCXX_3.4.32 not found`, and libgbm (Mesa's buffer manager) makes QtWebEngine's GPU process print `did not find extension DRI_Mesa version 1` / `EGL: Failed to initialize GBM device` and fall back to software rendering on any host whose Mesa is newer than 22.04's.
 - The app icon (`scripts/assets/app-icon.png`) is generated from `scripts/generate-icon.mjs` and bundled via `edi.spec` `datas`. `backend/window.py` `load_app_icon()` guards `sys._MEIPASS` (built binary vs. source run) — keep that guard. The about-dialog logo (`assets/edi-logo.png`) is bundled the same way (`_find_logo()` falls back to the app icon).
 - `PySide6==6.11.1` and other pins live in `requirements.txt`; keep PySide6 pinned (Qt releases break the WebEngine hooks).
 
