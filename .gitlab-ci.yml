@@ -21,6 +21,9 @@ stages:
 
 variables:
   PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  # Cache npm's registry cache (project-local) instead of node_modules/: npm ci
+  # deletes node_modules anyway, and the npm cache makes the reinstall offline.
+  NPM_CONFIG_CACHE: $CI_PROJECT_DIR/.npm
   NODE_MAJOR: "22"
   NODE_VERSION: "22.22.1"
   GLAB_VERSION: "v1.113.0"
@@ -32,43 +35,59 @@ variables:
   QTWEBENGINE_CHROMIUM_FLAGS: "--disable-dev-shm-usage --disable-gpu"
   PYTHONUNBUFFERED: "1"
 
+# Only package-manager caches (npm + pip) are kept: node_modules/ and .venv/
+# are rebuilt deterministically from those caches each job. Caching them too
+# would exceed GitLab's per-project cache size limit (~1 GB on shared runners)
+# and force a full miss + re-install on every pipeline.
 cache:
   key:
     files:
       - package-lock.json
       - requirements.txt
   paths:
-    - node_modules/
-    - .venv/
+    - .npm/
     - .cache/pip/
 
 default:
   image: ubuntu:22.04
-  before_script:
-    - apt-get update && apt-get install -y --no-install-recommends
-      curl xz-utils ca-certificates git
-      python3 python3-venv libpython3.10 binutils
-      libegl1 libgl1 libglib2.0-0 libdbus-1-3 libfontconfig1
-      libxkbcommon0 libnss3 libnspr4 libxcomposite1 libxdamage1 libxrandr2
-      libgbm1 libasound2 libxcb-cursor0 libxkbcommon-x11-0 libxcb-xkb1
-      libxcb-icccm4 libxcb-shape0 libxcb-keysyms1 libxcb-xinerama0
-      libxcb-render-util0 libxkbfile1 libxtst6 libxfixes3 libkrb5-3
-      libgssapi-krb5-2 fonts-dejavu-core
-      libpcsclite1 libpulse0 libwayland-cursor0 libwayland-egl1
-      libwayland-server0
-      libgl1-mesa-dri libegl-mesa0 libglx-mesa0
-    - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
-    - python3 -m venv .venv
-    - .venv/bin/pip install -r requirements.txt
-    - npm ci --no-audit --no-fund
+
+.setup_node: &setup_node
+  # Enough for typecheck/lint/unit tests (vitest runs in jsdom, no Qt needed).
+  - apt-get update && apt-get install -y --no-install-recommends
+    curl xz-utils ca-certificates git
+  - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
+  - npm ci --no-audit --no-fund
+
+.setup_full: &setup_full
+  # Full stack for the Qt/PySide6 jobs (backend tests, PyInstaller, packaging).
+  - apt-get update && apt-get install -y --no-install-recommends
+    curl xz-utils ca-certificates git
+    python3 python3-venv libpython3.10 binutils
+    libegl1 libgl1 libglib2.0-0 libdbus-1-3 libfontconfig1
+    libxkbcommon0 libnss3 libnspr4 libxcomposite1 libxdamage1 libxrandr2
+    libgbm1 libasound2 libxcb-cursor0 libxkbcommon-x11-0 libxcb-xkb1
+    libxcb-icccm4 libxcb-shape0 libxcb-keysyms1 libxcb-xinerama0
+    libxcb-render-util0 libxkbfile1 libxtst6 libxfixes3 libkrb5-3
+    libgssapi-krb5-2 fonts-dejavu-core
+    libpcsclite1 libpulse0 libwayland-cursor0 libwayland-egl1
+    libwayland-server0
+    libgl1-mesa-dri libegl-mesa0 libglx-mesa0
+  - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
+  - python3 -m venv .venv
+  - .venv/bin/pip install -r requirements.txt
+  - npm ci --no-audit --no-fund
 
 check:
   stage: check
+  before_script: *setup_node
+  # Unit tests are skipped here; the `test` job runs them with coverage.
   script:
-    - npm run check
+    - npm run typecheck
+    - npm run lint
 
 test:
   stage: test
+  before_script: *setup_full
   script:
     - npm run coverage
     - npm run build
@@ -81,8 +100,14 @@ test:
         coverage_format: cobertura
         path: coverage/cobertura-coverage.xml
 
+# The PyInstaller build only matters for releases and the default branch; do
+# not spend ~5 min of runner time bundling on every branch/MR push.
 build:
   stage: build
+  before_script: *setup_full
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   artifacts:
     name: edi-$CI_COMMIT_TAG
     paths:
@@ -91,7 +116,9 @@ build:
   script:
     - npm run build
     - .venv/bin/pip install --no-cache-dir "pyinstaller==6.22.0"
-    - .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
+    # PKG archive at zlib level 6 (default is 9): ~2x faster pack step for a
+    # negligible size difference, and the release packages compress again anyway.
+    - PYINSTALLER_ZLIB_COMPRESSION_LEVEL=6 .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
     # EDI_SELFTEST=1 makes the binary print "SELFTEST {...}" (or
     # "SELFTEST_TIMEOUT" after 25s) and exit 0/1 accordingly; rely on the exit
     # code, not grep, so a timeout line can't be mistaken for success. The
@@ -103,6 +130,7 @@ build:
 # the release version from the tag (e.g. v0.2.4 -> edi_0.2.4_amd64.deb).
 package:
   stage: package
+  before_script: *setup_full
   needs:
     - build
   rules:
@@ -122,6 +150,12 @@ package:
 
 release:
   stage: release
+  # Only needs node (version.sh) + git for the changelog; no Qt stack, venv,
+  # or npm install. Runs rarely (tag pushes), so keep the setup minimal.
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends
+      curl xz-utils ca-certificates git
+    - curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
   artifacts:
