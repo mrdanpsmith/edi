@@ -249,12 +249,13 @@ body.resizing {
 #workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 5px minmax(0, 1fr);
+  grid-template-areas: 'editor divider preview';
   flex: 1;
   min-height: 0;
 }
 
-#editor-pane,
-#preview-pane {
+#editor-pane {
+  grid-area: editor;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -262,15 +263,25 @@ body.resizing {
 }
 
 #preview-pane {
+  grid-area: preview;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--preview-bg);
 }
 
 #divider {
+  grid-area: divider;
   flex: none;
   width: 5px;
   cursor: col-resize;
   background: transparent;
   transition: background 120ms;
+}
+
+#workspace.editor-hidden #formatbar {
+  display: none;
 }
 
 #divider:hover,

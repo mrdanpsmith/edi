@@ -117,6 +117,10 @@ function previewPane(): HTMLElement {
   return document.querySelector<HTMLElement>('#preview-pane')!
 }
 
+function editorPane(): HTMLElement {
+  return document.querySelector<HTMLElement>('#editor-pane')!
+}
+
 function statusLeft(): HTMLElement {
   return document.querySelector<HTMLElement>('#status-left')!
 }
@@ -300,7 +304,7 @@ describe('tabs', () => {
 
 describe('open and save', () => {
   it('opens a file', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -313,7 +317,7 @@ describe('open and save', () => {
   })
 
   it('focuses an already-open file instead of reopening it', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -335,8 +339,23 @@ describe('open and save', () => {
     expect(mainState.readTextFile).not.toHaveBeenCalled()
   })
 
+  it('opens every file selected in one dialog', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/a.md', '/tmp/b.md'])
+    mainState.readTextFile
+      .mockResolvedValueOnce('content a')
+      .mockResolvedValueOnce('content b')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(3)
+    expect(mainState.readTextFile).toHaveBeenNthCalledWith(1, '/tmp/a.md')
+    expect(mainState.readTextFile).toHaveBeenNthCalledWith(2, '/tmp/b.md')
+    expect(docText()).toBe('content b')
+  })
+
   it('reports a failed open', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/bad.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/bad.md'])
     mainState.readTextFile.mockRejectedValue(new Error('no such file'))
     await loadMain()
     menu('open')
@@ -347,7 +366,7 @@ describe('open and save', () => {
   })
 
   it('saves the active document', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -388,7 +407,7 @@ describe('open and save', () => {
   })
 
   it('saves under a new name', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -423,7 +442,7 @@ describe('open and save', () => {
 
 describe('revert', () => {
   it('reverts a dirty document after confirming', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -437,7 +456,7 @@ describe('revert', () => {
   })
 
   it('does not revert when the user cancels', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -457,7 +476,7 @@ describe('revert', () => {
   })
 
   it('reverts a clean document without asking', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -472,7 +491,7 @@ describe('revert', () => {
   })
 
   it('reports a failed revert', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/notes.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
     mainState.readTextFile.mockResolvedValue('hello file')
     await loadMain()
     menu('open')
@@ -532,6 +551,19 @@ describe('view toggles', () => {
     )
     menu('togglePreview')
     expect(previewPane().hidden).toBe(false)
+  })
+
+  it('toggles the editor', async () => {
+    await loadMain()
+    expect(editorPane().hidden).toBe(false)
+    menu('toggleEditor')
+    expect(editorPane().hidden).toBe(true)
+    expect(mainState.invoke).toHaveBeenCalledWith(
+      'setMenuState',
+      expect.objectContaining({ editorVisible: false }),
+    )
+    menu('toggleEditor')
+    expect(editorPane().hidden).toBe(false)
   })
 
   it('toggles the formatting toolbar', async () => {
@@ -648,7 +680,7 @@ describe('links', () => {
   })
 
   it('opens local markdown links as documents', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/docs/a.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/docs/a.md'])
     mainState.readTextFile.mockResolvedValue('doc a')
     await loadMain()
     menu('open')
@@ -666,7 +698,7 @@ describe('links', () => {
   })
 
   it('opens non-markdown local links as file URLs', async () => {
-    mainState.pickOpenPath.mockResolvedValue('/tmp/docs/a.md')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/docs/a.md'])
     mainState.readTextFile.mockResolvedValue('doc a')
     await loadMain()
     menu('open')

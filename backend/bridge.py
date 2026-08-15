@@ -74,7 +74,7 @@ class Bridge(QObject):
         self._window.confirm(message, lambda accepted: self._reply(request_id, accepted))
 
     def _pick_open_path(self, request_id: int, _args: dict) -> None:
-        self._window.pick_open_path(lambda path: self._reply(request_id, path or None))
+        self._window.pick_open_path(lambda paths: self._reply(request_id, paths or None))
 
     def _pick_save_path(self, request_id: int, args: dict) -> None:
         self._window.pick_save_path(
@@ -199,6 +199,7 @@ class Bridge(QObject):
             can_revert=bool(args.get("canRevert")),
             preview_visible=bool(args.get("previewVisible")),
             formatting_visible=bool(args.get("formattingVisible")),
+            editor_visible=bool(args.get("editorVisible")),
         )
         self._reply(request_id, None)
 

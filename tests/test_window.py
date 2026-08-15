@@ -10,10 +10,18 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPointF, QUrl, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QUrl, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWebEngineCore import QWebEnginePage
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QLabel, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QFileSystemModel,
+    QLabel,
+    QListView,
+    QMessageBox,
+)
 
 import backend.window as window_module
 from backend.window import DIST_DIR, MainWindow, __version__
@@ -225,6 +233,48 @@ def test_pick_open_path_cancel_returns_none(visible, qtbot):
     assert result["value"] == "null"
 
 
+def test_pick_open_path_returns_multiple_files(visible, qtbot, tmp_path):
+    window = visible
+    first = tmp_path / "one.md"
+    second = tmp_path / "two.md"
+    first.write_text("one", encoding="utf-8")
+    second.write_text("two", encoding="utf-8")
+    result = {}
+
+    window.pick_open_path(lambda paths: result.__setitem__("paths", paths))
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    dialog = QApplication.activeModalWidget()
+    try:
+        dialog.setDirectory(str(tmp_path))
+        qtbot.waitUntil(lambda: dialog.findChild(QListView) is not None, timeout=3000)
+        view = next(v for v in dialog.findChildren(QListView) if isinstance(v.model(), QFileSystemModel))
+        model = view.model()
+
+        def index_of(name):
+            root = view.rootIndex()
+            for row in range(model.rowCount(root)):
+                index = model.index(row, 0, root)
+                if model.fileName(index) == name:
+                    return index
+            return None
+
+        qtbot.waitUntil(
+            lambda: index_of("one.md") is not None and index_of("two.md") is not None,
+            timeout=3000,
+        )
+        flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+        view.selectionModel().select(index_of("one.md"), flags)
+        view.selectionModel().select(index_of("two.md"), flags)
+        dialog.accept()
+    finally:
+        if QApplication.activeModalWidget() is dialog:
+            dialog.reject()
+    qtbot.waitUntil(lambda: "paths" in result, timeout=3000)
+    assert result["paths"] == [str(first), str(second)]
+
+
 def test_pick_import_path_cancel_returns_none(visible, qtbot):
     window = visible
     result = {}
@@ -337,16 +387,23 @@ def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
     assert window._revert_action.isEnabled() is False
     assert window._preview_action.isChecked() is True
+    assert window._editor_action.isChecked() is True
     assert window._formatting_action.isChecked() is True
 
-    window.update_menu_state(can_revert=True, preview_visible=False, formatting_visible=False)
+    window.update_menu_state(
+        can_revert=True, preview_visible=False, formatting_visible=False, editor_visible=False
+    )
     assert window._revert_action.isEnabled() is True
     assert window._preview_action.isChecked() is False
+    assert window._editor_action.isChecked() is False
     assert window._formatting_action.isChecked() is False
 
-    window.update_menu_state(can_revert=False, preview_visible=True, formatting_visible=True)
+    window.update_menu_state(
+        can_revert=False, preview_visible=True, formatting_visible=True, editor_visible=True
+    )
     assert window._revert_action.isEnabled() is False
     assert window._preview_action.isChecked() is True
+    assert window._editor_action.isChecked() is True
     assert window._formatting_action.isChecked() is True
 
 
@@ -427,6 +484,33 @@ def test_view_menu_formatting_action_invokes_js_command(visible, qtbot):
 
     qtbot.waitUntil(fetched, timeout=3000)
     assert result["value"] == "toggleFormatting"
+
+
+def test_view_menu_editor_action_invokes_js_command(visible, qtbot):
+    window = visible
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__menuCmd = null;"
+        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
+        "true",
+        lambda _v: None,
+    )
+
+    view_menu = window._view_menu
+    editor_action = next(
+        action for action in view_menu.actions() if action.text() == "&Editor"
+    )
+    editor_action.trigger()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "window.__menuCmd", lambda v: result.__setitem__("value", v)
+        )
+        return result.get("value") is not None
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "toggleEditor"
 
 
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):

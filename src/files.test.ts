@@ -54,9 +54,9 @@ describe('bridge wrappers', () => {
     expect(invoke).toHaveBeenCalledWith('pickOpenPath', {})
   })
 
-  it('pickOpenPath resolves to a chosen path', async () => {
-    vi.mocked(invoke).mockResolvedValue('/tmp/notes.md')
-    await expect(pickOpenPath()).resolves.toBe('/tmp/notes.md')
+  it('pickOpenPath resolves to the chosen paths', async () => {
+    vi.mocked(invoke).mockResolvedValue(['/tmp/a.md', '/tmp/b.md'])
+    await expect(pickOpenPath()).resolves.toEqual(['/tmp/a.md', '/tmp/b.md'])
   })
 
   it('pickSavePath passes the default name', async () => {

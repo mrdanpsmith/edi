@@ -53,8 +53,8 @@ export async function writeTextFile(path: string, content: string): Promise<void
   await invoke('writeTextFile', { path, content })
 }
 
-export async function pickOpenPath(): Promise<string | null> {
-  return invoke<string | null>('pickOpenPath', {})
+export async function pickOpenPath(): Promise<string[] | null> {
+  return invoke<string[] | null>('pickOpenPath', {})
 }
 
 export async function pickSavePath(defaultName: string): Promise<string | null> {

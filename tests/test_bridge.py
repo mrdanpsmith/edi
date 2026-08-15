@@ -24,6 +24,7 @@ class StubWindow(QObject):
         self.can_revert = False
         self.preview_visible = True
         self.formatting_visible = True
+        self.editor_visible = True
         self.opened_urls: list[str] = []
 
     def confirm(self, message, callback=None) -> None:
@@ -34,10 +35,13 @@ class StubWindow(QObject):
     def set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
 
-    def update_menu_state(self, can_revert=False, preview_visible=True, formatting_visible=True) -> None:
+    def update_menu_state(
+        self, can_revert=False, preview_visible=True, formatting_visible=True, editor_visible=True
+    ) -> None:
         self.can_revert = can_revert
         self.preview_visible = preview_visible
         self.formatting_visible = formatting_visible
+        self.editor_visible = editor_visible
 
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
@@ -128,13 +132,19 @@ def test_set_menu_state(bridge):
     _invoke(
         bridge_obj,
         "setMenuState",
-        {"canRevert": True, "previewVisible": False, "formattingVisible": False},
+        {
+            "canRevert": True,
+            "previewVisible": False,
+            "formattingVisible": False,
+            "editorVisible": False,
+        },
     )
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.can_revert is True
     assert window.preview_visible is False
     assert window.formatting_visible is False
+    assert window.editor_visible is False
 
 
 def test_pick_import_path(bridge):
@@ -143,6 +153,24 @@ def test_pick_import_path(bridge):
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert message["data"] == "/tmp/table.csv"
+
+
+def test_pick_open_path_multiple_files(bridge):
+    bridge_obj, window, result = bridge
+    window.pick_open_path = lambda callback: callback(["/tmp/a.md", "/tmp/b.md"])
+    _invoke(bridge_obj, "pickOpenPath")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == ["/tmp/a.md", "/tmp/b.md"]
+
+
+def test_pick_open_path_cancel_returns_none(bridge):
+    bridge_obj, window, result = bridge
+    window.pick_open_path = lambda callback: callback([])
+    _invoke(bridge_obj, "pickOpenPath")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] is None
 
 
 def test_pick_text_import_path(bridge):

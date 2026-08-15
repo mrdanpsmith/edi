@@ -96,6 +96,7 @@ print("Hello from Python!")
 const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
 const previewContainer = document.querySelector<HTMLElement>('#preview-container')!
 const workspace = document.querySelector<HTMLElement>('#workspace')!
+const editorPane = document.querySelector<HTMLElement>('#editor-pane')!
 const previewPane = document.querySelector<HTMLElement>('#preview-pane')!
 const divider = document.querySelector<HTMLElement>('#divider')!
 const formatBar = document.querySelector<HTMLElement>('#formatbar')!
@@ -113,7 +114,7 @@ const editor = createEditor(editorContainer, () => {
 
 const formatToolbar = new FormatToolbar(formatBar, editor.view)
 
-const layout = new SplitLayout(workspace, previewPane, divider)
+const layout = new SplitLayout(workspace, editorPane, previewPane, divider)
 
 const tabs = new Tabs(tabbar, editor.view, {
   onNewTab: () => openNewTab(),
@@ -153,6 +154,7 @@ function syncMenuState(): void {
   void invoke('setMenuState', {
     canRevert: Boolean(active?.path),
     previewVisible: layout.isPreviewVisible(),
+    editorVisible: layout.isEditorVisible(),
     formattingVisible: formatToolbar.isVisible(),
   }).catch(() => undefined)
 }
@@ -173,6 +175,11 @@ function flashStatus(message: string): void {
 
 function togglePreview(): void {
   layout.togglePreview()
+  syncMenuState()
+}
+
+function toggleEditor(): void {
+  layout.toggleEditor()
   syncMenuState()
 }
 
@@ -233,11 +240,13 @@ async function closeTab(id: string): Promise<void> {
 }
 
 async function openFile(): Promise<void> {
-  const path = await pickOpenPath()
-  if (!path) {
+  const paths = await pickOpenPath()
+  if (!paths || paths.length === 0) {
     return
   }
-  await openDocument(path)
+  for (const path of paths) {
+    await openDocument(path)
+  }
 }
 
 async function openDocument(path: string): Promise<void> {
@@ -471,6 +480,7 @@ function init(): void {
     insertImage: () => void insertImage(),
     export: () => void exportHtml(),
     togglePreview: () => togglePreview(),
+    toggleEditor: () => toggleEditor(),
     toggleFormatting: () => toggleFormatting(),
   })
   subscribe(() => syncDirty())

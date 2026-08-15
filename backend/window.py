@@ -229,6 +229,7 @@ class MainWindow(QMainWindow):
         self._allow_close = False
         self._revert_action = None
         self._preview_action = None
+        self._editor_action = None
         self._formatting_action = None
 
         self._bridge = Bridge(self)
@@ -322,6 +323,14 @@ class MainWindow(QMainWindow):
         )
         view_menu.addAction(self._preview_action)
 
+        self._editor_action = QAction("&Editor", self)
+        self._editor_action.setCheckable(True)
+        self._editor_action.setChecked(True)
+        self._editor_action.triggered.connect(
+            lambda _checked=False: self._menu_command("toggleEditor")
+        )
+        view_menu.addAction(self._editor_action)
+
         self._formatting_action = QAction("&Formatting Toolbar", self)
         self._formatting_action.setCheckable(True)
         self._formatting_action.setChecked(True)
@@ -354,11 +363,19 @@ class MainWindow(QMainWindow):
         if not _xdg_open(url):
             QDesktopServices.openUrl(QUrl(url))
 
-    def update_menu_state(self, can_revert: bool, preview_visible: bool, formatting_visible: bool) -> None:
+    def update_menu_state(
+        self,
+        can_revert: bool,
+        preview_visible: bool,
+        formatting_visible: bool,
+        editor_visible: bool,
+    ) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
         if self._preview_action is not None:
             self._preview_action.setChecked(preview_visible)
+        if self._editor_action is not None:
+            self._editor_action.setChecked(editor_visible)
         if self._formatting_action is not None:
             self._formatting_action.setChecked(formatting_visible)
 
@@ -399,17 +416,22 @@ class MainWindow(QMainWindow):
         box.finished.connect(done)
         box.open()
 
-    def _run_dialog(self, dialog: QFileDialog, callback=None) -> None:
-        """Open a file dialog non-blocking and report the chosen path.
+    def _run_dialog(self, dialog: QFileDialog, callback=None, multiple: bool = False) -> None:
+        """Open a file dialog non-blocking and report the chosen path(s).
 
         ``callback(path: str | None)`` runs on accept (selected file) or cancel
-        (``None``). Non-blocking (``open()``) so the event loop keeps pumping.
+        (``None``). With ``multiple=True`` the callback receives the full list
+        of selected files (``[]`` on cancel). Non-blocking (``open()``) so the
+        event loop keeps pumping.
         """
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
 
         def done(result) -> None:
             selected = dialog.selectedFiles()
-            value = selected[0] if result and selected else None
+            if multiple:
+                value = selected if result else []
+            else:
+                value = selected[0] if result and selected else None
             dialog.deleteLater()
             if callback is not None:
                 callback(value)
@@ -418,11 +440,11 @@ class MainWindow(QMainWindow):
         dialog.open()
 
     def pick_open_path(self, callback=None) -> None:
-        dialog = QFileDialog(self, "Open document")
+        dialog = QFileDialog(self, "Open documents")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
-        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dialog.setNameFilter("Markdown documents (*.md *.markdown *.txt *.mermaid);;All files (*)")
-        self._run_dialog(dialog, callback)
+        self._run_dialog(dialog, callback, multiple=True)
 
     def pick_save_path(self, default_name, callback=None) -> None:
         dialog = QFileDialog(self, "Save document")
