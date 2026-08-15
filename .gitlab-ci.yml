@@ -164,7 +164,11 @@ build:
     # "SELFTEST_TIMEOUT" after 25s) and exit 0/1 accordingly; rely on the exit
     # code, not grep, so a timeout line can't be mistaken for success. The
     # outer `timeout` is only a last-resort backstop if the process hangs.
-    - EDI_SELFTEST=1 timeout 60 ./dist-app/edi
+    # The onefile unpack (~450 MB) goes to $TMPDIR; point it at the runner's
+    # disk (build/tmp) since /tmp is often a small tmpfs and a full write makes
+    # the bootloader fail with "decompression resulted in return code -1".
+    - mkdir -p build/tmp
+    - TMPDIR="$CI_PROJECT_DIR/build/tmp" EDI_SELFTEST=1 timeout 60 ./dist-app/edi
 
 # Wraps the onefile binary into versioned .deb/.rpm/.tar.gz/.AppImage
 # artifacts (scripts/package-linux.sh). Runs only on v* tags; the names embed
