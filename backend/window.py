@@ -231,6 +231,7 @@ class MainWindow(QMainWindow):
         self._preview_action = None
         self._editor_action = None
         self._formatting_action = None
+        self._insert_actions = None
 
         self._bridge = Bridge(self)
         self._web = QWebEngineView()
@@ -312,6 +313,7 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("insertImage")
         )
         insert_menu.addAction(image_action)
+        self._insert_actions = (import_action, text_action, image_action)
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu
@@ -378,6 +380,9 @@ class MainWindow(QMainWindow):
             self._editor_action.setChecked(editor_visible)
         if self._formatting_action is not None:
             self._formatting_action.setChecked(formatting_visible)
+        if self._insert_actions is not None:
+            for action in self._insert_actions:
+                action.setEnabled(editor_visible)
 
     def set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty

@@ -389,6 +389,8 @@ def test_update_menu_state_toggles_actions(visible, qtbot):
     assert window._preview_action.isChecked() is True
     assert window._editor_action.isChecked() is True
     assert window._formatting_action.isChecked() is True
+    assert window._insert_actions is not None
+    assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
         can_revert=True, preview_visible=False, formatting_visible=False, editor_visible=False
@@ -397,6 +399,7 @@ def test_update_menu_state_toggles_actions(visible, qtbot):
     assert window._preview_action.isChecked() is False
     assert window._editor_action.isChecked() is False
     assert window._formatting_action.isChecked() is False
+    assert all(not action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
         can_revert=False, preview_visible=True, formatting_visible=True, editor_visible=True
@@ -405,6 +408,7 @@ def test_update_menu_state_toggles_actions(visible, qtbot):
     assert window._preview_action.isChecked() is True
     assert window._editor_action.isChecked() is True
     assert window._formatting_action.isChecked() is True
+    assert all(action.isEnabled() for action in window._insert_actions)
 
 
 def test_menu_action_invokes_js_command(visible, qtbot):
