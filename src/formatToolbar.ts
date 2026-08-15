@@ -51,7 +51,11 @@ const BUTTONS: ButtonSpec[] = [
   {
     label: 'Highlight',
     title: 'Highlight',
-    markup: icon('<path d="M4 12.5 8.5 8l3.5 3.5-4.5 4.5H4z"/>'),
+    markup: icon(
+      '<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#fde047" stroke="none"/>' +
+        '<text x="8" y="12" text-anchor="middle" font-size="11" font-family="var(--font-sans)" ' +
+        'stroke="none" fill="currentColor">a</text>',
+    ),
     run: toggleHighlight,
   },
   { label: 'H1', title: 'Heading 1', className: 'fmt-heading', run: (doc, from, to) => toggleHeading(doc, from, to, 1) },
