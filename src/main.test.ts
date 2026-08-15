@@ -712,14 +712,39 @@ describe('links', () => {
     expect(open).toHaveBeenCalledWith('file:///tmp/docs/data.csv', '_blank', 'noopener')
   })
 
-  it('ignores anchor fragment links', async () => {
+  it('scrolls to the target element for anchor fragment links', async () => {
     await loadMain()
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    previewContainer().innerHTML = '<a href="#section">x</a>'
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      value: scrollIntoView,
+      writable: true,
+      configurable: true,
+    })
+    previewContainer().innerHTML = '<h1 id="section">x</h1><a href="#section">go</a>'
     previewContainer()
       .querySelector('a')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     expect(open).not.toHaveBeenCalled()
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    expect(scrollIntoView.mock.instances[0]).toBe(previewContainer().querySelector('h1'))
+  })
+
+  it('does not scroll or open anything when the fragment target is missing', async () => {
+    await loadMain()
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      value: scrollIntoView,
+      writable: true,
+      configurable: true,
+    })
+    previewContainer().innerHTML = '<a href="#missing">x</a>'
+    previewContainer()
+      .querySelector('a')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect(open).not.toHaveBeenCalled()
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 })
 

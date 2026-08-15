@@ -268,6 +268,8 @@ async function openDocument(path: string): Promise<void> {
 
 function openLink(target: LinkTarget): void {
   if (target.kind === 'fragment') {
+    const element = previewContainer.querySelector<HTMLElement>(`#${target.id}`)
+    element?.scrollIntoView({ block: 'start' })
     return
   }
   if (target.kind === 'external') {
@@ -301,9 +303,6 @@ function bindPreviewLinks(): void {
     }
     const active = getActive()
     const target = resolveLinkHref(href, active?.path ? dirname(active.path) : undefined)
-    if (target.kind === 'fragment') {
-      return
-    }
     event.preventDefault()
     openLink(target)
   })

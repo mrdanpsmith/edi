@@ -7,7 +7,9 @@ import {
   toggleBold,
   toggleCode,
   toggleCodeBlock,
+  toggleDefinition,
   toggleHeading,
+  toggleHighlight,
   toggleItalic,
   toggleOrderedList,
   toggleStrikethrough,
@@ -260,6 +262,53 @@ describe('block placeholders on empty lines', () => {
     const doc = 'one\ntwo'
     const edit = toggleBlockquote(doc, 5, 5)
     expect(apply(doc, edit)).toBe('one\n> two')
+  })
+})
+
+describe('toggleHighlight', () => {
+  it('wraps and unwraps the selection in double equals', () => {
+    const doc = 'hello world'
+    const edit = toggleHighlight(doc, 6, 11)
+    const wrapped = apply(doc, edit)
+    expect(wrapped).toBe('hello ==world==')
+    expect(wrapped.slice(edit.selectionFrom, edit.selectionTo)).toBe('world')
+    const unwrap = toggleHighlight(wrapped, 6, 15)
+    expect(apply(wrapped, unwrap)).toBe('hello world')
+  })
+
+  it('inserts an empty pair with the cursor inside when nothing is selected', () => {
+    const doc = 'hello'
+    const edit = toggleHighlight(doc, 3, 3)
+    expect(apply(doc, edit)).toBe('hel====lo')
+    expect(edit.selectionFrom).toBe(edit.selectionTo)
+    expect(edit.selectionFrom).toBe(3 + 2)
+  })
+})
+
+describe('toggleDefinition', () => {
+  it('prefixes following lines with the definition marker', () => {
+    const doc = 'Term\ndefinition one\ndefinition two'
+    const edit = toggleDefinition(doc, 0, 33)
+    const wrapped = apply(doc, edit)
+    expect(wrapped).toBe('Term\n: definition one\n: definition two')
+    const unwrap = toggleDefinition(wrapped, 0, 37)
+    expect(apply(wrapped, unwrap)).toBe('Term\ndefinition one\ndefinition two')
+  })
+
+  it('appends a definition placeholder to a term-only line', () => {
+    const doc = 'Term'
+    const edit = toggleDefinition(doc, 0, 4)
+    const inserted = apply(doc, edit)
+    expect(inserted).toBe('Term\n: definition')
+    expect(inserted.slice(edit.selectionFrom, edit.selectionTo)).toBe('definition')
+  })
+
+  it('inserts a term and definition placeholder on an empty line with the term selected', () => {
+    const doc = '\n\n'
+    const edit = toggleDefinition(doc, 1, 1)
+    const inserted = apply(doc, edit)
+    expect(inserted).toBe('\nterm\n: definition\n')
+    expect(inserted.slice(edit.selectionFrom, edit.selectionTo)).toBe('term')
   })
 })
 

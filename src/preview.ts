@@ -1,4 +1,9 @@
-import MarkdownIt from 'markdown-it'
+import MarkdownIt, { type Token } from 'markdown-it'
+import deflist from 'markdown-it-deflist'
+import footnote from 'markdown-it-footnote'
+import markPlugin from 'markdown-it-mark'
+import subPlugin from 'markdown-it-sub'
+import supPlugin from 'markdown-it-sup'
 import taskLists from 'markdown-it-task-lists'
 
 import { execLanguage, renderExecBlock } from './exec'
@@ -26,6 +31,11 @@ const md = new MarkdownIt({
 })
 
 md.use(taskLists, { enabled: true, label: true, labelAfter: true })
+md.use(footnote)
+md.use(deflist)
+md.use(markPlugin)
+md.use(supPlugin)
+md.use(subPlugin)
 
 export interface PreviewEnv {
   docDir?: string
@@ -43,13 +53,13 @@ export function resolveImageSrc(src: string, docDir: string | undefined): string
 export type LinkTarget =
   | { kind: 'external'; url: string }
   | { kind: 'local'; path: string }
-  | { kind: 'fragment' }
+  | { kind: 'fragment'; id: string }
 
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
 
 export function resolveLinkHref(href: string, docDir: string | undefined): LinkTarget {
   if (href.startsWith('#')) {
-    return { kind: 'fragment' }
+    return { kind: 'fragment', id: href.slice(1) }
   }
   if (SCHEME_RE.test(href)) {
     return { kind: 'external', url: href }
@@ -87,7 +97,69 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   return defaultFenceRule!(tokens, idx, options, env, self)
 }
 
+const EXPLICIT_ID_RE = /\s*\{#([A-Za-z0-9_-]+)\}\s*$/
+const usedSlugs = new Map<string, number>()
+
+function headingPlainText(children: Token[] | null): string {
+  if (!children) {
+    return ''
+  }
+  let out = ''
+  for (const child of children) {
+    if (child.type === 'text' || child.type === 'code_inline') {
+      out += child.content
+    } else if (child.children) {
+      out += headingPlainText(child.children)
+    }
+  }
+  return out
+}
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9_-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function uniqueSlug(slug: string): string {
+  const count = (usedSlugs.get(slug) ?? 0) + 1
+  usedSlugs.set(slug, count)
+  return count === 1 ? slug : `${slug}-${count}`
+}
+
+const defaultHeadingOpenRule = md.renderer.rules.heading_open?.bind(md.renderer.rules)
+
+md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  const inline = tokens[idx + 1]
+  const raw = inline?.content ?? ''
+  const explicit = EXPLICIT_ID_RE.exec(raw)
+  let id: string
+  if (explicit) {
+    id = explicit[1]
+    inline!.content = raw.replace(EXPLICIT_ID_RE, '')
+    const children = inline!.children
+    const last = children && children[children.length - 1]
+    if (last && last.type === 'text') {
+      last.content = last.content.replace(EXPLICIT_ID_RE, '')
+    }
+  } else {
+    id = uniqueSlug(slugify(headingPlainText(inline?.children ?? null)))
+  }
+  if (id) {
+    token.attrSet('id', id)
+  }
+  return defaultHeadingOpenRule
+    ? defaultHeadingOpenRule(tokens, idx, options, env, self)
+    : self.renderToken(tokens, idx, options)
+}
+
 export function renderMarkdown(source: string, env: PreviewEnv = {}): string {
+  usedSlugs.clear()
   return md.render(source, env as MarkdownEnv)
 }
 

@@ -207,7 +207,8 @@ export function toggleLinePrefixes(
 
 export function toggleHeading(doc: string, from: number, to: number, level: number): FormatEdit {
   const prefix = `${'#'.repeat(level)} `
-  return toggleLinePrefixes(doc, from, to, () => prefix, level === 1 ? 'Heading 1' : 'Heading 2')
+  const placeholder = level <= 3 ? `Heading ${level}` : undefined
+  return toggleLinePrefixes(doc, from, to, () => prefix, placeholder)
 }
 
 export function toggleBlockquote(doc: string, from: number, to: number): FormatEdit {
@@ -224,6 +225,56 @@ export function toggleOrderedList(doc: string, from: number, to: number): Format
 
 export function toggleTaskList(doc: string, from: number, to: number): FormatEdit {
   return toggleLinePrefixes(doc, from, to, () => '- [ ] ', 'task')
+}
+
+const DEFINITION_MARKER = ': '
+const DEFINITION_TERM_PLACEHOLDER = 'term'
+const DEFINITION_PLACEHOLDER = 'definition'
+
+export function toggleDefinition(doc: string, from: number, to: number): FormatEdit {
+  const { start, end } = blockRange(doc, from, to)
+  if (from === to && doc.slice(start, end).trim() === '') {
+    const insert = `${DEFINITION_TERM_PLACEHOLDER}\n${DEFINITION_MARKER}${DEFINITION_PLACEHOLDER}`
+    return {
+      from: start,
+      to: end,
+      insert,
+      selectionFrom: start,
+      selectionTo: start + DEFINITION_TERM_PLACEHOLDER.length,
+    }
+  }
+  const lines = doc.slice(start, end).split('\n')
+  const term = lines[0]
+  const defs = lines.slice(1)
+  const allPrefixed =
+    defs.length > 0 &&
+    defs.every((line) => line.length === 0 || line.startsWith(DEFINITION_MARKER))
+  if (allPrefixed) {
+    const insert = [
+      term,
+      ...defs.map((line) => (line.length === 0 ? line : line.slice(DEFINITION_MARKER.length))),
+    ].join('\n')
+    return { from: start, to: end, insert, selectionFrom: start, selectionTo: start + insert.length }
+  }
+  if (defs.length === 0) {
+    const insert = `${doc.slice(start, end)}\n${DEFINITION_MARKER}${DEFINITION_PLACEHOLDER}`
+    return {
+      from: start,
+      to: end,
+      insert,
+      selectionFrom: end + 1 + DEFINITION_MARKER.length,
+      selectionTo: end + 1 + DEFINITION_MARKER.length + DEFINITION_PLACEHOLDER.length,
+    }
+  }
+  const insert = [
+    term,
+    ...defs.map((line) => (line.length === 0 ? line : DEFINITION_MARKER + line)),
+  ].join('\n')
+  return { from: start, to: end, insert, selectionFrom: start, selectionTo: start + insert.length }
+}
+
+export function toggleHighlight(doc: string, from: number, to: number): FormatEdit {
+  return toggleInline(doc, from, to, '==')
 }
 
 export function insertLink(doc: string, from: number, to: number): FormatEdit {

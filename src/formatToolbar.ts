@@ -8,7 +8,9 @@ import {
   toggleBold,
   toggleCode,
   toggleCodeBlock,
+  toggleDefinition,
   toggleHeading,
+  toggleHighlight,
   toggleItalic,
   toggleOrderedList,
   toggleStrikethrough,
@@ -46,12 +48,19 @@ const BUTTONS: ButtonSpec[] = [
     className: 'fmt-strike',
     run: toggleStrikethrough,
   },
+  {
+    label: 'Highlight',
+    title: 'Highlight',
+    markup: icon('<path d="M4 12.5 8.5 8l3.5 3.5-4.5 4.5H4z"/>'),
+    run: toggleHighlight,
+  },
   { label: 'H1', title: 'Heading 1', className: 'fmt-heading', run: (doc, from, to) => toggleHeading(doc, from, to, 1) },
   { label: 'H2', title: 'Heading 2', className: 'fmt-heading', run: (doc, from, to) => toggleHeading(doc, from, to, 2) },
+  { label: 'H3', title: 'Heading 3', className: 'fmt-heading', run: (doc, from, to) => toggleHeading(doc, from, to, 3) },
   {
     label: 'Horizontal rule',
     title: 'Horizontal rule',
-    markup: icon('<path d="M2.5 6h11M2.5 8.5h11M2.5 11h11"/>'),
+    markup: icon('<path d="M2.5 8h11"/>'),
     run: insertHorizontalRule,
   },
   {
@@ -108,6 +117,16 @@ const BUTTONS: ButtonSpec[] = [
         BULLET_LINES,
     ),
     run: toggleOrderedList,
+  },
+  {
+    label: 'Definition list',
+    title: 'Definition list',
+    markup: icon(
+      '<path d="M2.5 4h11"/>' +
+        '<circle cx="3" cy="8.5" r="0.8"/><path d="M4.5 8.5h8"/>' +
+        '<circle cx="3" cy="12.5" r="0.8"/><path d="M4.5 12.5h8"/>',
+    ),
+    run: toggleDefinition,
   },
   {
     label: 'Link',

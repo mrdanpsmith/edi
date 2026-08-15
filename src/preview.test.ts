@@ -9,8 +9,8 @@ import {
 } from './preview'
 
 describe('renderMarkdown', () => {
-  it('renders headings', () => {
-    expect(renderMarkdown('# Hello')).toContain('<h1>Hello</h1>')
+  it('renders headings with ids', () => {
+    expect(renderMarkdown('# Hello')).toContain('<h1 id="hello">Hello</h1>')
   })
 
   it('renders a table', () => {
@@ -27,6 +27,49 @@ describe('renderMarkdown', () => {
 
   it('renders strikethrough', () => {
     expect(renderMarkdown('~~gone~~')).toContain('<s>gone</s>')
+  })
+
+  it('renders footnotes', () => {
+    const html = renderMarkdown('Text with a note[^1].\n\n[^1]: The note itself.')
+    expect(html).toContain('<sup class="footnote-ref">')
+    expect(html).toContain('id="fn1"')
+    expect(html).toContain('The note itself.')
+  })
+
+  it('renders definition lists', () => {
+    const html = renderMarkdown('Apple\n: A fruit.\n: A tech company.')
+    expect(html).toContain('<dl>')
+    expect(html).toContain('<dt>Apple</dt>')
+    expect(html).toContain('<dd>A fruit.</dd>')
+  })
+
+  it('renders highlighted, superscript, and subscript text', () => {
+    const html = renderMarkdown('==marked==, 2^nd^, and H~2~O')
+    expect(html).toContain('<mark>marked</mark>')
+    expect(html).toContain('<sup>nd</sup>')
+    expect(html).toContain('<sub>2</sub>')
+  })
+
+  it('adds heading ids', () => {
+    const html = renderMarkdown('# Hello World\n\n## Hello World')
+    expect(html).toContain('<h1 id="hello-world">')
+    expect(html).toContain('<h2 id="hello-world-2">')
+  })
+
+  it('honors explicit heading ids', () => {
+    const html = renderMarkdown('# Custom {#my-id}')
+    expect(html).toContain('<h1 id="my-id">')
+    expect(html).toContain('<h1 id="my-id">Custom</h1>')
+    expect(html).not.toContain('{#my-id}')
+  })
+
+  it('dedupes heading ids independently per render', () => {
+    const first = renderMarkdown('# Same\n\n# Same')
+    const second = renderMarkdown('# Same')
+    expect(first).toContain('<h1 id="same">')
+    expect(first).toContain('<h1 id="same-2">')
+    expect(second).toContain('<h1 id="same">')
+    expect(second).not.toContain('same-2')
   })
 
   it('escapes raw HTML', () => {
@@ -84,7 +127,7 @@ describe('resolveImageSrc', () => {
 
 describe('resolveLinkHref', () => {
   it('classifies fragment links', () => {
-    expect(resolveLinkHref('#section', '/docs')).toEqual({ kind: 'fragment' })
+    expect(resolveLinkHref('#section', '/docs')).toEqual({ kind: 'fragment', id: 'section' })
   })
 
   it('classifies scheme links as external', () => {

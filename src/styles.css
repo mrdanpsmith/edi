@@ -21,6 +21,7 @@
   --md-heading: #1f2328;
   --md-link: #0969da;
   --md-quote: #59636e;
+  --md-mark: #fff8c5;
   --md-code: #7a3e9d;
   --md-code-keyword: #cf222e;
   --md-code-string: #0a3069;
@@ -51,6 +52,7 @@
     --md-heading: #e6edf3;
     --md-link: #4493f8;
     --md-quote: #8b949e;
+    --md-mark: #3a3a00;
     --md-code: #d2a8ff;
     --md-code-keyword: #ff7b72;
     --md-code-string: #a5d6ff;
@@ -358,6 +360,57 @@ body.resizing #divider {
 
 .md-preview h3 {
   font-size: 1.25em;
+}
+
+.md-preview h1,
+.md-preview h2,
+.md-preview h3,
+.md-preview h4,
+.md-preview h5,
+.md-preview h6 {
+  scroll-margin-top: 0.5em;
+}
+
+.md-preview mark {
+  background: var(--md-mark);
+  color: inherit;
+  padding: 0 0.15em;
+  border-radius: 3px;
+}
+
+.md-preview sup,
+.md-preview sub {
+  line-height: 0;
+}
+
+.md-preview dl {
+  margin: 0.5em 0;
+}
+
+.md-preview dt {
+  font-weight: 600;
+  margin-top: 0.5em;
+}
+
+.md-preview dd {
+  margin: 0 0 0.5em 1.5em;
+  color: var(--md-quote);
+}
+
+.md-preview .footnote-sep {
+  display: none;
+}
+
+.md-preview .footnotes {
+  margin-top: 2em;
+  padding-top: 1em;
+  border-top: 1px solid var(--border);
+  font-size: 0.9em;
+  color: var(--md-quote);
+}
+
+.md-preview .footnote-backref {
+  text-decoration: none;
 }
 
 .md-preview a {

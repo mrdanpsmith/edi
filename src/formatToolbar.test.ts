@@ -29,7 +29,7 @@ describe('FormatToolbar', () => {
     const { bar, view } = makeFixture()
     const toolbar = new FormatToolbar(bar, view)
     expect(toolbar.isVisible()).toBe(true)
-    expect(bar.querySelectorAll('.fmt-btn')).toHaveLength(13)
+    expect(bar.querySelectorAll('.fmt-btn')).toHaveLength(16)
   })
 
   it('is hidden by default only when the user hid it before', () => {
@@ -77,5 +77,18 @@ describe('FormatToolbar', () => {
     const rule = bar.querySelector<HTMLButtonElement>('button[title="Horizontal rule"]')!
     rule.click()
     expect(view.state.doc.toString()).toBe('---\nhello world')
+  })
+
+  it('applies a heading-3, highlight, and definition list from their buttons', () => {
+    const { bar, view } = makeFixture()
+    new FormatToolbar(bar, view)
+    view.dispatch({ selection: { anchor: 6, head: 11 } })
+    bar.querySelector<HTMLButtonElement>('button[title="Highlight"]')!.click()
+    expect(view.state.doc.toString()).toBe('hello ==world==')
+    bar.querySelector<HTMLButtonElement>('button[title="Heading 3"]')!.click()
+    expect(view.state.doc.toString()).toBe('### hello ==world==')
+    view.dispatch({ selection: { anchor: 0, head: 0 } })
+    bar.querySelector<HTMLButtonElement>('button[title="Definition list"]')!.click()
+    expect(view.state.doc.toString()).toBe('### hello ==world==\n: definition')
   })
 })
