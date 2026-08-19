@@ -10,7 +10,7 @@ export interface TableCopyCallbacks {
 }
 
 export function attachTableCopyControls(container: HTMLElement, callbacks: TableCopyCallbacks): void {
-  for (const table of Array.from(container.querySelectorAll<HTMLTableElement>('.md-preview table'))) {
+  for (const table of Array.from(container.querySelectorAll<HTMLTableElement>('table'))) {
     if (table.parentElement?.classList.contains('table-copy-wrap')) {
       continue
     }

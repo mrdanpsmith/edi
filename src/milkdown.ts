@@ -13,7 +13,7 @@ import {
   autoInsertSpanPlugin,
   tableEditingPlugin,
 } from '@milkdown/preset-gfm'
-import { $remark } from '@milkdown/utils'
+import { $prose, $remark } from '@milkdown/utils'
 import remarkGFM from 'remark-gfm'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
@@ -24,11 +24,42 @@ import {
   descriptionTermSchema,
   descriptionDetailsSchema,
 } from './remark/deflist'
+import { mermaidRemark, mermaidSchema, mermaidNodeView } from './node/mermaid'
+import { execRemark, execSchema, execNodeView } from './node/execblock'
+import { spreadsheetPlugin } from './node/spreadsheet'
+import { Plugin, PluginKey } from '@milkdown/prose/state'
+import type { EditorView } from '@milkdown/prose/view'
+
+const taskTogglePlugin = $prose(() => {
+  return new Plugin({
+    key: new PluginKey('MILKDOWN_TASK_TOGGLE'),
+    props: {
+      handleClick(view: EditorView, pos: number, event: MouseEvent) {
+        const target = event.target as HTMLElement
+        const li = target.closest('li[data-item-type="task"]')
+        if (!li) return false
+
+        const $pos = view.state.doc.resolve(pos)
+        const node = $pos.node($pos.depth === 0 ? 0 : -1)
+        if (!node || node.type.name !== 'list_item') return false
+
+        const tr = view.state.tr.setNodeAttribute(
+          $pos.before($pos.depth === 0 ? 1 : $pos.depth),
+          'checked',
+          !(node.attrs.checked as boolean),
+        )
+        view.dispatch(tr)
+        return true
+      },
+    },
+  })
+})
 
 export interface EdiEditor {
   mount(container: HTMLElement): Promise<void>
   unmount(): Promise<void>
   getMarkdown(): string
+  getHtml(): string
   setMarkdown(markdown: string): Promise<void>
   getView(): import('@milkdown/prose/view').EditorView | null
   isMounted(): boolean
@@ -80,18 +111,26 @@ export function createEdiEditor(): EdiEditor {
       .use(subscript.remark)
       .use(superscript.remark)
       .use(remarkDeflistPlugin)
+      .use(mermaidRemark)
+      .use(execRemark)
       .use(highlight.schema)
       .use(subscript.schema)
       .use(superscript.schema)
       .use(descriptionListSchema)
       .use(descriptionTermSchema)
       .use(descriptionDetailsSchema)
+      .use(mermaidSchema)
+      .use(execSchema)
       .use(highlight.command)
       .use(subscript.command)
       .use(superscript.command)
       .use(highlight.inputRule)
       .use(subscript.inputRule)
       .use(superscript.inputRule)
+      .use(mermaidNodeView)
+      .use(execNodeView)
+      .use(spreadsheetPlugin)
+      .use(taskTogglePlugin)
       .use(listener)
 
     await editor.create()
@@ -108,6 +147,12 @@ export function createEdiEditor(): EdiEditor {
 
   function getMarkdown(): string {
     return latestMarkdown
+  }
+
+  function getHtml(): string {
+    if (!rootElement) return ''
+    const editor = rootElement.querySelector<HTMLElement>('.editor')
+    return editor?.innerHTML ?? ''
   }
 
   async function setMarkdown(markdown: string): Promise<void> {
@@ -161,6 +206,7 @@ export function createEdiEditor(): EdiEditor {
     mount,
     unmount,
     getMarkdown,
+    getHtml,
     setMarkdown,
     getView,
     isMounted,

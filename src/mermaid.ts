@@ -7,7 +7,7 @@ export function collectPendingMermaid(container: HTMLElement): HTMLElement[] {
 
 let mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null
 
-async function loadMermaid(): Promise<typeof import('mermaid')['default']> {
+export async function loadMermaid(): Promise<typeof import('mermaid')['default']> {
   if (!mermaidPromise) {
     mermaidPromise = import('mermaid').then((mod) => {
       const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -30,7 +30,7 @@ async function loadMermaid(): Promise<typeof import('mermaid')['default']> {
   return mermaidPromise
 }
 
-function errorBlock(message: string): HTMLElement {
+export function errorBlock(message: string): HTMLElement {
   const el = document.createElement('div')
   el.className = `${MERMAID_CLASS}-error`
   const title = document.createElement('strong')

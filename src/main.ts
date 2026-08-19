@@ -1,3 +1,6 @@
+import '@milkdown/prose/view/style/prosemirror.css'
+import '@milkdown/prose/tables/style/tables.css'
+import '@milkdown/prose/gapcursor/style/gapcursor.css'
 import './styles.css'
 
 import { confirmAction, hasBridge, invoke } from './bridge'
@@ -142,6 +145,11 @@ function syncContentToVisual(): void {
   void visualEditor.setMarkdown(md)
 }
 
+function syncContentToText(): void {
+  const md = visualEditor.getMarkdown()
+  textEditor.setValue(md)
+}
+
 function syncContentToMode(): void {
   const active = getActive()
   if (!active) return
@@ -215,7 +223,12 @@ function flashStatus(message: string): void {
 }
 
 function toggleMode(): void {
-  syncContentToVisual()
+  if (layout.isTextMode()) {
+    syncContentToVisual()
+  } else {
+    syncContentToText()
+  }
+  tabs.snapshotActive()
   layout.toggleMode()
   syncMenuState()
 }
@@ -233,11 +246,15 @@ async function exportHtml(): Promise<void> {
     return
   }
   try {
-    const md = layout.isTextMode() ? textEditor.getValue() : visualEditor.getMarkdown()
-    const exportContainer = document.createElement('div')
-    exportContainer.className = 'md-preview'
-    exportContainer.textContent = md
-    await writeTextFile(path, buildExportHtml(fileName(path), previewExportBody(exportContainer)))
+    const bodyHtml = layout.isTextMode()
+      ? (() => {
+          const div = document.createElement('div')
+          div.className = 'md-preview'
+          div.textContent = textEditor.getValue()
+          return previewExportBody(div)
+        })()
+      : `<div class="md-preview">${visualEditor.getHtml()}</div>`
+    await writeTextFile(path, buildExportHtml(fileName(path), bodyHtml))
     flashStatus(`Exported ${path}`)
   } catch (error) {
     reportError(`Failed to export ${path}`, error)
