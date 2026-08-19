@@ -2,7 +2,28 @@ import { Editor, commandsCtx, editorViewCtx, parserCtx, rootCtx } from '@milkdow
 import type { Ctx } from '@milkdown/ctx'
 import { listener, listenerCtx } from '@milkdown/plugin-listener'
 import { commonmark } from '@milkdown/preset-commonmark'
-import { gfm } from '@milkdown/preset-gfm'
+import {
+  schema as gfmSchema,
+  inputRules as gfmInputRules,
+  pasteRules as gfmPasteRules,
+  markInputRules as gfmMarkInputRules,
+  keymap as gfmKeymap,
+  commands as gfmCommands,
+  keepTableAlignPlugin,
+  autoInsertSpanPlugin,
+  tableEditingPlugin,
+} from '@milkdown/preset-gfm'
+import { $remark } from '@milkdown/utils'
+import remarkGFM from 'remark-gfm'
+import { highlight } from './remark/highlight'
+import { subscript } from './remark/sub'
+import { superscript } from './remark/sup'
+import {
+  remarkDeflistPlugin,
+  descriptionListSchema,
+  descriptionTermSchema,
+  descriptionDetailsSchema,
+} from './remark/deflist'
 
 export interface EdiEditor {
   mount(container: HTMLElement): Promise<void>
@@ -43,7 +64,34 @@ export function createEdiEditor(): EdiEditor {
         })
       })
       .use(commonmark)
-      .use(gfm)
+      .use([
+        gfmSchema,
+        gfmInputRules,
+        gfmPasteRules,
+        gfmMarkInputRules,
+        gfmKeymap,
+        gfmCommands,
+        keepTableAlignPlugin,
+        autoInsertSpanPlugin,
+        tableEditingPlugin,
+      ].flat())
+      .use($remark('remarkGfmNoSingleTilde', () => remarkGFM as never, { singleTilde: false }))
+      .use(highlight.remark)
+      .use(subscript.remark)
+      .use(superscript.remark)
+      .use(remarkDeflistPlugin)
+      .use(highlight.schema)
+      .use(subscript.schema)
+      .use(superscript.schema)
+      .use(descriptionListSchema)
+      .use(descriptionTermSchema)
+      .use(descriptionDetailsSchema)
+      .use(highlight.command)
+      .use(subscript.command)
+      .use(superscript.command)
+      .use(highlight.inputRule)
+      .use(subscript.inputRule)
+      .use(superscript.inputRule)
       .use(listener)
 
     await editor.create()

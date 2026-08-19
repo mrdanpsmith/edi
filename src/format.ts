@@ -277,6 +277,14 @@ export function toggleHighlight(doc: string, from: number, to: number): FormatEd
   return toggleInline(doc, from, to, '==')
 }
 
+export function toggleSubscriptFormat(doc: string, from: number, to: number): FormatEdit {
+  return toggleInline(doc, from, to, '~')
+}
+
+export function toggleSuperscriptFormat(doc: string, from: number, to: number): FormatEdit {
+  return toggleInline(doc, from, to, '^')
+}
+
 export function insertLink(doc: string, from: number, to: number): FormatEdit {
   const { start, end } = trimSelection(doc, from, to)
   const label = doc.slice(start, end) || 'text'

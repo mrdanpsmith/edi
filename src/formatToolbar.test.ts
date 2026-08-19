@@ -36,7 +36,7 @@ describe('FormatToolbar', () => {
     const { bar, ctx } = makeFixture()
     const toolbar = new FormatToolbar(bar, ctx)
     expect(toolbar.isVisible()).toBe(true)
-    expect(bar.querySelectorAll('.fmt-btn')).toHaveLength(16)
+    expect(bar.querySelectorAll('.fmt-btn')).toHaveLength(18)
   })
 
   it('is hidden by default only when the user hid it before', () => {
@@ -120,8 +120,8 @@ describe('FormatToolbar', () => {
     const { bar, view, ctx } = makeFixture('visual', visualCommand)
     new FormatToolbar(bar, ctx)
     view.dispatch({ selection: { anchor: 6, head: 11 } })
-    bar.querySelector<HTMLButtonElement>('button[title="Highlight"]')!.click()
+    bar.querySelector<HTMLButtonElement>('button[title="Task list"]')!.click()
     expect(visualCommand).not.toHaveBeenCalled()
-    expect(view.state.doc.toString()).toBe('hello ==world==')
+    expect(view.state.doc.toString()).toBe('- [ ] hello world')
   })
 })
