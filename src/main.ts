@@ -2,11 +2,8 @@ import './styles.css'
 
 import { confirmAction, hasBridge, invoke } from './bridge'
 
-import { createEditor } from './editor'
-import { initExecBlocks } from './exec'
 import { buildExportHtml } from './export'
 import {
-  dirname,
   fileName,
   imageReference,
   isSupportedFile,
@@ -23,16 +20,13 @@ import {
 } from './files'
 import { FormatToolbar } from './formatToolbar'
 import { parseTableFile, toMarkdownTable } from './import'
-import { SplitLayout } from './layout'
+import { EditorLayout } from './layout'
 import { bindMenuCommands } from './menus'
-import { renderPendingMermaid } from './mermaid'
-import { renderPreview, resolveLinkHref, type LinkTarget } from './preview'
-import { computeSpreadsheet } from './spreadsheet'
+import { createTextEditor } from './textmode'
+import { createEdiEditor } from './milkdown'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { Tabs } from './tabs'
-import { attachTableCopyControls, previewExportBody } from './tablecopy'
-
-const RENDER_DEBOUNCE_MS = 300
+import { previewExportBody } from './tablecopy'
 
 const WELCOME_DOCUMENT = `# Welcome to Edi
 
@@ -40,12 +34,11 @@ Edi is a fast markdown editor with a live preview, Mermaid diagrams, in-line spr
 
 ## Getting started
 
-- Type on the left, see the result on the right.
-- Use the **File** and **View** menus for document actions and the preview.
+- Toggle between visual and text mode with \`Ctrl+E\`.
+- Use the **File** and **View** menus for document actions.
 - Format text with the toolbar above the editor (\`Ctrl+B\` bold, \`Ctrl+I\` italic), or hide it via \`View → Formatting Toolbar\`.
 - Open several documents side by side in tabs (\`Ctrl+N\` for a new tab, \`Ctrl+W\` to close one).
 - Insert a spreadsheet, text file, or image with \`Insert → …\`.
-- Hover a table in the preview and press **Copy** to paste it into Word, email, or Excel.
 
 ## Mermaid diagrams
 
@@ -90,37 +83,74 @@ print("Hello from Python!")
 - [x] Text-file import
 - [x] Image insertion
 - [x] Formatting toolbar
-- [x] Copy tables to the clipboard
 `
 
-const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
-const previewContainer = document.querySelector<HTMLElement>('#preview-container')!
+const visualContainer = document.querySelector<HTMLElement>('#visual-container')!
+const textContainer = document.querySelector<HTMLElement>('#text-container')!
 const workspace = document.querySelector<HTMLElement>('#workspace')!
-const editorPane = document.querySelector<HTMLElement>('#editor-pane')!
-const previewPane = document.querySelector<HTMLElement>('#preview-pane')!
-const divider = document.querySelector<HTMLElement>('#divider')!
+const visualPane = document.querySelector<HTMLElement>('#visual-pane')!
+const textPane = document.querySelector<HTMLElement>('#text-pane')!
 const formatBar = document.querySelector<HTMLElement>('#formatbar')!
 const statusLeft = document.querySelector<HTMLElement>('#status-left')!
 const statusRight = document.querySelector<HTMLElement>('#status-right')!
 const tabbar = document.querySelector<HTMLElement>('#tabbar')!
 
-let renderTimer: number | undefined
-
-const editor = createEditor(editorContainer, () => {
+const visualEditor = createEdiEditor()
+const textEditor = createTextEditor(textContainer, () => {
   setActiveDirty(true)
   updateStatus()
-  schedulePreview()
+  syncContentToVisual()
 })
 
-const formatToolbar = new FormatToolbar(formatBar, editor.view)
+const formatToolbar = new FormatToolbar(formatBar, () => textEditor.getView())
 
-const layout = new SplitLayout(workspace, editorPane, previewPane, divider)
+const layout = new EditorLayout(workspace, visualPane, textPane, {
+  onModeChange: (_mode) => {
+    syncContentToMode()
+    syncMenuState()
+  },
+})
 
-const tabs = new Tabs(tabbar, editor.view, {
+const tabs = new Tabs(tabbar, {
+  getMarkdown(): string {
+    if (layout.isTextMode()) {
+      return textEditor.getValue()
+    }
+    return visualEditor.getMarkdown()
+  },
+  setMarkdown(value: string): void {
+    if (textEditor.getView()) {
+      textEditor.setValue(value)
+    }
+    if (visualEditor.isMounted()) {
+      void visualEditor.setMarkdown(value)
+    }
+  },
+}, {
   onNewTab: () => openNewTab(),
   onCloseTab: (id) => void closeTab(id),
   onActivate: () => afterActivate(),
 })
+
+function syncContentToVisual(): void {
+  if (!visualEditor.isMounted()) return
+  const md = textEditor.getValue()
+  void visualEditor.setMarkdown(md)
+}
+
+function syncContentToMode(): void {
+  const active = getActive()
+  if (!active) return
+  const snapshot = tabs.getMarkdownSnapshot(active.id)
+  if (snapshot !== undefined) {
+    if (layout.isTextMode()) {
+      textEditor.setValue(snapshot)
+    }
+    if (visualEditor.isMounted()) {
+      void visualEditor.setMarkdown(snapshot)
+    }
+  }
+}
 
 function updateTitle(): void {
   const active = getActive()
@@ -131,7 +161,9 @@ function updateTitle(): void {
 function updateStatus(): void {
   const active = getActive()
   statusLeft.textContent = active?.path ?? UNTITLED
-  const text = editor.getValue()
+  const text = layout.isTextMode()
+    ? textEditor.getValue()
+    : visualEditor.getMarkdown()
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
 }
@@ -141,8 +173,6 @@ function afterActivate(): void {
   updateStatus()
   syncDirty()
   syncMenuState()
-  void renderPreviewNow()
-  editor.focus()
 }
 
 function syncDirty(): void {
@@ -153,15 +183,22 @@ function syncMenuState(): void {
   const active = getActive()
   void invoke('setMenuState', {
     canRevert: Boolean(active?.path),
-    previewVisible: layout.isPreviewVisible(),
-    editorVisible: layout.isEditorVisible(),
+    visualMode: layout.isVisualMode(),
     formattingVisible: formatToolbar.isVisible(),
   }).catch(() => undefined)
 }
 
 function insertText(text: string): void {
-  editor.view.dispatch(editor.view.state.replaceSelection(text))
-  editor.view.focus()
+  if (layout.isTextMode()) {
+    const view = textEditor.getView()
+    if (view) {
+      view.dispatch(view.state.replaceSelection(text))
+      view.focus()
+    }
+  } else {
+    const md = visualEditor.getMarkdown() + text
+    void visualEditor.setMarkdown(md)
+  }
 }
 
 function insertTable(markdown: string): void {
@@ -173,13 +210,9 @@ function flashStatus(message: string): void {
   window.setTimeout(() => updateStatus(), 3000)
 }
 
-function togglePreview(): void {
-  layout.togglePreview()
-  syncMenuState()
-}
-
-function toggleEditor(): void {
-  layout.toggleEditor()
+function toggleMode(): void {
+  syncContentToVisual()
+  layout.toggleMode()
   syncMenuState()
 }
 
@@ -189,7 +222,6 @@ function toggleFormatting(): void {
 }
 
 async function exportHtml(): Promise<void> {
-  await renderPreviewNow()
   const active = getActive()
   const base = active?.path ? fileName(active.path) : UNTITLED
   const path = await pickExportPath(base)
@@ -197,31 +229,15 @@ async function exportHtml(): Promise<void> {
     return
   }
   try {
-    await writeTextFile(path, buildExportHtml(fileName(path), previewExportBody(previewContainer)))
+    const md = layout.isTextMode() ? textEditor.getValue() : visualEditor.getMarkdown()
+    const exportContainer = document.createElement('div')
+    exportContainer.className = 'md-preview'
+    exportContainer.textContent = md
+    await writeTextFile(path, buildExportHtml(fileName(path), previewExportBody(exportContainer)))
     flashStatus(`Exported ${path}`)
   } catch (error) {
     reportError(`Failed to export ${path}`, error)
   }
-}
-
-function schedulePreview(): void {
-  if (renderTimer !== undefined) {
-    window.clearTimeout(renderTimer)
-  }
-  renderTimer = window.setTimeout(() => void renderPreviewNow(), RENDER_DEBOUNCE_MS)
-}
-
-async function renderPreviewNow(): Promise<void> {
-  const scrollTop = previewContainer.scrollTop
-  const active = getActive()
-  previewContainer.innerHTML = renderPreview(editor.getValue(), {
-    docDir: active?.path ? dirname(active.path) : undefined,
-  })
-  previewContainer.scrollTop = Math.min(scrollTop, previewContainer.scrollHeight)
-  computeSpreadsheet(previewContainer)
-  attachTableCopyControls(previewContainer, { onCopied: () => flashStatus('Table copied to clipboard') })
-  initExecBlocks(previewContainer)
-  await renderPendingMermaid(previewContainer)
 }
 
 function openNewTab(): void {
@@ -266,48 +282,6 @@ async function openDocument(path: string): Promise<void> {
   }
 }
 
-function openLink(target: LinkTarget): void {
-  if (target.kind === 'fragment') {
-    const element = previewContainer.querySelector<HTMLElement>(`#${target.id}`)
-    element?.scrollIntoView({ block: 'start' })
-    return
-  }
-  if (target.kind === 'external') {
-    void openExternalUrl(target.url)
-    return
-  }
-  if (isSupportedFile(target.path)) {
-    void openDocument(target.path)
-    return
-  }
-  void openExternalUrl(`file://${target.path}`)
-}
-
-function openExternalUrl(url: string): void {
-  if (hasBridge()) {
-    void invoke('openUrl', { url }).catch(() => undefined)
-    return
-  }
-  window.open(url, '_blank', 'noopener')
-}
-
-function bindPreviewLinks(): void {
-  previewContainer.addEventListener('click', (event) => {
-    const anchor = (event.target as Element | null)?.closest?.('a[href]')
-    if (!anchor) {
-      return
-    }
-    const href = anchor.getAttribute('href')
-    if (!href) {
-      return
-    }
-    const active = getActive()
-    const target = resolveLinkHref(href, active?.path ? dirname(active.path) : undefined)
-    event.preventDefault()
-    openLink(target)
-  })
-}
-
 async function saveFile(): Promise<void> {
   const active = getActive()
   let path = active?.path ?? null
@@ -335,7 +309,8 @@ async function saveTo(path: string): Promise<void> {
     await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`)
   }
   try {
-    await writeTextFile(path, editor.getValue())
+    const md = layout.isTextMode() ? textEditor.getValue() : visualEditor.getMarkdown()
+    await writeTextFile(path, md)
     setActivePath(path)
     setActiveDirty(false)
     updateTitle()
@@ -361,7 +336,11 @@ async function revertFile(): Promise<void> {
   }
   try {
     const content = await readTextFile(path)
-    editor.setValue(content)
+    if (layout.isTextMode()) {
+      textEditor.setValue(content)
+    } else {
+      void visualEditor.setMarkdown(content)
+    }
     setActiveDirty(false)
     tabs.snapshotActive()
     afterActivate()
@@ -435,12 +414,12 @@ function registerShortcuts(): void {
     } else if (key === 's') {
       event.preventDefault()
       void saveFile()
-    } else if (key === 'p' && event.shiftKey) {
-      event.preventDefault()
-      togglePreview()
     } else if (key === 'e' && event.shiftKey) {
       event.preventDefault()
       void exportHtml()
+    } else if (key === 'e') {
+      event.preventDefault()
+      toggleMode()
     } else if (key === 'q') {
       event.preventDefault()
       void requestQuit()
@@ -453,8 +432,6 @@ interface CloseRequestEvent {
 }
 
 function requestQuit(event?: CloseRequestEvent): void {
-  // The native shell owns the dirty check: its closeEvent prompts when any
-  // document is unsaved. Ask it to close and let it decide.
   if (hasBridge()) {
     void invoke('quit')
     return
@@ -463,11 +440,21 @@ function requestQuit(event?: CloseRequestEvent): void {
   window.close()
 }
 
-function init(): void {
-  editor.setValue(WELCOME_DOCUMENT)
+async function init(): Promise<void> {
+  await visualEditor.mount(visualContainer)
+  visualEditor.onChange((markdown) => {
+    setActiveDirty(true)
+    updateStatus()
+    if (layout.isVisualMode()) {
+      textEditor.setValue(markdown)
+    }
+  })
+
+  const welcome = getWelcomeDocument()
+  textEditor.setValue(welcome)
+  void visualEditor.setMarkdown(welcome)
   tabs.snapshotActive()
   registerShortcuts()
-  bindPreviewLinks()
   bindMenuCommands({
     new: () => openNewTab(),
     open: () => void openFile(),
@@ -478,13 +465,16 @@ function init(): void {
     importText: () => void importTextFile(),
     insertImage: () => void insertImage(),
     export: () => void exportHtml(),
-    togglePreview: () => togglePreview(),
-    toggleEditor: () => toggleEditor(),
+    toggleMode: () => toggleMode(),
     toggleFormatting: () => toggleFormatting(),
   })
   subscribe(() => syncDirty())
   syncDirty()
   afterActivate()
+}
+
+function getWelcomeDocument(): string {
+  return WELCOME_DOCUMENT
 }
 
 init()

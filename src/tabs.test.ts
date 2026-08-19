@@ -1,34 +1,33 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { EditorView } from '@codemirror/view'
-
-import { createEditorState } from './editor'
 import { closeSession, getActive, getState, setActiveDirty } from './state'
-import { Tabs } from './tabs'
+import { Tabs, type TabContent } from './tabs'
+
+function makeContent(): TabContent & { value: string } {
+  let value = ''
+  return {
+    get value() { return value },
+    getMarkdown() { return value },
+    setMarkdown(v: string) { value = v },
+  }
+}
 
 function setup(): {
   tabs: Tabs
   tabbar: HTMLElement
-  view: EditorView
+  content: ReturnType<typeof makeContent>
   activeIds: string[]
 } {
   const tabbar = document.createElement('div')
   document.body.append(tabbar)
   const activeIds: string[] = []
-  const view = new EditorView({
-    state: createEditorState(''),
-    parent: document.createElement('div'),
-  })
-  const tabs = new Tabs(tabbar, view, {
+  const content = makeContent()
+  const tabs = new Tabs(tabbar, content, {
     onNewTab: () => tabs.addSession(),
     onCloseTab: (id) => tabs.close(id),
     onActivate: (id) => activeIds.push(id),
   })
-  return { tabs, tabbar, view, activeIds }
-}
-
-function docText(view: EditorView): string {
-  return view.state.doc.toString()
+  return { tabs, tabbar, content, activeIds }
 }
 
 beforeEach(() => {
@@ -48,33 +47,24 @@ describe('Tabs', () => {
   })
 
   it('adds a session and shows its content', () => {
-    const { tabs, view } = setup()
+    const { tabs, content } = setup()
     const first = getActive()!.id
     tabs.addSession('hello')
     expect(getState().sessions).toHaveLength(2)
     expect(getActive()?.id).not.toBe(first)
-    expect(docText(view)).toBe('hello')
+    expect(content.getMarkdown()).toBe('hello')
   })
 
   it('restores per-tab content when activating', () => {
-    const { tabs, view } = setup()
+    const { tabs, content } = setup()
     const first = getActive()!.id
     tabs.addSession('second doc')
     tabs.addSession('third doc')
     tabs.activate(first)
     expect(getActive()?.id).toBe(first)
-    expect(docText(view)).toBe('')
+    expect(content.getMarkdown()).toBe('')
     tabs.activate(getState().sessions[2]!.id)
-    expect(docText(view)).toBe('third doc')
-  })
-
-  it('preserves scroll position per tab', () => {
-    const { tabs, view } = setup()
-    view.scrollDOM.scrollTop = 120
-    const first = getActive()!.id
-    tabs.addSession('other')
-    tabs.activate(first)
-    expect(view.scrollDOM.scrollTop).toBe(120)
+    expect(content.getMarkdown()).toBe('third doc')
   })
 
   it('renders exactly one active tab', () => {
@@ -106,24 +96,24 @@ describe('Tabs', () => {
   })
 
   it('switches tabs when a tab is clicked', () => {
-    const { tabs, tabbar, view } = setup()
+    const { tabs, tabbar, content } = setup()
     const first = getActive()!.id
     tabs.addSession('second doc')
     const second = getActive()!.id
     const tabEls = tabbar.querySelectorAll<HTMLElement>('.tab')
     tabEls[0]!.click()
     expect(getActive()?.id).toBe(first)
-    expect(docText(view)).toBe('')
+    expect(content.getMarkdown()).toBe('')
     tabEls[1]!.click()
     expect(getActive()?.id).toBe(second)
-    expect(docText(view)).toBe('second doc')
+    expect(content.getMarkdown()).toBe('second doc')
   })
 
   it('creates a fresh tab when the last one closes', () => {
-    const { tabs, view } = setup()
+    const { tabs, content } = setup()
     tabs.close(getActive()!.id)
     expect(getState().sessions).toHaveLength(1)
-    expect(docText(view)).toBe('')
+    expect(content.getMarkdown()).toBe('')
   })
 
   it('notifies activation through the callback', () => {
@@ -145,11 +135,11 @@ describe('Tabs', () => {
   })
 
   it('ignores activating a tab that does not exist', () => {
-    const { tabs, view } = setup()
+    const { tabs, content } = setup()
     tabs.addSession('second doc')
     tabs.activate('does-not-exist')
     expect(getActive()?.id).not.toBe('does-not-exist')
-    expect(docText(view)).toBe('second doc')
+    expect(content.getMarkdown()).toBe('second doc')
   })
 
   it('activates a tab with Enter or Space', () => {
@@ -177,5 +167,14 @@ describe('Tabs', () => {
     expect(getState().sessions[0]!.id).toBe(second)
     expect(getActive()?.id).toBe(second)
     expect(first).not.toBe(second)
+  })
+
+  it('returns markdown snapshot for a tab', () => {
+    const { tabs, content } = setup()
+    const first = getActive()!.id
+    content.setMarkdown('first tab content')
+    tabs.snapshotActive()
+    tabs.addSession('second tab')
+    expect(tabs.getMarkdownSnapshot(first)).toBe('first tab content')
   })
 })

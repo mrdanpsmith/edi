@@ -149,7 +149,7 @@ export class FormatToolbar {
 
   constructor(
     private readonly bar: HTMLElement,
-    private readonly view: EditorView,
+    private readonly getView: () => EditorView | null,
   ) {
     this.visible = readBool(FORMATTING_VISIBLE_KEY, true)
     this.build()
@@ -192,9 +192,11 @@ export class FormatToolbar {
   }
 
   private run(fn: FormatFn): void {
-    const { from, to } = this.view.state.selection.main
-    applyFormatEdit(this.view, fn(this.view.state.doc.toString(), from, to))
-    this.view.focus()
+    const view = this.getView()
+    if (!view) return
+    const { from, to } = view.state.selection.main
+    applyFormatEdit(view, fn(view.state.doc.toString(), from, to))
+    view.focus()
   }
 }
 

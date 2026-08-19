@@ -13,7 +13,7 @@ function makeFixture() {
     state: EditorState.create({ doc: 'hello world' }),
     parent: host,
   })
-  return { bar, view }
+  return { bar, view, getView: () => view }
 }
 
 describe('FormatToolbar', () => {
@@ -26,22 +26,22 @@ describe('FormatToolbar', () => {
   })
 
   it('builds one button per format command', () => {
-    const { bar, view } = makeFixture()
-    const toolbar = new FormatToolbar(bar, view)
+    const { bar, getView } = makeFixture()
+    const toolbar = new FormatToolbar(bar, getView)
     expect(toolbar.isVisible()).toBe(true)
     expect(bar.querySelectorAll('.fmt-btn')).toHaveLength(16)
   })
 
   it('is hidden by default only when the user hid it before', () => {
     localStorage.setItem('edi.formattingVisible', 'false')
-    const { bar, view } = makeFixture()
-    new FormatToolbar(bar, view)
+    const { bar, getView } = makeFixture()
+    new FormatToolbar(bar, getView)
     expect(bar.hidden).toBe(true)
   })
 
   it('hides and shows the toolbar on setVisible', () => {
-    const { bar, view } = makeFixture()
-    const toolbar = new FormatToolbar(bar, view)
+    const { bar, getView } = makeFixture()
+    const toolbar = new FormatToolbar(bar, getView)
     toolbar.setVisible(false)
     expect(bar.hidden).toBe(true)
     expect(toolbar.isVisible()).toBe(false)
@@ -51,8 +51,8 @@ describe('FormatToolbar', () => {
   })
 
   it('toggles visibility', () => {
-    const { bar, view } = makeFixture()
-    const toolbar = new FormatToolbar(bar, view)
+    const { bar, getView } = makeFixture()
+    const toolbar = new FormatToolbar(bar, getView)
     toolbar.toggle()
     expect(bar.hidden).toBe(true)
     toolbar.toggle()
@@ -60,8 +60,8 @@ describe('FormatToolbar', () => {
   })
 
   it('applies a format from a button click', () => {
-    const { bar, view } = makeFixture()
-    const toolbar = new FormatToolbar(bar, view)
+    const { bar, view, getView } = makeFixture()
+    const toolbar = new FormatToolbar(bar, getView)
     view.dispatch({ selection: { anchor: 6, head: 11 } })
     const bold = bar.querySelector<HTMLButtonElement>('button[title="Bold (Ctrl+B)"]')!
     bold.click()
@@ -72,16 +72,16 @@ describe('FormatToolbar', () => {
   })
 
   it('inserts a horizontal rule from its button', () => {
-    const { bar, view } = makeFixture()
-    new FormatToolbar(bar, view)
+    const { bar, view, getView } = makeFixture()
+    new FormatToolbar(bar, getView)
     const rule = bar.querySelector<HTMLButtonElement>('button[title="Horizontal rule"]')!
     rule.click()
     expect(view.state.doc.toString()).toBe('---\nhello world')
   })
 
   it('applies a heading-3, highlight, and definition list from their buttons', () => {
-    const { bar, view } = makeFixture()
-    new FormatToolbar(bar, view)
+    const { bar, view, getView } = makeFixture()
+    new FormatToolbar(bar, getView)
     view.dispatch({ selection: { anchor: 6, head: 11 } })
     bar.querySelector<HTMLButtonElement>('button[title="Highlight"]')!.click()
     expect(view.state.doc.toString()).toBe('hello ==world==')

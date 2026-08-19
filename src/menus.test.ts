@@ -13,8 +13,7 @@ function makeHandlers() {
     importText: vi.fn(),
     insertImage: vi.fn(),
     export: vi.fn(),
-    togglePreview: vi.fn(),
-    toggleEditor: vi.fn(),
+    toggleMode: vi.fn(),
     toggleFormatting: vi.fn(),
   }
 }
@@ -29,8 +28,7 @@ const COMMANDS = [
   'importText',
   'insertImage',
   'export',
-  'togglePreview',
-  'toggleEditor',
+  'toggleMode',
   'toggleFormatting',
 ]
 

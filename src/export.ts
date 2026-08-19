@@ -1,4 +1,4 @@
-import { escapeHtml } from './preview'
+import { escapeHtml } from './utils'
 
 const EXPORT_CSS = `
 :root {

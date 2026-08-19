@@ -1,11 +1,37 @@
 import { describe, expect, it } from 'vitest'
 
-import { renderMarkdown } from './preview'
 import { computeSpreadsheet, formatNumber } from './spreadsheet'
+
+function renderTable(markdown: string): string {
+  const lines = markdown.split('\n')
+  const rows: string[][] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('|')) continue
+    const cells = trimmed
+      .slice(1, -1)
+      .split('|')
+      .map((c) => c.trim())
+    if (cells.every((c) => /^-+$/.test(c))) continue
+    rows.push(cells)
+  }
+  if (rows.length === 0) return ''
+  let html = '<table>'
+  for (let i = 0; i < rows.length; i++) {
+    const tag = i === 0 ? 'th' : 'td'
+    html += '<tr>'
+    for (const cell of rows[i]!) {
+      html += `<${tag}>${cell}</${tag}>`
+    }
+    html += '</tr>'
+  }
+  html += '</table>'
+  return html
+}
 
 function compute(markdown: string): string {
   const container = document.createElement('div')
-  container.innerHTML = renderMarkdown(markdown)
+  container.innerHTML = renderTable(markdown)
   computeSpreadsheet(container)
   return container.innerHTML
 }

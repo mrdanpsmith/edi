@@ -1,7 +1,3 @@
-import type { EditorState } from '@codemirror/state'
-import type { EditorView } from '@codemirror/view'
-
-import { createEditorState, restoreChangeNotifications, suppressChangeNotifications } from './editor'
 import {
   activateSession,
   closeSession,
@@ -11,23 +7,23 @@ import {
   subscribe,
 } from './state'
 
-interface Snapshot {
-  state: EditorState
-  scrollTop: number
-}
-
 export interface TabCallbacks {
   onNewTab(): void
   onCloseTab(id: string): void
   onActivate(id: string): void
 }
 
+export interface TabContent {
+  getMarkdown(): string
+  setMarkdown(value: string): void
+}
+
 export class Tabs {
-  private readonly snapshots = new Map<string, Snapshot>()
+  private readonly snapshots = new Map<string, string>()
 
   constructor(
     private readonly tabbar: HTMLElement,
-    private readonly view: EditorView,
+    private readonly content: TabContent,
     private readonly callbacks: TabCallbacks,
   ) {
     subscribe(() => this.render())
@@ -40,36 +36,23 @@ export class Tabs {
 
   snapshotActive(): void {
     const active = getActive()
-    if (!active) {
-      return
-    }
-    this.snapshots.set(active.id, {
-      state: this.view.state,
-      scrollTop: this.view.scrollDOM.scrollTop,
-    })
+    if (!active) return
+    this.snapshots.set(active.id, this.content.getMarkdown())
   }
 
   addSession(content = ''): void {
     this.snapshotActive()
     const id = createSession()
-    const state = createEditorState(content)
-    this.snapshots.set(id, { state, scrollTop: 0 })
-    suppressChangeNotifications()
-    this.view.setState(state)
-    this.view.scrollDOM.scrollTop = 0
-    restoreChangeNotifications()
+    this.snapshots.set(id, content)
+    this.content.setMarkdown(content)
     this.render()
     this.notifyActive()
   }
 
   activate(id: string): void {
-    if (id === this.activeId) {
-      return
-    }
+    if (id === this.activeId) return
     this.snapshotActive()
-    if (!activateSession(id)) {
-      return
-    }
+    if (!activateSession(id)) return
     this.restoreActive()
     this.notifyActive()
   }
@@ -87,19 +70,15 @@ export class Tabs {
     this.notifyActive()
   }
 
+  getMarkdownSnapshot(id: string): string | undefined {
+    return this.snapshots.get(id)
+  }
+
   private restoreActive(): void {
     const active = getActive()
-    if (!active) {
-      return
-    }
-    const snapshot = this.snapshots.get(active.id)
-    if (!snapshot) {
-      return
-    }
-    suppressChangeNotifications()
-    this.view.setState(snapshot.state)
-    this.view.scrollDOM.scrollTop = snapshot.scrollTop
-    restoreChangeNotifications()
+    if (!active) return
+    const markdown = this.snapshots.get(active.id) ?? ''
+    this.content.setMarkdown(markdown)
   }
 
   private notifyActive(): void {

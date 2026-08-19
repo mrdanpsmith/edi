@@ -1,24 +1,11 @@
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { markdown } from '@codemirror/lang-markdown'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { languages } from '@codemirror/language-data'
-import { tags } from '@lezer/highlight'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers } from '@codemirror/view'
-
-import { runFormat, toggleBold, toggleItalic, toggleStrikethrough } from './format'
-
-export type ChangeHandler = (view: EditorView) => void
-
-let suppressChange = false
-
-export function suppressChangeNotifications(): void {
-  suppressChange = true
-}
-
-export function restoreChangeNotifications(): void {
-  suppressChange = false
-}
+import { history, historyKeymap } from '@codemirror/commands'
+import { markdown } from '@codemirror/lang-markdown'
+import { languages } from '@codemirror/language-data'
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
+import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 
 const highlight = HighlightStyle.define([
   { tag: tags.heading, color: 'var(--md-heading)', fontWeight: '600' },
@@ -30,7 +17,10 @@ const highlight = HighlightStyle.define([
   { tag: tags.quote, color: 'var(--md-quote)', fontStyle: 'italic' },
   { tag: tags.monospace, color: 'var(--md-code)' },
   { tag: tags.comment, color: 'var(--text-muted)' },
-  { tag: [tags.keyword, tags.atom, tags.bool, tags.typeName, tags.number], color: 'var(--md-code-keyword)' },
+  {
+    tag: [tags.keyword, tags.atom, tags.bool, tags.typeName, tags.number],
+    color: 'var(--md-code-keyword)',
+  },
   { tag: [tags.string, tags.special(tags.string)], color: 'var(--md-code-string)' },
   { tag: [tags.meta, tags.processingInstruction], color: 'var(--text-muted)' },
   { tag: tags.contentSeparator, color: 'var(--text-muted)' },
@@ -81,55 +71,46 @@ const theme = EditorView.theme({
   },
 })
 
-export function createEditorState(doc: string): EditorState {
-  return EditorState.create({
-    doc,
-    extensions: [
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged && !suppressChange) {
-          // Wired in createEditor; the listener closure is patched there so
-          // setState-driven tab switches don't mark sessions dirty.
-          notifyChange(update.view)
-        }
-      }),
-      lineNumbers(),
-      history(),
-      keymap.of([
-        { key: 'Mod-b', run: (view) => runFormat(view, toggleBold) },
-        { key: 'Mod-i', run: (view) => runFormat(view, toggleItalic) },
-        { key: 'Mod-Shift-x', run: (view) => runFormat(view, toggleStrikethrough) },
-        ...defaultKeymap,
-        ...historyKeymap,
-        indentWithTab,
-      ]),
-      markdown({ codeLanguages: languages }),
-      syntaxHighlighting(highlight),
-      theme,
-      EditorView.lineWrapping,
-      EditorState.tabSize.of(2),
-    ],
-  })
-}
-
-export interface EdiEditor {
-  view: EditorView
+export interface TextEditor {
+  getView(): EditorView
   getValue(): string
   setValue(value: string): void
   focus(): void
 }
 
-let notifyChange: ChangeHandler = () => undefined
-
-export function createEditor(parent: HTMLElement, onChange: ChangeHandler): EdiEditor {
-  notifyChange = onChange
+export function createTextEditor(parent: HTMLElement, onChange: () => void): TextEditor {
+  let suppressChange = false
 
   const view = new EditorView({
-    state: createEditorState(''),
+    state: EditorState.create({
+      doc: '',
+      extensions: [
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged && !suppressChange) {
+            onChange()
+          }
+        }),
+        lineNumbers(),
+        history(),
+        keymap.of([
+          ...defaultKeymap,
+          ...historyKeymap,
+          indentWithTab,
+        ]),
+        markdown({ codeLanguages: languages }),
+        syntaxHighlighting(highlight),
+        theme,
+        EditorView.lineWrapping,
+        EditorState.tabSize.of(2),
+      ],
+    }),
     parent,
   })
 
   return {
-    view,
+    getView() {
+      return view
+    },
     getValue() {
       return view.state.doc.toString()
     },

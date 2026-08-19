@@ -26,7 +26,6 @@
   --md-code-keyword: #cf222e;
   --md-code-string: #0a3069;
 
-  --preview-bg: #fafbfc;
   --exec-bg: #0d1117;
   --exec-fg: #e6edf3;
 }
@@ -56,8 +55,6 @@
     --md-code: #d2a8ff;
     --md-code-keyword: #ff7b72;
     --md-code-string: #a5d6ff;
-
-    --preview-bg: #010409;
   }
 }
 
@@ -78,11 +75,6 @@ body {
   color: var(--text-primary);
   background: var(--bg);
   overflow: hidden;
-}
-
-body.resizing {
-  cursor: col-resize;
-  user-select: none;
 }
 
 #app {
@@ -249,57 +241,54 @@ body.resizing {
 }
 
 #workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 5px minmax(0, 1fr);
-  grid-template-areas: 'editor divider preview';
   flex: 1;
   min-height: 0;
-}
-
-#editor-pane {
-  grid-area: editor;
-  min-width: 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-#preview-pane {
-  grid-area: preview;
+#visual-pane,
+#text-pane {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--preview-bg);
+  flex: 1;
 }
 
-#divider {
-  grid-area: divider;
-  flex: none;
-  width: 5px;
-  cursor: col-resize;
-  background: transparent;
-  transition: background 120ms;
+#text-pane {
+  flex: 1;
 }
 
-#workspace.editor-hidden #formatbar {
+#text-pane[hidden] {
   display: none;
 }
 
-#divider:hover,
-body.resizing #divider {
-  background: var(--accent);
+#visual-pane[hidden] {
+  display: none;
 }
 
-#editor-container,
-#preview-container {
+#visual-container,
+#text-container {
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 
-#preview-container {
-  scrollbar-gutter: stable;
+#visual-container .milkdown {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 16px 24px 48px;
+}
+
+#visual-container .editor {
+  outline: none;
+}
+
+#visual-container .editor .content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
 }
 
 #statusbar {

@@ -1,6 +1,6 @@
 import { invoke } from './bridge'
 
-import { escapeHtml } from './preview'
+import { escapeHtml } from './utils'
 
 const EXEC_TIMEOUT_SECONDS = 30
 

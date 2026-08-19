@@ -8,8 +8,7 @@ export interface MenuCommands {
   importText: () => void
   insertImage: () => void
   export: () => void
-  togglePreview: () => void
-  toggleEditor: () => void
+  toggleMode: () => void
   toggleFormatting: () => void
 }
 

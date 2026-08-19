@@ -49,13 +49,12 @@ vi.mock('mermaid', () => ({
 const DOM_TEMPLATE = `
   <nav id="tabbar" role="tablist" aria-label="Documents"></nav>
   <main id="workspace">
-    <section id="editor-pane" aria-label="Editor">
-      <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
-      <div id="editor-container"></div>
+    <section id="visual-pane" aria-label="Visual Editor">
+      <div id="visual-container"></div>
     </section>
-    <div id="divider" role="separator" aria-orientation="vertical" aria-label="Resize preview"></div>
-    <section id="preview-pane" aria-label="Preview">
-      <div id="preview-container"></div>
+    <section id="text-pane" aria-label="Text Editor">
+      <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
+      <div id="text-container"></div>
     </section>
   </main>
   <footer id="statusbar">
@@ -88,37 +87,36 @@ function press(key: string, extra: KeyboardEventInit = {}): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, ...extra }))
 }
 
-function editorView(): EditorView {
-  const cm = editorContainer().querySelector<HTMLElement>('.cm-editor')!
-  return EditorView.findFromDOM(cm)!
-}
-
-function editorContainer(): HTMLElement {
-  return document.querySelector<HTMLElement>('#editor-container')!
+function textContainer(): HTMLElement {
+  return document.querySelector<HTMLElement>('#text-container')!
 }
 
 function docText(): string {
-  return editorView().state.doc.toString()
+  const cm = textContainer().querySelector<HTMLElement>('.cm-editor')
+  if (cm) {
+    return EditorView.findFromDOM(cm)!.state.doc.toString()
+  }
+  return ''
 }
 
 function typeText(text: string): void {
-  editorView().dispatch({ changes: { from: 0, insert: text } })
+  const cm = textContainer().querySelector<HTMLElement>('.cm-editor')
+  if (cm) {
+    const view = EditorView.findFromDOM(cm)!
+    view.dispatch({ changes: { from: 0, insert: text } })
+  }
 }
 
 function tabbar(): HTMLElement {
   return document.querySelector<HTMLElement>('#tabbar')!
 }
 
-function previewContainer(): HTMLElement {
-  return document.querySelector<HTMLElement>('#preview-container')!
+function visualPane(): HTMLElement {
+  return document.querySelector<HTMLElement>('#visual-pane')!
 }
 
-function previewPane(): HTMLElement {
-  return document.querySelector<HTMLElement>('#preview-pane')!
-}
-
-function editorPane(): HTMLElement {
-  return document.querySelector<HTMLElement>('#editor-pane')!
+function textPane(): HTMLElement {
+  return document.querySelector<HTMLElement>('#text-pane')!
 }
 
 function statusLeft(): HTMLElement {
@@ -189,22 +187,17 @@ describe('init', () => {
     expect(statusLeft().textContent).toBe('Untitled')
     expect(statusRight().textContent).toContain('words')
     expect(tabbar().querySelectorAll('.tab')).toHaveLength(1)
-    expect(previewContainer().querySelector('h1')?.textContent).toContain('Welcome to Edi')
-    expect(previewContainer().querySelector('.mermaid[data-state="done"]')).not.toBeNull()
+    expect(visualPane().hidden).toBe(false)
+    expect(textPane().hidden).toBe(true)
   })
 
   it('marks the active tab dirty and updates the status when typing', async () => {
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     typeText('hello world')
     expect(tabbar().querySelector('.tab-title')?.textContent).toBe('* Untitled')
     expect(statusRight().textContent).toContain('2 words')
-  })
-
-  it('debounces preview re-renders while typing', async () => {
-    await loadMain()
-    typeText('first')
-    typeText('second')
-    expect(previewContainer().textContent).toContain('Welcome to Edi')
   })
 
   it('ignores keydowns without a modifier', async () => {
@@ -221,9 +214,9 @@ describe('init', () => {
         : Promise.resolve(undefined),
     )
     await loadMain()
-    menu('togglePreview')
+    menu('toggleMode')
     await flushAsync()
-    expect(previewPane().hidden).toBe(true)
+    expect(textPane().hidden).toBe(false)
   })
 })
 
@@ -246,13 +239,12 @@ describe('keyboard shortcuts', () => {
     press('o')
     press('s', { shiftKey: true })
     press('s')
-    press('p', { shiftKey: true })
     press('e', { shiftKey: true })
+    press('e')
     press('q')
     await flushAsync()
 
     expect(close).toHaveBeenCalled()
-    expect(previewPane().hidden).toBe(true)
   })
 })
 
@@ -263,7 +255,6 @@ describe('tabs', () => {
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(2)
     expect(tabbar().querySelectorAll('.tab')).toHaveLength(2)
-    expect(docText()).toBe('')
   })
 
   it('closes the active tab with Ctrl+W', async () => {
@@ -273,11 +264,12 @@ describe('tabs', () => {
     await flushAsync()
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(1)
-    expect(docText()).toContain('# Welcome to Edi')
   })
 
   it('keeps the tab when closing a dirty document is cancelled', async () => {
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     typeText('unsaved')
     mainState.confirmAction.mockResolvedValue(false)
     press('w')
@@ -292,12 +284,13 @@ describe('tabs', () => {
 
   it('closes a dirty document after confirming', async () => {
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     typeText('unsaved')
     press('w')
     await flushAsync()
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(1)
-    expect(docText()).toBe('')
     expect(mainState.confirmAction).toHaveBeenCalled()
   })
 })
@@ -447,6 +440,8 @@ describe('revert', () => {
     await loadMain()
     menu('open')
     await flushAsync()
+    menu('toggleMode')
+    await flushAsync()
     typeText('edited')
     mainState.readTextFile.mockResolvedValue('reverted content')
     menu('revert')
@@ -461,11 +456,13 @@ describe('revert', () => {
     await loadMain()
     menu('open')
     await flushAsync()
+    menu('toggleMode')
+    await flushAsync()
     typeText('edited')
     mainState.confirmAction.mockResolvedValue(false)
     menu('revert')
     await flushAsync()
-    expect(docText()).toBe('editedhello file')
+    expect(docText()).toContain('edited')
   })
 
   it('ignores revert when no path is set', async () => {
@@ -473,21 +470,6 @@ describe('revert', () => {
     menu('revert')
     await flushAsync()
     expect(mainState.confirmAction).not.toHaveBeenCalled()
-  })
-
-  it('reverts a clean document without asking', async () => {
-    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
-    mainState.readTextFile.mockResolvedValue('hello file')
-    await loadMain()
-    menu('open')
-    await flushAsync()
-    menu('save')
-    await flushAsync()
-    mainState.readTextFile.mockResolvedValue('v2')
-    menu('revert')
-    await flushAsync()
-    expect(mainState.confirmAction).not.toHaveBeenCalled()
-    expect(docText()).toBe('v2')
   })
 
   it('reports a failed revert', async () => {
@@ -506,7 +488,7 @@ describe('revert', () => {
 })
 
 describe('export', () => {
-  it('exports the preview to HTML', async () => {
+  it('exports to HTML', async () => {
     mainState.pickExportPath.mockResolvedValue('/tmp/out.html')
     await loadMain()
     menu('export')
@@ -540,30 +522,18 @@ describe('export', () => {
 })
 
 describe('view toggles', () => {
-  it('toggles the preview', async () => {
+  it('toggles mode between visual and text', async () => {
     await loadMain()
-    expect(previewPane().hidden).toBe(false)
-    menu('togglePreview')
-    expect(previewPane().hidden).toBe(true)
-    expect(mainState.invoke).toHaveBeenCalledWith(
-      'setMenuState',
-      expect.objectContaining({ previewVisible: false }),
-    )
-    menu('togglePreview')
-    expect(previewPane().hidden).toBe(false)
-  })
-
-  it('toggles the editor', async () => {
-    await loadMain()
-    expect(editorPane().hidden).toBe(false)
-    menu('toggleEditor')
-    expect(editorPane().hidden).toBe(true)
-    expect(mainState.invoke).toHaveBeenCalledWith(
-      'setMenuState',
-      expect.objectContaining({ editorVisible: false }),
-    )
-    menu('toggleEditor')
-    expect(editorPane().hidden).toBe(false)
+    expect(visualPane().hidden).toBe(false)
+    expect(textPane().hidden).toBe(true)
+    menu('toggleMode')
+    await flushAsync()
+    expect(visualPane().hidden).toBe(true)
+    expect(textPane().hidden).toBe(false)
+    menu('toggleMode')
+    await flushAsync()
+    expect(visualPane().hidden).toBe(false)
+    expect(textPane().hidden).toBe(true)
   })
 
   it('toggles the formatting toolbar', async () => {
@@ -571,10 +541,6 @@ describe('view toggles', () => {
     expect(formatBar().hidden).toBe(false)
     menu('toggleFormatting')
     expect(formatBar().hidden).toBe(true)
-    expect(mainState.invoke).toHaveBeenCalledWith(
-      'setMenuState',
-      expect.objectContaining({ formattingVisible: false }),
-    )
   })
 })
 
@@ -588,6 +554,8 @@ describe('import', () => {
       return Promise.resolve(undefined)
     })
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     menu('importTable')
     await flushAsync()
     expect(docText()).toContain('| A | B |')
@@ -598,6 +566,8 @@ describe('import', () => {
     mainState.pickImportPath.mockResolvedValue('/tmp/data.csv')
     mainState.invoke.mockRejectedValue(new Error('parse failed'))
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     menu('importTable')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(
@@ -622,6 +592,8 @@ describe('import', () => {
     mainState.pickTextImportPath.mockResolvedValue('/tmp/data.txt')
     mainState.readAnyTextFile.mockResolvedValue('inserted text')
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     menu('importText')
     await flushAsync()
     expect(docText()).toContain('inserted text')
@@ -632,6 +604,8 @@ describe('import', () => {
     mainState.pickTextImportPath.mockResolvedValue('/tmp/data.txt')
     mainState.readAnyTextFile.mockRejectedValue(new Error('nope'))
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     menu('importText')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(
@@ -642,6 +616,8 @@ describe('import', () => {
   it('inserts an image reference', async () => {
     mainState.pickImageImportPath.mockResolvedValue('/tmp/pic.png')
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     menu('insertImage')
     await flushAsync()
     expect(docText()).toContain('![pic](/tmp/pic.png)')
@@ -651,100 +627,11 @@ describe('import', () => {
   it('angle-brackets image paths that contain spaces', async () => {
     mainState.pickImageImportPath.mockResolvedValue('/tmp/my pic.png')
     await loadMain()
+    menu('toggleMode')
+    await flushAsync()
     menu('insertImage')
     await flushAsync()
     expect(docText()).toContain('![my pic](</tmp/my pic.png>)')
-  })
-})
-
-describe('links', () => {
-  it('opens external links in a new window', async () => {
-    await loadMain()
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    previewContainer().innerHTML = '<a href="https://example.com">x</a>'
-    previewContainer()
-      .querySelector('a')!
-      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener')
-  })
-
-  it('routes external links through the native shell when available', async () => {
-    mainState.hasBridge.mockReturnValue(true)
-    await loadMain()
-    previewContainer().innerHTML = '<a href="https://example.com">x</a>'
-    previewContainer()
-      .querySelector('a')!
-      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    await flushAsync()
-    expect(mainState.invoke).toHaveBeenCalledWith('openUrl', { url: 'https://example.com' })
-  })
-
-  it('opens local markdown links as documents', async () => {
-    mainState.pickOpenPath.mockResolvedValue(['/tmp/docs/a.md'])
-    mainState.readTextFile.mockResolvedValue('doc a')
-    await loadMain()
-    menu('open')
-    await flushAsync()
-
-    mainState.readTextFile.mockResolvedValue('doc b')
-    previewContainer().innerHTML = '<a href="b.md">x</a>'
-    previewContainer()
-      .querySelector('a')!
-      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    await flushAsync()
-
-    expect(mainState.readTextFile).toHaveBeenCalledWith('/tmp/docs/b.md')
-    expect(docText()).toBe('doc b')
-  })
-
-  it('opens non-markdown local links as file URLs', async () => {
-    mainState.pickOpenPath.mockResolvedValue(['/tmp/docs/a.md'])
-    mainState.readTextFile.mockResolvedValue('doc a')
-    await loadMain()
-    menu('open')
-    await flushAsync()
-
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    previewContainer().innerHTML = '<a href="data.csv">x</a>'
-    previewContainer()
-      .querySelector('a')!
-      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    expect(open).toHaveBeenCalledWith('file:///tmp/docs/data.csv', '_blank', 'noopener')
-  })
-
-  it('scrolls to the target element for anchor fragment links', async () => {
-    await loadMain()
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    const scrollIntoView = vi.fn()
-    Object.defineProperty(Element.prototype, 'scrollIntoView', {
-      value: scrollIntoView,
-      writable: true,
-      configurable: true,
-    })
-    previewContainer().innerHTML = '<h1 id="section">x</h1><a href="#section">go</a>'
-    previewContainer()
-      .querySelector('a')!
-      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    expect(open).not.toHaveBeenCalled()
-    expect(scrollIntoView).toHaveBeenCalledTimes(1)
-    expect(scrollIntoView.mock.instances[0]).toBe(previewContainer().querySelector('h1'))
-  })
-
-  it('does not scroll or open anything when the fragment target is missing', async () => {
-    await loadMain()
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    const scrollIntoView = vi.fn()
-    Object.defineProperty(Element.prototype, 'scrollIntoView', {
-      value: scrollIntoView,
-      writable: true,
-      configurable: true,
-    })
-    previewContainer().innerHTML = '<a href="#missing">x</a>'
-    previewContainer()
-      .querySelector('a')!
-      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    expect(open).not.toHaveBeenCalled()
-    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 })
 

@@ -1,4 +1,9 @@
-import { collectPendingMermaid, MERMAID_CLASS, MERMAID_LANG } from './preview'
+export const MERMAID_LANG = 'mermaid'
+export const MERMAID_CLASS = 'mermaid'
+
+export function collectPendingMermaid(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(`.${MERMAID_CLASS}[data-state="pending"]`))
+}
 
 let mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null
 
@@ -85,5 +90,3 @@ export function mermaidFenceTokens(source: string): string[] {
   }
   return blocks
 }
-
-export { MERMAID_CLASS, MERMAID_LANG }
