@@ -197,9 +197,8 @@ class Bridge(QObject):
     def _set_menu_state(self, request_id: int, args: dict) -> None:
         self._window.update_menu_state(
             can_revert=bool(args.get("canRevert")),
-            preview_visible=bool(args.get("previewVisible")),
+            visual_mode=bool(args.get("visualMode")),
             formatting_visible=bool(args.get("formattingVisible")),
-            editor_visible=bool(args.get("editorVisible")),
         )
         self._reply(request_id, None)
 

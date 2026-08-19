@@ -367,7 +367,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     preview_actions = [
         action
         for action in window._view_menu.actions()
-        if action.text().startswith("&Preview")
+        if action.text().startswith("&Visual Mode")
     ]
     assert preview_actions
     assert preview_actions[0].isCheckable()
@@ -386,26 +386,23 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
 def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
     assert window._revert_action.isEnabled() is False
-    assert window._preview_action.isChecked() is True
     assert window._editor_action.isChecked() is True
     assert window._formatting_action.isChecked() is True
     assert window._insert_actions is not None
     assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
-        can_revert=True, preview_visible=False, formatting_visible=False, editor_visible=False
+        can_revert=True, visual_mode=False, formatting_visible=False
     )
     assert window._revert_action.isEnabled() is True
-    assert window._preview_action.isChecked() is False
     assert window._editor_action.isChecked() is False
     assert window._formatting_action.isChecked() is False
-    assert all(not action.isEnabled() for action in window._insert_actions)
+    assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
-        can_revert=False, preview_visible=True, formatting_visible=True, editor_visible=True
+        can_revert=False, visual_mode=True, formatting_visible=True
     )
     assert window._revert_action.isEnabled() is False
-    assert window._preview_action.isChecked() is True
     assert window._editor_action.isChecked() is True
     assert window._formatting_action.isChecked() is True
     assert all(action.isEnabled() for action in window._insert_actions)
@@ -448,10 +445,10 @@ def test_view_menu_action_invokes_js_command(visible, qtbot):
     )
 
     view_menu = window._view_menu
-    preview_action = next(
-        action for action in view_menu.actions() if action.text().startswith("&Preview")
+    editor_action = next(
+        action for action in view_menu.actions() if action.text().startswith("&Visual Mode")
     )
-    preview_action.trigger()
+    editor_action.trigger()
 
     def fetched():
         window._web.page().runJavaScript(
@@ -460,7 +457,7 @@ def test_view_menu_action_invokes_js_command(visible, qtbot):
         return result.get("value") is not None
 
     qtbot.waitUntil(fetched, timeout=3000)
-    assert result["value"] == "togglePreview"
+    assert result["value"] == "toggleMode"
 
 
 def test_view_menu_formatting_action_invokes_js_command(visible, qtbot):
@@ -488,33 +485,6 @@ def test_view_menu_formatting_action_invokes_js_command(visible, qtbot):
 
     qtbot.waitUntil(fetched, timeout=3000)
     assert result["value"] == "toggleFormatting"
-
-
-def test_view_menu_editor_action_invokes_js_command(visible, qtbot):
-    window = visible
-    result = {}
-
-    window._web.page().runJavaScript(
-        "window.__menuCmd = null;"
-        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
-        "true",
-        lambda _v: None,
-    )
-
-    view_menu = window._view_menu
-    editor_action = next(
-        action for action in view_menu.actions() if action.text() == "&Editor"
-    )
-    editor_action.trigger()
-
-    def fetched():
-        window._web.page().runJavaScript(
-            "window.__menuCmd", lambda v: result.__setitem__("value", v)
-        )
-        return result.get("value") is not None
-
-    qtbot.waitUntil(fetched, timeout=3000)
-    assert result["value"] == "toggleEditor"
 
 
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):

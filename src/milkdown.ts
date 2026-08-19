@@ -40,15 +40,23 @@ const taskTogglePlugin = $prose(() => {
         if (!li) return false
 
         const $pos = view.state.doc.resolve(pos)
-        const node = $pos.node($pos.depth === 0 ? 0 : -1)
-        if (!node || node.type.name !== 'list_item') return false
+        let depth = $pos.depth
+        while (depth > 0 && $pos.node(depth).type.name !== 'list_item') {
+          depth--
+        }
+        if (depth === 0) return false
+        const node = $pos.node(depth)
+        if (node.type.name !== 'list_item') return false
 
         const tr = view.state.tr.setNodeAttribute(
-          $pos.before($pos.depth === 0 ? 1 : $pos.depth),
+          $pos.before(depth),
           'checked',
           !(node.attrs.checked as boolean),
         )
         view.dispatch(tr)
+
+        const newChecked = !(node.attrs.checked as boolean)
+        li.setAttribute('data-checked', String(newChecked))
         return true
       },
     },

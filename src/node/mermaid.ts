@@ -115,11 +115,6 @@ class MermaidNodeView implements NodeView {
       const id = `mermaid-node-${Date.now()}-${seed++}`
       const { svg } = await mermaid.render(id, code)
       this.dom.innerHTML = svg
-      const svgEl = this.dom.querySelector('svg')
-      if (svgEl) {
-        svgEl.removeAttribute('width')
-        svgEl.removeAttribute('height')
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.dom.innerHTML = ''

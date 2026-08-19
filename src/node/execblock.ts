@@ -67,7 +67,6 @@ export { remarkExecPlugin as rawExecRemarkPlugin }
 
 export const execSchema = $nodeSchema(EXEC_TYPE as never, () => ({
   group: 'block',
-  content: 'text*',
   marks: '',
   code: true,
   attrs: {
@@ -99,7 +98,7 @@ export const execSchema = $nodeSchema(EXEC_TYPE as never, () => ({
     runner: (state, node) => {
       const shebang = String(node.attrs.shebang)
       const value = String(node.attrs.value)
-      const isInline = value.startsWith(shebang)
+      const isInline = shebang && value.startsWith(shebang)
       if (isInline) {
         state.addNode('code', undefined, value)
       } else {
@@ -113,16 +112,22 @@ const outputCache = new Map<string, CodeResult | { error: string }>()
 
 class ExecBlockNodeView implements NodeView {
   dom: HTMLElement
+  private codeEl: HTMLPreElement
   private shebang: string
   private source: string
   private button: HTMLButtonElement
   private output: HTMLElement
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private node: any
+  private view: import('@milkdown/prose/view').EditorView
+  private getPos: () => number | undefined
+  private skipNextUpdate = false
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(node: any) {
+  constructor(node: any, view: import('@milkdown/prose/view').EditorView, getPos: () => number | undefined) {
     this.node = node
+    this.view = view
+    this.getPos = getPos
     this.shebang = node.attrs.shebang
     this.source = node.attrs.value
 
@@ -130,11 +135,13 @@ class ExecBlockNodeView implements NodeView {
     this.dom.className = 'exec-block'
     this.dom.dataset['shebang'] = this.shebang
 
-    const pre = document.createElement('pre')
-    pre.className = 'exec-source'
+    this.codeEl = document.createElement('pre')
+    this.codeEl.className = 'exec-source'
     const code = document.createElement('code')
+    code.contentEditable = 'true'
+    code.spellcheck = false
     code.textContent = this.source
-    pre.append(code)
+    this.codeEl.append(code)
 
     const toolbar = document.createElement('div')
     toolbar.className = 'exec-toolbar'
@@ -148,9 +155,11 @@ class ExecBlockNodeView implements NodeView {
     this.output.className = 'exec-output'
     this.output.hidden = true
 
-    this.dom.append(pre, toolbar, this.output)
+    this.dom.append(this.codeEl, toolbar, this.output)
 
     this.button.addEventListener('click', this.handleClick)
+    code.addEventListener('input', this.handleInput)
+    code.addEventListener('keydown', this.handleKeyDown)
 
     const cached = outputCache.get(this.cacheKey())
     if (cached) {
@@ -162,14 +171,36 @@ class ExecBlockNodeView implements NodeView {
     void this.run()
   }
 
+  private handleKeyDown = (e: KeyboardEvent): void => {
+    e.stopPropagation()
+  }
+
+  private handleInput = (): void => {
+    const code = this.codeEl.querySelector('code')
+    if (!code) return
+    this.source = code.textContent ?? ''
+    this.node = { ...this.node, attrs: { ...this.node.attrs, value: this.source } }
+    this.skipNextUpdate = true
+    const pos = this.getPos()
+    if (pos !== undefined) {
+      const tr = this.view.state.tr.setNodeAttribute(pos, 'value', this.source)
+      this.view.dispatch(tr)
+    }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   update(node: any): boolean {
-    if (node.attrs.value !== this.node?.attrs?.value || node.attrs.shebang !== this.node?.attrs?.shebang) {
+    if (this.skipNextUpdate) {
+      this.skipNextUpdate = false
+      return true
+    }
+    if (node.attrs.value !== this.source || node.attrs.shebang !== this.shebang) {
       this.node = node
       this.shebang = node.attrs.shebang
       this.source = node.attrs.value
       this.dom.dataset['shebang'] = this.shebang
-      this.dom.querySelector<HTMLElement>('.exec-source code')!.textContent = this.source
+      const code = this.codeEl.querySelector('code')
+      if (code) code.textContent = this.source
     }
     return true
   }
@@ -215,6 +246,11 @@ class ExecBlockNodeView implements NodeView {
 
   destroy(): void {
     this.button.removeEventListener('click', this.handleClick)
+    const code = this.codeEl.querySelector('code')
+    if (code) {
+      code.removeEventListener('input', this.handleInput)
+      code.removeEventListener('keydown', this.handleKeyDown)
+    }
   }
 }
 
@@ -223,8 +259,8 @@ export const execNodeView = $prose(() => {
     key: new PluginKey('MILKDOWN_EXEC_NODEVIEW'),
     props: {
       nodeViews: {
-        [EXEC_TYPE]: (node: ProseNode): NodeView => {
-          return new ExecBlockNodeView(node)
+        [EXEC_TYPE]: (node: ProseNode, view: import('@milkdown/prose/view').EditorView, getPos: () => number | undefined): NodeView => {
+          return new ExecBlockNodeView(node, view, getPos)
         },
       },
     },

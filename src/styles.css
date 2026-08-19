@@ -489,12 +489,11 @@ body {
   justify-content: center;
   margin: 1em 0;
   overflow-x: auto;
-  overflow-y: visible;
 }
 
 #visual-container .editor .mermaid svg {
+  max-width: 100%;
   height: auto;
-  overflow: visible;
 }
 
 #visual-container .editor .mermaid-error {
@@ -523,6 +522,22 @@ body {
   border: none;
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  white-space: pre;
+}
+
+#visual-container .editor .exec-source code {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+  white-space: pre;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  outline: none;
+  min-height: 1.5em;
+  color: inherit;
+  width: 100%;
 }
 
 #visual-container .editor .exec-toolbar {

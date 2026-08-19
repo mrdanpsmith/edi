@@ -208,8 +208,14 @@ function insertText(text: string): void {
       view.focus()
     }
   } else {
-    const md = visualEditor.getMarkdown() + text
-    void visualEditor.setMarkdown(md)
+    const view = visualEditor.getView()
+    if (view) {
+      view.dispatch(view.state.tr.insertText(text))
+      view.focus()
+    } else {
+      const md = visualEditor.getMarkdown() + text
+      void visualEditor.setMarkdown(md)
+    }
   }
 }
 

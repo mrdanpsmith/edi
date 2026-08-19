@@ -22,9 +22,8 @@ class StubWindow(QObject):
         self.closed = False
         self.confirm_messages: list[str] = []
         self.can_revert = False
-        self.preview_visible = True
+        self.visual_mode = True
         self.formatting_visible = True
-        self.editor_visible = True
         self.opened_urls: list[str] = []
 
     def confirm(self, message, callback=None) -> None:
@@ -36,12 +35,11 @@ class StubWindow(QObject):
         self.dirty = dirty
 
     def update_menu_state(
-        self, can_revert=False, preview_visible=True, formatting_visible=True, editor_visible=True
+        self, can_revert=False, visual_mode=True, formatting_visible=True
     ) -> None:
         self.can_revert = can_revert
-        self.preview_visible = preview_visible
+        self.visual_mode = visual_mode
         self.formatting_visible = formatting_visible
-        self.editor_visible = editor_visible
 
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
@@ -134,17 +132,15 @@ def test_set_menu_state(bridge):
         "setMenuState",
         {
             "canRevert": True,
-            "previewVisible": False,
+            "visualMode": False,
             "formattingVisible": False,
-            "editorVisible": False,
         },
     )
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.can_revert is True
-    assert window.preview_visible is False
+    assert window.visual_mode is False
     assert window.formatting_visible is False
-    assert window.editor_visible is False
 
 
 def test_pick_import_path(bridge):

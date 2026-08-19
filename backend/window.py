@@ -228,7 +228,6 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._allow_close = False
         self._revert_action = None
-        self._preview_action = None
         self._editor_action = None
         self._formatting_action = None
         self._insert_actions = None
@@ -317,19 +316,11 @@ class MainWindow(QMainWindow):
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu
-        self._preview_action = QAction("&Preview\tCtrl+Shift+P", self)
-        self._preview_action.setCheckable(True)
-        self._preview_action.setChecked(True)
-        self._preview_action.triggered.connect(
-            lambda _checked=False: self._menu_command("togglePreview")
-        )
-        view_menu.addAction(self._preview_action)
-
-        self._editor_action = QAction("&Editor", self)
+        self._editor_action = QAction("&Visual Mode\tCtrl+E", self)
         self._editor_action.setCheckable(True)
         self._editor_action.setChecked(True)
         self._editor_action.triggered.connect(
-            lambda _checked=False: self._menu_command("toggleEditor")
+            lambda _checked=False: self._menu_command("toggleMode")
         )
         view_menu.addAction(self._editor_action)
 
@@ -368,21 +359,18 @@ class MainWindow(QMainWindow):
     def update_menu_state(
         self,
         can_revert: bool,
-        preview_visible: bool,
+        visual_mode: bool,
         formatting_visible: bool,
-        editor_visible: bool,
     ) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
-        if self._preview_action is not None:
-            self._preview_action.setChecked(preview_visible)
         if self._editor_action is not None:
-            self._editor_action.setChecked(editor_visible)
+            self._editor_action.setChecked(visual_mode)
         if self._formatting_action is not None:
             self._formatting_action.setChecked(formatting_visible)
         if self._insert_actions is not None:
             for action in self._insert_actions:
-                action.setEnabled(editor_visible)
+                action.setEnabled(True)
 
     def set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
