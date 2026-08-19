@@ -1,10 +1,8 @@
-import { Editor, editorViewCtx, parserCtx, rootCtx } from '@milkdown/core'
+import { Editor, commandsCtx, editorViewCtx, parserCtx, rootCtx } from '@milkdown/core'
 import type { Ctx } from '@milkdown/ctx'
 import { listener, listenerCtx } from '@milkdown/plugin-listener'
 import { commonmark } from '@milkdown/preset-commonmark'
 import { gfm } from '@milkdown/preset-gfm'
-
-export type Mode = 'visual' | 'text'
 
 export interface EdiEditor {
   mount(container: HTMLElement): Promise<void>
@@ -13,6 +11,7 @@ export interface EdiEditor {
   setMarkdown(markdown: string): Promise<void>
   getView(): import('@milkdown/prose/view').EditorView | null
   isMounted(): boolean
+  runCommand(name: string, payload?: unknown): boolean
   onChange(callback: (markdown: string) => void): void
   onMounted(callback: () => void): void
 }
@@ -80,6 +79,15 @@ export function createEdiEditor(): EdiEditor {
     }
   }
 
+  function runCommand(name: string, payload?: unknown): boolean {
+    if (!editor || !mounted) return false
+    try {
+      return editor.action((ctx: Ctx) => ctx.get(commandsCtx).call(name, payload))
+    } catch {
+      return false
+    }
+  }
+
   function getView(): import('@milkdown/prose/view').EditorView | null {
     if (!editor || !mounted) return null
     try {
@@ -108,6 +116,7 @@ export function createEdiEditor(): EdiEditor {
     setMarkdown,
     getView,
     isMounted,
+    runCommand,
     onChange,
     onMounted,
   }

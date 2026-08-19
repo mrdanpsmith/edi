@@ -102,13 +102,17 @@ const textEditor = createTextEditor(textContainer, () => {
   syncContentToVisual()
 })
 
-const formatToolbar = new FormatToolbar(formatBar, () => textEditor.getView())
-
 const layout = new EditorLayout(workspace, visualPane, textPane, {
   onModeChange: (_mode) => {
     syncContentToMode()
     syncMenuState()
   },
+})
+
+const formatToolbar = new FormatToolbar(formatBar, {
+  getMode: () => layout.mode,
+  runVisualCommand: (name, payload) => visualEditor.runCommand(name, payload),
+  getTextEditor: () => textEditor.getView(),
 })
 
 const tabs = new Tabs(tabbar, {
