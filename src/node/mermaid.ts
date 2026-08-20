@@ -216,6 +216,14 @@ class MermaidNodeView implements NodeView {
     }
   }
 
+  stopEvent(): boolean {
+    return this.cm !== null
+  }
+
+  ignoreMutation(): boolean {
+    return true
+  }
+
   destroy(): void {
     this.cm?.destroy()
     this.dom.innerHTML = ''
