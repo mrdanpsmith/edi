@@ -176,6 +176,24 @@ body {
   vertical-align: -0.1em;
 }
 
+.md-preview li[data-checked]::before {
+  content: '';
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 0.4em;
+  margin-left: -1.3em;
+  vertical-align: -0.1em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.md-preview li[data-checked='true']::before {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--bg);
+}
+
 .md-preview hr {
   border: none;
   border-top: 1px solid var(--border);
@@ -266,16 +284,6 @@ export function serializeDocToHtml(doc: ProseNode): string {
   nodes.source_block = (node) => {
     const markdown = String(node.attrs.markdown ?? '')
     return ['pre', ['code', markdown]]
-  }
-
-  nodes.list_item = (node) => {
-    const checked = node.attrs.checked as boolean | null
-    if (checked !== null) {
-      return ['li', { 'data-checked': String(checked) },
-        ['input', { type: 'checkbox', checked: checked ? 'checked' : null, disabled: 'disabled' }],
-        0]
-    }
-    return ['li', 0]
   }
 
   const serializer = new DOMSerializer(nodes, base.marks)

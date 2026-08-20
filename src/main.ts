@@ -5,7 +5,7 @@ import './styles.css'
 
 import { confirmAction, hasBridge, invoke } from './bridge'
 
-import { buildExportHtml } from './export'
+import { buildExportHtml, serializeDocToHtml } from './export'
 import {
   fileName,
   imageReference,
@@ -164,11 +164,11 @@ async function exportHtml(): Promise<void> {
     return
   }
   try {
-    const md = blockEditor?.getMarkdown() ?? ''
-    const div = document.createElement('div')
-    div.className = 'md-preview'
-    div.textContent = md
-    const bodyHtml = div.innerHTML
+    const doc = blockEditor?.getView().state.doc
+    if (!doc) {
+      return
+    }
+    const bodyHtml = serializeDocToHtml(doc)
     await writeTextFile(path, buildExportHtml(fileName(path), bodyHtml))
     flashStatus(`Exported ${path}`)
   } catch (error) {
