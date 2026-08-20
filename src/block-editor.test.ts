@@ -1,0 +1,429 @@
+import { describe, expect, it, beforeEach } from 'vitest'
+import { schema } from './schema'
+import { markdownToProse, proseToMarkdown } from './markdown'
+import { EditorState } from 'prosemirror-state'
+import { EditorView } from 'prosemirror-view'
+import { Node as ProseNode } from 'prosemirror-model'
+import { blockPlugin, enterSourceMode, exitSourceMode, toggleSourceMode, getSourceBlockState, BLOCK_PLUGIN_KEY } from './blockplugin'
+import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
+import { mermaidNodeViewPlugin } from './node/mermaid'
+import { serializeBlock } from './markdown'
+import { Plugin } from 'prosemirror-state'
+
+function createEditor(initialMarkdown: string) {
+  const doc = markdownToProse(initialMarkdown, schema)
+  const nodeViewPlugin = new Plugin({
+    props: {
+      nodeViews: Object.fromEntries(
+        [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+      ),
+    },
+  })
+  const view = new EditorView(document.body, {
+    state: EditorState.create({
+      doc,
+      plugins: [blockPlugin, nodeViewPlugin, mermaidNodeViewPlugin],
+    }),
+  })
+  return view
+}
+
+function firstBlockPos(view: EditorView): number {
+  let pos = -1
+  view.state.doc.forEach((_node, offset) => {
+    if (pos < 0) pos = offset
+  })
+  return pos
+}
+
+function allBlockPositions(view: EditorView): number[] {
+  const positions: number[] = []
+  view.state.doc.forEach((_node, offset) => {
+    positions.push(offset)
+  })
+  return positions
+}
+
+function blockNodeAt(view: EditorView, pos: number): ProseNode | null {
+  let result: ProseNode | null = null
+  view.state.doc.forEach((node: ProseNode, offset: number) => {
+    if (offset === pos) result = node
+  })
+  return result
+}
+
+beforeEach(() => {
+  document.body.innerHTML = ''
+})
+
+describe('blockPlugin state', () => {
+  it('starts with no source block', () => {
+    const view = createEditor('# Hello')
+    const state = getSourceBlockState(view.state)
+    expect(state.sourceBlockPos).toBeNull()
+    view.destroy()
+  })
+
+  it('enterSourceMode sets _source attr and plugin state', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    const tr = enterSourceMode(view.state, pos)
+    expect(tr.getMeta(BLOCK_PLUGIN_KEY)).toEqual({ sourceBlockPos: pos })
+
+    view.dispatch(tr)
+    const blockState = getSourceBlockState(view.state)
+    expect(blockState.sourceBlockPos).toBe(pos)
+
+    const node = blockNodeAt(view, pos)
+    expect(node!.attrs._source).toBe(true)
+    view.destroy()
+  })
+
+  it('exitSourceMode clears _source attr and plugin state', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+
+    const tr = exitSourceMode(view.state)
+    view.dispatch(tr)
+    const blockState = getSourceBlockState(view.state)
+    expect(blockState.sourceBlockPos).toBeNull()
+
+    const node = blockNodeAt(view, pos)
+    expect(node!.attrs._source).toBe(false)
+    view.destroy()
+  })
+
+  it('toggleSourceMode enters when not in source mode', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    const tr = toggleSourceMode(view.state, pos)
+    view.dispatch(tr)
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(pos)
+    view.destroy()
+  })
+
+  it('toggleSourceMode exits when clicking same block', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(toggleSourceMode(view.state, pos))
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBeNull()
+    view.destroy()
+  })
+
+  it('toggleSourceMode switches to different block', () => {
+    const view = createEditor('# First\n\nSecond paragraph')
+    const positions = allBlockPositions(view)
+    expect(positions.length).toBe(2)
+
+    view.dispatch(enterSourceMode(view.state, positions[0]))
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(positions[0])
+
+    view.dispatch(toggleSourceMode(view.state, positions[1]))
+    const blockState = getSourceBlockState(view.state)
+    expect(blockState.sourceBlockPos).toBe(positions[1])
+
+    const node0 = blockNodeAt(view, positions[0])
+    expect(node0!.attrs._source).toBe(false)
+    const node1 = blockNodeAt(view, positions[1])
+    expect(node1!.attrs._source).toBe(true)
+    view.destroy()
+  })
+})
+
+describe('block nodeView factory', () => {
+  it('creates visual NodeView when _source is false', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    const deco = view.nodeDOM(pos) as HTMLElement
+    expect(deco).toBeTruthy()
+    expect(deco.classList.contains('block-visual-mode')).toBe(true)
+    view.destroy()
+  })
+
+  it('creates source NodeView when _source is true', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const deco = view.nodeDOM(pos) as HTMLElement
+    expect(deco).toBeTruthy()
+    expect(deco.classList.contains('block-source-mode')).toBe(true)
+    view.destroy()
+  })
+
+  it('switches back to visual after exitSourceMode', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    expect((view.nodeDOM(pos) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
+
+    view.dispatch(exitSourceMode(view.state))
+    const deco = view.nodeDOM(pos) as HTMLElement
+    expect(deco).toBeTruthy()
+    expect(deco.classList.contains('block-visual-mode')).toBe(true)
+    view.destroy()
+  })
+
+  it('source view has exit button', () => {
+    const view = createEditor('Hello world')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const btn = dom.querySelector('.block-source-exit') as HTMLElement
+    expect(btn).toBeTruthy()
+    expect(btn.textContent).toBe('Visual mode')
+    view.destroy()
+  })
+
+  it('source view has a CodeMirror editor', () => {
+    const view = createEditor('Hello world')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const cm = dom.querySelector('.cm-editor') as HTMLElement
+    expect(cm).toBeTruthy()
+    view.destroy()
+  })
+
+  it('visual view has block handle', () => {
+    const view = createEditor('Hello world')
+    const pos = firstBlockPos(view)
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const handle = dom.querySelector('.block-handle') as HTMLElement
+    expect(handle).toBeTruthy()
+    expect(handle.getAttribute('data-block-pos')).toBe(String(pos))
+    view.destroy()
+  })
+
+  it('source view does NOT have block handle', () => {
+    const view = createEditor('Hello world')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const handle = dom.querySelector('.block-handle')
+    expect(handle).toBeNull()
+    view.destroy()
+  })
+})
+
+describe('source mode round-trip', () => {
+  it('content survives enter source and exit', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('Hello')
+    view.destroy()
+  })
+
+  it('edited source content is applied on exit', () => {
+    const view = createEditor('Original text')
+    const pos = firstBlockPos(view)
+
+    view.dispatch(enterSourceMode(view.state, pos))
+
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const cmEditor = dom.querySelector('.cm-editor') as HTMLElement
+    expect(cmEditor).toBeTruthy()
+
+    view.dispatch(exitSourceMode(view.state))
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('Original text')
+    view.destroy()
+  })
+
+  it('escape key exits source mode', () => {
+    const view = createEditor('Hello world')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(pos)
+
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const cmContent = dom.querySelector('.cm-content') as HTMLElement
+    cmContent.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBeNull()
+    view.destroy()
+  })
+})
+
+describe('source mode serialization', () => {
+  it('code block shows fence and language in source mode', () => {
+    const view = createEditor('```js\nconst x = 1;\n```')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const cmContent = dom.querySelector('.cm-content') as HTMLElement
+    expect(cmContent.textContent).toContain('```js')
+    expect(cmContent.textContent).toContain('const x = 1;')
+    view.destroy()
+  })
+
+  it('code block round-trips through source mode', () => {
+    const view = createEditor('```js\nconst x = 1;\n```')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('```js')
+    expect(md).toContain('const x = 1;')
+    view.destroy()
+  })
+
+  it('mermaid block shows content in source mode', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const cmContent = dom.querySelector('.cm-content') as HTMLElement
+    expect(cmContent.textContent).toContain('graph TD')
+    expect(cmContent.textContent).toContain('A-->B')
+    view.destroy()
+  })
+
+  it('mermaid block round-trips through source mode', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('graph TD')
+    expect(md).toContain('A-->B')
+    view.destroy()
+  })
+
+  it('table shows pipe-formatted markdown in source mode', () => {
+    const view = createEditor('| H1 | H2 |\n| --- | --- |\n| A | B |')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const dom = view.nodeDOM(pos) as HTMLElement
+    const cmContent = dom.querySelector('.cm-content') as HTMLElement
+    expect(cmContent.textContent).toContain('| H1 | H2 |')
+    expect(cmContent.textContent).toContain('| A | B |')
+    view.destroy()
+  })
+
+  it('table round-trips through source mode', () => {
+    const view = createEditor('| H1 | H2 |\n| --- | --- |\n| A | B |')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('| H1 | H2 |')
+    expect(md).toContain('| A | B |')
+    view.destroy()
+  })
+})
+
+describe('table source mode', () => {
+  it('serialized table includes separator row', () => {
+    const view = createEditor('| H1 | H2 |\n| --- | --- |\n| A | B |')
+    const pos = firstBlockPos(view)
+    const node = blockNodeAt(view, pos)
+    const md = serializeBlock(node!)
+    expect(md).toContain('| --- | --- |')
+    view.destroy()
+  })
+
+  it('table round-trips preserving structure', () => {
+    const view = createEditor('| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('| Name | Age |')
+    expect(md).toContain('| Alice | 30 |')
+    expect(md).toContain('| Bob | 25 |')
+    const node = blockNodeAt(view, pos)
+    expect(node!.type.name).toBe('table')
+    view.destroy()
+  })
+})
+
+describe('task list support', () => {
+  it('parses unchecked task list items', () => {
+    const view = createEditor('- [ ] Buy groceries\n- [ ] Clean house')
+    const pos = firstBlockPos(view)
+    const node = blockNodeAt(view, pos)
+    expect(node!.type.name).toBe('bullet_list')
+    const firstItem = node!.child(0)
+    expect(firstItem.type.name).toBe('list_item')
+    expect(firstItem.attrs.checked).toBe(false)
+    view.destroy()
+  })
+
+  it('parses checked task list items', () => {
+    const view = createEditor('- [x] Done task\n- [ ] Pending task')
+    const pos = firstBlockPos(view)
+    const node = blockNodeAt(view, pos)
+    const firstItem = node!.child(0)
+    expect(firstItem.attrs.checked).toBe(true)
+    const secondItem = node!.child(1)
+    expect(secondItem.attrs.checked).toBe(false)
+    view.destroy()
+  })
+
+  it('serializes task list items with checkbox syntax', () => {
+    const view = createEditor('- [ ] Buy milk\n- [x] Walk dog')
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('- [ ] Buy milk')
+    expect(md).toContain('- [x] Walk dog')
+    view.destroy()
+  })
+
+  it('task list round-trips through source mode', () => {
+    const view = createEditor('- [ ] Todo item\n- [x] Done item')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('- [ ] Todo item')
+    expect(md).toContain('- [x] Done item')
+    view.destroy()
+  })
+
+  it('renders checkbox attribute in DOM', () => {
+    const view = createEditor('- [ ] Unchecked\n- [x] Checked')
+    const pos = firstBlockPos(view)
+    const node = blockNodeAt(view, pos)
+    const firstLi = node!.child(0)
+    expect(firstLi.attrs.checked).toBe(false)
+    const secondLi = node!.child(1)
+    expect(secondLi.attrs.checked).toBe(true)
+    view.destroy()
+  })
+})
+
+describe('no duplicate handles', () => {
+  it('bulleted list with items shows only one handle', () => {
+    const view = createEditor('- Item 1\n- Item 2\n- Item 3')
+    const handles = view.dom.querySelectorAll('.block-handle')
+    expect(handles.length).toBe(1)
+    view.destroy()
+  })
+
+  it('nested blockquote shows only one handle', () => {
+    const view = createEditor('> Quoted text\n> More quoted')
+    const handles = view.dom.querySelectorAll('.block-handle')
+    expect(handles.length).toBe(1)
+    view.destroy()
+  })
+
+  it('table shows only one handle', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const handles = view.dom.querySelectorAll('.block-handle')
+    expect(handles.length).toBe(1)
+    view.destroy()
+  })
+
+  it('multiple top-level blocks each get a handle', () => {
+    const view = createEditor('First\n\nSecond\n\nThird')
+    const handles = view.dom.querySelectorAll('.block-handle')
+    expect(handles.length).toBe(3)
+    view.destroy()
+  })
+})

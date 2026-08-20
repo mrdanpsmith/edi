@@ -1,14 +1,11 @@
-import { $prose } from '@milkdown/utils'
-import { Plugin, PluginKey } from '@milkdown/prose/state'
+import { Plugin, PluginKey } from 'prosemirror-state'
 import { computeSpreadsheet } from '../spreadsheet'
 
-export const spreadsheetPlugin = $prose(() => {
-  return new Plugin({
-    key: new PluginKey('MILKDOWN_SPREADSHEET'),
-    view: () => ({
-      update: (view) => {
-        computeSpreadsheet(view.dom)
-      },
-    }),
-  })
+export const spreadsheetPlugin = new Plugin({
+  key: new PluginKey('EDI_SPREADSHEET'),
+  view: () => ({
+    update: (view) => {
+      computeSpreadsheet(view.dom)
+    },
+  }),
 })

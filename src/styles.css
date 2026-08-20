@@ -247,115 +247,156 @@ body {
   flex-direction: column;
 }
 
-#visual-pane,
-#text-pane {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-}
-
-#text-pane {
-  flex: 1;
-}
-
-#text-pane[hidden] {
-  display: none;
-}
-
-#visual-pane[hidden] {
-  display: none;
-}
-
-#visual-container,
-#text-container {
+#editor-container {
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 
-#visual-container .milkdown {
+/* ── ProseMirror editor ── */
+
+.ProseMirror {
   max-width: 46rem;
   margin: 0 auto;
   padding: 16px 24px 48px;
-}
-
-#visual-container .editor {
   outline: none;
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-primary);
 }
 
-#visual-container .editor:focus {
+.ProseMirror:focus {
   outline: none;
 }
 
-#visual-container .editor h1,
-#visual-container .editor h2,
-#visual-container .editor h3,
-#visual-container .editor h4,
-#visual-container .editor h5,
-#visual-container .editor h6 {
+/* Block spacing: every top-level child of the ProseMirror doc */
+.ProseMirror > * {
+  margin-top: 0;
+  margin-bottom: 0.5em;
+}
+
+.ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.ProseMirror > .block-visual-mode {
+  position: relative;
+  padding-left: 24px;
+}
+
+/* Task list checkboxes */
+.ProseMirror li[data-checked] {
+  list-style: none;
+  display: flex !important;
+  align-items: baseline;
+  gap: 0;
+}
+.ProseMirror li[data-checked]::before {
+  content: '';
+  display: block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.4em;
+  margin-top: 0.35em;
+  border: 1.5px solid var(--text-3, #888);
+  border-radius: 3px;
+  background: var(--bg-0, #fff);
+  flex-shrink: 0;
+}
+.ProseMirror li[data-checked='true']::before {
+  background: var(--accent, #3b82f6);
+  border-color: var(--accent, #3b82f6);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8l3 3 7-7' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E");
+  background-size: contain;
+}
+.ProseMirror li[data-checked] > p {
+  margin: 0;
+}
+
+.ProseMirror > .block-source-mode {
+  position: relative;
+  padding-left: 24px;
+  margin: 0.5em 0;
+}
+
+/* Block handle */
+.block-handle {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 150ms;
+  user-select: none;
+}
+
+.block-visual-mode:hover > .block-handle {
+  opacity: 1;
+}
+
+.block-handle:hover {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.block-handle svg {
+  display: block;
+}
+
+/* ── Headings ── */
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3,
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 {
   color: var(--md-heading);
   line-height: 1.25;
   margin: 1.5em 0 0.5em;
   scroll-margin-top: 0.5em;
 }
 
-#visual-container .editor h1:first-child {
+.ProseMirror h1:first-child {
   margin-top: 0.4em;
 }
 
-#visual-container .editor h1 {
+.ProseMirror h1 {
   font-size: 1.9em;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.3em;
 }
 
-#visual-container .editor h2 {
+.ProseMirror h2 {
   font-size: 1.5em;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.3em;
 }
 
-#visual-container .editor h3 {
+.ProseMirror h3 {
   font-size: 1.25em;
 }
 
-#visual-container .editor a {
+/* ── Inline elements ── */
+
+.ProseMirror a {
   color: var(--md-link);
   text-decoration: none;
 }
 
-#visual-container .editor a:hover {
+.ProseMirror a:hover {
   text-decoration: underline;
 }
 
-#visual-container .editor blockquote {
-  margin: 0.5em 0;
-  padding: 0 1em;
-  border-left: 4px solid var(--border);
-  color: var(--md-quote);
-}
-
-#visual-container .editor pre {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  overflow-x: auto;
-}
-
-#visual-container .editor pre code {
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
-  font-size: 0.88em;
-}
-
-#visual-container .editor code {
+.ProseMirror code {
   font-family: var(--font-mono);
   font-size: 0.9em;
   background: var(--surface);
@@ -363,140 +404,131 @@ body {
   padding: 0.15em 0.35em;
 }
 
-#visual-container .editor mark {
+.ProseMirror mark {
   background: var(--md-mark);
   color: inherit;
   padding: 0 0.15em;
   border-radius: 3px;
 }
 
-#visual-container .editor sup,
-#visual-container .editor sub {
+.ProseMirror sup,
+.ProseMirror sub {
   line-height: 0;
 }
 
-#visual-container .editor ul,
-#visual-container .editor ol {
+/* ── Block elements ── */
+
+.ProseMirror blockquote {
+  margin: 0.5em 0;
+  padding: 0 1em;
+  border-left: 4px solid var(--border);
+  color: var(--md-quote);
+}
+
+.ProseMirror pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.88em;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
   padding-left: 2em;
 }
 
-#visual-container .editor li + li {
+.ProseMirror li + li {
   margin-top: 0.25em;
 }
 
-#visual-container .editor hr {
+.ProseMirror hr {
   border: none;
   border-top: 1px solid var(--border);
   margin: 1.5em 0;
 }
 
-#visual-container .editor p {
+.ProseMirror p {
   margin: 0.5em 0;
 }
 
-#visual-container .editor dl {
+.ProseMirror dl {
   margin: 0.5em 0;
 }
 
-#visual-container .editor dt {
+.ProseMirror dt {
   font-weight: 600;
   margin-top: 0.5em;
 }
 
-#visual-container .editor dd {
+.ProseMirror dd {
   margin: 0 0 0.5em 1.5em;
   color: var(--md-quote);
 }
 
-/* Task list checkboxes via data-checked attribute */
-#visual-container .editor li[data-item-type='task'] {
-  list-style: none;
-  margin-left: -1.5em;
-  padding-left: 1.5em;
-}
+/* ── Tables ── */
 
-#visual-container .editor li[data-item-type='task'] > p {
-  margin: 0;
-}
-
-#visual-container .editor li[data-item-type='task']::before {
-  content: '';
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  margin-right: 0.4em;
-  margin-left: -1.5em;
-  vertical-align: -0.15em;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--bg);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-#visual-container .editor li[data-item-type='task'][data-checked='true']::before {
-  background: var(--accent);
-  border-color: var(--accent);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='white' d='M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 10px;
-}
-
-/* Tables */
-#visual-container .editor .tableWrapper {
+.ProseMirror .tableWrapper {
   overflow-x: auto;
   margin: 1em 0;
 }
 
-#visual-container .editor table {
+.ProseMirror table {
   border-collapse: collapse;
   table-layout: fixed;
   width: 100%;
 }
 
-#visual-container .editor th,
-#visual-container .editor td {
+.ProseMirror th,
+.ProseMirror td {
   border: 1px solid var(--border);
   padding: 6px 13px;
   vertical-align: top;
   box-sizing: border-box;
 }
 
-#visual-container .editor th {
+.ProseMirror th {
   background: var(--surface);
   font-weight: 600;
 }
 
-#visual-container .editor td.spreadsheet-formula {
+.ProseMirror td.spreadsheet-formula {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
-#visual-container .editor td.spreadsheet-formula.spreadsheet-error {
+.ProseMirror td.spreadsheet-formula.spreadsheet-error {
   color: var(--danger);
   font-family: var(--font-mono);
   font-size: 0.85em;
 }
 
-#visual-container .editor .selectedCell::after {
+.ProseMirror .selectedCell::after {
   background: rgba(200, 200, 255, 0.4);
 }
 
-/* Mermaid diagrams */
-#visual-container .editor .mermaid {
+/* ── Mermaid diagrams ── */
+
+.ProseMirror .mermaid {
   display: flex;
   justify-content: center;
   margin: 1em 0;
   overflow-x: auto;
 }
 
-#visual-container .editor .mermaid svg {
+.ProseMirror .mermaid svg {
   max-width: 100%;
   height: auto;
 }
 
-#visual-container .editor .mermaid-error {
+.ProseMirror .mermaid-error {
   border: 1px solid var(--danger);
   border-radius: 6px;
   color: var(--danger);
@@ -507,8 +539,9 @@ body {
   font-size: 0.85em;
 }
 
-/* Executable code blocks */
-#visual-container .editor .exec-block {
+/* ── Executable code blocks ── */
+
+.ProseMirror .exec-block {
   margin: 1em 0;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -516,7 +549,7 @@ body {
   background: var(--surface);
 }
 
-#visual-container .editor .exec-source {
+.ProseMirror .exec-source {
   margin: 0;
   padding: 12px;
   border: none;
@@ -525,7 +558,7 @@ body {
   white-space: pre;
 }
 
-#visual-container .editor .exec-source code {
+.ProseMirror .exec-source code {
   display: block;
   font-family: var(--font-mono);
   font-size: 0.88em;
@@ -540,7 +573,7 @@ body {
   width: 100%;
 }
 
-#visual-container .editor .exec-toolbar {
+.ProseMirror .exec-toolbar {
   display: flex;
   justify-content: flex-end;
   padding: 6px 8px;
@@ -548,7 +581,7 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-#visual-container .editor .exec-toolbar .exec-run {
+.ProseMirror .exec-toolbar .exec-run {
   font: inherit;
   font-size: 12px;
   color: var(--text-primary);
@@ -559,16 +592,16 @@ body {
   cursor: pointer;
 }
 
-#visual-container .editor .exec-toolbar .exec-run:hover:not(:disabled) {
+.ProseMirror .exec-toolbar .exec-run:hover:not(:disabled) {
   background: var(--bg);
 }
 
-#visual-container .editor .exec-toolbar .exec-run:disabled {
+.ProseMirror .exec-toolbar .exec-run:disabled {
   opacity: 0.6;
   cursor: default;
 }
 
-#visual-container .editor .exec-output {
+.ProseMirror .exec-output {
   margin: 0;
   padding: 12px;
   border: none;
@@ -581,44 +614,74 @@ body {
   overflow-x: auto;
 }
 
-#visual-container .editor .exec-output.exec-error {
+.ProseMirror .exec-output.exec-error {
   border-top: 2px solid var(--danger);
 }
 
-/* Table copy button (for cloned DOM in export) */
-#visual-container .editor .table-copy-wrap {
-  position: relative;
-  margin: 1em 0;
+/* ── Block source mode (inline CodeMirror) ── */
+
+.block-source-mode {
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
 }
 
-#visual-container .editor .table-copy-wrap > table {
-  margin: 0;
+.block-source-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
 }
 
-#visual-container .editor .table-copy-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 2;
+.block-source-label {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.block-source-exit {
   font: inherit;
   font-size: 11px;
-  color: var(--text-primary);
-  background: var(--surface-raised);
+  color: var(--accent);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 4px;
   padding: 2px 8px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms;
 }
 
-#visual-container .editor .table-copy-wrap:hover .table-copy-btn,
-#visual-container .editor .table-copy-btn:focus-visible {
-  opacity: 1;
-}
-
-#visual-container .editor .table-copy-btn:hover {
+.block-source-exit:hover {
   background: var(--bg);
+  color: var(--text-primary);
+}
+
+.block-source-mode .cm-editor {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.block-source-mode .cm-editor .cm-scroller {
+  padding: 8px 12px;
+}
+
+.block-source-mode .cm-editor .cm-content {
+  font-family: inherit;
+}
+
+.block-source-mode .cm-editor .cm-gutters {
+  display: none;
+}
+
+.block-source-mode .cm-editor .cm-lineNumbers {
+  display: none;
 }
 
 #statusbar {

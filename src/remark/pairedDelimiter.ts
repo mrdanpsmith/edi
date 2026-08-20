@@ -1,7 +1,6 @@
-import { commandsCtx } from '@milkdown/core'
-import { markRule } from '@milkdown/prose'
-import { toggleMark } from '@milkdown/prose/commands'
-import { $command, $inputRule, $markAttr, $markSchema, $remark, $useKeymap } from '@milkdown/utils'
+import { toggleMark } from 'prosemirror-commands'
+import { InputRule } from 'prosemirror-inputrules'
+import type { MarkType, Schema } from 'prosemirror-model'
 import { classifyCharacter } from 'micromark-util-classify-character'
 import { resolveAll } from 'micromark-util-resolve-all'
 import { splice } from 'micromark-util-chunked'
@@ -12,7 +11,6 @@ interface PairedDelimiterOptions {
   charCode: number
   seqLength: number
   htmlTag: string
-  shortcuts?: string
 }
 
 export function createPairedDelimiterMark({
@@ -21,7 +19,6 @@ export function createPairedDelimiterMark({
   charCode,
   seqLength,
   htmlTag,
-  shortcuts,
 }: PairedDelimiterOptions) {
   const seqType = `${name}SequenceTemporary`
   const resolvedType = `${name}Sequence`
@@ -171,57 +168,41 @@ export function createPairedDelimiterMark({
     }
   }
 
-  // --- Milkdown components ---
-  const attr = $markAttr(name)
-
-  const schema = $markSchema(name, (ctx) => ({
-    parseDOM: [{ tag: htmlTag }],
-    toDOM: () => [htmlTag, ctx.get(attr.key)],
-    parseMarkdown: {
-      match: (node) => node.type === name,
-      runner: (state, node, markType) => {
-        state.openMark(markType)
-        state.next(node.children)
-        state.closeMark(markType)
+  // --- ProseMirror mark spec ---
+  function markSpec() {
+    return {
+      parseDOM: [{ tag: htmlTag }],
+      toDOM() {
+        return [htmlTag, 0]
       },
-    },
-    toMarkdown: {
-      match: (mark) => mark.type.name === name,
-      runner: (state, mark) => {
-        state.withMark(mark, name)
-      },
-    },
-  }))
+    }
+  }
 
-  const cmd = $command(`${name.charAt(0).toUpperCase() + name.slice(1)}Command`, (ctx) => () => {
-    return toggleMark(schema.type(ctx))
-  })
+  // --- Toggle command ---
+  function createToggleCommand(schema: Schema) {
+    const markType = schema.marks[name]
+    return toggleMark(markType)
+  }
 
-  const inputRule = $inputRule((ctx) => {
+  // --- Input rule ---
+  function createInputRule(schema: Schema) {
+    const markType: MarkType = schema.marks[name]
     const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const pattern = new RegExp(`${escaped}{${seqLength}}(.*?)${escaped}{${seqLength}}$`)
-    return markRule(pattern, schema.type(ctx))
-  })
-
-  const keymap = shortcuts
-    ? $useKeymap(`${name}Keymap`, {
-        [`Toggle${name.charAt(0).toUpperCase() + name.slice(1)}`]: {
-          shortcuts,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          command: (ctx: any) => {
-            const commands = ctx.get(commandsCtx)
-            return () => commands.call(cmd.key)
-          },
-        },
-      })
-    : null
+    return new InputRule(pattern, (state, match, start, end) => {
+      const tr = state.tr
+      if (match[1]) {
+        tr.replaceWith(start, end, state.schema.text(match[1], [markType.create()]))
+      }
+      return tr
+    })
+  }
 
   return {
-    remark: $remark(`remark${name.charAt(0).toUpperCase() + name.slice(1)}`, () => remarkPlugin),
+    remarkPlugin,
     rawRemarkPlugin: remarkPlugin,
-    schema,
-    command: cmd,
-    inputRule,
-    keymap,
+    markSpec,
+    createToggleCommand,
+    createInputRule,
   }
 }

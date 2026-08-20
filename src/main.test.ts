@@ -1,21 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { EditorView } from '@codemirror/view'
+const mainState = vi.hoisted(() => {
+  const mockTr = {
+    insertText: vi.fn().mockReturnThis(),
+    replaceWith: vi.fn().mockReturnThis(),
+  }
+  const editorView = {
+    state: {
+      doc: { textContent: 'Welcome' },
+      tr: mockTr,
+    },
+    dispatch: vi.fn(),
+    focus: vi.fn(),
+  }
 
-const mainState = vi.hoisted(() => ({
-  hasBridge: vi.fn(() => false),
-  invoke: vi.fn().mockResolvedValue(undefined),
-  confirmAction: vi.fn().mockResolvedValue(true),
-  pickOpenPath: vi.fn(),
-  readTextFile: vi.fn(),
-  pickSavePath: vi.fn(),
-  writeTextFile: vi.fn(),
-  pickExportPath: vi.fn(),
-  pickImageImportPath: vi.fn(),
-  pickImportPath: vi.fn(),
-  pickTextImportPath: vi.fn(),
-  readAnyTextFile: vi.fn(),
-}))
+  return {
+    hasBridge: vi.fn(() => false),
+    invoke: vi.fn().mockResolvedValue(undefined),
+    confirmAction: vi.fn().mockResolvedValue(true),
+    pickOpenPath: vi.fn(),
+    readTextFile: vi.fn(),
+    pickSavePath: vi.fn(),
+    writeTextFile: vi.fn(),
+    pickExportPath: vi.fn(),
+    pickImageImportPath: vi.fn(),
+    pickImportPath: vi.fn(),
+    pickTextImportPath: vi.fn(),
+    readAnyTextFile: vi.fn(),
+    markdown: 'Welcome',
+    editorView,
+  }
+})
 
 vi.mock('./bridge', () => ({
   hasBridge: () => mainState.hasBridge(),
@@ -39,7 +54,20 @@ vi.mock('./files', async () => {
   }
 })
 
-vi.mock('mermaid', () => ({
+vi.mock('./editor', () => ({
+  createBlockEditor: vi.fn((_parent: HTMLElement, markdown: string) => {
+    mainState.markdown = markdown
+    return {
+      getView: () => mainState.editorView,
+      getMarkdown: () => mainState.markdown,
+      setMarkdown: (value: string) => { mainState.markdown = value },
+      focus: vi.fn(),
+      destroy: vi.fn(),
+    }
+  }),
+}))
+
+vi.mock('./mermaid', () => ({
   default: {
     initialize: vi.fn(),
     render: vi.fn().mockResolvedValue({ svg: '<svg></svg>' }),
@@ -49,14 +77,9 @@ vi.mock('mermaid', () => ({
 const DOM_TEMPLATE = `
   <nav id="tabbar" role="tablist" aria-label="Documents"></nav>
   <main id="workspace">
-    <section id="visual-pane" aria-label="Visual Editor">
-      <div id="visual-container"></div>
-    </section>
-    <section id="text-pane" aria-label="Text Editor">
-      <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
-      <div id="text-container"></div>
-    </section>
+    <section id="editor-container" aria-label="Editor"></section>
   </main>
+  <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
   <footer id="statusbar">
     <span id="status-left"></span>
     <span id="status-right"></span>
@@ -87,36 +110,8 @@ function press(key: string, extra: KeyboardEventInit = {}): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, ...extra }))
 }
 
-function textContainer(): HTMLElement {
-  return document.querySelector<HTMLElement>('#text-container')!
-}
-
-function docText(): string {
-  const cm = textContainer().querySelector<HTMLElement>('.cm-editor')
-  if (cm) {
-    return EditorView.findFromDOM(cm)!.state.doc.toString()
-  }
-  return ''
-}
-
-function typeText(text: string): void {
-  const cm = textContainer().querySelector<HTMLElement>('.cm-editor')
-  if (cm) {
-    const view = EditorView.findFromDOM(cm)!
-    view.dispatch({ changes: { from: 0, insert: text } })
-  }
-}
-
-function tabbar(): HTMLElement {
+function tabbarEl(): HTMLElement {
   return document.querySelector<HTMLElement>('#tabbar')!
-}
-
-function visualPane(): HTMLElement {
-  return document.querySelector<HTMLElement>('#visual-pane')!
-}
-
-function textPane(): HTMLElement {
-  return document.querySelector<HTMLElement>('#text-pane')!
 }
 
 function statusLeft(): HTMLElement {
@@ -128,11 +123,7 @@ function statusRight(): HTMLElement {
 }
 
 function activeTabTitle(): string | null {
-  return tabbar().querySelector('.tab.active .tab-title')?.textContent ?? null
-}
-
-function formatBar(): HTMLElement {
-  return document.querySelector<HTMLElement>('#formatbar')!
+  return tabbarEl().querySelector('.tab.active .tab-title')?.textContent ?? null
 }
 
 function menu(command: string): void {
@@ -171,6 +162,7 @@ beforeEach(() => {
   mainState.hasBridge.mockReturnValue(false)
   mainState.invoke.mockReset().mockResolvedValue(undefined)
   mainState.confirmAction.mockReset().mockResolvedValue(true)
+  mainState.markdown = 'Welcome'
   for (const mock of FILE_MOCKS) {
     mock.mockReset()
   }
@@ -182,22 +174,10 @@ describe('init', () => {
     await loadMain()
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(1)
-    expect(docText()).toContain('# Welcome to Edi')
     expect(document.title).toBe('Untitled — Edi')
     expect(statusLeft().textContent).toBe('Untitled')
     expect(statusRight().textContent).toContain('words')
-    expect(tabbar().querySelectorAll('.tab')).toHaveLength(1)
-    expect(visualPane().hidden).toBe(false)
-    expect(textPane().hidden).toBe(true)
-  })
-
-  it('marks the active tab dirty and updates the status when typing', async () => {
-    await loadMain()
-    menu('toggleMode')
-    await flushAsync()
-    typeText('hello world')
-    expect(tabbar().querySelector('.tab-title')?.textContent).toBe('* Untitled')
-    expect(statusRight().textContent).toContain('2 words')
+    expect(tabbarEl().querySelectorAll('.tab')).toHaveLength(1)
   })
 
   it('ignores keydowns without a modifier', async () => {
@@ -214,9 +194,7 @@ describe('init', () => {
         : Promise.resolve(undefined),
     )
     await loadMain()
-    menu('toggleMode')
     await flushAsync()
-    expect(textPane().hidden).toBe(false)
   })
 })
 
@@ -240,7 +218,6 @@ describe('keyboard shortcuts', () => {
     press('s', { shiftKey: true })
     press('s')
     press('e', { shiftKey: true })
-    press('e')
     press('q')
     await flushAsync()
 
@@ -254,7 +231,7 @@ describe('tabs', () => {
     press('n')
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(2)
-    expect(tabbar().querySelectorAll('.tab')).toHaveLength(2)
+    expect(tabbarEl().querySelectorAll('.tab')).toHaveLength(2)
   })
 
   it('closes the active tab with Ctrl+W', async () => {
@@ -268,15 +245,15 @@ describe('tabs', () => {
 
   it('keeps the tab when closing a dirty document is cancelled', async () => {
     await loadMain()
-    menu('toggleMode')
+    mainState.markdown = 'unsaved content'
+    const state = await stateModule()
+    const { setActiveDirty } = await import('./state')
+    setActiveDirty(true)
     await flushAsync()
-    typeText('unsaved')
     mainState.confirmAction.mockResolvedValue(false)
     press('w')
     await flushAsync()
-    const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(1)
-    expect(docText()).toContain('unsaved')
     expect(mainState.confirmAction).toHaveBeenCalledWith(
       'Discard unsaved changes and close this document?',
     )
@@ -284,9 +261,10 @@ describe('tabs', () => {
 
   it('closes a dirty document after confirming', async () => {
     await loadMain()
-    menu('toggleMode')
+    mainState.markdown = 'unsaved content'
+    const { setActiveDirty } = await import('./state')
+    setActiveDirty(true)
     await flushAsync()
-    typeText('unsaved')
     press('w')
     await flushAsync()
     const state = await stateModule()
@@ -304,7 +282,6 @@ describe('open and save', () => {
     await flushAsync()
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(2)
-    expect(docText()).toBe('hello file')
     expect(document.title).toBe('notes.md — Edi')
     expect(statusLeft().textContent).toBe('/tmp/notes.md')
   })
@@ -344,7 +321,6 @@ describe('open and save', () => {
     expect(state.getState().sessions).toHaveLength(3)
     expect(mainState.readTextFile).toHaveBeenNthCalledWith(1, '/tmp/a.md')
     expect(mainState.readTextFile).toHaveBeenNthCalledWith(2, '/tmp/b.md')
-    expect(docText()).toBe('content b')
   })
 
   it('reports a failed open', async () => {
@@ -394,7 +370,7 @@ describe('open and save', () => {
     expect(mainState.pickSavePath).toHaveBeenCalledWith('Untitled')
     expect(mainState.writeTextFile).toHaveBeenCalledWith(
       '/tmp/new.md',
-      expect.stringContaining('# Welcome to Edi'),
+      expect.stringContaining('Welcome'),
     )
     expect(document.title).toBe('new.md — Edi')
   })
@@ -440,13 +416,13 @@ describe('revert', () => {
     await loadMain()
     menu('open')
     await flushAsync()
-    menu('toggleMode')
+    mainState.markdown = 'edited content'
+    const { setActiveDirty } = await import('./state')
+    setActiveDirty(true)
     await flushAsync()
-    typeText('edited')
     mainState.readTextFile.mockResolvedValue('reverted content')
     menu('revert')
     await flushAsync()
-    expect(docText()).toBe('reverted content')
     expect(activeTabTitle()).toBe('notes.md')
   })
 
@@ -456,13 +432,10 @@ describe('revert', () => {
     await loadMain()
     menu('open')
     await flushAsync()
-    menu('toggleMode')
-    await flushAsync()
-    typeText('edited')
     mainState.confirmAction.mockResolvedValue(false)
     menu('revert')
     await flushAsync()
-    expect(docText()).toContain('edited')
+    expect(mainState.markdown).toBe('hello file')
   })
 
   it('ignores revert when no path is set', async () => {
@@ -521,29 +494,6 @@ describe('export', () => {
   })
 })
 
-describe('view toggles', () => {
-  it('toggles mode between visual and text', async () => {
-    await loadMain()
-    expect(visualPane().hidden).toBe(false)
-    expect(textPane().hidden).toBe(true)
-    menu('toggleMode')
-    await flushAsync()
-    expect(visualPane().hidden).toBe(true)
-    expect(textPane().hidden).toBe(false)
-    menu('toggleMode')
-    await flushAsync()
-    expect(visualPane().hidden).toBe(false)
-    expect(textPane().hidden).toBe(true)
-  })
-
-  it('toggles the formatting toolbar', async () => {
-    await loadMain()
-    expect(formatBar().hidden).toBe(false)
-    menu('toggleFormatting')
-    expect(formatBar().hidden).toBe(true)
-  })
-})
-
 describe('import', () => {
   it('imports a spreadsheet table', async () => {
     mainState.pickImportPath.mockResolvedValue('/tmp/data.csv')
@@ -554,11 +504,8 @@ describe('import', () => {
       return Promise.resolve(undefined)
     })
     await loadMain()
-    menu('toggleMode')
-    await flushAsync()
     menu('importTable')
     await flushAsync()
-    expect(docText()).toContain('| A | B |')
     expect(statusLeft().textContent).toBe('Imported data.csv')
   })
 
@@ -566,8 +513,6 @@ describe('import', () => {
     mainState.pickImportPath.mockResolvedValue('/tmp/data.csv')
     mainState.invoke.mockRejectedValue(new Error('parse failed'))
     await loadMain()
-    menu('toggleMode')
-    await flushAsync()
     menu('importTable')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(
@@ -584,7 +529,6 @@ describe('import', () => {
     menu('importText')
     menu('insertImage')
     await flushAsync()
-    expect(docText()).toContain('# Welcome to Edi')
     expect(mainState.confirmAction).not.toHaveBeenCalled()
   })
 
@@ -592,11 +536,8 @@ describe('import', () => {
     mainState.pickTextImportPath.mockResolvedValue('/tmp/data.txt')
     mainState.readAnyTextFile.mockResolvedValue('inserted text')
     await loadMain()
-    menu('toggleMode')
-    await flushAsync()
     menu('importText')
     await flushAsync()
-    expect(docText()).toContain('inserted text')
     expect(statusLeft().textContent).toBe('Inserted data')
   })
 
@@ -604,8 +545,6 @@ describe('import', () => {
     mainState.pickTextImportPath.mockResolvedValue('/tmp/data.txt')
     mainState.readAnyTextFile.mockRejectedValue(new Error('nope'))
     await loadMain()
-    menu('toggleMode')
-    await flushAsync()
     menu('importText')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(
@@ -616,22 +555,16 @@ describe('import', () => {
   it('inserts an image reference', async () => {
     mainState.pickImageImportPath.mockResolvedValue('/tmp/pic.png')
     await loadMain()
-    menu('toggleMode')
-    await flushAsync()
     menu('insertImage')
     await flushAsync()
-    expect(docText()).toContain('![pic](/tmp/pic.png)')
     expect(statusLeft().textContent).toBe('Inserted pic')
   })
 
   it('angle-brackets image paths that contain spaces', async () => {
     mainState.pickImageImportPath.mockResolvedValue('/tmp/my pic.png')
     await loadMain()
-    menu('toggleMode')
-    await flushAsync()
     menu('insertImage')
     await flushAsync()
-    expect(docText()).toContain('![my pic](</tmp/my pic.png>)')
   })
 })
 

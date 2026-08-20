@@ -6,5 +6,4 @@ export const highlight = createPairedDelimiterMark({
   charCode: 61,
   seqLength: 2,
   htmlTag: 'mark',
-  shortcuts: 'Mod-Shift-h',
 })

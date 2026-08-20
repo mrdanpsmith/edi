@@ -1,15 +1,14 @@
-import { $nodeSchema, $prose, $remark } from '@milkdown/utils'
-import { Plugin, PluginKey } from '@milkdown/prose/state'
-import type { Node as ProseNode, DOMOutputSpec } from '@milkdown/prose/model'
-import type { NodeView } from '@milkdown/prose/view'
+import { Plugin, PluginKey } from 'prosemirror-state'
+import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
+import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
 import { invoke } from '../bridge'
 import type { CodeResult } from '../exec'
 
-const EXEC_TYPE = 'exec_block'
+export const EXEC_TYPE = 'exec_block'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function remarkExecPlugin(this: any) {
+export function remarkPlugin(this: any) {
   const data = this.data()
   if (!data.micromarkExtensions) data.micromarkExtensions = []
   if (!data.fromMarkdownExtensions) data.fromMarkdownExtensions = []
@@ -62,16 +61,14 @@ function remarkExecPlugin(this: any) {
   })
 }
 
-export const execRemark = $remark('remarkExec', () => remarkExecPlugin)
-export { remarkExecPlugin as rawExecRemarkPlugin }
-
-export const execSchema = $nodeSchema(EXEC_TYPE as never, () => ({
+export const execSchema = {
   group: 'block',
   marks: '',
   code: true,
   attrs: {
     shebang: { default: '' },
     value: { default: '' },
+    _source: { default: false },
   },
   parseDOM: [
     {
@@ -82,33 +79,24 @@ export const execSchema = $nodeSchema(EXEC_TYPE as never, () => ({
       }),
     },
   ],
-  toDOM: (): DOMOutputSpec => [
-    'div',
-    { 'data-exec-block': '' },
-    ['div', { class: 'exec-source' }, ['code', 0]],
-  ],
-  parseMarkdown: {
-    match: (node: { type: string }) => node.type === EXEC_TYPE,
-    runner: (state, node, type) => {
-      state.addNode(type, { shebang: String(node.shebang ?? ''), value: String(node.value ?? '') })
-    },
+  toDOM(): DOMOutputSpec {
+    return ['div', { 'data-exec-block': '' }, ['div', { class: 'exec-source' }, ['code', 0]]]
   },
-  toMarkdown: {
-    match: (node: ProseNode) => node.type.name === EXEC_TYPE,
-    runner: (state, node) => {
-      const shebang = String(node.attrs.shebang)
-      const value = String(node.attrs.value)
-      const isInline = shebang && value.startsWith(shebang)
-      if (isInline) {
-        state.addNode('code', undefined, value)
-      } else {
-        state.addNode('code', undefined, value, { lang: shebang, meta: null })
-      }
-    },
-  },
-}))
+}
 
 const outputCache = new Map<string, CodeResult | { error: string }>()
+
+function createHandleDOM(pos: number): HTMLElement {
+  const handle = document.createElement('div')
+  handle.className = 'block-handle'
+  handle.setAttribute('data-block-pos', String(pos))
+  handle.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+    <circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/>
+    <circle cx="3" cy="6" r="1.2"/><circle cx="9" cy="6" r="1.2"/>
+    <circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/>
+  </svg>`
+  return handle
+}
 
 class ExecBlockNodeView implements NodeView {
   dom: HTMLElement
@@ -119,12 +107,12 @@ class ExecBlockNodeView implements NodeView {
   private output: HTMLElement
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private node: any
-  private view: import('@milkdown/prose/view').EditorView
+  private view: EditorView
   private getPos: () => number | undefined
   private skipNextUpdate = false
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(node: any, view: import('@milkdown/prose/view').EditorView, getPos: () => number | undefined) {
+  constructor(node: any, view: EditorView, getPos: () => number | undefined) {
     this.node = node
     this.view = view
     this.getPos = getPos
@@ -134,6 +122,11 @@ class ExecBlockNodeView implements NodeView {
     this.dom = document.createElement('div')
     this.dom.className = 'exec-block'
     this.dom.dataset['shebang'] = this.shebang
+
+    const pos = getPos()
+    if (pos !== undefined) {
+      this.dom.appendChild(createHandleDOM(pos))
+    }
 
     this.codeEl = document.createElement('pre')
     this.codeEl.className = 'exec-source'
@@ -254,15 +247,13 @@ class ExecBlockNodeView implements NodeView {
   }
 }
 
-export const execNodeView = $prose(() => {
-  return new Plugin({
-    key: new PluginKey('MILKDOWN_EXEC_NODEVIEW'),
-    props: {
-      nodeViews: {
-        [EXEC_TYPE]: (node: ProseNode, view: import('@milkdown/prose/view').EditorView, getPos: () => number | undefined): NodeView => {
-          return new ExecBlockNodeView(node, view, getPos)
-        },
+export const execNodeViewPlugin = new Plugin({
+  key: new PluginKey('EDI_EXEC_NODEVIEW'),
+  props: {
+    nodeViews: {
+      [EXEC_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
+        return new ExecBlockNodeView(node, view, getPos)
       },
     },
-  })
+  },
 })

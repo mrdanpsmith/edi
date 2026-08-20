@@ -1,5 +1,5 @@
 import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers } from '@codemirror/view'
+import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
 import { history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
@@ -26,29 +26,24 @@ const highlight = HighlightStyle.define([
   { tag: tags.contentSeparator, color: 'var(--text-muted)' },
 ])
 
-const theme = EditorView.theme({
+const blockTheme = EditorView.theme({
   '&': {
-    height: '100%',
     backgroundColor: 'var(--editor-bg)',
     color: 'var(--text-primary)',
     fontSize: '13px',
+    minHeight: '1.6em',
   },
   '.cm-scroller': {
     fontFamily: 'var(--font-mono)',
     lineHeight: '1.55',
+    overflow: 'auto',
   },
   '.cm-content': {
     caretColor: 'var(--accent)',
-    padding: '12px 16px 24px',
+    padding: '4px 0',
   },
   '.cm-gutters': {
-    backgroundColor: 'var(--editor-bg)',
-    color: 'var(--text-muted)',
-    border: 'none',
-  },
-  '.cm-lineNumbers .cm-gutterElement': {
-    padding: '0 8px 0 12px',
-    minWidth: '24px',
+    display: 'none',
   },
   '&.cm-focused': {
     outline: 'none',
@@ -60,69 +55,65 @@ const theme = EditorView.theme({
     {
       backgroundColor: 'var(--selection)',
     },
-  '.cm-activeLine': {
-    backgroundColor: 'var(--active-line)',
-  },
-  '.cm-activeLineGutter': {
-    backgroundColor: 'var(--active-line)',
-  },
-  '.cm-selectionMatch': {
-    backgroundColor: 'var(--selection-strong)',
-  },
 })
 
-export interface TextEditor {
-  getView(): EditorView
+export interface BlockCodeMirror {
+  view: EditorView
   getValue(): string
-  setValue(value: string): void
   focus(): void
+  destroy(): void
 }
 
-export function createTextEditor(parent: HTMLElement, onChange: () => void): TextEditor {
-  let suppressChange = false
-
+export function createBlockCodeMirror(
+  parent: HTMLElement,
+  doc: string,
+  onExit: (value: string) => void,
+): BlockCodeMirror {
   const view = new EditorView({
     state: EditorState.create({
-      doc: '',
+      doc,
       extensions: [
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged && !suppressChange) {
-            onChange()
-          }
-        }),
-        lineNumbers(),
         history(),
         keymap.of([
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,
+          {
+            key: 'Escape',
+            run: () => {
+              onExit(view.state.doc.toString())
+              return true
+            },
+          },
+          {
+            key: 'Mod-Shift-e',
+            run: () => {
+              onExit(view.state.doc.toString())
+              return true
+            },
+          },
         ]),
         markdown({ codeLanguages: languages }),
         syntaxHighlighting(highlight),
-        theme,
+        blockTheme,
         EditorView.lineWrapping,
         EditorState.tabSize.of(2),
+        cmPlaceholder('(edit markdown…)'),
       ],
     }),
     parent,
   })
 
   return {
-    getView() {
-      return view
-    },
+    view,
     getValue() {
       return view.state.doc.toString()
     },
-    setValue(value: string) {
-      suppressChange = true
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: value },
-      })
-      suppressChange = false
-    },
     focus() {
       view.focus()
+    },
+    destroy() {
+      view.destroy()
     },
   }
 }

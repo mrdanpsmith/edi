@@ -6,8 +6,8 @@ import remarkDeflist from 'remark-deflist'
 import { highlight } from './highlight'
 import { subscript } from './sub'
 import { superscript } from './sup'
-import { rawMermaidRemarkPlugin } from '../node/mermaid'
-import { rawExecRemarkPlugin } from '../node/execblock'
+import { remarkPlugin as rawMermaidRemarkPlugin } from '../node/mermaid'
+import { remarkPlugin as rawExecRemarkPlugin } from '../node/execblock'
 
 function roundTrip(md: string): string {
   const processor = unified()
