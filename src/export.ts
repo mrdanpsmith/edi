@@ -1,3 +1,6 @@
+import type { Node as ProseNode } from 'prosemirror-model'
+import { DOMSerializer } from 'prosemirror-model'
+import { schema } from './schema'
 import { escapeHtml } from './utils'
 
 const EXPORT_CSS = `
@@ -240,6 +243,48 @@ body {
   border-top: 2px solid var(--danger);
 }
 `
+
+export function serializeDocToHtml(doc: ProseNode): string {
+  const base = DOMSerializer.fromSchema(schema)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodes: Record<string, (node: ProseNode) => any> = { ...base.nodes }
+
+  nodes.mermaid_block = (node) => {
+    const value = String(node.attrs.value ?? '')
+    return ['div', { class: 'mermaid' }, ['pre', ['code', { class: 'language-mermaid' }, value]]]
+  }
+
+  nodes.exec_block = (node) => {
+    const shebang = String(node.attrs.shebang ?? '')
+    const value = String(node.attrs.value ?? '')
+    const content = shebang ? shebang + '\n' + value : value
+    return ['div', { class: 'exec-block' },
+      ['div', { class: 'exec-source' }, ['pre', ['code', content]]]]
+  }
+
+  nodes.source_block = (node) => {
+    const markdown = String(node.attrs.markdown ?? '')
+    return ['pre', ['code', markdown]]
+  }
+
+  nodes.list_item = (node) => {
+    const checked = node.attrs.checked as boolean | null
+    if (checked !== null) {
+      return ['li', { 'data-checked': String(checked) },
+        ['input', { type: 'checkbox', checked: checked ? 'checked' : null, disabled: 'disabled' }],
+        0]
+    }
+    return ['li', 0]
+  }
+
+  const serializer = new DOMSerializer(nodes, base.marks)
+  const fragment = serializer.serializeFragment(doc.content)
+  const div = document.createElement('div')
+  div.className = 'md-preview'
+  div.appendChild(fragment)
+  return div.outerHTML
+}
 
 export function buildExportHtml(title: string, bodyHtml: string): string {
   return `<!DOCTYPE html>

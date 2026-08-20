@@ -346,9 +346,6 @@ function registerShortcuts(): void {
     } else if (key === 's') {
       event.preventDefault()
       void saveFile()
-    } else if (key === 'e' && event.shiftKey) {
-      event.preventDefault()
-      void exportHtml()
     } else if (key === 'q') {
       event.preventDefault()
       void requestQuit()
