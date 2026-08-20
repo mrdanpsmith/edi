@@ -427,3 +427,52 @@ describe('no duplicate handles', () => {
     view.destroy()
   })
 })
+
+describe('mermaid block handles', () => {
+  it('mermaid block has a handle in visual mode', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+    const handles = view.dom.querySelectorAll('.block-handle')
+    expect(handles.length).toBe(1)
+    const handle = handles[0] as HTMLElement
+    expect(handle.getAttribute('data-block-pos')).toBeTruthy()
+    view.destroy()
+  })
+
+  it('clicking mermaid handle enters source mode', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+    const pos = firstBlockPos(view)
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBeNull()
+
+    const handle = view.dom.querySelector('.block-handle') as HTMLElement
+    expect(handle).toBeTruthy()
+    const handlePos = Number(handle.getAttribute('data-block-pos'))
+    expect(handlePos).toBe(pos)
+
+    view.dispatch(toggleSourceMode(view.state, handlePos))
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(pos)
+    view.destroy()
+  })
+
+  it('mermaid source mode shows code in CodeMirror', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    const dom = view.nodeDOM(pos) as HTMLElement
+    expect(dom.classList.contains('block-source-mode')).toBe(true)
+    const cmContent = dom.querySelector('.cm-content') as HTMLElement
+    expect(cmContent.textContent).toContain('graph TD')
+    expect(cmContent.textContent).toContain('A-->B')
+    view.destroy()
+  })
+
+  it('mermaid round-trips through source mode', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const md = proseToMarkdown(view.state.doc)
+    expect(md).toContain('graph TD')
+    expect(md).toContain('A-->B')
+    view.destroy()
+  })
+})
