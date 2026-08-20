@@ -281,7 +281,7 @@ body {
 
 .ProseMirror > .block-visual-mode {
   position: relative;
-  padding-left: 24px;
+  margin-left: 24px;
 }
 
 /* Task list checkboxes */
@@ -315,14 +315,16 @@ body {
 
 .ProseMirror > .block-source-mode {
   position: relative;
-  padding-left: 24px;
-  margin: 0.5em 0;
+  margin-left: 24px;
+  margin-right: 0;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
 }
 
 /* Block handle */
 .block-handle {
   position: absolute;
-  left: 0;
+  left: -24px;
   top: 50%;
   transform: translateY(-50%);
   width: 20px;
@@ -520,8 +522,9 @@ body {
 
 .ProseMirror .mermaid {
   position: relative;
-  padding-left: 24px;
-  margin: 1em 0;
+  margin-left: 24px;
+  margin-top: 1em;
+  margin-bottom: 1em;
 }
 .ProseMirror .mermaid .mermaid-preview {
   overflow-x: auto;
@@ -554,10 +557,9 @@ body {
   margin: 1em 0;
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
   background: var(--surface);
   position: relative;
-  padding-left: 24px;
+  margin-left: 24px;
 }
 
 .ProseMirror .exec-source {
@@ -567,6 +569,7 @@ body {
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   white-space: pre;
+  border-radius: 6px 6px 0 0;
 }
 
 .ProseMirror .exec-source code {
@@ -616,7 +619,7 @@ body {
   margin: 0;
   padding: 12px;
   border: none;
-  border-radius: 0;
+  border-radius: 0 0 6px 6px;
   background: var(--exec-bg);
   color: var(--exec-fg);
   font-family: var(--font-mono);

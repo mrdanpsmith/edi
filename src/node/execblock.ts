@@ -2,6 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state'
 import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
+import { blockNodeView } from '../blockview'
 import { invoke } from '../bridge'
 import type { CodeResult } from '../exec'
 
@@ -187,6 +188,9 @@ class ExecBlockNodeView implements NodeView {
       this.skipNextUpdate = false
       return true
     }
+    if (node.attrs._source !== this.node.attrs._source) {
+      return false
+    }
     if (node.attrs.value !== this.source || node.attrs.shebang !== this.shebang) {
       this.node = node
       this.shebang = node.attrs.shebang
@@ -252,6 +256,9 @@ export const execNodeViewPlugin = new Plugin({
   props: {
     nodeViews: {
       [EXEC_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
+        if ((node.attrs['_source'] as boolean)) {
+          return blockNodeView(node, view, getPos) ?? new ExecBlockNodeView(node, view, getPos)
+        }
         return new ExecBlockNodeView(node, view, getPos)
       },
     },

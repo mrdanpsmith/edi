@@ -7,6 +7,7 @@ import { Node as ProseNode } from 'prosemirror-model'
 import { blockPlugin, enterSourceMode, exitSourceMode, toggleSourceMode, getSourceBlockState, BLOCK_PLUGIN_KEY } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { mermaidNodeViewPlugin } from './node/mermaid'
+import { execNodeViewPlugin } from './node/execblock'
 import { serializeBlock } from './markdown'
 import { Plugin } from 'prosemirror-state'
 
@@ -22,7 +23,7 @@ function createEditor(initialMarkdown: string) {
   const view = new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, nodeViewPlugin, mermaidNodeViewPlugin],
+      plugins: [blockPlugin, nodeViewPlugin, mermaidNodeViewPlugin, execNodeViewPlugin],
     }),
   })
   return view
@@ -473,6 +474,132 @@ describe('mermaid block handles', () => {
     const md = proseToMarkdown(view.state.doc)
     expect(md).toContain('graph TD')
     expect(md).toContain('A-->B')
+    view.destroy()
+  })
+})
+
+describe('handle position accuracy', () => {
+  it('each handle maps to the correct block in multi-block doc', () => {
+    const view = createEditor('# Hello\n\nWorld\n\n```python\nx = 1\n```')
+    const handles = view.dom.querySelectorAll('.block-handle')
+    expect(handles.length).toBe(3)
+
+    const positions = allBlockPositions(view)
+    expect(positions.length).toBe(3)
+
+    for (let i = 0; i < handles.length; i++) {
+      const handle = handles[i] as HTMLElement
+      const handlePos = Number(handle.getAttribute('data-block-pos'))
+      const block = blockNodeAt(view, handlePos)
+      const expectedBlock = blockNodeAt(view, positions[i])
+      expect(block).toBe(expectedBlock)
+    }
+    view.destroy()
+  })
+
+  it('toggling source on first block does not affect second block', () => {
+    const view = createEditor('First block\n\nSecond block')
+    const positions = allBlockPositions(view)
+    expect(positions.length).toBe(2)
+
+    view.dispatch(toggleSourceMode(view.state, positions[0]))
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(positions[0])
+
+    const block0 = blockNodeAt(view, positions[0])
+    const block1 = blockNodeAt(view, positions[1])
+    expect(block0!.attrs._source).toBe(true)
+    expect(block1!.attrs._source).toBe(false)
+    view.destroy()
+  })
+
+  it('code block handle toggles code block not adjacent task list', () => {
+    const md = '## Tasks\n\n- [x] Fast editing\n- [x] Spreadsheet tables\n\n```python\nprint("Hello")\n```\n\nMore text'
+    const view = createEditor(md)
+    const positions = allBlockPositions(view)
+    const nodeTypes = positions.map(p => blockNodeAt(view, p)!.type.name)
+
+    const codeBlockIndex = nodeTypes.indexOf('code_block')
+    expect(codeBlockIndex).toBeGreaterThanOrEqual(0)
+    const codeBlockPos = positions[codeBlockIndex]
+
+    const handles = Array.from(view.dom.querySelectorAll('.block-handle')) as HTMLElement[]
+    const codeHandle = handles.find(h => Number(h.getAttribute('data-block-pos')) === codeBlockPos)
+    expect(codeHandle).toBeTruthy()
+
+    const handlePos = Number(codeHandle!.getAttribute('data-block-pos'))
+    expect(handlePos).toBe(codeBlockPos)
+
+    view.dispatch(toggleSourceMode(view.state, handlePos))
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(codeBlockPos)
+
+    const toggledBlock = blockNodeAt(view, codeBlockPos)
+    expect(toggledBlock!.type.name).toBe('code_block')
+
+    for (const p of positions) {
+      if (p !== codeBlockPos) {
+        expect(blockNodeAt(view, p)!.attrs._source).toBe(false)
+      }
+    }
+    view.destroy()
+  })
+
+  it('handle positions remain valid after entering source mode', () => {
+    const view = createEditor('# Hello\n\nWorld\n\n```python\nx = 1\n```')
+    const positions = allBlockPositions(view)
+    const handles = Array.from(view.dom.querySelectorAll('.block-handle')) as HTMLElement[]
+    const prePositions = handles.map(h => Number(h.getAttribute('data-block-pos')))
+
+    view.dispatch(toggleSourceMode(view.state, positions[1]))
+
+    const postHandles = Array.from(view.dom.querySelectorAll('.block-handle')) as HTMLElement[]
+    const postPositions = postHandles.map(h => Number(h.getAttribute('data-block-pos')))
+
+    for (const pp of postPositions) {
+      expect(prePositions).toContain(pp)
+    }
+    view.destroy()
+  })
+})
+
+describe('exec block toggle', () => {
+  it('exec block has a handle', () => {
+    const view = createEditor('```\n#!/usr/bin/env python3\nprint("hello")\n```')
+    const handles = view.dom.querySelectorAll('.block-handle')
+    expect(handles.length).toBe(1)
+    const handle = handles[0] as HTMLElement
+    const pos = Number(handle.getAttribute('data-block-pos'))
+    const block = blockNodeAt(view, pos)
+    expect(block!.type.name).toBe('exec_block')
+    view.destroy()
+  })
+
+  it('toggling exec block enters source mode for exec block not other blocks', () => {
+    const md = 'Some text\n\n```\n#!/usr/bin/env python3\nprint("hello")\n```\n\n- [x] task'
+    const view = createEditor(md)
+    const positions = allBlockPositions(view)
+
+    const execPos = positions.find(p => blockNodeAt(view, p)!.type.name === 'exec_block')
+    expect(execPos).toBeDefined()
+
+    const handle = Array.from(view.dom.querySelectorAll('.block-handle')).find(
+      h => Number((h as HTMLElement).getAttribute('data-block-pos')) === execPos
+    ) as HTMLElement
+    expect(handle).toBeTruthy()
+
+    const handlePos = Number(handle.getAttribute('data-block-pos'))
+    expect(handlePos).toBe(execPos)
+
+    view.dispatch(toggleSourceMode(view.state, handlePos))
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(execPos)
+
+    for (const p of positions) {
+      const block = blockNodeAt(view, p)
+      if (p === execPos) {
+        expect(block!.attrs._source).toBe(true)
+      } else {
+        expect(block!.attrs._source).toBe(false)
+      }
+    }
     view.destroy()
   })
 })

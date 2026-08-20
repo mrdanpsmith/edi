@@ -2,6 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state'
 import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
+import { blockNodeView } from '../blockview'
 import { loadMermaid, errorBlock } from '../mermaid'
 import { BLOCK_PLUGIN_KEY } from '../blockplugin'
 import { markdownToProse, serializeBlock } from '../markdown'
@@ -226,6 +227,9 @@ export const mermaidNodeViewPlugin = new Plugin({
   props: {
     nodeViews: {
       [MERMAID_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
+        if ((node.attrs['_source'] as boolean)) {
+          return blockNodeView(node, view, getPos) ?? new MermaidNodeView(node, view, getPos)
+        }
         return new MermaidNodeView(node, view, getPos)
       },
     },
