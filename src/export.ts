@@ -176,19 +176,18 @@ body {
   vertical-align: -0.1em;
 }
 
-.md-preview li[data-checked]::before {
+.md-preview li[data-checked] > p:first-child::before {
   content: '';
   display: inline-block;
   width: 0.9em;
   height: 0.9em;
   margin-right: 0.4em;
-  margin-left: -1.3em;
   vertical-align: -0.1em;
   border: 1px solid var(--border);
   border-radius: 3px;
 }
 
-.md-preview li[data-checked='true']::before {
+.md-preview li[data-checked='true'] > p:first-child::before {
   background: var(--accent);
   border-color: var(--accent);
   box-shadow: inset 0 0 0 2px var(--bg);
@@ -270,15 +269,15 @@ export function serializeDocToHtml(doc: ProseNode): string {
 
   nodes.mermaid_block = (node) => {
     const value = String(node.attrs.value ?? '')
-    return ['div', { class: 'mermaid' }, ['pre', ['code', { class: 'language-mermaid' }, value]]]
+    return ['div', { class: 'mermaid' }, value]
   }
 
   nodes.exec_block = (node) => {
     const shebang = String(node.attrs.shebang ?? '')
     const value = String(node.attrs.value ?? '')
-    const content = shebang ? shebang + '\n' + value : value
-    return ['div', { class: 'exec-block' },
-      ['div', { class: 'exec-source' }, ['pre', ['code', content]]]]
+    const isInline = shebang !== '' && value.startsWith(shebang)
+    const content = isInline ? value : (shebang ? shebang + '\n' + value : value)
+    return ['pre', { class: 'exec-block' }, ['code', content]]
   }
 
   nodes.source_block = (node) => {
@@ -302,6 +301,8 @@ export function buildExportHtml(title: string, bodyHtml: string): string {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>${escapeHtml(title)}</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'default'})</script>
     <style>${EXPORT_CSS}</style>
   </head>
   <body>

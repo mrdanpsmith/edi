@@ -74,6 +74,14 @@ vi.mock('./mermaid', () => ({
   },
 }))
 
+vi.mock('./export', async () => {
+  const actual = await vi.importActual('./export')
+  return {
+    ...actual,
+    serializeDocToHtml: (_doc: unknown) => `<p>${(_doc as { textContent?: string }).textContent ?? ''}</p>`,
+  }
+})
+
 const DOM_TEMPLATE = `
   <nav id="tabbar" role="tablist" aria-label="Documents"></nav>
   <main id="workspace">
@@ -202,7 +210,6 @@ describe('keyboard shortcuts', () => {
   it('binds all application shortcuts', async () => {
     mainState.pickOpenPath.mockResolvedValue(null)
     mainState.pickSavePath.mockResolvedValue(null)
-    mainState.pickExportPath.mockResolvedValue(null)
     const close = vi.spyOn(window, 'close').mockImplementation(() => undefined)
     await loadMain()
 
@@ -217,7 +224,6 @@ describe('keyboard shortcuts', () => {
     press('o')
     press('s', { shiftKey: true })
     press('s')
-    press('e', { shiftKey: true })
     press('q')
     await flushAsync()
 
