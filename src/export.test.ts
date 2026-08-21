@@ -165,4 +165,27 @@ describe('serializeDocToHtml', () => {
     expect(html).toContain('x = 1')
     expect(html).toContain('<pre')
   })
+
+  it('computes spreadsheet formulas instead of showing raw text', () => {
+    const headerRow = schema.node('table_row', {}, [
+      schema.node('table_header', {}, [schema.node('paragraph', {}, [schema.text('A')])]),
+      schema.node('table_header', {}, [schema.node('paragraph', {}, [schema.text('B')])]),
+    ])
+    const dataRow = schema.node('table_row', {}, [
+      schema.node('table_cell', {}, [schema.node('paragraph', {}, [schema.text('10')])]),
+      schema.node('table_cell', {}, [schema.node('paragraph', {}, [schema.text('20')])]),
+    ])
+    const formulaRow = schema.node('table_row', {}, [
+      schema.node('table_cell', {}, [schema.node('paragraph', {}, [schema.text('=SUM(A2:B2)')])]),
+      schema.node('table_cell', {}, [schema.node('paragraph', {}, [schema.text('=B2-A2')])]),
+    ])
+    const doc = schema.node('doc', {}, [
+      schema.node('table', {}, [headerRow, dataRow, formulaRow]),
+    ])
+    const html = serializeDocToHtml(doc)
+    expect(html).toContain('30')
+    expect(html).toContain('10')
+    expect(html).not.toContain('>SUM(A2:B2)<')
+    expect(html).not.toContain('>B2-A2<')
+  })
 })

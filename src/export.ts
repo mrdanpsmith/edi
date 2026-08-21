@@ -1,6 +1,7 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import { DOMSerializer } from 'prosemirror-model'
 import { schema } from './schema'
+import { computeSpreadsheet } from './spreadsheet'
 import { escapeHtml } from './utils'
 
 const EXPORT_CSS = `
@@ -290,6 +291,7 @@ export function serializeDocToHtml(doc: ProseNode): string {
   const div = document.createElement('div')
   div.className = 'md-preview'
   div.appendChild(fragment)
+  computeSpreadsheet(div)
   return div.outerHTML
 }
 
