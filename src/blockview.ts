@@ -57,6 +57,9 @@ function createSemanticWrapper(node: ProseNode): HTMLElement | null {
       const el = document.createElement('dl')
       return el
     }
+    case 'horizontal_rule': {
+      return document.createElement('hr')
+    }
     default:
       return null
   }

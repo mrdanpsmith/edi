@@ -3,6 +3,7 @@ import { EditorView } from 'prosemirror-view'
 import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap } from 'prosemirror-commands'
+import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
 import { tableEditing } from 'prosemirror-tables'
 import { gapCursor } from 'prosemirror-gapcursor'
@@ -74,6 +75,18 @@ const undoKeymap = keymap({
   },
 })
 
+const listKeymap = keymap({
+  'Enter': splitListItem(schema.nodes.list_item),
+  'Backspace': (state, dispatch) => {
+    if (dispatch && state.selection.empty && state.selection.$from.parent.type.name === 'list_item' && state.selection.$from.parent.content.size === 0) {
+      return liftListItem(schema.nodes.list_item)(state, dispatch)
+    }
+    return false
+  },
+  'Tab': sinkListItem(schema.nodes.list_item),
+  'Shift-Tab': liftListItem(schema.nodes.list_item),
+})
+
 const blockToggleKeymap = keymap({
   'Mod-Shift-e': (state, dispatch) => {
     if (!dispatch) return false
@@ -123,6 +136,7 @@ export function createBlockEditor(parent: HTMLElement, initialMarkdown: string):
       plugins: [
         history(),
         undoKeymap,
+        listKeymap,
         keymap(baseKeymap),
         createInputRules(),
         blockToggleKeymap,

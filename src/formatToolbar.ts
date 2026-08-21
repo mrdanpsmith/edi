@@ -1,6 +1,8 @@
 import type { EditorView } from 'prosemirror-view'
 import type { MarkType } from 'prosemirror-model'
-import { wrapIn, setBlockType, toggleMark } from 'prosemirror-commands'
+import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands'
+import { wrapInList } from 'prosemirror-schema-list'
+import { TextSelection } from 'prosemirror-state'
 
 const FORMATTING_VISIBLE_KEY = 'edi.formattingVisible'
 
@@ -30,21 +32,71 @@ function toggleMarkCmd(markType: MarkType): (view: EditorView) => boolean {
   return (view) => toggleMark(markType)(view.state, view.dispatch)
 }
 
-function wrapInList(nodeType: string): (view: EditorView) => boolean {
+function findListAncestor($from: import('prosemirror-model').ResolvedPos): { depth: number; name: string } | null {
+  for (let d = $from.depth; d > 0; d--) {
+    const name = $from.node(d).type.name
+    if (name === 'bullet_list' || name === 'ordered_list') return { depth: d, name }
+  }
+  return null
+}
+
+function mapPosThroughUnwrap(
+  pos: number,
+  listNode: import('prosemirror-model').Node,
+  listStart: number,
+  blocks: import('prosemirror-model').Node[],
+): number {
+  let liOffset = 0
+  let blockOffset = 0
+  for (let i = 0; i < listNode.childCount; i++) {
+    const li = listNode.child(i)
+    if (pos < listStart + liOffset + li.nodeSize) {
+      const cursorInParagraph = pos - (listStart + liOffset + 2)
+      return listStart + blockOffset + Math.max(0, cursorInParagraph)
+    }
+    liOffset += li.nodeSize
+    blockOffset += blocks[i].nodeSize
+  }
+  return pos
+}
+
+function toggleList(nodeType: string): (view: EditorView) => boolean {
   return (view) => {
     const { state, dispatch } = view
-    const outerType = state.schema.nodes[nodeType]
-    const liType = state.schema.nodes.list_item
-    if (!outerType || !liType) return false
-    const $from = state.selection.$from
-    const $to = state.selection.$to
-    const range = $from.blockRange($to)
-    if (!range) return false
-    dispatch(state.tr.wrap(range, [
-      { type: liType },
-      { type: outerType },
-    ]))
-    return true
+    const listType = state.schema.nodes[nodeType]
+    if (!listType) return false
+    const { selection } = state
+    const { $from } = selection
+
+    const current = findListAncestor($from)
+
+    if (current && current.name === nodeType) {
+      const listNode = $from.node(current.depth)
+      const listStart = $from.before(current.depth)
+      const blocks: import('prosemirror-model').Node[] = []
+      listNode.forEach((li) => { li.forEach((child) => blocks.push(child)) })
+      const tr = state.tr.replaceWith(listStart, listStart + listNode.nodeSize, blocks)
+
+      const anchor = mapPosThroughUnwrap(selection.anchor, listNode, listStart, blocks)
+      const head = mapPosThroughUnwrap(selection.head, listNode, listStart, blocks)
+      const $anchor = tr.doc.resolve(anchor)
+      const $head = tr.doc.resolve(head)
+      if ($anchor.parent.inlineContent && $head.parent.inlineContent) {
+        tr.setSelection(new TextSelection($anchor, $head))
+      }
+
+      dispatch(tr)
+      return true
+    }
+
+    if (current) {
+      const listNode = $from.node(current.depth)
+      const pos = $from.before(current.depth)
+      dispatch(state.tr.replaceWith(pos, pos + listNode.nodeSize, listType.create(listNode.attrs, listNode.content)))
+      return true
+    }
+
+    return wrapInList(listType)(state, dispatch)
   }
 }
 
@@ -70,7 +122,12 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
       run: (view) => {
         const { state } = view
         const node = state.schema.nodes.horizontal_rule.create()
-        view.dispatch(state.tr.replaceSelectionWith(node))
+        const { $from } = state.selection
+        if ($from.depth > 0) {
+          view.dispatch(state.tr.insert($from.after(1), node))
+        } else {
+          view.dispatch(state.tr.insert($from.pos, node))
+        }
         return true
       },
     },
@@ -89,7 +146,12 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
       run: (view) => {
         const { state } = view
         const node = state.schema.nodes.code_block.create()
-        view.dispatch(state.tr.replaceSelectionWith(node))
+        const { $from } = state.selection
+        if ($from.depth > 0) {
+          view.dispatch(state.tr.insert($from.after(1), node))
+        } else {
+          view.dispatch(state.tr.insert($from.pos, node))
+        }
         return true
       },
     },
@@ -97,7 +159,7 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
       label: 'Bullet list', title: 'Bullet list', markup: icon(
         '<circle cx="3" cy="4" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="3" cy="12" r="1"/>' + BULLET_LINES,
       ),
-      run: wrapInList('bullet_list'),
+      run: toggleList('bullet_list'),
     },
     {
       label: 'Numbered list', title: 'Numbered list', markup: icon(
@@ -106,7 +168,7 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
         '<text x="3" y="13.5" text-anchor="middle" font-size="5.5" font-family="var(--font-sans)" stroke="none" fill="currentColor">3</text>' +
         BULLET_LINES,
       ),
-      run: wrapInList('ordered_list'),
+      run: toggleList('ordered_list'),
     },
   ]
 }
