@@ -10,6 +10,12 @@ export interface MenuCommands {
   export: () => void
   toggleMode: () => void
   toggleFormatting: () => void
+  undo: () => void
+  redo: () => void
+  cut: () => void
+  copy: () => void
+  paste: () => void
+  selectAll: () => void
 }
 
 export function bindMenuCommands(handlers: MenuCommands): void {

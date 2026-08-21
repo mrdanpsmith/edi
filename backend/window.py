@@ -295,6 +295,33 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        self._edit_menu = menubar.addMenu("&Edit")
+        edit_menu = self._edit_menu
+        for label, command in (
+            ("&Undo\tCtrl+Z", "undo"),
+            ("&Redo\tCtrl+Shift+Z", "redo"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
+            edit_menu.addAction(action)
+
+        edit_menu.addSeparator()
+
+        for label, command in (
+            ("Cu&t\tCtrl+X", "cut"),
+            ("&Copy\tCtrl+C", "copy"),
+            ("&Paste\tCtrl+V", "paste"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
+            edit_menu.addAction(action)
+
+        edit_menu.addSeparator()
+
+        select_all_action = QAction("Select &All\tCtrl+A", self)
+        select_all_action.triggered.connect(lambda _checked=False: self._menu_command("selectAll"))
+        edit_menu.addAction(select_all_action)
+
         self._insert_menu = menubar.addMenu("&Insert")
         insert_menu = self._insert_menu
         import_action = QAction("&Spreadsheet…", self)

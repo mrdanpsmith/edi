@@ -15,6 +15,12 @@ function makeHandlers() {
     export: vi.fn(),
     toggleMode: vi.fn(),
     toggleFormatting: vi.fn(),
+    undo: vi.fn(),
+    redo: vi.fn(),
+    cut: vi.fn(),
+    copy: vi.fn(),
+    paste: vi.fn(),
+    selectAll: vi.fn(),
   }
 }
 
@@ -30,6 +36,12 @@ const COMMANDS = [
   'export',
   'toggleMode',
   'toggleFormatting',
+  'undo',
+  'redo',
+  'cut',
+  'copy',
+  'paste',
+  'selectAll',
 ]
 
 describe('bindMenuCommands', () => {

@@ -1,6 +1,6 @@
 import { EditorState, Plugin } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
-import { history } from 'prosemirror-history'
+import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap } from 'prosemirror-commands'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
@@ -59,6 +59,21 @@ function createInputRules() {
   ] })
 }
 
+const undoKeymap = keymap({
+  'Mod-z': (state, dispatch, view) => {
+    if (!dispatch) return false
+    return undo(state, dispatch, view)
+  },
+  'Mod-Shift-z': (state, dispatch, view) => {
+    if (!dispatch) return false
+    return redo(state, dispatch, view)
+  },
+  'Mod-y': (state, dispatch, view) => {
+    if (!dispatch) return false
+    return redo(state, dispatch, view)
+  },
+})
+
 const blockToggleKeymap = keymap({
   'Mod-Shift-e': (state, dispatch) => {
     if (!dispatch) return false
@@ -107,6 +122,7 @@ export function createBlockEditor(parent: HTMLElement, initialMarkdown: string):
       doc,
       plugins: [
         history(),
+        undoKeymap,
         keymap(baseKeymap),
         createInputRules(),
         blockToggleKeymap,

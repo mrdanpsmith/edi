@@ -45,6 +45,7 @@ class Bridge(QObject):
             "writeTextFile": self._write_text_file,
             "parseTableFile": self._parse_table_file,
             "copyTable": self._copy_table,
+            "readClipboardText": self._read_clipboard_text,
             "runCodeBlock": self._run_code_block,
             "openUrl": self._open_url,
             "setDirty": self._set_dirty,
@@ -119,6 +120,10 @@ class Bridge(QObject):
         mime.setText(str(args.get("plain") or ""))
         QGuiApplication.clipboard().setMimeData(mime)
         self._reply(request_id, None)
+
+    def _read_clipboard_text(self, request_id: int, _args: dict) -> None:
+        mime = QGuiApplication.clipboard().mimeData()
+        self._reply(request_id, {"text": mime.text(), "html": mime.html()})
 
     def _read_text_file(self, request_id: int, args: dict) -> None:
         path = args.get("path")

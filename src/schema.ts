@@ -10,6 +10,7 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     content: 'inline*',
     attrs: { _source: { default: false } },
+    parseDOM: [{ tag: 'p' }],
     toDOM() {
       return ['p', 0]
     },
@@ -19,6 +20,14 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     content: 'inline*',
     attrs: { level: { default: 1 }, _source: { default: false } },
+    parseDOM: [
+      { tag: 'h1', attrs: { level: 1 } },
+      { tag: 'h2', attrs: { level: 2 } },
+      { tag: 'h3', attrs: { level: 3 } },
+      { tag: 'h4', attrs: { level: 4 } },
+      { tag: 'h5', attrs: { level: 5 } },
+      { tag: 'h6', attrs: { level: 6 } },
+    ],
     toDOM(node) {
       return [`h${node.attrs.level as number}`, 0]
     },
@@ -28,6 +37,7 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     content: 'block+',
     attrs: { _source: { default: false } },
+    parseDOM: [{ tag: 'blockquote' }],
     toDOM() {
       return ['blockquote', 0]
     },
@@ -37,6 +47,7 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     content: 'list_item+',
     attrs: { _source: { default: false } },
+    parseDOM: [{ tag: 'ul' }],
     toDOM() {
       return ['ul', 0]
     },
@@ -46,6 +57,13 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     content: 'list_item+',
     attrs: { order: { default: 1 }, _source: { default: false } },
+    parseDOM: [{
+      tag: 'ol',
+      getAttrs(dom: HTMLElement) {
+        const start = dom.getAttribute('start')
+        return { order: start ? Number(start) : 1 }
+      },
+    }],
     toDOM(node) {
       const order = node.attrs.order as number
       return order === 1 ? ['ol', 0] : ['ol', { start: order }, 0]
@@ -55,6 +73,13 @@ const nodes: SchemaSpec['nodes'] = {
   list_item: {
     content: 'block+',
     attrs: { checked: { default: null } },
+    parseDOM: [{
+      tag: 'li',
+      getAttrs(dom: HTMLElement) {
+        const checked = dom.getAttribute('data-checked')
+        return { checked: checked !== null ? checked === 'true' : null }
+      },
+    }],
     toDOM(node) {
       const checked = node.attrs.checked as boolean | null
       if (checked !== null) {
@@ -70,6 +95,15 @@ const nodes: SchemaSpec['nodes'] = {
     marks: '',
     code: true,
     attrs: { language: { default: '' }, _source: { default: false } },
+    parseDOM: [{
+      tag: 'pre',
+      preserveWhitespace: 'full',
+      getAttrs(dom: HTMLElement) {
+        const code = dom.querySelector('code')
+        const lang = code?.className?.match(/language-(\S+)/)?.[1] ?? ''
+        return { language: lang }
+      },
+    }],
     toDOM(node) {
       const lang = node.attrs.language as string
       return ['pre', ['code', { class: lang ? `language-${lang}` : '' }, 0]]
@@ -80,6 +114,7 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     atom: true,
     attrs: { _source: { default: false } },
+    parseDOM: [{ tag: 'hr' }],
     toDOM() {
       return ['hr']
     },
@@ -89,6 +124,7 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     content: 'table_row+',
     attrs: { _source: { default: false } },
+    parseDOM: [{ tag: 'table' }],
     toDOM() {
       return ['table', 0]
     },
@@ -96,6 +132,7 @@ const nodes: SchemaSpec['nodes'] = {
 
   table_row: {
     content: '(table_cell | table_header)+',
+    parseDOM: [{ tag: 'tr' }],
     toDOM() {
       return ['tr', 0]
     },
@@ -103,6 +140,7 @@ const nodes: SchemaSpec['nodes'] = {
 
   table_cell: {
     content: 'block+',
+    parseDOM: [{ tag: 'td' }],
     toDOM() {
       return ['td', 0]
     },
@@ -110,6 +148,7 @@ const nodes: SchemaSpec['nodes'] = {
 
   table_header: {
     content: 'block+',
+    parseDOM: [{ tag: 'th' }],
     toDOM() {
       return ['th', 0]
     },
@@ -119,6 +158,7 @@ const nodes: SchemaSpec['nodes'] = {
     inline: true,
     group: 'inline',
     atom: true,
+    parseDOM: [{ tag: 'br' }],
     toDOM() {
       return ['br']
     },
@@ -131,6 +171,12 @@ const nodes: SchemaSpec['nodes'] = {
       src: { default: '' },
       alt: { default: '' },
     },
+    parseDOM: [{
+      tag: 'img',
+      getAttrs(dom: HTMLElement) {
+        return { src: dom.getAttribute('src') ?? '', alt: dom.getAttribute('alt') ?? '' }
+      },
+    }],
     toDOM(node) {
       return ['img', { src: node.attrs.src as string, alt: node.attrs.alt as string }]
     },
@@ -142,8 +188,14 @@ const nodes: SchemaSpec['nodes'] = {
     code: true,
     atom: true,
     attrs: { value: { default: '' }, _source: { default: false } },
-    toDOM() {
-      return ['div', { 'data-mermaid-block': '', style: 'white-space:pre' }]
+    parseDOM: [{
+      tag: '[data-mermaid-block]',
+      getAttrs(dom: HTMLElement) {
+        return { value: dom.textContent ?? '' }
+      },
+    }],
+    toDOM(node) {
+      return ['div', { 'data-mermaid-block': '', style: 'white-space:pre' }, node.attrs.value as string]
     },
   },
 
@@ -151,13 +203,28 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'block',
     marks: '',
     code: true,
+    atom: true,
     attrs: {
       shebang: { default: '' },
       value: { default: '' },
       _source: { default: false },
     },
-    toDOM() {
-      return ['div', { 'data-exec-block': '' }, ['div', { class: 'exec-source' }, ['code', 0]]]
+    parseDOM: [{
+      tag: '[data-exec-block]',
+      getAttrs(dom: HTMLElement) {
+        const code = dom.querySelector('code')
+        const text = code?.textContent ?? dom.textContent ?? ''
+        const lines = text.split('\n')
+        const shebang = lines[0].startsWith('#!') ? lines[0] : ''
+        const value = shebang ? lines.slice(1).join('\n') : text
+        return { shebang, value }
+      },
+    }],
+    toDOM(node) {
+      const shebang = node.attrs.shebang as string
+      const value = node.attrs.value as string
+      const text = shebang ? shebang + '\n' + value : value
+      return ['div', { 'data-exec-block': '' }, ['div', { class: 'exec-source' }, ['code', text]]]
     },
   },
 
@@ -169,8 +236,14 @@ const nodes: SchemaSpec['nodes'] = {
     attrs: {
       markdown: { default: '' },
     },
-    toDOM() {
-      return ['div', { 'data-source-block': '' }]
+    parseDOM: [{
+      tag: '[data-source-block]',
+      getAttrs(dom: HTMLElement) {
+        return { markdown: dom.textContent ?? '' }
+      },
+    }],
+    toDOM(node) {
+      return ['div', { 'data-source-block': '' }, node.attrs.markdown as string]
     },
   },
 
@@ -179,6 +252,7 @@ const nodes: SchemaSpec['nodes'] = {
     content: '(descriptionterm descriptiondetails*)+',
     defining: true,
     attrs: { _source: { default: false } },
+    parseDOM: [{ tag: 'dl' }],
     toDOM() {
       return ['dl', 0]
     },
@@ -187,6 +261,7 @@ const nodes: SchemaSpec['nodes'] = {
   descriptionterm: {
     content: 'inline*',
     group: '',
+    parseDOM: [{ tag: 'dt' }],
     toDOM() {
       return ['dt', 0]
     },
@@ -195,6 +270,7 @@ const nodes: SchemaSpec['nodes'] = {
   descriptiondetails: {
     content: 'block+',
     group: '',
+    parseDOM: [{ tag: 'dd' }],
     toDOM() {
       return ['dd', 0]
     },

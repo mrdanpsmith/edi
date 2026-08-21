@@ -6,6 +6,9 @@ import './styles.css'
 import { confirmAction, hasBridge, invoke } from './bridge'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
+import { undo, redo } from 'prosemirror-history'
+import { selectAll } from 'prosemirror-commands'
+import { DOMParser as ProseMirrorDOMParser } from 'prosemirror-model'
 import {
   fileName,
   imageReference,
@@ -375,6 +378,88 @@ function toggleFormatting(): void {
   syncMenuState()
 }
 
+function editUndo(): void {
+  const view = blockEditor?.getView()
+  if (view) {
+    view.focus()
+    undo(view.state, view.dispatch, view)
+  }
+}
+
+function editRedo(): void {
+  const view = blockEditor?.getView()
+  if (view) {
+    view.focus()
+    redo(view.state, view.dispatch, view)
+  }
+}
+
+function editCut(): void {
+  const view = blockEditor?.getView()
+  if (view) {
+    view.focus()
+    document.execCommand('cut')
+  }
+}
+
+function editCopy(): void {
+  const view = blockEditor?.getView()
+  if (view) {
+    view.focus()
+    document.execCommand('copy')
+  }
+}
+
+async function editPaste(): Promise<void> {
+  const view = blockEditor?.getView()
+  if (!view) return
+  let html: string | null = null
+  let text: string | null = null
+  if (hasBridge()) {
+    const data = await invoke<{ text: string; html: string }>('readClipboardText')
+    html = data?.html || null
+    text = data?.text || null
+  } else {
+    try {
+      const items = await navigator.clipboard.read()
+      for (const item of items) {
+        if (item.types.includes('text/html')) {
+          html = await item.getType('text/html').then((b) => b.text())
+        }
+        if (item.types.includes('text/plain')) {
+          text = await item.getType('text/plain').then((b) => b.text())
+        }
+      }
+    } catch {
+      return
+    }
+  }
+  view.focus()
+  const { state } = view
+  if (html) {
+    const tmp = document.createElement('div')
+    tmp.innerHTML = html
+    const pmDoc = ProseMirrorDOMParser.fromSchema(state.schema).parse(tmp)
+    const tr = state.tr.replaceWith(
+      state.selection.from,
+      state.selection.to,
+      pmDoc.content,
+    )
+    view.dispatch(tr)
+  } else if (text) {
+    const tr = state.tr.insertText(text)
+    view.dispatch(tr)
+  }
+}
+
+function editSelectAll(): void {
+  const view = blockEditor?.getView()
+  if (view) {
+    view.focus()
+    selectAll(view.state, view.dispatch)
+  }
+}
+
 function init(): void {
   const welcome = getWelcomeDocument()
   blockEditor = createBlockEditor(editorContainer, welcome)
@@ -395,6 +480,12 @@ function init(): void {
     export: () => void exportHtml(),
     toggleMode: () => {},
     toggleFormatting: () => toggleFormatting(),
+    undo: () => editUndo(),
+    redo: () => editRedo(),
+    cut: () => editCut(),
+    copy: () => editCopy(),
+    paste: () => void editPaste(),
+    selectAll: () => editSelectAll(),
   })
   subscribe(() => syncDirty())
   syncDirty()
