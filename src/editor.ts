@@ -19,6 +19,7 @@ import { spreadsheetPlugin } from './node/spreadsheet'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
+import { taskClickPlugin, toggleTaskItems } from './formatToolbar'
 
 function createInputRules() {
   function headingRule(level: number): InputRule {
@@ -85,6 +86,10 @@ const listKeymap = keymap({
   },
   'Tab': sinkListItem(schema.nodes.list_item),
   'Shift-Tab': liftListItem(schema.nodes.list_item),
+  'Mod-Shift-x': (_state, dispatch, view) => {
+    if (!dispatch || !view) return false
+    return toggleTaskItems(view)
+  },
 })
 
 const blockToggleKeymap = keymap({
@@ -147,6 +152,7 @@ export function createBlockEditor(parent: HTMLElement, initialMarkdown: string):
         mermaidNodeViewPlugin,
         execNodeViewPlugin,
         spreadsheetPlugin,
+        taskClickPlugin(),
         new Plugin({
           props: {
             nodeViews: Object.fromEntries(

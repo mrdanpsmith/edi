@@ -2,7 +2,7 @@ import type { EditorView } from 'prosemirror-view'
 import type { MarkType } from 'prosemirror-model'
 import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands'
 import { wrapInList } from 'prosemirror-schema-list'
-import { TextSelection } from 'prosemirror-state'
+import { TextSelection, Plugin } from 'prosemirror-state'
 
 const FORMATTING_VISIBLE_KEY = 'edi.formattingVisible'
 
@@ -100,6 +100,131 @@ function toggleList(nodeType: string): (view: EditorView) => boolean {
   }
 }
 
+function findListItemAncestor($from: import('prosemirror-model').ResolvedPos): { depth: number } | null {
+  for (let d = $from.depth; d > 0; d--) {
+    if ($from.node(d).type.name === 'list_item') return { depth: d }
+  }
+  return null
+}
+
+function findTaskListAncestor($from: import('prosemirror-model').ResolvedPos): { depth: number } | null {
+  for (let d = $from.depth; d > 0; d--) {
+    const node = $from.node(d)
+    if (node.type.name === 'bullet_list') {
+      if (node.childCount > 0 && node.child(0).attrs.checked !== null) return { depth: d }
+    }
+  }
+  return null
+}
+
+function toggleTaskList(view: EditorView): boolean {
+  const { state, dispatch } = view
+  const { $from } = state.selection
+
+  const taskList = findTaskListAncestor($from)
+  if (taskList) {
+    const listNode = $from.node(taskList.depth)
+    const listStart = $from.before(taskList.depth)
+    const blocks: import('prosemirror-model').Node[] = []
+    listNode.forEach((li) => {
+      const item = state.schema.nodes.list_item.create(
+        { checked: null },
+        li.content,
+      )
+      blocks.push(item)
+    })
+    const flat = blocks.length === 1
+      ? blocks[0].content
+      : undefined
+    if (flat) {
+      dispatch(state.tr.replaceWith(listStart, listStart + listNode.nodeSize, flat))
+    } else {
+      const items: import('prosemirror-model').Node[] = []
+      listNode.forEach((li) => {
+        items.push(state.schema.nodes.list_item.create({ checked: null }, li.content))
+      })
+      const bullet = state.schema.nodes.bullet_list.create(null, items)
+      dispatch(state.tr.replaceWith(listStart, listStart + listNode.nodeSize, bullet))
+    }
+    return true
+  }
+
+  const current = findListAncestor($from)
+  if (current) {
+    const listNode = $from.node(current.depth)
+    const pos = $from.before(current.depth)
+    const items: import('prosemirror-model').Node[] = []
+    listNode.forEach((li) => {
+      const checked = li.attrs.checked !== null ? li.attrs.checked : false
+      items.push(state.schema.nodes.list_item.create({ checked }, li.content))
+    })
+    const bullet = state.schema.nodes.bullet_list.create(null, items)
+    dispatch(state.tr.replaceWith(pos, pos + listNode.nodeSize, bullet))
+    return true
+  }
+
+  const bulletType = state.schema.nodes.bullet_list
+  const liType = state.schema.nodes.list_item
+  const { selection } = state
+  const range = selection.$from.blockRange(selection.$to)
+  if (!range) return false
+  const items: import('prosemirror-model').Node[] = []
+  range.parent.forEach((child, _, i) => {
+    if (i >= range.startIndex && i < range.endIndex) {
+      items.push(liType.create({ checked: false }, child))
+    } else {
+      items.push(child)
+    }
+  })
+  const bullet = bulletType.create(null, items)
+  dispatch(state.tr.replaceWith(range.start, range.end, bullet))
+  return true
+}
+
+export function toggleTaskItems(view: EditorView): boolean {
+  const { state, dispatch } = view
+  const { $from } = state.selection
+  const li = findListItemAncestor($from)
+  if (!li) return false
+  const liNode = $from.node(li.depth)
+  const newChecked = liNode.attrs.checked === false ? true : false
+  const pos = $from.before(li.depth)
+  dispatch(state.tr.setNodeMarkup(pos, undefined, { checked: newChecked }))
+  return true
+}
+
+export function taskClickPlugin(): Plugin {
+  return new Plugin({
+    props: {
+      handleDOMEvents: {
+        click(view, event) {
+          const target = event.target as HTMLElement
+          const li = target.closest('li[data-checked]')
+          if (!li) return false
+          const { state, dispatch } = view
+          const posAtCoords = view.posAtCoords({
+            left: event.clientX,
+            top: event.clientY,
+          })
+          if (!posAtCoords) return false
+          const $pos = state.doc.resolve(posAtCoords.pos)
+          for (let d = $pos.depth; d > 0; d--) {
+            if ($pos.node(d).type.name === 'list_item') {
+              const liNode = $pos.node(d)
+              if (liNode.attrs.checked === null) return false
+              const newChecked = liNode.attrs.checked === false ? true : false
+              const itemPos = $pos.before(d)
+              dispatch(state.tr.setNodeMarkup(itemPos, undefined, { checked: newChecked }))
+              return true
+            }
+          }
+          return false
+        },
+      },
+    },
+  })
+}
+
 export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
   return [
     { label: 'B', title: 'Bold (Ctrl+B)', className: 'fmt-bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
@@ -169,6 +294,16 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
         BULLET_LINES,
       ),
       run: toggleList('ordered_list'),
+    },
+    {
+      label: 'Task list', title: 'Task list', markup: icon(
+        '<rect x="1.5" y="3.5" width="4" height="4" rx="1" stroke-width="1.5"/>' +
+        '<path d="M2.8 5.5l.9.9 2-2" stroke-width="1.3"/>' +
+        '<path d="M8 5.5h6"/><path d="M8 7.5h4"/>' +
+        '<rect x="1.5" y="8.5" width="4" height="4" rx="1" stroke-width="1.5"/>' +
+        '<path d="M8 10.5h6"/><path d="M8 12.5h4"/>',
+      ),
+      run: toggleTaskList,
     },
   ]
 }

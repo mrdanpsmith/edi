@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
-import { FormatToolbar, getButtons } from './formatToolbar'
+import { FormatToolbar, getButtons, toggleTaskItems } from './formatToolbar'
 import type { FormatToolbarContext } from './formatToolbar'
 
 function makeFixture() {
@@ -223,6 +223,90 @@ describe('FormatToolbar', () => {
     expect(view.state.doc.childCount).toBe(3)
     for (let i = 0; i < 3; i++) {
       expect(view.state.doc.child(i).type.name).toBe('paragraph')
+    }
+  })
+
+  it('wraps paragraph in task list', () => {
+    const { view, ctx } = makeFixtureWithCursor(5)
+    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    const result = btn.run(view)
+    expect(result).toBe(true)
+    const doc = view.state.doc
+    expect(doc.firstChild!.type.name).toBe('bullet_list')
+    expect(doc.firstChild!.child(0).attrs.checked).toBe(false)
+    expect(doc.textContent).toBe('hello world')
+  })
+
+  it('toggles off task list when clicking task list again', () => {
+    const { view, ctx } = makeFixtureWithCursor(5)
+    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    btn.run(view)
+    expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
+    expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(false)
+    btn.run(view)
+    expect(view.state.doc.firstChild!.type.name).toBe('paragraph')
+    expect(view.state.doc.textContent).toBe('hello world')
+  })
+
+  it('toggles checked state on task item', () => {
+    const doc = schema.node('doc', null, [
+      schema.node('bullet_list', null, [
+        schema.node('list_item', { checked: false }, [
+          schema.node('paragraph', null, [schema.text('task item')]),
+        ]),
+      ]),
+    ])
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const state = EditorState.create({
+      doc,
+      selection: TextSelection.create(doc, 3),
+    })
+    const view = new EditorView(host, { state })
+    expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(false)
+    const result = toggleTaskItems(view)
+    expect(result).toBe(true)
+    expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(true)
+    toggleTaskItems(view)
+    expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(false)
+    view.destroy()
+    host.remove()
+  })
+
+  it('converts regular list item to task item on toggle', () => {
+    const doc = schema.node('doc', null, [
+      schema.node('bullet_list', null, [
+        schema.node('list_item', { checked: null }, [
+          schema.node('paragraph', null, [schema.text('regular item')]),
+        ]),
+      ]),
+    ])
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const state = EditorState.create({
+      doc,
+      selection: TextSelection.create(doc, 3),
+    })
+    const view = new EditorView(host, { state })
+    expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(null)
+    const result = toggleTaskItems(view)
+    expect(result).toBe(true)
+    expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(false)
+    view.destroy()
+    host.remove()
+  })
+
+  it('wraps multiple blocks into a task list', () => {
+    const { view, ctx } = makeMultiBlockFixture()
+    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    btn.run(view)
+    const doc = view.state.doc
+    expect(doc.childCount).toBe(1)
+    expect(doc.firstChild!.type.name).toBe('bullet_list')
+    expect(doc.firstChild!.childCount).toBe(3)
+    for (let i = 0; i < 3; i++) {
+      expect(doc.firstChild!.child(i).type.name).toBe('list_item')
+      expect(doc.firstChild!.child(i).attrs.checked).toBe(false)
     }
   })
 })
