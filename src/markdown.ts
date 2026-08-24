@@ -406,15 +406,16 @@ function serializeListItem(node: ProseNode, indent: string): string {
 
 function serializeListItemContent(node: ProseNode, bullet: string, indent: string): string {
   const lines: string[] = []
+  const contentIndent = indent + ' '.repeat(bullet.length + 1)
   node.content.forEach((child, _, i) => {
     if (child.type.name === 'bullet_list' || child.type.name === 'ordered_list') {
-      lines.push(serializeNode(child, indent + '  '))
+      lines.push(serializeNode(child, contentIndent))
     } else {
-      const content = serializeNode(child, indent)
+      const content = serializeNode(child)
       if (i === 0) {
-        lines.push(bullet + ' ' + content)
+        lines.push(indent + bullet + ' ' + content)
       } else {
-        lines.push(indent + '  ' + content)
+        lines.push(contentIndent + content)
       }
     }
   })

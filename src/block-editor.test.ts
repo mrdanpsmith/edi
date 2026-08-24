@@ -387,6 +387,38 @@ describe('task list support', () => {
     view.destroy()
   })
 
+  it('nested ordered list round-trips through source mode', () => {
+    const md = '1. First\n   1. Sub A\n   2. Sub B\n2. Second'
+    const view = createEditor(md)
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const restored = proseToMarkdown(view.state.doc)
+    expect(restored).toContain('1. First')
+    expect(restored).toContain('1. Sub A')
+    expect(restored).toContain('2. Sub B')
+    expect(restored).toContain('2. Second')
+    const nestedList = view.state.doc.child(0).child(0).lastChild
+    expect(nestedList!.type.name).toBe('ordered_list')
+    view.destroy()
+  })
+
+  it('nested bullet list round-trips through source mode', () => {
+    const md = '- First\n  - Sub A\n  - Sub B\n- Second'
+    const view = createEditor(md)
+    const pos = firstBlockPos(view)
+    view.dispatch(enterSourceMode(view.state, pos))
+    view.dispatch(exitSourceMode(view.state))
+    const restored = proseToMarkdown(view.state.doc)
+    expect(restored).toContain('- First')
+    expect(restored).toContain('- Sub A')
+    expect(restored).toContain('- Sub B')
+    expect(restored).toContain('- Second')
+    const nestedList = view.state.doc.child(0).child(0).lastChild
+    expect(nestedList!.type.name).toBe('bullet_list')
+    view.destroy()
+  })
+
   it('renders checkbox attribute in DOM', () => {
     const view = createEditor('- [ ] Unchecked\n- [x] Checked')
     const pos = firstBlockPos(view)
