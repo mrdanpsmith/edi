@@ -5,6 +5,7 @@ import { visit } from 'unist-util-visit'
 import { blockNodeView } from '../blockview'
 import { invoke } from '../bridge'
 import type { CodeResult } from '../exec'
+import { shebangFromFenceInfo } from '../exec'
 
 export const EXEC_TYPE = 'exec_block'
 
@@ -25,7 +26,9 @@ export function remarkPlugin(this: any) {
           const lang = String(node.lang ?? '').trim()
           const value = String(node.value ?? '')
           const firstLine = value.split('\n', 1)[0] ?? ''
-          const shebang = lang.startsWith('#!') ? lang : firstLine.startsWith('#!') ? firstLine : null
+          const shebang =
+            shebangFromFenceInfo(lang, node.meta) ??
+            (firstLine.startsWith('#!') ? firstLine : null)
           if (shebang) {
             parent.children[index] = {
               type: EXEC_TYPE,
@@ -134,7 +137,7 @@ class ExecBlockNodeView implements NodeView {
     const code = document.createElement('code')
     code.contentEditable = 'true'
     code.spellcheck = false
-    code.textContent = this.source
+    code.textContent = this.displaySource()
     this.codeEl.append(code)
 
     const toolbar = document.createElement('div')
@@ -197,9 +200,14 @@ class ExecBlockNodeView implements NodeView {
       this.source = node.attrs.value
       this.dom.dataset['shebang'] = this.shebang
       const code = this.codeEl.querySelector('code')
-      if (code) code.textContent = this.source
+      if (code) code.textContent = this.displaySource()
     }
     return true
+  }
+
+  private displaySource(): string {
+    if (this.source.startsWith(this.shebang)) return this.source
+    return this.shebang ? `${this.shebang}\n${this.source}` : this.source
   }
 
   private cacheKey(): string {

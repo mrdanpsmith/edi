@@ -85,13 +85,6 @@ export function createBlockCodeMirror(
               return true
             },
           },
-          {
-            key: 'Mod-Shift-e',
-            run: () => {
-              onExit(view.state.doc.toString())
-              return true
-            },
-          },
         ]),
         markdown({ codeLanguages: languages }),
         syntaxHighlighting(highlight),

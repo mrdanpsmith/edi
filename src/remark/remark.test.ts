@@ -149,6 +149,17 @@ describe('exec block remark plugin', () => {
     const md = '```#!bash\necho "hello"\n```\n'
     expect(roundTripExec(md)).toBe(md)
   })
+
+  it('treats the whole info string line as the shebang', () => {
+    const md = '```#!/usr/bin/env python3 -m http.server\nprint("hi")\n```\n'
+    const processor = unified().use(remarkParse).use(rawExecRemarkPlugin)
+    const tree = processor.parse(md)
+    expect(tree.children[0]).toMatchObject({
+      type: 'exec_block',
+      shebang: '#!/usr/bin/env python3 -m http.server',
+    })
+    expect(roundTripExec(md)).toBe(md)
+  })
 })
 
 describe('definition list remark plugin', () => {

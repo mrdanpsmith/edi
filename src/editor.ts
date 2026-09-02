@@ -10,8 +10,8 @@ import { gapCursor } from 'prosemirror-gapcursor'
 import { dropCursor } from 'prosemirror-dropcursor'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { blockPlugin, getSourceBlockState, toggleSourceMode, exitSourceMode } from './blockplugin'
-import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
+import { blockPlugin, getSourceBlockState, toggleSourceMode } from './blockplugin'
+import { blockNodeView, BLOCK_NODE_TYPES, commitSourceMode } from './blockview'
 import { attachBlockHandles } from './blockhandle'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { execNodeViewPlugin } from './node/execblock'
@@ -93,10 +93,15 @@ const listKeymap = keymap({
 })
 
 const blockToggleKeymap = keymap({
-  'Mod-Shift-e': (state, dispatch) => {
-    if (!dispatch) return false
+  'Mod-Shift-e': (state, dispatch, view) => {
+    if (!dispatch || !view) return false
     const blockState = getSourceBlockState(state)
-    if (blockState.sourceBlockPos !== null) return false
+    if (blockState.sourceBlockPos !== null) {
+      const tr = commitSourceMode(view)
+      if (!tr) return false
+      dispatch(tr)
+      return true
+    }
 
     let blockPos = -1
     state.doc.forEach((_node, offset) => {
@@ -112,11 +117,12 @@ const blockToggleKeymap = keymap({
     dispatch(tr)
     return true
   },
-  'Escape': (state, dispatch) => {
-    if (!dispatch) return false
+  'Escape': (state, dispatch, view) => {
+    if (!dispatch || !view) return false
     const blockState = getSourceBlockState(state)
     if (blockState.sourceBlockPos !== null) {
-      const tr = exitSourceMode(state)
+      const tr = commitSourceMode(view)
+      if (!tr) return false
       dispatch(tr)
       return true
     }

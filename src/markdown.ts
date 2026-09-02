@@ -9,6 +9,7 @@ import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { remarkPlugin as mermaidRemarkPlugin } from './node/mermaid'
 import { remarkPlugin as execRemarkPlugin } from './node/execblock'
+import { shebangFromFenceInfo } from './exec'
 
 export interface BlockOffset {
   id: string
@@ -114,7 +115,9 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
         return schema.node('mermaid_block', { value: node.value ?? '' })
       }
       if (lang.startsWith('#!') || (node.value ?? '').startsWith('#!')) {
-        const shebang = lang.startsWith('#!') ? lang : (node.value ?? '').split('\n', 1)[0] ?? ''
+        const shebang =
+          shebangFromFenceInfo(lang, node.meta ?? '') ??
+          (node.value ?? '').split('\n', 1)[0] ?? ''
         return schema.node('exec_block', { shebang, value: node.value ?? '' })
       }
       return schema.node('code_block', { language: lang }, [

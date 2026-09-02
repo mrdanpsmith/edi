@@ -1,7 +1,9 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
+import type { Transaction } from 'prosemirror-state'
+import { EditorView as CMEditorView } from '@codemirror/view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
-import { BLOCK_PLUGIN_KEY } from './blockplugin'
+import { BLOCK_PLUGIN_KEY, getSourceBlockState } from './blockplugin'
 import { markdownToProse, serializeBlock } from './markdown'
 
 function createHandleDOM(pos: number): HTMLElement {
@@ -14,6 +16,39 @@ function createHandleDOM(pos: number): HTMLElement {
     <circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/>
   </svg>`
   return handle
+}
+
+function buildSourceCommitTransaction(
+  view: EditorView,
+  pos: number,
+  nodeSize: number,
+  markdown: string,
+): Transaction {
+  const tr = view.state.tr
+  const newDoc = markdownToProse(markdown, view.state.schema)
+  const nodes: ProseNode[] = []
+  newDoc.forEach((child) => nodes.push(child))
+  if (nodes.length > 0) {
+    tr.replaceWith(pos, pos + nodeSize, nodes)
+  } else {
+    tr.delete(pos, pos + nodeSize)
+  }
+  tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
+  return tr
+}
+
+export function commitSourceMode(view: EditorView): Transaction | null {
+  const blockState = getSourceBlockState(view.state)
+  const pos = blockState.sourceBlockPos
+  if (pos === null || pos >= view.state.doc.content.size) return null
+  const node = view.state.doc.nodeAt(pos)
+  if (!node) return null
+  const dom = view.nodeDOM(pos)
+  const cmEl = dom instanceof HTMLElement ? dom.querySelector('.cm-editor') : null
+  const cmView = cmEl instanceof HTMLElement ? CMEditorView.findFromDOM(cmEl) : undefined
+  const value = cmView?.state.doc.toString()
+  if (value === undefined) return null
+  return buildSourceCommitTransaction(view, pos, node.nodeSize, value)
 }
 
 function createSemanticWrapper(node: ProseNode): HTMLElement | null {
@@ -114,18 +149,7 @@ class BlockSourceNodeView implements NodeView {
     const pos = this.getPos()
     if (pos === undefined) return
 
-    const tr = this.view.state.tr
-    const newDoc = markdownToProse(value, this.view.state.schema)
-    const nodes: ProseNode[] = []
-    newDoc.forEach((child) => nodes.push(child))
-
-    if (nodes.length > 0) {
-      tr.replaceWith(pos, pos + this.node.nodeSize, nodes)
-    } else {
-      tr.delete(pos, pos + this.node.nodeSize)
-    }
-
-    tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
+    const tr = buildSourceCommitTransaction(this.view, pos, this.node.nodeSize, value)
     this.view.dispatch(tr)
     this.view.focus()
   }

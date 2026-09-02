@@ -181,6 +181,36 @@ function toggleTaskList(view: EditorView): boolean {
   return true
 }
 
+function insertCodeBlock(view: EditorView): boolean {
+  const { state } = view
+  const { selection, schema } = state
+  const codeBlockType = schema.nodes.code_block
+
+  // Selection spanning content → turn the selected lines into a code block
+  if (!selection.empty) {
+    const text = state.doc.textBetween(selection.from, selection.to, '\n')
+    const node = codeBlockType.create(null, schema.text(text))
+    view.dispatch(state.tr.replaceSelectionWith(node))
+    return true
+  }
+
+  const { $from } = selection
+  const depth = $from.depth
+  const parent = $from.parent
+
+  // Cursor on an empty block line → insert the code block right there
+  if (parent.isTextblock && parent.content.size === 0) {
+    const start = $from.before(depth)
+    const end = $from.after(depth)
+    view.dispatch(state.tr.replaceWith(start, end, codeBlockType.create()))
+    return true
+  }
+
+  // Otherwise → insert a fresh code block after the block the cursor is on
+  view.dispatch(state.tr.insert($from.after(depth), codeBlockType.create()))
+  return true
+}
+
 export function toggleTaskItems(view: EditorView): boolean {
   const { state, dispatch } = view
   const { $from } = state.selection
@@ -268,17 +298,7 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
         '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>' +
         '<path d="M4.5 6l2.5 2.5L4.5 11"/><path d="M9 10.5h2.5"/>',
       ),
-      run: (view) => {
-        const { state } = view
-        const node = state.schema.nodes.code_block.create()
-        const { $from } = state.selection
-        if ($from.depth > 0) {
-          view.dispatch(state.tr.insert($from.after(1), node))
-        } else {
-          view.dispatch(state.tr.insert($from.pos, node))
-        }
-        return true
-      },
+      run: insertCodeBlock,
     },
     {
       label: 'Bullet list', title: 'Bullet list', markup: icon(
@@ -288,20 +308,14 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
     },
     {
       label: 'Numbered list', title: 'Numbered list', markup: icon(
-        '<text x="3" y="4.5" text-anchor="middle" font-size="5.5" font-family="var(--font-sans)" stroke="none" fill="currentColor">1</text>' +
-        '<text x="3" y="9" text-anchor="middle" font-size="5.5" font-family="var(--font-sans)" stroke="none" fill="currentColor">2</text>' +
-        '<text x="3" y="13.5" text-anchor="middle" font-size="5.5" font-family="var(--font-sans)" stroke="none" fill="currentColor">3</text>' +
-        BULLET_LINES,
+        '<text x="8" y="12" text-anchor="middle" font-size="11" font-family="var(--font-sans)" stroke="none" fill="currentColor">1.</text>',
       ),
       run: toggleList('ordered_list'),
     },
     {
       label: 'Task list', title: 'Task list', markup: icon(
-        '<rect x="1.5" y="3.5" width="4" height="4" rx="1" stroke-width="1.5"/>' +
-        '<path d="M2.8 5.5l.9.9 2-2" stroke-width="1.3"/>' +
-        '<path d="M8 5.5h6"/><path d="M8 7.5h4"/>' +
-        '<rect x="1.5" y="8.5" width="4" height="4" rx="1" stroke-width="1.5"/>' +
-        '<path d="M8 10.5h6"/><path d="M8 12.5h4"/>',
+        '<rect x="1.5" y="2.5" width="13" height="13" fill="#3b82f6" stroke="none"/>' +
+        '<path d="M4.5 8l2.5 2.5 4.5-4.5" stroke="white" stroke-width="2"/>',
       ),
       run: toggleTaskList,
     },
