@@ -28,6 +28,7 @@ import {
   writeTextFile,
 } from './files'
 import { parseTableFile, toMarkdownTable } from './import'
+import { insertPastedText } from './paste'
 import { FormatToolbar } from './formatToolbar'
 import { bindMenuCommands } from './menus'
 import { createBlockEditor, type BlockEditor } from './editor'
@@ -480,8 +481,7 @@ async function editPaste(): Promise<void> {
     )
     view.dispatch(tr)
   } else if (text) {
-    const tr = state.tr.insertText(text)
-    view.dispatch(tr)
+    insertPastedText(view, text)
   }
 }
 

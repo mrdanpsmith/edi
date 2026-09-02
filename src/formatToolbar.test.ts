@@ -2,8 +2,9 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
-import { FormatToolbar, getButtons, toggleTaskItems } from './formatToolbar'
+import { FormatToolbar, getButtons, toggleTaskItems, applyLink } from './formatToolbar'
 import type { FormatToolbarContext } from './formatToolbar'
+import { markdownToProse, proseToMarkdown } from './markdown'
 
 function makeFixture() {
   const bar = document.createElement('div')
@@ -308,5 +309,79 @@ describe('FormatToolbar', () => {
       expect(doc.firstChild!.child(i).type.name).toBe('list_item')
       expect(doc.firstChild!.child(i).attrs.checked).toBe(false)
     }
+  })
+})
+
+describe('hyperlink', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('offers a Hyperlink toolbar button', () => {
+    const { ctx } = makeFixture()
+    const link = getButtons(ctx).find((b) => b.title === 'Hyperlink')!
+    expect(link).toBeDefined()
+    expect(link.markup).toContain('<svg')
+  })
+
+  it('applies a link mark over a selection', () => {
+    const doc = schema.node('doc', null, [
+      schema.node('paragraph', null, [schema.text('hello world')]),
+    ])
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({
+        doc,
+        selection: TextSelection.create(doc, 1, 6),
+      }),
+    })
+    const result = applyLink(view, 'https://example.com')
+    expect(result).toBe(true)
+    const selected = view.state.doc.textBetween(1, 6)
+    expect(selected).toBe('hello')
+    expect(proseToMarkdown(view.state.doc)).toContain('[hello](https://example.com)')
+    view.destroy()
+    host.remove()
+  })
+
+  it('prepends https for a bare www link', () => {
+    const doc = markdownToProse('abc', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 1, 2) }),
+    })
+    applyLink(view, 'www.example.com')
+    expect(proseToMarkdown(view.state.doc)).toContain('[a](https://www.example.com)')
+    view.destroy()
+    host.remove()
+  })
+
+  it('removes a link mark when the URL is empty', () => {
+    const doc = markdownToProse('[hello](https://example.com) world', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 1, 6) }),
+    })
+    applyLink(view, '')
+    expect(proseToMarkdown(view.state.doc)).toContain('hello world')
+    expect(proseToMarkdown(view.state.doc)).not.toContain('example.com')
+    view.destroy()
+    host.remove()
+  })
+
+  it('inserts the URL as link text when there is no selection', () => {
+    const doc = markdownToProse('abc', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    applyLink(view, 'https://example.com')
+    expect(proseToMarkdown(view.state.doc)).toContain('[https://example.com](https://example.com)')
+    view.destroy()
+    host.remove()
   })
 })

@@ -3,6 +3,7 @@ import type { MarkType } from 'prosemirror-model'
 import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands'
 import { wrapInList } from 'prosemirror-schema-list'
 import { TextSelection, Plugin } from 'prosemirror-state'
+import { promptForUrl } from './urlDialog'
 
 const FORMATTING_VISIBLE_KEY = 'edi.formattingVisible'
 
@@ -16,6 +17,60 @@ function icon(markup: string, viewBox = '0 0 16 16'): string {
 
 const BULLET_LINES = '<path d="M7 4h7M7 8h7M7 12h7"/>'
 
+const LINK_ICON = icon(
+  '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+    '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  '0 0 24 24',
+)
+
+function findLinkHref(view: EditorView): string {
+  const { state } = view
+  const linkType = state.schema.marks.link
+  if (!state.selection.empty) {
+    const mark = linkType.isInSet(state.selection.$from.marks()) ?? null
+    if (mark) return mark.attrs.href as string
+  }
+  const stored = state.storedMarks?.find((m) => m.type.name === 'link') ?? null
+  return stored ? (stored.attrs.href as string) : ''
+}
+
+/**
+ * Apply (or, when ``url`` is empty, remove) a link mark over the current
+ * selection. Bare ``www.`` links are given an ``https://`` scheme.
+ */
+export function applyLink(view: EditorView, url: string): boolean {
+  const { state, dispatch } = view
+  const { from, to } = state.selection
+  const linkType = state.schema.marks.link
+  const trimmed = url.trim()
+  let tr = state.tr
+  if (trimmed) {
+    const href = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed
+    const mark = linkType.create({ href, title: null })
+    if (from === to) {
+      // No selection: insert the URL itself as the linked text, mirroring how
+      // pasting a raw link turns it into a clickable link.
+      const node = state.schema.text(trimmed, [mark])
+      tr = tr.insert(from, node)
+    } else {
+      tr = tr.addMark(from, to, mark)
+    }
+  } else {
+    tr = tr.removeMark(from, to, linkType)
+  }
+  dispatch(tr)
+  return true
+}
+
+function hyperlinkRun(view: EditorView): Promise<boolean> {
+  const url = findLinkHref(view)
+  return promptForUrl(url).then((entered) => {
+    if (entered === null) return false
+    view.focus()
+    return applyLink(view, entered)
+  })
+}
+
 export interface FormatToolbarContext {
   getView(): EditorView
 }
@@ -25,7 +80,7 @@ interface ButtonSpec {
   title: string
   className?: string
   markup?: string
-  run(view: EditorView): boolean
+  run(view: EditorView): boolean | Promise<boolean>
 }
 
 function toggleMarkCmd(markType: MarkType): (view: EditorView) => boolean {
@@ -260,6 +315,7 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
     { label: 'B', title: 'Bold (Ctrl+B)', className: 'fmt-bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
     { label: 'I', title: 'Italic (Ctrl+I)', className: 'fmt-italic', run: (view) => toggleMarkCmd(view.state.schema.marks.em)(view) },
     { label: 'S', title: 'Strikethrough', className: 'fmt-strike', run: (view) => toggleMarkCmd(view.state.schema.marks.strikethrough)(view) },
+    { label: 'Link', title: 'Hyperlink', markup: LINK_ICON, run: hyperlinkRun },
     {
       label: 'Highlight', title: 'Highlight', markup: icon(
         '<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#fde047" stroke="none"/>' +

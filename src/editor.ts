@@ -20,6 +20,7 @@ import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { taskClickPlugin, toggleTaskItems } from './formatToolbar'
+import { insertPastedText, containsRawUrl } from './paste'
 
 function createInputRules() {
   function headingRule(level: number): InputRule {
@@ -162,6 +163,25 @@ export function createBlockEditor(
     },
   })
 
+  const urlPastePlugin = new Plugin({
+    props: {
+      handlePaste(view, event) {
+        const data = event.clipboardData
+        if (!data) return false
+        // Rich text (HTML) is handled by ProseMirror's own parser, which turns
+        // <a> into a link mark. Only intercept plain-text pastes containing a
+        // raw URL so it becomes a clickable link instead of dead text.
+        const types = Array.isArray(data.types) ? data.types : []
+        if (types.includes('text/html')) return false
+        const text = data.getData('text/plain')
+        if (!containsRawUrl(text)) return false
+        event.preventDefault()
+        insertPastedText(view, text)
+        return true
+      },
+    },
+  })
+
   const view = new EditorView(parent, {
     state: EditorState.create({
       doc,
@@ -176,6 +196,7 @@ export function createBlockEditor(
         gapCursor(),
         dropCursor(),
         linkClickPlugin,
+        urlPastePlugin,
         blockPlugin,
         mermaidNodeViewPlugin,
         spreadsheetPlugin,
