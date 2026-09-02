@@ -85,3 +85,51 @@ describe('Tabs.addSession', () => {
     expect(tabs.getMarkdownSnapshot(originalId)).toContain('My Document')
   })
 })
+
+describe('Tabs scroll position', () => {
+  function makeContent(scrollTop = 0) {
+    const state = { markdown: '', scroll: scrollTop }
+    const content: TabContent = {
+      getMarkdown: () => state.markdown,
+      setMarkdown: (value: string) => {
+        state.markdown = value
+      },
+      getScroll: () => state.scroll,
+      setScroll: (value: number) => {
+        state.scroll = value
+      },
+    }
+    return { content, state }
+  }
+
+  it('restores a tab to its own saved scroll position', () => {
+    const { content, state } = makeContent()
+    const tabs = new Tabs(createTabbar(), content, makeCallbacks())
+    const firstId = tabs.activeId
+
+    // User scrolls tab 1 down and creates tab 2, which scrolls to top.
+    state.scroll = 120
+    tabs.addSession()
+    const secondId = tabs.activeId
+    state.scroll = 0
+
+    // Switch back to tab 1: should restore its saved 120.
+    tabs.activate(firstId)
+    expect(state.scroll).toBe(120)
+
+    // Switch to tab 2: should restore its saved 0.
+    tabs.activate(secondId)
+    expect(state.scroll).toBe(0)
+  })
+
+  it('a brand-new tab starts scrolled to the top', () => {
+    const { content, state } = makeContent(300)
+    const tabs = new Tabs(createTabbar(), content, makeCallbacks())
+
+    // Current tab is scrolled down; adding a new tab resets to top.
+    state.scroll = 300
+    tabs.addSession()
+
+    expect(state.scroll).toBe(0)
+  })
+})

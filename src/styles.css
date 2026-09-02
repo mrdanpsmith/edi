@@ -401,6 +401,11 @@ body {
   text-decoration: underline;
 }
 
+/* Inline decorations wrap the link text in a span inside the anchor. */
+.ProseMirror a .ml-misleading {
+  color: var(--danger);
+}
+
 .ProseMirror code {
   font-family: var(--font-mono);
   font-size: 0.9em;

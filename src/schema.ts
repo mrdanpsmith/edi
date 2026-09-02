@@ -294,8 +294,11 @@ const marks: SchemaSpec['marks'] = {
       },
     ],
     toDOM(mark) {
-      const attrs: Record<string, string> = { href: mark.attrs.href as string }
-      if (mark.attrs.title != null) attrs.title = mark.attrs.title as string
+      const attrs: Record<string, string> = {
+        href: mark.attrs.href as string,
+        // Native browser tooltip on hover: show the real destination.
+        title: mark.attrs.href as string,
+      }
       return ['a', attrs, 0]
     },
   },

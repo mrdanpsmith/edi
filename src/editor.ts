@@ -1,5 +1,5 @@
-import { EditorState, Plugin } from 'prosemirror-state'
-import { EditorView } from 'prosemirror-view'
+import { EditorState, Plugin, PluginKey } from 'prosemirror-state'
+import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
 import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap } from 'prosemirror-commands'
@@ -21,6 +21,7 @@ import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { taskClickPlugin, toggleTaskItems } from './formatToolbar'
 import { insertPastedText, containsRawUrl } from './paste'
+import { isMisleadingLink } from './linkSecurity'
 
 function createInputRules() {
   function headingRule(level: number): InputRule {
@@ -140,7 +141,7 @@ export interface BlockEditor {
 }
 
 export interface BlockEditorOptions {
-  onOpenLink?: (href: string) => void
+  onOpenLink?: (href: string, text: string) => void
 }
 
 export function createBlockEditor(
@@ -157,7 +158,8 @@ export function createBlockEditor(
         if (!link) return false
         const href = link.attrs.href as string
         if (typeof href !== 'string' || href === '') return false
-        options.onOpenLink?.(href)
+        const text = linkTextAt(view.state.doc, link)
+        options.onOpenLink?.(href, text)
         return true
       },
     },
@@ -182,6 +184,25 @@ export function createBlockEditor(
     },
   })
 
+  const misleadingLinkKey = new PluginKey('misleading-links')
+
+  const misleadingLinkPlugin = new Plugin({
+    key: misleadingLinkKey,
+    state: {
+      init(_config, state) {
+        return buildMisleadingDecorations(state.doc)
+      },
+      apply(_tr, _old, _oldState, newState) {
+        return buildMisleadingDecorations(newState.doc)
+      },
+    },
+    props: {
+      decorations(state) {
+        return misleadingLinkKey.getState(state)
+      },
+    },
+  })
+
   const view = new EditorView(parent, {
     state: EditorState.create({
       doc,
@@ -197,6 +218,7 @@ export function createBlockEditor(
         dropCursor(),
         linkClickPlugin,
         urlPastePlugin,
+        misleadingLinkPlugin,
         blockPlugin,
         mermaidNodeViewPlugin,
         spreadsheetPlugin,
@@ -237,5 +259,59 @@ export function createBlockEditor(
 
 function linkMarkAt(doc: import('prosemirror-model').Node, pos: number): import('prosemirror-model').Mark | null {
   const $pos = doc.resolve(pos)
-  return $pos.marks().find((m) => m.type.name === 'link') ?? null
+  // Only treat the click as "on the link" when it lands on a linked text
+  // child, i.e. strictly inside the linked text. A click at the trailing
+  // boundary after the link (marks() would still report the mark) must NOT
+  // open the link.
+  const child = $pos.parent.maybeChild($pos.index())
+  if (child && child.isText) {
+    return child.marks.find((m) => m.type.name === 'link') ?? null
+  }
+  return null
+}
+
+function linkTextAt(doc: import('prosemirror-model').Node, mark: import('prosemirror-model').Mark): string {
+  let text = ''
+  doc.nodesBetween(0, doc.content.size, (node) => {
+    if (!node.isText) return
+    const link = node.marks.find((m) => m.type.name === 'link')
+    if (link && link.eq(mark)) text += node.text ?? ''
+  })
+  return text
+}
+
+function buildMisleadingDecorations(doc: import('prosemirror-model').Node): DecorationSet {
+  const decorations: Decoration[] = []
+  let run: { from: number; to: number; mark: import('prosemirror-model').Mark; text: string } | null = null
+
+  function flush() {
+    if (!run) return
+    const href = run.mark.attrs.href as string
+    if (typeof href === 'string' && isMisleadingLink(href, run.text)) {
+      decorations.push(Decoration.inline(run.from, run.to, { class: 'ml-misleading' }))
+    }
+    run = null
+  }
+
+  doc.nodesBetween(0, doc.content.size, (node, pos) => {
+    if (!node.isText) {
+      flush()
+      return
+    }
+    const link = node.marks.find((m) => m.type.name === 'link')
+    if (!link) {
+      flush()
+      return
+    }
+    if (run && run.mark.eq(link) && run.to === pos) {
+      run.to = pos + node.nodeSize
+      run.text += node.text ?? ''
+    } else {
+      flush()
+      run = { from: pos, to: pos + node.nodeSize, mark: link, text: node.text ?? '' }
+    }
+  })
+  flush()
+
+  return DecorationSet.create(doc, decorations)
 }

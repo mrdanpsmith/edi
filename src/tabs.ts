@@ -16,10 +16,13 @@ export interface TabCallbacks {
 export interface TabContent {
   getMarkdown(): string
   setMarkdown(value: string): void
+  getScroll?(): number
+  setScroll?(value: number): void
 }
 
 export class Tabs {
   private readonly snapshots = new Map<string, string>()
+  private readonly scrolls = new Map<string, number>()
 
   constructor(
     private readonly tabbar: HTMLElement,
@@ -38,13 +41,17 @@ export class Tabs {
     const active = getActive()
     if (!active) return
     this.snapshots.set(active.id, this.content.getMarkdown())
+    this.scrolls.set(active.id, this.content.getScroll?.() ?? 0)
   }
 
   addSession(content = ''): void {
     this.snapshotActive()
     const id = createSession()
     this.snapshots.set(id, content)
+    // A brand-new tab starts scrolled to the top.
+    this.scrolls.set(id, 0)
     this.content.setMarkdown(content)
+    this.content.setScroll?.(0)
     this.render()
     this.notifyActive()
   }
@@ -79,6 +86,7 @@ export class Tabs {
     if (!active) return
     const markdown = this.snapshots.get(active.id) ?? ''
     this.content.setMarkdown(markdown)
+    this.content.setScroll?.(this.scrolls.get(active.id) ?? 0)
   }
 
   private notifyActive(): void {

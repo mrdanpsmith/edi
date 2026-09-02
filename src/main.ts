@@ -29,6 +29,7 @@ import {
 } from './files'
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText } from './paste'
+import { isMisleadingLink } from './linkSecurity'
 import { FormatToolbar } from './formatToolbar'
 import { bindMenuCommands } from './menus'
 import { createBlockEditor, type BlockEditor } from './editor'
@@ -105,6 +106,12 @@ const tabs = new Tabs(tabbar, {
   },
   setMarkdown(value: string): void {
     blockEditor?.setMarkdown(value)
+  },
+  getScroll(): number {
+    return editorContainer.scrollTop
+  },
+  setScroll(value: number): void {
+    editorContainer.scrollTop = value
   },
 }, {
   onNewTab: () => openNewTab(),
@@ -241,7 +248,13 @@ function resolveInternalPath(href: string): string | null {
   return baseDir ? `${baseDir}/${withoutFragment}` : withoutFragment
 }
 
-function openLink(href: string): void {
+async function openLink(href: string, text: string): Promise<void> {
+  if (isMisleadingLink(href, text)) {
+    const go = await confirmAction(
+      `The link text "${text}" does not match its destination (${href}). Open it anyway?`,
+    )
+    if (!go) return
+  }
   if (isExternalUrl(href)) {
     void openUrl(href)
     return
@@ -507,6 +520,8 @@ function init(): void {
   // documents and the smoke/selftest harness drives headless runs via this hook.
   window.ediSetContent = (markdown: string) => {
     blockEditor?.setMarkdown(markdown)
+    // The shell loads a document into the current tab: reset its scroll to top.
+    editorContainer.scrollTop = 0
     tabs.snapshotActive()
     afterActivate()
   }

@@ -293,6 +293,10 @@ export function taskClickPlugin(): Plugin {
           })
           if (!posAtCoords) return false
           const $pos = state.doc.resolve(posAtCoords.pos)
+          // A click on the trailing boundary after the item's text (where the
+          // deepest resolved parent is the list item, not a textblock) must not
+          // toggle the checkbox — only clicks on actual text content do.
+          if (!$pos.parent.isTextblock) return false
           for (let d = $pos.depth; d > 0; d--) {
             if ($pos.node(d).type.name === 'list_item') {
               const liNode = $pos.node(d)
