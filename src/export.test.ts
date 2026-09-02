@@ -8,10 +8,6 @@ function docFrom(md: string): ProseNode {
   return markdownToProse(md, schema)
 }
 
-function flat(html: string): string {
-  return html.replace(/\s+/g, ' ').trim()
-}
-
 describe('buildExportHtml', () => {
   it('builds a standalone document with escaped title', () => {
     const html = buildExportHtml('Notes & Stuff', '<div class="md-preview"><h1>Hi</h1></div>')
@@ -125,17 +121,16 @@ describe('serializeDocToHtml', () => {
     expect(html).not.toMatch(/<pre/)
   })
 
-  it('renders exec blocks as single pre.exec-block', () => {
+  it('renders code blocks as pre/code', () => {
     const html = serializeDocToHtml(docFrom('```python\nprint("hi")\n```'))
     expect(html).toContain('<pre>')
     expect(html).toContain('<code')
     expect(html).toContain('print')
-    expect(flat(html)).not.toMatch(/<div[^>]*class="exec/)
   })
 
-  it('renders exec blocks with shebang on separate line (non-inline)', () => {
+  it('renders a runnable code block with its shebang on the first content line', () => {
     const doc = schema.node('doc', {}, [
-      schema.node('exec_block', { shebang: '#!/bin/bash', value: 'echo hello' }),
+      schema.node('code_block', {}, [schema.text('#!/bin/bash\necho hello')]),
     ])
     const html = serializeDocToHtml(doc)
     expect(html).toContain('#!/bin/bash')
@@ -144,26 +139,13 @@ describe('serializeDocToHtml', () => {
     expect(occurrences).toBe(1)
   })
 
-  it('renders exec blocks with inline shebang without duplication', () => {
+  it('renders a runnable code block as a single pre/code', () => {
     const doc = schema.node('doc', {}, [
-      schema.node('exec_block', {
-        shebang: '#!/bin/bash',
-        value: '#!/bin/bash\necho hello',
-      }),
+      schema.node('code_block', {}, [schema.text('#!/bin/bash\necho hello')]),
     ])
     const html = serializeDocToHtml(doc)
+    expect(html).toMatch(/<pre[^>]*><code/)
     expect(html).toContain('#!/bin/bash\necho hello')
-    const occurrences = (html.match(/#!\/bin\/bash/g) ?? []).length
-    expect(occurrences).toBe(1)
-  })
-
-  it('renders exec blocks without shebang', () => {
-    const doc = schema.node('doc', {}, [
-      schema.node('exec_block', { shebang: '', value: 'x = 1' }),
-    ])
-    const html = serializeDocToHtml(doc)
-    expect(html).toContain('x = 1')
-    expect(html).toContain('<pre')
   })
 
   it('computes spreadsheet formulas instead of showing raw text', () => {

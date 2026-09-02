@@ -719,3 +719,47 @@ def test_about_dialog_non_drag_mouse_events(visible):
     )
     dialog.mouseMoveEvent(no_button_move)
     assert dialog._drag_offset is None
+
+
+def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
+    import json as _json
+
+    window = visible
+    result = {}
+
+    def js(code, cb):
+        window._web.page().runJavaScript(code, cb or (lambda _v: None))
+
+    md = (
+        "```\n"
+        "#!/usr/bin/env python3\n"
+        'print("Hello, World!")\n'
+        "```"
+    )
+    js("window.ediSetContent(" + _json.dumps(md) + "); true", None)
+    time.sleep(1.0)
+
+    def run_button_clicked():
+        def done(v):
+            result["click"] = v
+        js(
+            "(function(){var b=document.querySelector('.exec-run');"
+            "if(!b) return 'NOBTN'; b.click(); return 'CLICKED';})()",
+            done,
+        )
+        return result.get("click") is not None
+
+    assert _pump_until(run_button_clicked, timeout=5), "Run button not rendered"
+    assert result["click"] == "CLICKED"
+
+    def read_output():
+        def done(v):
+            result["out"] = v
+        js(
+            "(document.querySelector('.exec-output')||{}).textContent||''",
+            done,
+        )
+        return result.get("out") not in (None, "")
+
+    assert _pump_until(read_output, timeout=20), "output cell never populated"
+    assert result["out"] == "Hello, World!"

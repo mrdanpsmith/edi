@@ -8,7 +8,6 @@ import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { remarkPlugin as mermaidRemarkPlugin } from './node/mermaid'
-import { remarkPlugin as execRemarkPlugin } from './node/execblock'
 import { shebangFromFenceInfo } from './exec'
 
 export interface BlockOffset {
@@ -33,7 +32,6 @@ function createProcessor() {
     .use(subscript.remarkPlugin)
     .use(superscript.remarkPlugin)
     .use(mermaidRemarkPlugin)
-    .use(execRemarkPlugin)
 }
 
 const MARK_TYPES = new Set([
@@ -114,15 +112,17 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       if (lang === 'mermaid') {
         return schema.node('mermaid_block', { value: node.value ?? '' })
       }
-      if (lang.startsWith('#!') || (node.value ?? '').startsWith('#!')) {
-        const shebang =
-          shebangFromFenceInfo(lang, node.meta ?? '') ??
-          (node.value ?? '').split('\n', 1)[0] ?? ''
-        return schema.node('exec_block', { shebang, value: node.value ?? '' })
+      const value = node.value ?? ''
+      const infoShebang = shebangFromFenceInfo(lang, node.meta ?? '')
+      if (infoShebang) {
+        // Normalize an info-string shebang (```#!cmd) into the content as the
+        // first line so a runnable block is just a code_block whose first line
+        // starts with `#!`.
+        const firstLine = value.split('\n', 1)[0] ?? ''
+        const content = firstLine.startsWith('#!') ? value : infoShebang + '\n' + value
+        return schema.node('code_block', { language: '' }, [schema.text(content)])
       }
-      return schema.node('code_block', { language: lang }, [
-        schema.text(node.value ?? ''),
-      ])
+      return schema.node('code_block', { language: lang }, [schema.text(value)])
     }
 
     case 'thematicBreak':
@@ -159,12 +159,6 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
 
     case 'mermaid_block':
       return schema.node('mermaid_block', { value: node.value ?? '' })
-
-    case 'exec_block':
-      return schema.node('exec_block', {
-        shebang: node.shebang ?? '',
-        value: node.value ?? '',
-      })
 
     case 'descriptionlist': {
       const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
@@ -285,7 +279,10 @@ function serializeNode(node: ProseNode, indent = ''): string {
     case 'code_block': {
       const lang = (node.attrs.language as string) ?? ''
       const content = node.textContent
-      return indent + '```' + lang + '\n' + content + '\n' + indent + '```'
+      // A runnable block just has its shebang as the first content line; the
+      // info string must stay empty so it round-trips as a bare fence.
+      const language = lang.startsWith('#!') ? '' : lang
+      return indent + '```' + language + '\n' + content + '\n' + indent + '```'
     }
 
     case 'horizontal_rule':
@@ -300,16 +297,6 @@ function serializeNode(node: ProseNode, indent = ''): string {
     case 'mermaid_block': {
       const val = (node.attrs.value as string) ?? ''
       return indent + '```mermaid\n' + val + '\n' + indent + '```'
-    }
-
-    case 'exec_block': {
-      const shebang = (node.attrs.shebang as string) ?? ''
-      const value = (node.attrs.value as string) ?? ''
-      const isInline = shebang && value.startsWith(shebang)
-      if (isInline) {
-        return indent + '```\n' + value + '\n' + indent + '```'
-      }
-      return indent + '```' + shebang + '\n' + value + '\n' + indent + '```'
     }
 
     case 'table':

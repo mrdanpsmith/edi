@@ -7,7 +7,8 @@ import { highlight } from './highlight'
 import { subscript } from './sub'
 import { superscript } from './sup'
 import { remarkPlugin as rawMermaidRemarkPlugin } from '../node/mermaid'
-import { remarkPlugin as rawExecRemarkPlugin } from '../node/execblock'
+import { markdownToProse, proseToMarkdown } from '../markdown'
+import { schema } from '../schema'
 
 function roundTrip(md: string): string {
   const processor = unified()
@@ -26,17 +27,6 @@ function roundTripMermaid(md: string): string {
   const processor = unified()
     .use(remarkParse)
     .use(rawMermaidRemarkPlugin)
-    .use(remarkStringify)
-
-  const tree = processor.parse(md)
-  const result = processor.stringify(tree)
-  return result
-}
-
-function roundTripExec(md: string): string {
-  const processor = unified()
-    .use(remarkParse)
-    .use(rawExecRemarkPlugin)
     .use(remarkStringify)
 
   const tree = processor.parse(md)
@@ -108,57 +98,47 @@ describe('mermaid remark plugin', () => {
   })
 })
 
-describe('exec block remark plugin', () => {
-  it('exec block with info shebang round-trips', () => {
-    const md = '```#!python3\nprint("hello")\n```\n'
-    expect(roundTripExec(md)).toBe(md)
+describe('runnable code block (shebang) handling', () => {
+  it('info-shebang block normalizes the shebang into the content first line', () => {
+    const doc = markdownToProse('```#!python3\nprint("hello")\n```', schema)
+    const block = doc.firstChild!
+    expect(block.type.name).toBe('code_block')
+    expect(block.attrs.language).toBe('')
+    expect(block.textContent).toBe('#!python3\nprint("hello")')
   })
 
-  it('exec block with inline shebang round-trips', () => {
-    const md = '```\n#!/usr/bin/env python3\nprint("hello")\n```\n'
-    expect(roundTripExec(md)).toBe(md)
+  it('inline-shebang block keeps content as-is', () => {
+    const doc = markdownToProse('```\n#!/usr/bin/env python3\nprint("hello")\n```', schema)
+    const block = doc.firstChild!
+    expect(block.type.name).toBe('code_block')
+    expect(block.textContent).toBe('#!/usr/bin/env python3\nprint("hello")')
   })
 
-  it('non-exec code blocks are not transformed', () => {
-    const md = '```js\nconsole.log("hi")\n```\n'
-    const result = roundTripExec(md)
-    expect(result).toContain('```js')
+  it('plain code block keeps its language', () => {
+    const doc = markdownToProse('```js\nconsole.log(1)\n```', schema)
+    const block = doc.firstChild!
+    expect(block.type.name).toBe('code_block')
+    expect(block.attrs.language).toBe('js')
+    expect(block.textContent).toBe('console.log(1)')
   })
 
-  it('parses info-shebang block into exec_block AST node', () => {
-    const processor = unified().use(remarkParse).use(rawExecRemarkPlugin)
-    const tree = processor.parse('```#!python3\nprint("hello")\n```')
-    expect(tree.children[0]).toMatchObject({
-      type: 'exec_block',
-      shebang: '#!python3',
-      value: 'print("hello")',
-    })
+  it('round-trips a runnable block as a bare fence', () => {
+    const md = '```\n#!/usr/bin/env python3\nprint("hello")\n```'
+    const doc = markdownToProse(md, schema)
+    expect(proseToMarkdown(doc)).toBe(md + '\n')
   })
 
-  it('parses inline-shebang block into exec_block AST node', () => {
-    const processor = unified().use(remarkParse).use(rawExecRemarkPlugin)
-    const tree = processor.parse('```\n#!/usr/bin/env python3\nprint("hello")\n```')
-    expect(tree.children[0]).toMatchObject({
-      type: 'exec_block',
-      shebang: '#!/usr/bin/env python3',
-      value: '#!/usr/bin/env python3\nprint("hello")',
-    })
-  })
-
-  it('preserves exec block content through round-trip', () => {
-    const md = '```#!bash\necho "hello"\n```\n'
-    expect(roundTripExec(md)).toBe(md)
+  it('round-trips an info-shebang block as a bare fence', () => {
+    const doc = markdownToProse('```#!python3\nprint("hello")\n```', schema)
+    expect(proseToMarkdown(doc)).toBe('```\n#!python3\nprint("hello")\n```\n')
   })
 
   it('treats the whole info string line as the shebang', () => {
-    const md = '```#!/usr/bin/env python3 -m http.server\nprint("hi")\n```\n'
-    const processor = unified().use(remarkParse).use(rawExecRemarkPlugin)
-    const tree = processor.parse(md)
-    expect(tree.children[0]).toMatchObject({
-      type: 'exec_block',
-      shebang: '#!/usr/bin/env python3 -m http.server',
-    })
-    expect(roundTripExec(md)).toBe(md)
+    const doc = markdownToProse('```#!/usr/bin/env python3 -m http.server\nprint("hi")\n```', schema)
+    const block = doc.firstChild!
+    expect(block.textContent).toBe(
+      '#!/usr/bin/env python3 -m http.server\nprint("hi")',
+    )
   })
 })
 

@@ -342,7 +342,7 @@ body {
 
 .block-visual-mode:hover > .block-handle,
 .mermaid:hover > .block-handle,
-.exec-block:hover > .block-handle {
+.runnable-block:hover > .block-handle {
   opacity: 1;
 }
 
@@ -551,9 +551,9 @@ body {
   font-size: 0.85em;
 }
 
-/* ── Executable code blocks ── */
+/* ── Runnable code blocks ── */
 
-.ProseMirror .exec-block {
+.ProseMirror .runnable-block {
   margin: 1em 0;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -562,7 +562,7 @@ body {
   margin-left: 24px;
 }
 
-.ProseMirror .exec-source {
+.ProseMirror .runnable-source {
   margin: 0;
   padding: 12px;
   border: none;
@@ -572,7 +572,7 @@ body {
   border-radius: 6px 6px 0 0;
 }
 
-.ProseMirror .exec-source code {
+.ProseMirror .runnable-source code {
   display: block;
   font-family: var(--font-mono);
   font-size: 0.88em;
@@ -587,7 +587,7 @@ body {
   width: 100%;
 }
 
-.ProseMirror .exec-toolbar {
+.ProseMirror .runnable-controls .exec-toolbar {
   display: flex;
   justify-content: flex-end;
   padding: 6px 8px;
@@ -595,7 +595,7 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.ProseMirror .exec-toolbar .exec-run {
+.ProseMirror .runnable-controls .exec-toolbar .exec-run {
   font: inherit;
   font-size: 12px;
   color: var(--text-primary);
@@ -606,11 +606,11 @@ body {
   cursor: pointer;
 }
 
-.ProseMirror .exec-toolbar .exec-run:hover:not(:disabled) {
+.ProseMirror .runnable-controls .exec-toolbar .exec-run:hover:not(:disabled) {
   background: var(--bg);
 }
 
-.ProseMirror .exec-toolbar .exec-run:disabled {
+.ProseMirror .runnable-controls .exec-toolbar .exec-run:disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -846,67 +846,6 @@ body {
   padding: 0;
   border-radius: 0;
   font-size: 0.88em;
-}
-
-.md-preview .exec-block {
-  margin: 1em 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--surface);
-}
-
-.md-preview .exec-source {
-  margin: 0;
-  padding: 12px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-}
-
-.md-preview .exec-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 6px 8px;
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
-}
-
-.md-preview .exec-toolbar .exec-run {
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 2px 10px;
-  cursor: pointer;
-}
-
-.md-preview .exec-toolbar .exec-run:hover:not(:disabled) {
-  background: var(--bg);
-}
-
-.md-preview .exec-toolbar .exec-run:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.md-preview .exec-output {
-  margin: 0;
-  padding: 12px;
-  border: none;
-  border-radius: 0;
-  background: var(--exec-bg);
-  color: var(--exec-fg);
-  font-family: var(--font-mono);
-  font-size: 0.85em;
-  white-space: pre-wrap;
-  overflow-x: auto;
-}
-
-.md-preview .exec-output.exec-error {
-  border-top: 2px solid var(--danger);
 }
 
 .md-preview .table-copy-wrap {

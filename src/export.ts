@@ -222,44 +222,6 @@ body {
   font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
   font-size: 0.85em;
 }
-
-.md-preview .exec-block {
-  margin: 1em 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--surface);
-}
-
-.md-preview .exec-source {
-  margin: 0;
-  padding: 12px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-}
-
-.md-preview .exec-toolbar,
-.md-preview .exec-toolbar .exec-run {
-  display: none;
-}
-
-.md-preview .exec-output {
-  margin: 0;
-  padding: 12px;
-  border: none;
-  border-radius: 0;
-  background: var(--exec-bg);
-  color: var(--exec-fg);
-  font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
-  font-size: 0.85em;
-  white-space: pre-wrap;
-  overflow-x: auto;
-}
-
-.md-preview .exec-output.exec-error {
-  border-top: 2px solid var(--danger);
-}
 `
 
 export function serializeDocToHtml(doc: ProseNode): string {
@@ -271,14 +233,6 @@ export function serializeDocToHtml(doc: ProseNode): string {
   nodes.mermaid_block = (node) => {
     const value = String(node.attrs.value ?? '')
     return ['div', { class: 'mermaid' }, value]
-  }
-
-  nodes.exec_block = (node) => {
-    const shebang = String(node.attrs.shebang ?? '')
-    const value = String(node.attrs.value ?? '')
-    const isInline = shebang !== '' && value.startsWith(shebang)
-    const content = isInline ? value : (shebang ? shebang + '\n' + value : value)
-    return ['pre', { class: 'exec-block' }, ['code', content]]
   }
 
   nodes.source_block = (node) => {

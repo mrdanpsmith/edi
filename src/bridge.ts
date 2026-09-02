@@ -19,6 +19,7 @@ declare global {
       callback: (channel: { objects: { bridge: BridgeObject } }) => void,
     ) => unknown
     ediMenuCommand?: (command: string) => void
+    ediSetContent?: (markdown: string) => void
   }
 }
 

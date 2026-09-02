@@ -7,7 +7,7 @@ import { Node as ProseNode } from 'prosemirror-model'
 import { blockPlugin, enterSourceMode, exitSourceMode, toggleSourceMode, getSourceBlockState, BLOCK_PLUGIN_KEY } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { mermaidNodeViewPlugin } from './node/mermaid'
-import { execNodeViewPlugin } from './node/execblock'
+import { codeBlockNodeViewPlugin } from './node/execblock'
 import { serializeBlock } from './markdown'
 import { Plugin } from 'prosemirror-state'
 
@@ -23,7 +23,7 @@ function createEditor(initialMarkdown: string) {
   const view = new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, nodeViewPlugin, mermaidNodeViewPlugin, execNodeViewPlugin],
+      plugins: [blockPlugin, codeBlockNodeViewPlugin, nodeViewPlugin, mermaidNodeViewPlugin],
     }),
   })
   return view
@@ -593,45 +593,71 @@ describe('handle position accuracy', () => {
   })
 })
 
-describe('exec block toggle', () => {
-  it('exec block has a handle', () => {
+describe('runnable code block toggle', () => {
+  it('a shebang code block stays a code_block and gets a handle', () => {
     const view = createEditor('```\n#!/usr/bin/env python3\nprint("hello")\n```')
     const handles = view.dom.querySelectorAll('.block-handle')
     expect(handles.length).toBe(1)
     const handle = handles[0] as HTMLElement
     const pos = Number(handle.getAttribute('data-block-pos'))
     const block = blockNodeAt(view, pos)
-    expect(block!.type.name).toBe('exec_block')
+    expect(block!.type.name).toBe('code_block')
+    expect(block!.textContent.startsWith('#!/usr/bin/env python3')).toBe(true)
     view.destroy()
   })
 
-  it('toggling exec block enters source mode for exec block not other blocks', () => {
+  it('shows a Run button for a code block whose first line is a shebang', () => {
+    const view = createEditor('```\n#!/usr/bin/env python3\nprint("hello")\n```')
+    expect(view.dom.querySelector('.exec-run')).toBeTruthy()
+    view.destroy()
+  })
+
+  it('does not show a Run button for a plain code block', () => {
+    const view = createEditor('```js\nconsole.log(1)\n```')
+    expect(view.dom.querySelector('.exec-run')).toBeNull()
+    view.destroy()
+  })
+
+  it('toggling source mode for a shebang block enters source mode for it not other blocks', () => {
     const md = 'Some text\n\n```\n#!/usr/bin/env python3\nprint("hello")\n```\n\n- [x] task'
     const view = createEditor(md)
     const positions = allBlockPositions(view)
 
-    const execPos = positions.find(p => blockNodeAt(view, p)!.type.name === 'exec_block')
-    expect(execPos).toBeDefined()
+    const runPos = positions.find(p => blockNodeAt(view, p)!.type.name === 'code_block' && blockNodeAt(view, p)!.textContent.startsWith('#!'))
+    expect(runPos).toBeDefined()
 
     const handle = Array.from(view.dom.querySelectorAll('.block-handle')).find(
-      h => Number((h as HTMLElement).getAttribute('data-block-pos')) === execPos
+      h => Number((h as HTMLElement).getAttribute('data-block-pos')) === runPos
     ) as HTMLElement
     expect(handle).toBeTruthy()
 
     const handlePos = Number(handle.getAttribute('data-block-pos'))
-    expect(handlePos).toBe(execPos)
+    expect(handlePos).toBe(runPos)
 
     view.dispatch(toggleSourceMode(view.state, handlePos))
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(execPos)
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(runPos)
 
     for (const p of positions) {
       const block = blockNodeAt(view, p)
-      if (p === execPos) {
+      if (p === runPos) {
         expect(block!.attrs._source).toBe(true)
       } else {
         expect(block!.attrs._source).toBe(false)
       }
     }
+    view.destroy()
+  })
+
+  it('shows a Run button after typing a shebang into a code block first line', () => {
+    const view = createEditor('```\nprint("hello")\n```')
+    expect(view.dom.querySelector('.exec-run')).toBeNull()
+
+    // Simulate adding a shebang as the first line of the code block.
+    const pos = firstBlockPos(view)
+    const tr = view.state.tr.insertText('#!/usr/bin/env python3\n', pos + 1)
+    view.dispatch(tr)
+
+    expect(view.dom.querySelector('.exec-run')).toBeTruthy()
     view.destroy()
   })
 })

@@ -12,9 +12,9 @@ import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { blockPlugin, getSourceBlockState, toggleSourceMode } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES, commitSourceMode } from './blockview'
+import { codeBlockNodeViewPlugin } from './node/execblock'
 import { attachBlockHandles } from './blockhandle'
 import { mermaidNodeViewPlugin } from './node/mermaid'
-import { execNodeViewPlugin } from './node/execblock'
 import { spreadsheetPlugin } from './node/spreadsheet'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
@@ -156,9 +156,9 @@ export function createBlockEditor(parent: HTMLElement, initialMarkdown: string):
         dropCursor(),
         blockPlugin,
         mermaidNodeViewPlugin,
-        execNodeViewPlugin,
         spreadsheetPlugin,
         taskClickPlugin(),
+        codeBlockNodeViewPlugin,
         new Plugin({
           props: {
             nodeViews: Object.fromEntries(

@@ -468,6 +468,13 @@ function init(): void {
   })
   tabs.snapshotActive()
   registerShortcuts()
+  // Drive content from the native shell (QWebChannel): the desktop shell loads
+  // documents and the smoke/selftest harness drives headless runs via this hook.
+  window.ediSetContent = (markdown: string) => {
+    blockEditor?.setMarkdown(markdown)
+    tabs.snapshotActive()
+    afterActivate()
+  }
   bindMenuCommands({
     new: () => openNewTab(),
     open: () => void openFile(),

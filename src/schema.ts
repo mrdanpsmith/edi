@@ -199,35 +199,6 @@ const nodes: SchemaSpec['nodes'] = {
     },
   },
 
-  exec_block: {
-    group: 'block',
-    marks: '',
-    code: true,
-    atom: true,
-    attrs: {
-      shebang: { default: '' },
-      value: { default: '' },
-      _source: { default: false },
-    },
-    parseDOM: [{
-      tag: '[data-exec-block]',
-      getAttrs(dom: HTMLElement) {
-        const code = dom.querySelector('code')
-        const text = code?.textContent ?? dom.textContent ?? ''
-        const lines = text.split('\n')
-        const shebang = lines[0].startsWith('#!') ? lines[0] : ''
-        const value = shebang ? lines.slice(1).join('\n') : text
-        return { shebang, value }
-      },
-    }],
-    toDOM(node) {
-      const shebang = node.attrs.shebang as string
-      const value = node.attrs.value as string
-      const text = shebang ? shebang + '\n' + value : value
-      return ['div', { 'data-exec-block': '' }, ['div', { class: 'exec-source' }, ['code', text]]]
-    },
-  },
-
   source_block: {
     group: 'block',
     marks: '',
