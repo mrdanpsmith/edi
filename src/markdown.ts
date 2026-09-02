@@ -60,7 +60,8 @@ interface MdastNode {
   start?: number | null
   lang?: string | null
   meta?: string | null
-  href?: string
+  url?: string
+  title?: string | null
   alt?: string
   src?: string
   // custom types
@@ -201,7 +202,11 @@ function parseInline(
       const markType = schema.marks[child.type as string]
       if (markType) {
         const markAttrs: Record<string, unknown> = {}
-        if (child.href != null) markAttrs.href = child.href
+        if (child.type === 'link') {
+          // mdast exposes the destination on `url`, not `href`.
+          if (child.url != null) markAttrs.href = child.url
+          if (child.title != null) markAttrs.title = child.title
+        }
         const mark = markType.create(markAttrs)
         const inner = parseInline(child.children ?? [], schema, [...marks, mark])
         result.push(...inner)
@@ -249,7 +254,7 @@ function collectChildren(node: ProseNode): ProseNode[] {
 function serializeNode(node: ProseNode, indent = ''): string {
   switch (node.type.name) {
     case 'doc':
-      return collectChildren(node).map((c) => serializeNode(c)).join('\n') + '\n'
+      return collectChildren(node).map((c) => serializeNode(c)).join('\n\n') + '\n'
 
     case 'paragraph':
       return indent + serializeContent(node)
@@ -260,7 +265,7 @@ function serializeNode(node: ProseNode, indent = ''): string {
     }
 
     case 'blockquote': {
-      const inner = collectChildren(node).map((c) => serializeNode(c)).join('\n')
+      const inner = collectChildren(node).map((c) => serializeNode(c)).join('\n\n')
       return inner
         .split('\n')
         .map((line: string) => (line ? '> ' + line : '>'))
@@ -354,9 +359,13 @@ function applyMarks(text: string, marks: readonly Mark[]): string {
       case 'strikethrough':
         text = '~~' + text + '~~'
         break
-      case 'link':
-        text = '[' + text + '](' + (mark.attrs.href as string) + ')'
+      case 'link': {
+        const title = mark.attrs.title != null && mark.attrs.title !== ''
+          ? ` "${mark.attrs.title}"`
+          : ''
+        text = '[' + text + '](' + (mark.attrs.href as string) + title + ')'
         break
+      }
       case 'highlight':
         text = '==' + text + '=='
         break

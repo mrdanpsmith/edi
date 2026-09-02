@@ -138,8 +138,29 @@ export interface BlockEditor {
   destroy(): void
 }
 
-export function createBlockEditor(parent: HTMLElement, initialMarkdown: string): BlockEditor {
+export interface BlockEditorOptions {
+  onOpenLink?: (href: string) => void
+}
+
+export function createBlockEditor(
+  parent: HTMLElement,
+  initialMarkdown: string,
+  options: BlockEditorOptions = {},
+): BlockEditor {
   const doc = markdownToProse(initialMarkdown, schema)
+
+  const linkClickPlugin = new Plugin({
+    props: {
+      handleClick(view, pos) {
+        const link = linkMarkAt(view.state.doc, pos)
+        if (!link) return false
+        const href = link.attrs.href as string
+        if (typeof href !== 'string' || href === '') return false
+        options.onOpenLink?.(href)
+        return true
+      },
+    },
+  })
 
   const view = new EditorView(parent, {
     state: EditorState.create({
@@ -154,6 +175,7 @@ export function createBlockEditor(parent: HTMLElement, initialMarkdown: string):
         tableEditing(),
         gapCursor(),
         dropCursor(),
+        linkClickPlugin,
         blockPlugin,
         mermaidNodeViewPlugin,
         spreadsheetPlugin,
@@ -190,4 +212,9 @@ export function createBlockEditor(parent: HTMLElement, initialMarkdown: string):
       view.destroy()
     },
   }
+}
+
+function linkMarkAt(doc: import('prosemirror-model').Node, pos: number): import('prosemirror-model').Mark | null {
+  const $pos = doc.resolve(pos)
+  return $pos.marks().find((m) => m.type.name === 'link') ?? null
 }

@@ -76,3 +76,7 @@ export async function pickTextImportPath(): Promise<string | null> {
 export async function pickImageImportPath(): Promise<string | null> {
   return invoke<string | null>('pickImageImportPath', {})
 }
+
+export async function openUrl(url: string): Promise<void> {
+  await invoke('openUrl', { url })
+}

@@ -10,9 +10,12 @@ import { undo, redo } from 'prosemirror-history'
 import { selectAll } from 'prosemirror-commands'
 import { DOMParser as ProseMirrorDOMParser } from 'prosemirror-model'
 import {
+  dirname,
   fileName,
   imageReference,
+  isAbsolutePath,
   isSupportedFile,
+  openUrl,
   pickExportPath,
   pickImageImportPath,
   pickImportPath,
@@ -218,6 +221,36 @@ async function openDocument(path: string): Promise<void> {
     afterActivate()
   } catch (error) {
     reportError(`Failed to open ${path}`, error)
+  }
+}
+
+function isExternalUrl(href: string): boolean {
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)
+}
+
+function resolveInternalPath(href: string): string | null {
+  // Strip an in-document fragment (e.g. "#section"); a fragment-only link is
+  // an anchor within the same file and has no separate target to open.
+  const hashIndex = href.indexOf('#')
+  const withoutFragment = hashIndex >= 0 ? href.slice(0, hashIndex) : href
+  if (!withoutFragment) return null
+  if (isAbsolutePath(withoutFragment)) return withoutFragment
+  const active = getActive()
+  const baseDir = active?.path ? dirname(active.path) : ''
+  return baseDir ? `${baseDir}/${withoutFragment}` : withoutFragment
+}
+
+function openLink(href: string): void {
+  if (isExternalUrl(href)) {
+    void openUrl(href)
+    return
+  }
+  const target = resolveInternalPath(href)
+  if (!target) return
+  if (isSupportedFile(target)) {
+    void openDocument(target)
+  } else {
+    void openUrl(target)
   }
 }
 
@@ -462,7 +495,9 @@ function editSelectAll(): void {
 
 function init(): void {
   const welcome = getWelcomeDocument()
-  blockEditor = createBlockEditor(editorContainer, welcome)
+  blockEditor = createBlockEditor(editorContainer, welcome, {
+    onOpenLink: openLink,
+  })
   formatToolbar = new FormatToolbar(formatBar, {
     getView: () => blockEditor!.getView(),
   })

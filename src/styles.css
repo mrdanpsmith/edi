@@ -394,6 +394,7 @@ body {
 .ProseMirror a {
   color: var(--md-link);
   text-decoration: none;
+  cursor: pointer;
 }
 
 .ProseMirror a:hover {
@@ -812,6 +813,7 @@ body {
 .md-preview a {
   color: var(--md-link);
   text-decoration: none;
+  cursor: pointer;
 }
 
 .md-preview a:hover {

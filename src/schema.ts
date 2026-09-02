@@ -283,17 +283,20 @@ const marks: SchemaSpec['marks'] = {
   },
 
   link: {
-    attrs: { href: { default: '' } },
+    attrs: { href: { default: '' }, title: { default: null } },
     parseDOM: [
       {
         tag: 'a',
         getAttrs(dom: HTMLElement) {
-          return { href: dom.getAttribute('href') ?? '' }
+          const title = dom.getAttribute('title')
+          return { href: dom.getAttribute('href') ?? '', title }
         },
       },
     ],
     toDOM(mark) {
-      return ['a', { href: mark.attrs.href as string }, 0]
+      const attrs: Record<string, string> = { href: mark.attrs.href as string }
+      if (mark.attrs.title != null) attrs.title = mark.attrs.title as string
+      return ['a', attrs, 0]
     },
   },
 
