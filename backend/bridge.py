@@ -34,6 +34,7 @@ class Bridge(QObject):
         self._window = window
         self._handlers = {
             "confirm": self._confirm,
+            "alert": self._alert,
             "pickOpenPath": self._pick_open_path,
             "pickSavePath": self._pick_save_path,
             "pickExportPath": self._pick_export_path,
@@ -73,6 +74,11 @@ class Bridge(QObject):
     def _confirm(self, request_id: int, args: dict) -> None:
         message = args.get("message", "Continue?")
         self._window.confirm(message, lambda accepted: self._reply(request_id, accepted))
+
+    def _alert(self, request_id: int, args: dict) -> None:
+        message = args.get("message", "")
+        self._window.alert(message)
+        self._reply(request_id, None)
 
     def _pick_open_path(self, request_id: int, _args: dict) -> None:
         self._window.pick_open_path(lambda paths: self._reply(request_id, paths or None))

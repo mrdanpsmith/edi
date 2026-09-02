@@ -436,6 +436,25 @@ class MainWindow(QMainWindow):
         box.finished.connect(done)
         box.open()
 
+    def alert(self, message: str) -> None:
+        """Show a non-blocking centered message box with a single OK button.
+
+        Unlike :meth:`confirm`, this is informational: there is no Yes/No
+        decision, so the dialog has exactly one button ("OK").
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Edi")
+        box.setText(message)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.adjustSize()
+        frame = box.frameGeometry()
+        frame.moveCenter(self.frameGeometry().center())
+        box.move(frame.topLeft())
+        box.finished.connect(lambda _result: box.deleteLater())
+        box.open()
+
     def _run_dialog(self, dialog: QFileDialog, callback=None, multiple: bool = False) -> None:
         """Open a file dialog non-blocking and report the chosen path(s).
 

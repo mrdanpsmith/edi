@@ -166,4 +166,26 @@ describe('bridge', () => {
     fake._fire(JSON.stringify({ id, ok: true, data: false }))
     await expect(promise).resolves.toBe(false)
   })
+
+  it('showError falls back to window.alert', async () => {
+    const bridge = await freshBridge()
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    await bridge.showError('Something broke')
+    expect(alert).toHaveBeenCalledWith('Something broke')
+  })
+
+  it('showError routes through the bridge when available', async () => {
+    const fake = fakeBridge()
+    const bridge = await freshBridge(() => {
+      window.bridge = fake
+    })
+
+    const promise = bridge.showError('Something broke')
+    await vi.waitFor(() => expect(fake.invoke).toHaveBeenCalled())
+    expect(fake.invoke.mock.calls[0][0]).toBe('alert')
+
+    const id = fake.invoke.mock.calls[0]![1]
+    fake._fire(JSON.stringify({ id, ok: true, data: null }))
+    await expect(promise).resolves.toBeUndefined()
+  })
 })

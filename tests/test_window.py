@@ -147,6 +147,23 @@ def test_confirm_dialog_no_returns_false(visible, qtbot):
     assert _read_confirm_result(window, qtbot) is False
 
 
+def _call_alert(window):
+    window._web.page().runJavaScript(
+        "window.bridge.invoke('alert', 9002, JSON.stringify({ message: 'Something broke' }));"
+        "true",
+        lambda _v: None,
+    )
+
+
+def test_alert_dialog_shows_single_ok_button(visible, qtbot):
+    window = visible
+    _call_alert(window)
+    box = _wait_modal(qtbot)
+    buttons = box.buttons()
+    assert [b.text() for b in buttons] == ["OK"]
+    _dismiss_box(box, qtbot, box.button(QMessageBox.StandardButton.Ok))
+
+
 def test_close_clean_exits_without_prompt(visible, qtbot):
     window = visible
     window.close()

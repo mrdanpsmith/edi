@@ -96,4 +96,12 @@ export function confirmAction(message: string): Promise<boolean> {
   return Promise.resolve(window.confirm(message))
 }
 
+export async function showError(message: string): Promise<void> {
+  if (hasBridge()) {
+    await invoke('alert', { message })
+    return
+  }
+  window.alert(message)
+}
+
 void ensureChannel()

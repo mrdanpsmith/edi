@@ -18,6 +18,7 @@ const mainState = vi.hoisted(() => {
     hasBridge: vi.fn(() => false),
     invoke: vi.fn().mockResolvedValue(undefined),
     confirmAction: vi.fn().mockResolvedValue(true),
+    showError: vi.fn().mockResolvedValue(undefined),
     pickOpenPath: vi.fn(),
     readTextFile: vi.fn(),
     pickSavePath: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock('./bridge', () => ({
   hasBridge: () => mainState.hasBridge(),
   invoke: mainState.invoke,
   confirmAction: mainState.confirmAction,
+  showError: mainState.showError,
 }))
 
 vi.mock('./files', async () => {
@@ -335,7 +337,7 @@ describe('open and save', () => {
     await loadMain()
     menu('open')
     await flushAsync()
-    expect(mainState.confirmAction).toHaveBeenCalledWith(
+    expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to open /tmp/bad.md'),
     )
   })
@@ -409,7 +411,7 @@ describe('open and save', () => {
     await loadMain()
     menu('save')
     await flushAsync()
-    expect(mainState.confirmAction).toHaveBeenCalledWith(
+    expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to save /tmp/new.md'),
     )
   })
@@ -460,7 +462,7 @@ describe('revert', () => {
     mainState.readTextFile.mockRejectedValue(new Error('gone'))
     menu('revert')
     await flushAsync()
-    expect(mainState.confirmAction).toHaveBeenCalledWith(
+    expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to revert /tmp/notes.md'),
     )
   })
@@ -494,7 +496,7 @@ describe('export', () => {
     await loadMain()
     menu('export')
     await flushAsync()
-    expect(mainState.confirmAction).toHaveBeenCalledWith(
+    expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to export /tmp/out.html'),
     )
   })
@@ -521,7 +523,7 @@ describe('import', () => {
     await loadMain()
     menu('importTable')
     await flushAsync()
-    expect(mainState.confirmAction).toHaveBeenCalledWith(
+    expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to import /tmp/data.csv'),
     )
   })
@@ -553,7 +555,7 @@ describe('import', () => {
     await loadMain()
     menu('importText')
     await flushAsync()
-    expect(mainState.confirmAction).toHaveBeenCalledWith(
+    expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to insert /tmp/data.txt'),
     )
   })

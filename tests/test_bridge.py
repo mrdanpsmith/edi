@@ -21,6 +21,7 @@ class StubWindow(QObject):
         self.dirty = False
         self.closed = False
         self.confirm_messages: list[str] = []
+        self.alert_messages: list[str] = []
         self.can_revert = False
         self.visual_mode = True
         self.formatting_visible = True
@@ -30,6 +31,9 @@ class StubWindow(QObject):
         self.confirm_messages.append(message)
         if callback is not None:
             callback(True)
+
+    def alert(self, message) -> None:
+        self.alert_messages.append(message)
 
     def set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
@@ -250,6 +254,15 @@ def test_confirm_uses_window(bridge):
     assert message["ok"] is True
     assert message["data"] is True
     assert window.confirm_messages == ["Continue?"]
+
+
+def test_alert_uses_window(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "alert", {"message": "Something broke"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] is None
+    assert window.alert_messages == ["Something broke"]
 
 
 def test_quit_closes_window(bridge):

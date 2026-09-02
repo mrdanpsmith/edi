@@ -3,7 +3,7 @@ import 'prosemirror-tables/style/tables.css'
 import 'prosemirror-gapcursor/style/gapcursor.css'
 import './styles.css'
 
-import { confirmAction, hasBridge, invoke } from './bridge'
+import { confirmAction, hasBridge, invoke, showError } from './bridge'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
 import { undo, redo } from 'prosemirror-history'
@@ -325,7 +325,7 @@ async function insertImage(): Promise<void> {
 
 function reportError(message: string, error: unknown): void {
   const detail = error instanceof Error ? `\n\n${error.message}` : ''
-  void confirmAction(`${message}${detail}`)
+  void showError(`${message}${detail}`)
 }
 
 function registerShortcuts(): void {
