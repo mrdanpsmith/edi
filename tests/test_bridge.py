@@ -90,6 +90,26 @@ def bridge(qapp):
     return bridge, window, result
 
 
+@pytest.fixture
+def stream_bridge(qapp):
+    """A bridge that captures both ``result`` replies and ``stream`` chunks."""
+    window = StubWindow()
+    result: dict[int, dict] = {}
+    stream_events: list[dict] = []
+
+    def on_result(payload):
+        message = json.loads(payload)
+        result[message["id"]] = message
+
+    def on_stream(payload):
+        stream_events.append(json.loads(payload))
+
+    bridge = Bridge(window)
+    bridge.result.connect(on_result)
+    bridge.stream.connect(on_stream)
+    return bridge, window, result, stream_events
+
+
 def _invoke(bridge, method, payload=None, request_id=1):
     bridge.invoke(method, request_id, json.dumps(payload or {}))
 
@@ -332,6 +352,93 @@ def test_run_code_block_unsupported_interpreter(bridge):
     message = _wait_for(lambda: result.get(21))
     assert message["ok"] is False
     assert "Unsupported interpreter" in message["error"]
+
+
+def test_stream_code_block_outputs_chunks_and_done(stream_bridge):
+    bridge_obj, _window, result, stream_events = stream_bridge
+    rid = 50
+    _invoke(
+        bridge_obj,
+        "streamCodeBlock",
+        {"shebang": "#!sh", "source": "echo first; echo second"},
+        rid,
+    )
+    done = _wait_for(lambda: next((e for e in stream_events if e["kind"] == "done"), None))
+    assert done["id"] == rid
+    assert done["ok"] is True
+    text = "".join(e.get("text", "") for e in stream_events if e["kind"] == "output")
+    assert "first" in text
+    assert "second" in text
+    message = _wait_for(lambda: result.get(rid))
+    assert message["ok"] is True
+    assert message["data"]["exitCode"] == 0
+    assert message["data"]["stopped"] is False
+
+
+def test_stream_python_stdout_is_incremental(stream_bridge):
+    """A pty makes Python line-buffer stdout, so output streams before exit.
+
+    Python block-buffers stdout when it is a pipe, which would hold every
+    ``print`` until the process exits. Streaming through a pty makes the
+    interpreter fall back to line buffering, so chunks arrive while the program
+    is still running.
+    """
+    bridge_obj, _window, result, stream_events = stream_bridge
+    rid = 60
+    _invoke(
+        bridge_obj,
+        "streamCodeBlock",
+        {
+            "shebang": "#!python3",
+            "source": "import time\nprint('N 1')\ntime.sleep(2)\nprint('N 2')",
+        },
+        rid,
+    )
+
+    def got_count(n):
+        return (
+            len([e for e in stream_events if e["kind"] == "output" and "N" in e.get("text", "")])
+            >= n
+        )
+
+    # The first line arrives while the process is still sleeping, before the
+    # run has finished (its result reply has not been sent yet).
+    def first_line_streamed_before_completion():
+        if rid in result:
+            # The run finished before we ever observed a chunk — not incremental.
+            return None
+        return got_count(1) or None
+
+    assert _wait_for(first_line_streamed_before_completion, timeout=10)
+    assert rid not in result, "output should stream before the run completes"
+
+    done = _wait_for(lambda: next((e for e in stream_events if e["kind"] == "done"), None))
+    assert done["ok"] is True
+    text = "".join(e.get("text", "") for e in stream_events if e["kind"] == "output")
+    assert "N 1" in text
+    assert "N 2" in text
+    message = _wait_for(lambda: result.get(rid))
+    assert message["ok"] is True
+    assert message["data"]["stdout"] == "N 1\nN 2\n"
+
+
+def test_stop_code_block_kills_running_process(stream_bridge):
+    bridge_obj, _window, result, stream_events = stream_bridge
+    rid = 51
+    _invoke(
+        bridge_obj,
+        "streamCodeBlock",
+        {"shebang": "#!sh", "source": "for i in $(seq 1 200); do echo $i; sleep 0.05; done"},
+        rid,
+    )
+    # Wait until the process is registered, then stop it.
+    _wait_for(lambda: bridge_obj._procs.get(rid))
+    _invoke(bridge_obj, "stopCodeBlock", {"id": rid}, rid)
+    done = _wait_for(lambda: next((e for e in stream_events if e["kind"] == "done"), None))
+    assert done["ok"] is True
+    message = _wait_for(lambda: result.get(rid))
+    assert message["ok"] is True
+    assert message["data"]["stopped"] is True
 
 
 def test_run_code_block_timeout(bridge, monkeypatch):

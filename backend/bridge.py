@@ -16,22 +16,25 @@ thread via a queued connection.
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 
 from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 
-from .exec import run_code_block
+from .exec import run_code_block, run_code_block_streamed
 from .files import read_any_text_file, read_text_file, write_text_file
 from .tables import parse_table_file
 
 
 class Bridge(QObject):
     result = Signal(str)
+    stream = Signal(str)
 
     def __init__(self, window) -> None:
         super().__init__()
         self._window = window
+        self._procs: dict[int, subprocess.Popen] = {}
         self._handlers = {
             "confirm": self._confirm,
             "alert": self._alert,
@@ -48,6 +51,8 @@ class Bridge(QObject):
             "copyTable": self._copy_table,
             "readClipboardText": self._read_clipboard_text,
             "runCodeBlock": self._run_code_block,
+            "streamCodeBlock": self._stream_code_block,
+            "stopCodeBlock": self._stop_code_block,
             "openUrl": self._open_url,
             "setDirty": self._set_dirty,
             "setMenuState": self._set_menu_state,
@@ -193,6 +198,60 @@ class Bridge(QObject):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _stream_code_block(self, request_id: int, args: dict) -> None:
+        """Start a code block run whose output streams over ``stream``.
+
+        Each chunk arrives as a JSON object on the ``stream`` signal tagged with
+        this ``request_id``; the normal ``result`` reply resolves once the
+        process finishes (or is stopped/times out).
+        """
+        shebang = str(args.get("shebang") or "")
+        source = str(args.get("source") or "")
+
+        def on_output(stream_name: str, text: str) -> None:
+            self._send_stream(
+                {
+                    "id": request_id,
+                    "kind": "output",
+                    "stream": stream_name,
+                    "text": text,
+                }
+            )
+
+        def on_start(process) -> None:
+            self._procs[request_id] = process
+
+        def is_stopped() -> bool:
+            # The stop handler pops the id from _procs, signalling the run to
+            # kill its child and finish early.
+            return request_id not in self._procs
+
+        def work() -> None:
+            try:
+                result = run_code_block_streamed(
+                    shebang, source, on_output, is_stopped, on_start=on_start
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._procs.pop(request_id, None)
+                self._send_stream({"id": request_id, "kind": "done", "ok": False})
+                self._reply_error(request_id, str(exc))
+            else:
+                self._procs.pop(request_id, None)
+                self._send_stream({"id": request_id, "kind": "done", "ok": True})
+                self._reply(request_id, result)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _stop_code_block(self, request_id: int, args: dict) -> None:
+        run_id = int(args.get("id", request_id))
+        proc = self._procs.pop(run_id, None)
+        if proc is not None:
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+        self._reply(request_id, None)
+
     def _open_url(self, request_id: int, args: dict) -> None:
         url = str(args.get("url") or "")
         if not url:
@@ -225,6 +284,21 @@ class Bridge(QObject):
 
     def _reply_error(self, request_id: int, message: str) -> None:
         self._send_result(json.dumps({"id": request_id, "ok": False, "error": message}))
+
+    def _send_stream(self, message: dict) -> None:
+        # Skip emitting anything for a run the frontend has already stopped.
+        if message["id"] not in self._procs and message["kind"] != "done":
+            return
+        QMetaObject.invokeMethod(
+            self,
+            "_emit_stream",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, json.dumps(message)),
+        )
+
+    @Slot(str)
+    def _emit_stream(self, payload: str) -> None:
+        self.stream.emit(payload)
 
     def _send_result(self, payload: str) -> None:
         # Defer the emit to the next event-loop turn. QtWebEngine drops a

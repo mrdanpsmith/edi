@@ -8,6 +8,28 @@ export interface BridgeObject {
   result: {
     connect: (callback: (payload: string) => void) => void
   }
+  stream?: {
+    connect: (callback: (payload: string) => void) => void
+  }
+}
+
+export interface StreamEvent {
+  id: number
+  kind: 'output' | 'done'
+  stream?: 'stdout' | 'stderr'
+  text?: string
+  ok?: boolean
+}
+
+export interface StreamHandle<T> {
+  /** The id shared by the request/response and the stream events. */
+  id: number
+  /** Resolves with the final CodeResult when the run finishes. */
+  result: Promise<T>
+  /** Register a callback for each streamed chunk. */
+  onChunk: (callback: (event: StreamEvent) => void) => void
+  /** Release the stream routing. */
+  dispose: () => void
 }
 
 declare global {
@@ -25,6 +47,7 @@ declare global {
 
 let requestId = 0
 const pending = new Map<number, PendingRequest>()
+const streamHandlers = new Map<number, (event: StreamEvent) => void>()
 let channelPromise: Promise<void> | null = null
 
 function connectResult(bridge: BridgeObject): void {
@@ -44,6 +67,18 @@ function connectResult(bridge: BridgeObject): void {
       entry.resolve(message.data)
     } else {
       entry.reject(new Error(message.error ?? 'Bridge call failed'))
+    }
+  })
+  bridge.stream?.connect((payload) => {
+    let event: StreamEvent
+    try {
+      event = JSON.parse(payload) as StreamEvent
+    } catch {
+      return
+    }
+    const handler = streamHandlers.get(event.id)
+    if (handler) {
+      handler(event)
     }
   })
 }
@@ -76,17 +111,51 @@ export function hasBridge(): boolean {
   return Boolean(window.bridge)
 }
 
-export async function invoke<T = unknown>(method: string, payload: unknown = {}): Promise<T> {
+export async function invoke<T = unknown>(
+  method: string,
+  payload: unknown = {},
+  explicitId?: number,
+): Promise<T> {
   await ensureChannel()
   const bridge = window.bridge
   if (!bridge) {
     throw new Error('Native shell bridge is not available')
   }
-  const id = ++requestId
+  const id = explicitId ?? ++requestId
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve: resolve as (value: unknown) => void, reject })
     bridge.invoke(method, id, JSON.stringify(payload ?? {}))
   })
+}
+
+/**
+ * Invoke a native call whose result arrives both as the normal request/response
+ * on ``result`` *and* as incremental chunks on the ``stream`` signal. The run
+ * id is shared by both channels so chunks route to the right caller.
+ */
+export function invokeStream<T = unknown>(
+  method: string,
+  payload: unknown = {},
+): StreamHandle<T> {
+  const id = ++requestId
+  const callbacks = new Set<(event: StreamEvent) => void>()
+  streamHandlers.set(id, (event) => {
+    callbacks.forEach((callback) => callback(event))
+  })
+  const result = invoke<T>(method, payload, id)
+  const dispose = (): void => {
+    streamHandlers.delete(id)
+    callbacks.clear()
+  }
+  result.finally(dispose).catch(() => undefined)
+  return {
+    id,
+    result,
+    onChunk: (callback) => {
+      callbacks.add(callback)
+    },
+    dispose,
+  }
 }
 
 export function confirmAction(message: string): Promise<boolean> {

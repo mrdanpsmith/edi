@@ -3,6 +3,8 @@ export interface CodeResult {
   stdout: string
   stderr: string
   timedOut: boolean
+  /** True when the run was stopped by the user mid-flight. */
+  stopped?: boolean
 }
 
 /**

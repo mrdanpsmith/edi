@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import os
+import pty
+import select
 import subprocess
+import threading
+import time
 
 EXEC_TIMEOUT_SECONDS = 30
 
@@ -105,4 +109,152 @@ def run_code_block(shebang: str, source: str) -> dict:
         "stdout": stdout.decode("utf-8", errors="replace"),
         "stderr": stderr.decode("utf-8", errors="replace"),
         "timedOut": False,
+    }
+
+
+def run_code_block_streamed(
+    shebang: str,
+    source: str,
+    on_output,
+    is_stopped,
+    on_start=None,
+) -> dict:
+    """Run a code block, streaming stdout/stderr chunks to ``on_output``.
+
+    ``on_output(stream, text)`` is called with ``"stdout"`` or ``"stderr"`` and
+    a UTF-8 decoded chunk as it arrives, so the caller can render output
+    incrementally instead of waiting for the process to exit. ``is_stopped()``
+    is polled; when it returns True the child is killed and the returned dict
+    reports ``stopped``. ``on_start(proc)`` (if given) is called with the live
+    ``Popen`` so a caller can later kill it. Reader threads drain each stream
+    concurrently, so stdout/stderr both stream live and interleave by arrival.
+
+    stdout is attached to a pseudo-terminal: interpreters that block-buffer when
+    their output is a pipe (Python, Ruby, Node, Perl, ...) fall back to
+    line-buffering when they see a tty, so ``print``/``echo`` output arrives
+    incrementally just as it would when run from a real shell. stderr stays an
+    ordinary pipe (it is unbuffered everywhere) so the two stay distinguishable.
+    """
+    parts = parse_shebang(shebang)
+    if parts is None:
+        raise ValueError(f"Invalid shebang: {shebang}")
+    interpreter, flags = parts[0], parts[1:]
+    resolved = interpreter_command(interpreter, flags)
+    if resolved is None:
+        raise ValueError(f"Unsupported interpreter: {interpreter}")
+    program, args = resolved
+
+    env = dict(os.environ)
+    if program == "python3":
+        env.pop("PYTHONHOME", None)
+        env.pop("PYTHONPATH", None)
+
+    stdout_master, stdout_slave = pty.openpty()
+    try:
+        proc = subprocess.Popen(
+            [program, *args],
+            stdin=subprocess.PIPE,
+            stdout=stdout_slave,
+            stderr=subprocess.PIPE,
+            env=env,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        os.close(stdout_master)
+        raise ValueError(f"Failed to start {program}: {exc}") from exc
+    finally:
+        # The parent closes its copy of the slave; the child keeps the one it
+        # inherited. If Popen failed the slave is still open here, so closing it
+        # in finally means we never leak it and never double-close.
+        try:
+            os.close(stdout_slave)
+        except OSError:
+            pass
+
+    if on_start is not None:
+        on_start(proc)
+
+    proc.stdin.write(strip_shebang_line(source).encode("utf-8"))
+    proc.stdin.close()
+
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+
+    def pipe_reader(handle, stream_name, chunks) -> None:
+        try:
+            for raw in iter(handle.readline, b""):
+                if not raw:
+                    break
+                text = raw.decode("utf-8", errors="replace")
+                chunks.append(text)
+                on_output(stream_name, text)
+        finally:
+            try:
+                handle.close()
+            except OSError:
+                pass
+
+    def pty_reader(fd, stream_name, chunks) -> None:
+        # The line discipline emits \r\n for each newline, so normalize \r away.
+        # Use select so we never block forever once the child exits (a read on
+        # the master then raises EIO rather than returning EOF).
+        buf = b""
+        try:
+            while True:
+                ready, _, _ = select.select([fd], [], [], 1.0)
+                if not ready:
+                    continue
+                try:
+                    raw = os.read(fd, 4096)
+                except OSError:
+                    break
+                if not raw:
+                    break
+                buf += raw
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = line.replace(b"\r", b"").decode("utf-8", errors="replace")
+                    if text:
+                        chunks.append(text + "\n")
+                        on_output(stream_name, text + "\n")
+        finally:
+            if buf:
+                text = buf.replace(b"\r", b"").decode("utf-8", errors="replace")
+                if text:
+                    chunks.append(text + "\n")
+                    on_output(stream_name, text + "\n")
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    readers = [
+        threading.Thread(target=pty_reader, args=(stdout_master, "stdout", stdout_chunks), daemon=True),
+        threading.Thread(target=pipe_reader, args=(proc.stderr, "stderr", stderr_chunks), daemon=True),
+    ]
+    for thread in readers:
+        thread.start()
+
+    timed_out = False
+    stopped = False
+    try:
+        proc.wait(timeout=EXEC_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        proc.wait()
+
+    if is_stopped() and not timed_out:
+        stopped = True
+        proc.kill()
+
+    for thread in readers:
+        thread.join(timeout=5)
+
+    return {
+        "exitCode": proc.returncode if proc.returncode is not None and proc.returncode >= 0 else None,
+        "stdout": "".join(stdout_chunks),
+        "stderr": "".join(stderr_chunks),
+        "timedOut": timed_out,
+        "stopped": stopped,
     }

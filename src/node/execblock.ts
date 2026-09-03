@@ -2,7 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { blockNodeView } from '../blockview'
-import { invoke } from '../bridge'
+import { invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
 
 // A runnable code block is an ordinary `code_block` whose first line starts
@@ -18,8 +18,6 @@ function shebangOf(text: string): string | null {
 function sourceOf(text: string, shebang: string): string {
   return text.slice(shebang.length).replace(/^\n/, '')
 }
-
-const outputCache = new Map<string, CodeResult | { error: string }>()
 
 function createHandleDOM(pos: number): HTMLElement {
   const handle = document.createElement('div')
@@ -41,10 +39,17 @@ class RunnableBlockNodeView implements NodeView {
   private output: HTMLPreElement | null = null
   private controlsLayer: HTMLElement | null = null
   private shebang: string | null
+  private lastContent: string
+  private running = false
+  private activeHandle: StreamHandle<CodeResult> | null = null
+  private runStopped = false
+  private runEpoch = 0
+  private sawErrorOutput = false
 
   constructor(node: ProseNode, _view: EditorView, getPos: () => number | undefined) {
     this.node = node
     this.shebang = shebangOf(node.textContent)
+    this.lastContent = node.textContent
 
     this.dom = document.createElement('div')
     this.dom.className = 'runnable-block'
@@ -89,46 +94,98 @@ class RunnableBlockNodeView implements NodeView {
     this.dom.appendChild(layer)
 
     button.addEventListener('click', () => {
-      void this.run(shebang)
+      if (this.running) {
+        void this.stopRun()
+      } else {
+        void this.run(shebang)
+      }
     })
-
-    const cached = outputCache.get(this.cacheKey(shebang))
-    if (cached) this.showOutput(cached)
   }
 
   private clearControls(): void {
+    // Cancelling a run here (as opposed to just disposing the handle) is what
+    // stops the backend process. When a run is in flight and the view is
+    // rebuilt — a tab switch, a document swap, or an edit to the block's body
+    // via `update()` — ProseMirror reuses/replaces the node view and calls this.
+    // If we only disposed the JS stream handle, `stopCodeBlock` would never be
+    // sent and the child process would keep running in the background, letting
+    // repeated switches pile up orphaned processes.
+    if (this.running && this.activeHandle) {
+      void this.stopRun()
+    }
+    this.running = false
+    this.runEpoch++
+    this.activeHandle?.dispose()
+    this.activeHandle = null
     if (this.controlsLayer) this.controlsLayer.remove()
     this.controlsLayer = null
     this.runButton = null
     this.output = null
   }
 
-  private cacheKey(shebang: string): string {
-    return `${shebang}\u0000${sourceOf(this.node.textContent, shebang)}`
+  private setRunState(running: boolean): void {
+    const button = this.runButton
+    if (!button) return
+    this.running = running
+    button.disabled = false
+    button.textContent = running ? 'Stop' : 'Run'
+    button.classList.toggle('exec-stop', running)
   }
 
   private async run(shebang: string): Promise<void> {
-    if (!this.runButton || !this.output) return
+    if (!this.runButton || !this.output || this.running) return
+    // If the controls are rebuilt (tab switch, document swap, editing the body)
+    // while this run is in flight, the result of a stale run must never be
+    // published onto the newly rebuilt UI. We snapshot the current epoch and
+    // drop the result if it no longer matches when the run resolves. ProseMirror
+    // reuses this node view across such swaps, so without this guard the old
+    // run's output would land on the new document's fresh result cell.
+    const epoch = this.runEpoch
     const source = sourceOf(this.node.textContent, shebang)
-    this.runButton.disabled = true
-    this.runButton.textContent = 'Running…'
+    this.runStopped = false
+    this.sawErrorOutput = false
     this.output.hidden = false
     this.output.textContent = ''
     this.output.classList.remove('exec-error')
-    const key = this.cacheKey(shebang)
+    this.setRunState(true)
+    let handle: StreamHandle<CodeResult> | null = null
     try {
-      const result = await invoke<CodeResult>('runCodeBlock', { shebang, source })
-      outputCache.set(key, result)
-      this.showOutput(result)
+      handle = invokeStream<CodeResult>('streamCodeBlock', { shebang, source })
+      // capture before `await` so Stop knows the live handle
+      this.activeHandle = handle
+      handle.onChunk((event) => {
+        if (!this.output || epoch !== this.runEpoch) return
+        if (event.kind === 'output' && event.text) {
+          this.output.textContent += event.text
+          if (event.stream === 'stderr') {
+            this.sawErrorOutput = true
+            this.output.classList.add('exec-error')
+          }
+        }
+      })
+      const result = await handle.result
+      if (epoch !== this.runEpoch) return
+      this.showOutput(this.runStopped ? ({ stopped: true } as CodeResult) : result)
     } catch (error) {
-      const cached = { error: error instanceof Error ? error.message : String(error) }
-      outputCache.set(key, cached)
-      this.showOutput(cached)
+      if (epoch !== this.runEpoch) return
+      this.showOutput({ error: error instanceof Error ? error.message : String(error) })
     } finally {
-      if (this.runButton) {
-        this.runButton.disabled = false
-        this.runButton.textContent = 'Run'
+      if (handle) {
+        handle.dispose()
+        if (this.activeHandle === handle) this.activeHandle = null
       }
+      if (epoch === this.runEpoch) this.setRunState(false)
+    }
+  }
+
+  private async stopRun(): Promise<void> {
+    const handle = this.activeHandle
+    if (!handle || !this.running) return
+    this.runStopped = true
+    try {
+      await invoke('stopCodeBlock', { id: handle.id })
+    } catch {
+      // The run may have already finished; that's fine.
     }
   }
 
@@ -142,12 +199,15 @@ class RunnableBlockNodeView implements NodeView {
       if (cached.stdout) lines.push(cached.stdout.replace(/\s+$/, ''))
       if (cached.stderr) lines.push(cached.stderr.replace(/\s+$/, ''))
       if (cached.timedOut) lines.push('Execution timed out after 30 seconds')
+      if ((cached as CodeResult).stopped) lines.push('Process stopped')
       if (cached.exitCode && cached.exitCode !== 0) lines.push(`Process exited with code ${cached.exitCode}`)
     }
     out.textContent = lines.join('\n')
     out.classList.toggle(
       'exec-error',
-      'error' in cached || (!('error' in cached) && (cached as CodeResult).exitCode !== 0),
+      'error' in cached ||
+        this.sawErrorOutput ||
+        (!('error' in cached) && (cached as CodeResult).exitCode !== 0),
     )
   }
 
@@ -155,9 +215,15 @@ class RunnableBlockNodeView implements NodeView {
     if (node.attrs['_source'] !== this.node.attrs['_source']) return false
     this.node = node
     const newShebang = shebangOf(node.textContent)
-    if (newShebang !== this.shebang) {
+    // Rebuild the controls/output whenever the block's text changes, not just
+    // when the shebang line changes. ProseMirror reuses this node view across
+    // updates at the same position (including whole-document swaps when tabs
+    // switch), so a different body must not inherit the previous block's
+    // result cell — fresh code always starts with no output.
+    if (node.textContent !== this.lastContent) {
       this.clearControls()
       this.shebang = newShebang
+      this.lastContent = node.textContent
       if (newShebang) this.buildControls(newShebang)
     }
     return true
@@ -184,6 +250,8 @@ class RunnableBlockNodeView implements NodeView {
   }
 
   destroy(): void {
+    // clearControls stops any in-flight run (sends stopCodeBlock to kill the
+    // backend process) and tears the DOM down.
     this.clearControls()
   }
 }

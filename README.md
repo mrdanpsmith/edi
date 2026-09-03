@@ -67,7 +67,7 @@ print("Hello from Python!")
 ```
 ````
 
-The shebang is interpreted like a shell's, so all of these forms work: `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/python3`, `#!/usr/bin/env node`, and `#!node --harmony` (flags are passed through). Supported interpreters: `python`/`python3`/`py`, `sh`/`shell`, `bash`, `node`/`js`/`javascript`, `ruby`/`rb`, and `perl`/`pl`. Code runs locally with a 30-second timeout; stdout, stderr, and the exit code are shown in an output cell. Output is cached per block content, so re-rendering the preview does not re-execute it.
+The shebang is interpreted like a shell's, so all of these forms work: `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/python3`, `#!/usr/bin/env node`, and `#!node --harmony` (flags are passed through). Supported interpreters: `python`/`python3`/`py`, `sh`/`shell`, `bash`, `node`/`js`/`javascript`, `ruby`/`rb`, and `perl`/`pl`. Code runs locally with a 30-second timeout; stdout, stderr, and the exit code are shown in an output cell after the run. Each block owns its own result cell, and results are never shared — every **Run** executes fresh, and identical-looking blocks in different documents (or later runs of the same block) do not reuse each other's output, since a block may legitimately produce different results each time (random values, current time, changing files, etc.).
 
 ### Tabs
 

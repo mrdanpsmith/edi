@@ -7,17 +7,23 @@ type BridgeModule = typeof import('./bridge')
 interface FakeBridge extends BridgeObject {
   invoke: ReturnType<typeof vi.fn<(method: string, requestId: number, payload: string) => void>>
   _fire: (payload: string) => void
+  _fireStream: (payload: string) => void
 }
 
 function fakeBridge(): FakeBridge {
   const invoke = vi.fn()
   const handlers: ((payload: string) => void)[] = []
+  const streamHandlers: ((payload: string) => void)[] = []
   return {
     invoke,
     result: {
       connect: (callback) => handlers.push(callback),
     },
+    stream: {
+      connect: (callback) => streamHandlers.push(callback),
+    },
     _fire: (payload) => handlers.forEach((handler) => handler(payload)),
+    _fireStream: (payload) => streamHandlers.forEach((handler) => handler(payload)),
   }
 }
 
@@ -187,5 +193,51 @@ describe('bridge', () => {
     const id = fake.invoke.mock.calls[0]![1]
     fake._fire(JSON.stringify({ id, ok: true, data: null }))
     await expect(promise).resolves.toBeUndefined()
+  })
+
+  it('invokeStream routes chunks by id and delivers the final result', async () => {
+    const fake = fakeBridge()
+    const bridge = await freshBridge(() => {
+      window.bridge = fake
+    })
+
+    const stream = bridge.invokeStream<{ exitCode: number }>('streamCodeBlock', { shebang: '#!sh', source: 'echo hi' })
+    const chunks: string[] = []
+    stream.onChunk((event) => {
+      if (event.kind === 'output' && event.text) chunks.push(event.text)
+    })
+
+    await vi.waitFor(() => expect(fake.invoke).toHaveBeenCalled())
+    const id = fake.invoke.mock.calls[0]![1]
+    expect(stream.id).toBe(id)
+
+    fake._fireStream(JSON.stringify({ id, kind: 'output', stream: 'stdout', text: 'hi\n' }))
+    fake._fireStream(JSON.stringify({ id, kind: 'output', stream: 'stderr', text: 'warn' }))
+    fake._fire(JSON.stringify({ id, ok: true, data: { exitCode: 0 } }))
+
+    await expect(stream.result).resolves.toEqual({ exitCode: 0 })
+    expect(chunks).toEqual(['hi\n', 'warn'])
+  })
+
+  it('invokeStream drops chunks for an unknown id', async () => {
+    const fake = fakeBridge()
+    const bridge = await freshBridge(() => {
+      window.bridge = fake
+    })
+
+    const stream = bridge.invokeStream<string>('streamCodeBlock', {})
+    const chunks: string[] = []
+    stream.onChunk((event) => {
+      if (event.text) chunks.push(event.text)
+    })
+
+    await vi.waitFor(() => expect(fake.invoke).toHaveBeenCalled())
+    // A chunk bearing a different id (e.g. a stale run) must not reach this handle.
+    fake._fireStream(JSON.stringify({ id: 999, kind: 'output', stream: 'stdout', text: 'ignored' }))
+    expect(chunks).toEqual([])
+
+    const id = fake.invoke.mock.calls[0]![1]
+    fake._fire(JSON.stringify({ id, ok: true, data: 'done' }))
+    await expect(stream.result).resolves.toBe('done')
   })
 })

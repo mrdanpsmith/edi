@@ -629,6 +629,15 @@ body {
   background: var(--bg);
 }
 
+.ProseMirror .runnable-controls .exec-toolbar .exec-run.exec-stop {
+  color: var(--danger);
+  background: transparent;
+}
+
+.ProseMirror .runnable-controls .exec-toolbar .exec-run.exec-stop:hover:not(:disabled) {
+  background: var(--danger-alt, var(--surface));
+}
+
 .ProseMirror .runnable-controls .exec-toolbar .exec-run:disabled {
   opacity: 0.6;
   cursor: default;

@@ -756,18 +756,37 @@ def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
     js("window.ediSetContent(" + _json.dumps(md) + "); true", None)
     time.sleep(1.0)
 
+    button = {"clicked": False, "click": None}
+
     def run_button_clicked():
-        def done(v):
-            result["click"] = v
-        js(
-            "(function(){var b=document.querySelector('.exec-run');"
-            "if(!b) return 'NOBTN'; b.click(); return 'CLICKED';})()",
-            done,
-        )
-        return result.get("click") is not None
+        if not button["clicked"]:
+            button["clicked"] = True
+            def done(v):
+                button["click"] = v
+            js(
+                "(function(){var b=document.querySelector('.exec-run');"
+                "if(!b) return 'NOBTN'; b.click(); return 'CLICKED';})()",
+                done,
+            )
+        return button["click"] is not None
 
     assert _pump_until(run_button_clicked, timeout=5), "Run button not rendered"
-    assert result["click"] == "CLICKED"
+    assert button["click"] == "CLICKED"
+
+    # Output appears incrementally while the run is in flight: the run streams
+    # stdout live (line by line via a pty), so the cell fills up before the
+    # process exits. Wait for the run to finish (Run returns to its idle state)
+    # so the final trimmed result is what we assert against.
+    def run_finished():
+        def done(v):
+            result["done"] = v
+        js(
+            "(document.querySelector('.exec-run')||{}).textContent||''",
+            done,
+        )
+        return result.get("done") == "Run"
+
+    assert _pump_until(run_finished, timeout=20), "run never completed"
 
     def read_output():
         def done(v):
