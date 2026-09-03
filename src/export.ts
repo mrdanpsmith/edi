@@ -175,23 +175,7 @@ body {
 .md-preview input[type='checkbox'] {
   margin-right: 0.4em;
   vertical-align: -0.1em;
-}
-
-.md-preview li[data-checked] > p:first-child::before {
-  content: '';
-  display: inline-block;
-  width: 0.9em;
-  height: 0.9em;
-  margin-right: 0.4em;
-  vertical-align: -0.1em;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-}
-
-.md-preview li[data-checked='true'] > p:first-child::before {
-  background: var(--accent);
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 2px var(--bg);
+  accent-color: var(--accent);
 }
 
 .md-preview hr {

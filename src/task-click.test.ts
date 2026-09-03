@@ -15,25 +15,6 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function taskPluginOf(view: EditorView) {
-  return view.state.plugins.find((p) => p.props?.handleDOMEvents?.click)!
-}
-
-function clickAt(view: EditorView, resolveTo: number): void {
-  // Simulate a DOM click whose resolved document position is `resolveTo`.
-  view.posAtCoords = () => ({ pos: resolveTo, inside: -1 }) as never
-  const li = {
-    closest: (sel: string) => (sel === 'li[data-checked]' ? { dataset: {} } : null),
-  }
-  const event = { target: li, clientX: 0, clientY: 0 } as unknown as MouseEvent
-  const plugin = taskPluginOf(view)
-  const handler = plugin.props.handleDOMEvents!.click as (
-    v: EditorView,
-    e: MouseEvent,
-  ) => boolean
-  handler.call(plugin, view, event)
-}
-
 function makeView(markdown: string): EditorView {
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -43,18 +24,33 @@ function makeView(markdown: string): EditorView {
   })
 }
 
-describe('taskClickPlugin boundary clicks', () => {
-  it('toggles when clicking inside the task text', () => {
+function clickCheckbox(view: EditorView, index: number): void {
+  const input = view.dom.querySelectorAll('input[data-task-check]')[index]
+  if (!input) throw new Error(`checkbox ${index} not found in editor DOM`)
+  input.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+}
+
+describe('taskClickPlugin checkbox clicks', () => {
+  it('unchecks a checked item', () => {
     const view = makeView('- [x] task\n- [ ] two')
-    clickAt(view, 5) // inside "task"
+    clickCheckbox(view, 0)
     expect(proseToMarkdown(view.state.doc)).toContain('- [ ] task')
     view.destroy()
   })
 
-  it('does not toggle when clicking at the trailing boundary of a task item', () => {
+  it('checks an unchecked item', () => {
     const view = makeView('- [x] task\n- [ ] two')
-    clickAt(view, 8) // boundary right after "task" inside the li
-    expect(proseToMarkdown(view.state.doc)).toContain('- [x] task')
+    clickCheckbox(view, 1)
+    expect(proseToMarkdown(view.state.doc)).toContain('- [x] two')
+    view.destroy()
+  })
+
+  it('does not toggle a non-task list item', () => {
+    const view = makeView('- plain item\n- [ ] two')
+    const inputs = view.dom.querySelectorAll('input[data-task-check]')
+    expect(inputs.length).toBe(1)
+    expect(proseToMarkdown(view.state.doc)).toContain('- plain item')
+    expect(proseToMarkdown(view.state.doc)).toContain('- [ ] two')
     view.destroy()
   })
 })

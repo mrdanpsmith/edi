@@ -83,7 +83,11 @@ const nodes: SchemaSpec['nodes'] = {
     toDOM(node) {
       const checked = node.attrs.checked as boolean | null
       if (checked !== null) {
-        return ['li', { 'data-checked': String(checked) }, 0]
+        return [
+          'li', { 'data-checked': String(checked) },
+          ['input', { type: 'checkbox', 'data-task-check': '', ...(checked ? { checked: true } : {}) }],
+          ['div', 0],
+        ]
       }
       return ['li', 0]
     },

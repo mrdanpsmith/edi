@@ -284,30 +284,22 @@ export function taskClickPlugin(): Plugin {
       handleDOMEvents: {
         click(view, event) {
           const target = event.target as HTMLElement
+          if (target.tagName !== 'INPUT' || !target.matches('[data-task-check]'))
+            return false
           const li = target.closest('li[data-checked]')
           if (!li) return false
+          event.preventDefault()
           const { state, dispatch } = view
-          const posAtCoords = view.posAtCoords({
-            left: event.clientX,
-            top: event.clientY,
-          })
-          if (!posAtCoords) return false
-          const $pos = state.doc.resolve(posAtCoords.pos)
-          // A click on the trailing boundary after the item's text (where the
-          // deepest resolved parent is the list item, not a textblock) must not
-          // toggle the checkbox — only clicks on actual text content do.
-          if (!$pos.parent.isTextblock) return false
-          for (let d = $pos.depth; d > 0; d--) {
-            if ($pos.node(d).type.name === 'list_item') {
-              const liNode = $pos.node(d)
-              if (liNode.attrs.checked === null) return false
-              const newChecked = liNode.attrs.checked === false ? true : false
-              const itemPos = $pos.before(d)
-              dispatch(state.tr.setNodeMarkup(itemPos, undefined, { checked: newChecked }))
-              return true
-            }
-          }
-          return false
+          const liPos = view.posAtDOM(li, 0)
+          const $li = state.doc.resolve(liPos)
+          const liRes = findListItemAncestor($li)
+          if (!liRes) return false
+          const liNode = $li.node(liRes.depth)
+          if (liNode.attrs.checked === null) return false
+          const newChecked = liNode.attrs.checked === false ? true : false
+          const itemPos = $li.before(liRes.depth)
+          dispatch(state.tr.setNodeMarkup(itemPos, undefined, { checked: newChecked }))
+          return true
         },
       },
     },
