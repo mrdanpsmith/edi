@@ -82,6 +82,11 @@ class RunnableBlockNodeView implements NodeView {
     button.type = 'button'
     button.className = 'exec-run'
     button.textContent = 'Run'
+    // Keep the caret out of the button's label. Clicking a <button> natively
+    // places the text cursor inside its text; that must not happen when toggling
+    // a run. preventDefault on mousedown stops the button from taking the caret
+    // (and focus) while allowing the click handler below to still fire.
+    button.addEventListener('mousedown', (e) => e.preventDefault())
     toolbar.appendChild(button)
     this.runButton = button
 
