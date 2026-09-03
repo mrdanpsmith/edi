@@ -49,4 +49,25 @@ describe('image parsing and rendering', () => {
     expect(img).not.toBeNull()
     view.destroy()
   })
+
+  it('shows the alt text as the hover tooltip via the title attribute', () => {
+    const editor = createBlockEditor(document.body, '![A fluffy cat](./images/cat.png)', {
+      resolveImageSrc: (src) => `file:///${src}`,
+    })
+    const view = editor.getView()
+    const img = view.dom.querySelector<HTMLImageElement>('img.edi-image')
+    expect(img!.getAttribute('alt')).toBe('A fluffy cat')
+    expect(img!.getAttribute('title')).toBe('A fluffy cat')
+    view.destroy()
+  })
+
+  it('falls back to the file name when the image has no alt text', () => {
+    const editor = createBlockEditor(document.body, '![](./images/dog.png)', {
+      resolveImageSrc: (src) => `file:///${src}`,
+    })
+    const view = editor.getView()
+    const img = view.dom.querySelector<HTMLImageElement>('img.edi-image')
+    expect(img!.getAttribute('title')).toBe('dog.png')
+    view.destroy()
+  })
 })

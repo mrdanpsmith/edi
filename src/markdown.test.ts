@@ -26,6 +26,24 @@ describe('image round-trip', () => {
   })
 })
 
+describe('emphasis round-trip', () => {
+  it('preserves italic text', () => {
+    expect(serialize('Hello *world* test')).toBe('Hello *world* test\n')
+  })
+
+  it('preserves a standalone italic line', () => {
+    expect(serialize('*emphasized*')).toBe('*emphasized*\n')
+  })
+
+  it('preserves italic next to bold', () => {
+    expect(serialize('**bold** and *italic*')).toBe('**bold** and *italic*\n')
+  })
+
+  it('preserves GFM strikethrough alongside italics', () => {
+    expect(serialize('~~strike~~ and *em*')).toBe('~~strike~~ and *em*\n')
+  })
+})
+
 describe('proseToMarkdown save round-trip', () => {
   it('keeps separate paragraphs separated by a blank line', () => {
     const md = 'first paragraph\n\nsecond paragraph'

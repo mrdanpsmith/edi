@@ -36,14 +36,24 @@ function createProcessor() {
 
 const MARK_TYPES = new Set([
   'strong',
+  'emphasis',
   'em',
   'code',
   'strikethrough',
+  'delete',
   'link',
   'highlight',
   'sub',
   'sup',
 ])
+
+// remark/mdast names some emphasis nodes differently from their ProseMirror
+// mark type: italics are `emphasis` (not `em`) and GFM strikethrough is
+// `delete` (not `strikethrough`).
+const MARK_TYPE_ALIASES: Record<string, string> = {
+  emphasis: 'em',
+  delete: 'strikethrough',
+}
 
 function isMarkType(type: string): boolean {
   return MARK_TYPES.has(type)
@@ -201,7 +211,7 @@ function parseInline(
       // mdast exposes the image destination on `url`, not `src`.
       result.push(schema.node('image', { src: child.url ?? child.src ?? '', alt: child.alt ?? '' }))
     } else if (isMarkType(child.type)) {
-      const markType = schema.marks[child.type as string]
+      const markType = schema.marks[MARK_TYPE_ALIASES[child.type] ?? child.type]
       if (markType) {
         const markAttrs: Record<string, unknown> = {}
         if (child.type === 'link') {
