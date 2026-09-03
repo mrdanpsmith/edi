@@ -401,6 +401,19 @@ body {
   text-decoration: underline;
 }
 
+.ProseMirror img.edi-image {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.ProseMirror img.edi-image-error {
+  border: 1px dashed var(--danger);
+  opacity: 0.6;
+}
+
 /* Inline decorations wrap the link text in a span inside the anchor. */
 .ProseMirror a .ml-misleading {
   color: var(--danger);

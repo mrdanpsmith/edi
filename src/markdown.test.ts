@@ -6,6 +6,26 @@ function serialize(markdown: string): string {
   return proseToMarkdown(markdownToProse(markdown, schema))
 }
 
+describe('image round-trip', () => {
+  it('preserves a block image src and alt', () => {
+    expect(serialize('Hello\n\n![A cat](./images/cat.png)\n\nWorld')).toBe(
+      'Hello\n\n![A cat](./images/cat.png)\n\nWorld\n',
+    )
+  })
+
+  it('preserves an inline image with an absolute path', () => {
+    expect(serialize('Inline ![x](/abs/img.png) here')).toBe(
+      'Inline ![x](/abs/img.png) here\n',
+    )
+  })
+
+  it('preserves a remote image URL', () => {
+    expect(serialize('![remote](https://example.com/i.png)')).toBe(
+      '![remote](https://example.com/i.png)\n',
+    )
+  })
+})
+
 describe('proseToMarkdown save round-trip', () => {
   it('keeps separate paragraphs separated by a blank line', () => {
     const md = 'first paragraph\n\nsecond paragraph'

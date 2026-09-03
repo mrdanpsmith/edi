@@ -4,6 +4,7 @@ import {
   createSession,
   getActive,
   getState,
+  setActivePath,
   subscribe,
 } from './state'
 
@@ -44,12 +45,17 @@ export class Tabs {
     this.scrolls.set(active.id, this.content.getScroll?.() ?? 0)
   }
 
-  addSession(content = ''): void {
+  addSession(content = '', path: string | null = null): void {
     this.snapshotActive()
     const id = createSession()
     this.snapshots.set(id, content)
     // A brand-new tab starts scrolled to the top.
     this.scrolls.set(id, 0)
+    // Associate the new session with its path BEFORE rendering its content so
+    // any relative image references resolve against the document's directory.
+    if (path !== null) {
+      setActivePath(path)
+    }
     this.content.setMarkdown(content)
     this.content.setScroll?.(0)
     this.render()

@@ -22,6 +22,7 @@ import { superscript } from './remark/sup'
 import { taskClickPlugin, toggleTaskItems } from './formatToolbar'
 import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
+import { imageNodeView, reResolveImages, type ResolveImage } from './image'
 
 function createInputRules() {
   function headingRule(level: number): InputRule {
@@ -136,12 +137,14 @@ export interface BlockEditor {
   getView(): EditorView
   getMarkdown(): string
   setMarkdown(markdown: string): void
+  resolveImages(): void
   focus(): void
   destroy(): void
 }
 
 export interface BlockEditorOptions {
   onOpenLink?: (href: string, text: string) => void
+  resolveImageSrc?: ResolveImage
 }
 
 export function createBlockEditor(
@@ -150,6 +153,7 @@ export function createBlockEditor(
   options: BlockEditorOptions = {},
 ): BlockEditor {
   const doc = markdownToProse(initialMarkdown, schema)
+  const resolveImageSrc = options.resolveImageSrc
 
   const linkClickPlugin = new Plugin({
     props: {
@@ -226,9 +230,14 @@ export function createBlockEditor(
         codeBlockNodeViewPlugin,
         new Plugin({
           props: {
-            nodeViews: Object.fromEntries(
-              [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
-            ),
+            nodeViews: {
+              ...Object.fromEntries(
+                [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+              ),
+              ...(resolveImageSrc
+                ? { image: imageNodeView(resolveImageSrc) }
+                : {}),
+            },
           },
         }),
       ],
@@ -247,6 +256,9 @@ export function createBlockEditor(
     setMarkdown(markdown: string) {
       const newDoc = markdownToProse(markdown, view.state.schema)
       view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content))
+    },
+    resolveImages() {
+      if (resolveImageSrc) reResolveImages(view.dom, resolveImageSrc)
     },
     focus() {
       view.focus()

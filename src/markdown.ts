@@ -156,7 +156,8 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       return schema.node('hard_break')
 
     case 'image':
-      return schema.node('image', { src: node.src ?? '', alt: node.alt ?? '' })
+      // mdast exposes the image destination on `url`, not `src`.
+      return schema.node('image', { src: node.url ?? node.src ?? '', alt: node.alt ?? '' })
 
     case 'mermaid_block':
       return schema.node('mermaid_block', { value: node.value ?? '' })
@@ -197,7 +198,8 @@ function parseInline(
     } else if (child.type === 'break') {
       result.push(schema.node('hard_break', {}, marks.length ? undefined : undefined))
     } else if (child.type === 'image') {
-      result.push(schema.node('image', { src: child.src ?? '', alt: child.alt ?? '' }))
+      // mdast exposes the image destination on `url`, not `src`.
+      result.push(schema.node('image', { src: child.url ?? child.src ?? '', alt: child.alt ?? '' }))
     } else if (isMarkType(child.type)) {
       const markType = schema.marks[child.type as string]
       if (markType) {

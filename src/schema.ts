@@ -165,6 +165,7 @@ const nodes: SchemaSpec['nodes'] = {
   },
 
   image: {
+    group: 'inline',
     inline: true,
     atom: true,
     attrs: {

@@ -224,8 +224,9 @@ async function openDocument(path: string): Promise<void> {
   }
   try {
     const content = await readTextFile(path)
-    tabs.addSession(content)
-    setActivePath(path)
+    // The path is set before the content is rendered so that relative image
+    // references in opened documents resolve against the document's directory.
+    tabs.addSession(content, path)
     afterActivate()
   } catch (error) {
     reportError(`Failed to open ${path}`, error)
@@ -246,6 +247,25 @@ function resolveInternalPath(href: string): string | null {
   const active = getActive()
   const baseDir = active?.path ? dirname(active.path) : ''
   return baseDir ? `${baseDir}/${withoutFragment}` : withoutFragment
+}
+
+/**
+ * Turn a markdown image ``src`` into a URL the QtWebEngine view can load.
+ * Remote/data URLs pass through untouched; relative paths are resolved against
+ * the active document's directory and served as ``file://`` URLs so images on
+ * disk actually render.
+ */
+function resolveImageFileUrl(src: string): string {
+  if (isExternalUrl(src) || src.startsWith('#')) return src
+  let path = src
+  if (!isAbsolutePath(path)) {
+    const active = getActive()
+    const baseDir = active?.path ? dirname(active.path) : ''
+    path = baseDir ? `${baseDir}/${path}` : path
+  }
+  if (!path.startsWith('/')) return path
+  // Normalize dot segments and percent-encode spaces into a loadable file URL.
+  return new URL(`file://${path}`).href
 }
 
 async function openLink(href: string, text: string): Promise<void> {
@@ -510,6 +530,7 @@ function init(): void {
   const welcome = getWelcomeDocument()
   blockEditor = createBlockEditor(editorContainer, welcome, {
     onOpenLink: openLink,
+    resolveImageSrc: resolveImageFileUrl,
   })
   formatToolbar = new FormatToolbar(formatBar, {
     getView: () => blockEditor!.getView(),
@@ -545,6 +566,17 @@ function init(): void {
     selectAll: () => editSelectAll(),
   })
   subscribe(() => syncDirty())
+  // Re-resolve relative image references when the active document's path
+  // changes (e.g. Save As into a different directory) so they keep pointing at
+  // the current document's directory.
+  let lastImagePath: string | null = getActive()?.path ?? null
+  subscribe(() => {
+    const path = getActive()?.path ?? null
+    if (path !== lastImagePath) {
+      lastImagePath = path
+      blockEditor?.resolveImages()
+    }
+  })
   syncDirty()
   afterActivate()
 }
