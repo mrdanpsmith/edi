@@ -1,14 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mainState = vi.hoisted(() => {
-  const mockTr = {
-    insertText: vi.fn().mockReturnThis(),
-    replaceWith: vi.fn().mockReturnThis(),
-  }
   const editorView = {
     state: {
       doc: { textContent: 'Welcome' },
-      tr: mockTr,
+      tr: { insertText: vi.fn().mockReturnThis(), replaceWith: vi.fn().mockReturnThis() },
     },
     dispatch: vi.fn(),
     focus: vi.fn(),
@@ -70,6 +66,14 @@ vi.mock('./editor', () => ({
     }
   }),
 }))
+
+vi.mock('prosemirror-commands', async () => {
+  const actual = await vi.importActual<typeof import('prosemirror-commands')>('prosemirror-commands')
+  return {
+    ...actual,
+    selectAll: vi.fn().mockReturnValue(true),
+  }
+})
 
 vi.mock('./mermaid', () => ({
   default: {
@@ -232,6 +236,24 @@ describe('keyboard shortcuts', () => {
     await flushAsync()
 
     expect(close).toHaveBeenCalled()
+  })
+
+  it('selects all in the editor with Ctrl+A even when focus is elsewhere', async () => {
+    await loadMain()
+    const { selectAll } = await import('prosemirror-commands')
+    vi.mocked(selectAll).mockClear()
+    press('a')
+    expect(mainState.editorView.focus).toHaveBeenCalled()
+    expect(selectAll).toHaveBeenCalled()
+  })
+
+  it('preserves scroll position when selecting all', async () => {
+    await loadMain()
+    const container = document.querySelector<HTMLElement>('#editor-container')!
+    container.scrollTop = 123
+    press('a')
+    await flushAsync()
+    expect(container.scrollTop).toBe(123)
   })
 })
 

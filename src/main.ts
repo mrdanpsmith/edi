@@ -414,6 +414,13 @@ function registerShortcuts(): void {
     } else if (key === 'q') {
       event.preventDefault()
       void requestQuit()
+    } else if (key === 'a' && !event.defaultPrevented) {
+      // Focus the editor and select all. When the editor already had focus,
+      // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
+      // this only kicks in when focus is elsewhere (e.g. the formatting bar)
+      // where the browser would otherwise select the whole window.
+      event.preventDefault()
+      editSelectAll()
     }
   })
 }
@@ -516,8 +523,15 @@ async function editPaste(): Promise<void> {
 function editSelectAll(): void {
   const view = blockEditor?.getView()
   if (view) {
+    const scrollTop = editorContainer.scrollTop
     view.focus()
     selectAll(view.state, view.dispatch)
+    // selectAll scrolls the full-document selection into view (the bottom),
+    // which jump-scrolls the editor. Restore the prior scroll position on the
+    // next frame once ProseMirror has performed its scrollIntoView.
+    requestAnimationFrame(() => {
+      editorContainer.scrollTop = scrollTop
+    })
   }
 }
 
