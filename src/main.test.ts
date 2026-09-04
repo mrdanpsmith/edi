@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { EditorState } from 'prosemirror-state'
+import { EditorView } from 'prosemirror-view'
+import { schema } from './schema'
+import { markdownToProse, proseToMarkdown } from './markdown'
 
 const mainState = vi.hoisted(() => {
   const editorView = {
@@ -254,6 +258,32 @@ describe('keyboard shortcuts', () => {
     press('a')
     await flushAsync()
     expect(container.scrollTop).toBe(123)
+  })
+
+  it('pastes plain text via the text path even when HTML is present', async () => {
+    await loadMain()
+    mainState.hasBridge.mockReturnValue(true)
+    mainState.invoke.mockResolvedValue({
+      text: 'line1\nline2',
+      html: '<div>ignored html</div>',
+    })
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('abc', schema) }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    menu('paste')
+    await flushAsync()
+
+    // Plain text is preferred, so the paste becomes two clean paragraphs
+    // (not the HTML branch, and no literal newline inside one paragraph).
+    expect(proseToMarkdown(realView.state.doc)).toContain('line1\n\nline2')
+    expect(proseToMarkdown(realView.state.doc)).not.toContain('ignored html')
+    realView.destroy()
+    host.remove()
   })
 })
 

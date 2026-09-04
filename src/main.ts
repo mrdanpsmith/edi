@@ -8,7 +8,6 @@ import { confirmAction, hasBridge, invoke, showError } from './bridge'
 import { buildExportHtml, serializeDocToHtml } from './export'
 import { undo, redo } from 'prosemirror-history'
 import { selectAll } from 'prosemirror-commands'
-import { DOMParser as ProseMirrorDOMParser } from 'prosemirror-model'
 import {
   dirname,
   fileName,
@@ -29,6 +28,7 @@ import {
 } from './files'
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText } from './paste'
+import { writeClipboard } from './clipboard'
 import { isMisleadingLink } from './linkSecurity'
 import { FormatToolbar } from './formatToolbar'
 import { bindMenuCommands } from './menus'
@@ -465,18 +465,19 @@ function editRedo(): void {
 
 function editCut(): void {
   const view = blockEditor?.getView()
-  if (view) {
-    view.focus()
-    document.execCommand('cut')
-  }
+  if (!view || view.state.selection.empty) return
+  view.focus()
+  const { dom, text } = view.serializeForClipboard(view.state.selection.content())
+  void writeClipboard({ html: dom.innerHTML, text })
+  view.dispatch(view.state.tr.deleteSelection())
 }
 
 function editCopy(): void {
   const view = blockEditor?.getView()
-  if (view) {
-    view.focus()
-    document.execCommand('copy')
-  }
+  if (!view || view.state.selection.empty) return
+  view.focus()
+  const { dom, text } = view.serializeForClipboard(view.state.selection.content())
+  void writeClipboard({ html: dom.innerHTML, text })
 }
 
 async function editPaste(): Promise<void> {
@@ -504,18 +505,14 @@ async function editPaste(): Promise<void> {
     }
   }
   view.focus()
-  const { state } = view
-  if (html) {
-    const tmp = document.createElement('div')
-    tmp.innerHTML = html
-    const pmDoc = ProseMirrorDOMParser.fromSchema(state.schema).parse(tmp)
-    const tr = state.tr.replaceWith(
-      state.selection.from,
-      state.selection.to,
-      pmDoc.content,
-    )
-    view.dispatch(tr)
-  } else if (text) {
+  // Rich media first: pasteHTML runs ProseMirror's full clipboard parser, which
+  // preserves formatting (bold, links, code) and turns block HTML (our own
+  // serializeForClipboard output) into real paragraphs. Only fall back to plain
+  // text when no HTML is available (insertPastedText handles line breaks and
+  // linkifies bare URLs).
+  if (html && html.trim() !== '') {
+    view.pasteHTML(html)
+  } else if (text && text.trim() !== '') {
     insertPastedText(view, text)
   }
 }

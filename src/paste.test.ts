@@ -68,6 +68,20 @@ describe('insertPastedText', () => {
       'absee [https://example.com](https://example.com) nowc',
     )
   })
+
+  it('splits multi-line pastes into separate paragraphs', () => {
+    expect(linkifySerialized('line1\nline2').trim()).toBe('abline1\n\nline2c')
+  })
+
+  it('keeps a single-line paste inline in the current paragraph', () => {
+    expect(linkifySerialized('XYZ').trim()).toBe('abXYZc')
+  })
+
+  it('splits multi-line pastes into paragraphs while linkifying URLs', () => {
+    expect(linkifySerialized('first https://example.com\nsecond').trim()).toBe(
+      'abfirst [https://example.com](https://example.com)\n\nsecondc',
+    )
+  })
 })
 
 describe('rich-text HTML paste', () => {
