@@ -6,6 +6,7 @@
   --surface: #f6f8fa;
   --surface-raised: #ffffff;
   --border: #d0d7de;
+  --table-header-bg: #eef1f4;
   --text-primary: #1f2328;
   --text-secondary: #59636e;
   --text-muted: #818b98;
@@ -36,6 +37,7 @@
     --surface: #161b22;
     --surface-raised: #1c2128;
     --border: #3d444d;
+    --table-header-bg: #22272e;
     --text-primary: #e6edf3;
     --text-secondary: #b1bac4;
     --text-muted: #8b949e;
@@ -507,8 +509,10 @@ body {
 }
 
 .ProseMirror th {
-  background: var(--surface);
-  font-weight: 600;
+  background: var(--table-header-bg);
+  font-weight: 700;
+  text-align: left;
+  border-bottom: 2px solid var(--border);
 }
 
 .ProseMirror td.spreadsheet-formula {
@@ -956,8 +960,10 @@ body {
 }
 
 .md-preview th {
-  background: var(--surface);
-  font-weight: 600;
+  background: var(--table-header-bg);
+  font-weight: 700;
+  text-align: left;
+  border-bottom: 2px solid var(--border);
 }
 
 .md-preview td.spreadsheet-formula {

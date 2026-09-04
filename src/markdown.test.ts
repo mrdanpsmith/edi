@@ -99,3 +99,21 @@ describe('proseToMarkdown save round-trip', () => {
     )
   })
 })
+
+describe('table round-trip', () => {
+  it('parses the first GFM row as header cells and emits a delimiter row', () => {
+    const markdown = '| Item | Q1 |\n| --- | --- |\n| Widget | 120 |'
+    const doc = markdownToProse(markdown, schema)
+    const table = doc.firstChild!
+    expect(table.type.name).toBe('table')
+    const headerCells = table.child(0)
+    const dataRow = table.child(1)
+    for (let i = 0; i < headerCells.childCount; i++) {
+      expect(headerCells.child(i).type.name).toBe('table_header')
+    }
+    for (let i = 0; i < dataRow.childCount; i++) {
+      expect(dataRow.child(i).type.name).toBe('table_cell')
+    }
+    expect(proseToMarkdown(doc)).toBe(markdown + '\n')
+  })
+})

@@ -140,8 +140,17 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       return schema.node('horizontal_rule')
 
     case 'table': {
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
-      return schema.node('table', {}, children)
+      // GFM: the first row is the header (mdast marks every cell `tableCell`).
+      // Emit it as `table_header` so it renders with distinct header styling.
+      const tableChildren: ProseNode[] = []
+      ;(node.children ?? []).forEach((row, rowIndex) => {
+        const cells = (row.children ?? []).map((cell) => {
+          const content = parseTableCellContent(cell.children ?? [], schema)
+          return schema.node(rowIndex === 0 ? 'table_header' : 'table_cell', {}, content)
+        })
+        tableChildren.push(schema.node('table_row', {}, cells))
+      })
+      return schema.node('table', {}, tableChildren)
     }
 
     case 'tableRow': {
