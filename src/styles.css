@@ -653,7 +653,7 @@ body {
   position: relative;
 }
 
-/* Copy buttons: revealed on hover over their container. */
+/* Copy buttons: revealed via the JS-driven `.code-copy-show` state. */
 .ProseMirror .code-copy {
   font: inherit;
   font-size: 11px;
@@ -671,14 +671,17 @@ body {
   z-index: 2;
 }
 
-.ProseMirror .runnable-source:hover ~ .code-copy-source,
-.ProseMirror .exec-output-wrap:hover .code-copy,
-.ProseMirror .code-copy:hover {
+.ProseMirror .code-copy.code-copy-show {
   opacity: 1;
 }
 
 .ProseMirror .code-copy:hover {
   background: var(--bg);
+}
+
+.ProseMirror .code-copy.code-copy-fade {
+  opacity: 0 !important;
+  transition: opacity 500ms;
 }
 
 /* Leave room so the source copy button doesn't cover the first lines' text. */

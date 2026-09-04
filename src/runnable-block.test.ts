@@ -345,7 +345,7 @@ describe('code block copy buttons', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(invokeMock).toHaveBeenCalledWith('copyText', { text: 'console.log("hi")' })
-    expect(btn.textContent).toBe('Copied')
+    expect(btn.textContent).toBe('Copied!')
     view.destroy()
   })
 

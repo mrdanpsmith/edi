@@ -58,7 +58,11 @@ async function copyPlainText(text: string): Promise<void> {
   textarea.remove()
 }
 
-function createCopyButton(getText: () => string): HTMLButtonElement {
+function createCopyButton(
+  getText: () => string,
+  root: HTMLElement,
+  revealSelector: string,
+): HTMLButtonElement {
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.className = 'code-copy'
@@ -67,12 +71,40 @@ function createCopyButton(getText: () => string): HTMLButtonElement {
   // Keep the caret out of the button's label and stop the editor from treating
   // the click as a selection change.
   btn.addEventListener('mousedown', (e) => e.preventDefault())
+
+  // Visibility is JS-driven instead of CSS `:hover` so that, after a copy, the
+  // button stays hidden (even while the cursor is still over the area) until the
+  // user leaves and hovers the copiable area again. `elementFromPoint` lets us
+  // tell source from output even though the button floats over the source.
+  let locked = false
+  let x = 0
+  let y = 0
+  const refresh = (): void => {
+    if (locked) return
+    const under = document.elementFromPoint(x, y)
+    const over =
+      under instanceof Element &&
+      (under === btn || !!under.closest(revealSelector))
+    btn.classList.toggle('code-copy-show', over)
+  }
+  root.addEventListener('mousemove', (e) => {
+    x = e.clientX
+    y = e.clientY
+    refresh()
+  })
+  root.addEventListener('mouseleave', () => btn.classList.remove('code-copy-show'))
+
   btn.addEventListener('click', () => {
     void copyPlainText(getText()).then(() => {
-      btn.textContent = 'Copied'
+      btn.textContent = 'Copied!'
+      btn.classList.add('code-copy-fade')
+      btn.classList.remove('code-copy-show')
+      locked = true
       window.setTimeout(() => {
+        btn.classList.remove('code-copy-fade')
         btn.textContent = 'Copy'
-      }, 1500)
+        locked = false
+      }, 500)
     })
   })
   return btn
@@ -147,7 +179,7 @@ class RunnableBlockNodeView implements NodeView {
 
     const outputWrap = document.createElement('div')
     outputWrap.className = 'exec-output-wrap'
-    this.outputCopy = createCopyButton(() => output.textContent ?? '')
+    this.outputCopy = createCopyButton(() => output.textContent ?? '', this.dom, '.exec-output-wrap')
     outputWrap.append(output, this.outputCopy)
     this.outputCopy.style.display = 'none'
 
@@ -167,7 +199,7 @@ class RunnableBlockNodeView implements NodeView {
     const source = this.dom.querySelector('.runnable-source')
     if (!source) return
     source.classList.add('source-has-copy')
-    const btn = createCopyButton(() => this.node.textContent)
+    const btn = createCopyButton(() => this.node.textContent, this.dom, '.runnable-source')
     btn.classList.add('code-copy-source')
     this.dom.appendChild(btn)
   }
