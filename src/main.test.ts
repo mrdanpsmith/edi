@@ -63,6 +63,7 @@ vi.mock('./editor', () => ({
       getView: () => mainState.editorView,
       getMarkdown: () => mainState.markdown,
       setMarkdown: (value: string) => { mainState.markdown = value },
+      insertMarkdown: (value: string) => { mainState.markdown += value },
       resolveImages: vi.fn(),
       focus: vi.fn(),
       destroy: vi.fn(),

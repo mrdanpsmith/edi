@@ -148,21 +148,16 @@ function syncMenuState(): void {
   const active = getActive()
   void invoke('setMenuState', {
     canRevert: Boolean(active?.path),
-    visualMode: true,
     formattingVisible: formatToolbar?.isVisible() ?? true,
   }).catch(() => undefined)
 }
 
-function insertText(text: string): void {
-  const view = blockEditor?.getView()
-  if (view) {
-    view.focus()
-    view.dispatch(view.state.tr.insertText(text))
-  }
+function insertMarkdown(markdown: string): void {
+  blockEditor?.insertMarkdown(markdown)
 }
 
 function insertTable(markdown: string): void {
-  insertText(`\n${markdown}\n`)
+  insertMarkdown(`\n${markdown}\n`)
 }
 
 function flashStatus(message: string): void {
@@ -372,7 +367,7 @@ async function importTextFile(): Promise<void> {
   }
   try {
     const content = await readAnyTextFile(path)
-    insertText(`\n${content}\n`)
+    insertMarkdown(`\n${content}\n`)
     flashStatus(`Inserted ${fileName(path)}`)
   } catch (error) {
     reportError(`Failed to insert ${path}`, error)
@@ -386,7 +381,7 @@ async function insertImage(): Promise<void> {
   }
   const reference = imageReference(getActive()?.path ?? null, path)
   const destination = /[ ()]/u.test(reference) ? `<${reference}>` : reference
-  insertText(`\n![${fileName(path)}](${destination})\n`)
+  insertMarkdown(`\n![${fileName(path)}](${destination})\n`)
   flashStatus(`Inserted ${fileName(path)}`)
 }
 
@@ -556,7 +551,6 @@ function init(): void {
     importText: () => void importTextFile(),
     insertImage: () => void insertImage(),
     export: () => void exportHtml(),
-    toggleMode: () => {},
     toggleFormatting: () => toggleFormatting(),
     undo: () => editUndo(),
     redo: () => editRedo(),

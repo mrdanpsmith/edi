@@ -228,7 +228,6 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._allow_close = False
         self._revert_action = None
-        self._editor_action = None
         self._formatting_action = None
         self._insert_actions = None
 
@@ -343,14 +342,6 @@ class MainWindow(QMainWindow):
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu
-        self._editor_action = QAction("&Visual Mode\tCtrl+E", self)
-        self._editor_action.setCheckable(True)
-        self._editor_action.setChecked(True)
-        self._editor_action.triggered.connect(
-            lambda _checked=False: self._menu_command("toggleMode")
-        )
-        view_menu.addAction(self._editor_action)
-
         self._formatting_action = QAction("&Formatting Toolbar", self)
         self._formatting_action.setCheckable(True)
         self._formatting_action.setChecked(True)
@@ -386,13 +377,10 @@ class MainWindow(QMainWindow):
     def update_menu_state(
         self,
         can_revert: bool,
-        visual_mode: bool,
         formatting_visible: bool,
     ) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
-        if self._editor_action is not None:
-            self._editor_action.setChecked(visual_mode)
         if self._formatting_action is not None:
             self._formatting_action.setChecked(formatting_visible)
         if self._insert_actions is not None:

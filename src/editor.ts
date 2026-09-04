@@ -2,7 +2,7 @@ import { EditorState, Plugin, PluginKey } from 'prosemirror-state'
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
 import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
-import { baseKeymap } from 'prosemirror-commands'
+import { baseKeymap, toggleMark } from 'prosemirror-commands'
 import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
 import { tableEditing } from 'prosemirror-tables'
@@ -95,6 +95,11 @@ const listKeymap = keymap({
   },
 })
 
+const formattingKeymap = keymap({
+  'Mod-b': toggleMark(schema.marks.strong),
+  'Mod-i': toggleMark(schema.marks.em),
+})
+
 const blockToggleKeymap = keymap({
   'Mod-Shift-e': (state, dispatch, view) => {
     if (!dispatch || !view) return false
@@ -137,6 +142,7 @@ export interface BlockEditor {
   getView(): EditorView
   getMarkdown(): string
   setMarkdown(markdown: string): void
+  insertMarkdown(markdown: string): void
   resolveImages(): void
   focus(): void
   destroy(): void
@@ -215,6 +221,7 @@ export function createBlockEditor(
         undoKeymap,
         listKeymap,
         keymap(baseKeymap),
+        formattingKeymap,
         createInputRules(),
         blockToggleKeymap,
         tableEditing(),
@@ -256,6 +263,12 @@ export function createBlockEditor(
     setMarkdown(markdown: string) {
       const newDoc = markdownToProse(markdown, view.state.schema)
       view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content))
+    },
+    insertMarkdown(markdown: string) {
+      view.dispatch(view.state.tr.insertText(markdown))
+      const newDoc = markdownToProse(proseToMarkdown(view.state.doc), view.state.schema)
+      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content))
+      view.focus()
     },
     resolveImages() {
       if (resolveImageSrc) reResolveImages(view.dom, resolveImageSrc)
