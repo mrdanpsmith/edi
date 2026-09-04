@@ -310,3 +310,81 @@ describe('runnable code block node view', () => {
     view.destroy()
   })
 })
+
+describe('code block copy buttons', () => {
+  beforeEach(() => {
+    invokeMock.mockReset()
+    invokeStreamMock.mockReset()
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('adds a source copy button to runnable (shebang) code blocks', () => {
+    const view = makeView('```\n#!/usr/bin/env python3\nprint(1)\n```')
+    const btn = view.dom.querySelector('.code-copy-source') as HTMLButtonElement
+    expect(btn).toBeTruthy()
+    view.destroy()
+  })
+
+  it('adds a source copy button to plain (non-runnable) code blocks', () => {
+    const view = makeView('```\nconsole.log("hi")\n```')
+    const btn = view.dom.querySelector('.code-copy-source') as HTMLButtonElement
+    expect(btn).toBeTruthy()
+    view.destroy()
+  })
+
+  it('copies the full code block source to the clipboard via the bridge', async () => {
+    invokeMock.mockResolvedValue(null)
+
+    const view = makeView('```\nconsole.log("hi")\n```')
+    const btn = view.dom.querySelector('.code-copy-source') as HTMLButtonElement
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(invokeMock).toHaveBeenCalledWith('copyText', { text: 'console.log("hi")' })
+    expect(btn.textContent).toBe('Copied')
+    view.destroy()
+  })
+
+  it('copies the shebang source including the shebang line', async () => {
+    invokeMock.mockResolvedValue(null)
+
+    const view = makeView('```\n#!/usr/bin/env python3\nprint(1)\n```')
+    const btn = view.dom.querySelector('.code-copy-source') as HTMLButtonElement
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(invokeMock).toHaveBeenCalledWith('copyText', { text: '#!/usr/bin/env python3\nprint(1)' })
+    view.destroy()
+  })
+
+  it('copies the run output via the output copy button', async () => {
+    invokeMock.mockResolvedValue(null)
+
+    const handle = streamHandle({
+      exitCode: 0,
+      stdout: 'Hello out\n',
+      stderr: '',
+      timedOut: false,
+    })
+    invokeStreamMock.mockReturnValue(handle)
+
+    const view = makeView('```\n#!/bin/sh\necho "Hello out"\n```')
+    ;(view.dom.querySelector('.exec-run') as HTMLButtonElement).click()
+    handle._emit({ id: handle.id, kind: 'output', stream: 'stdout', text: 'Hello out\n' })
+    handle._finish()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const outCopy = view.dom.querySelector('.exec-output-wrap .code-copy') as HTMLButtonElement
+    expect(outCopy).toBeTruthy()
+    invokeMock.mockClear()
+    outCopy.click()
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(invokeMock).toHaveBeenCalledWith('copyText', { text: 'Hello out' })
+    view.destroy()
+  })
+})

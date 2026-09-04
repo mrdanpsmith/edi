@@ -267,6 +267,16 @@ def test_copy_table_sets_clipboard(bridge):
     assert "<table>" in mime.html()
 
 
+def test_copy_text_sets_clipboard(bridge):
+    from PySide6.QtGui import QGuiApplication
+
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "copyText", {"text": "hello"}, 41)
+    message = _wait_for(lambda: result.get(41))
+    assert message["ok"] is True
+    assert QGuiApplication.clipboard().text() == "hello"
+
+
 def test_confirm_uses_window(bridge):
     bridge_obj, window, result = bridge
     _invoke(bridge_obj, "confirm", {"message": "Continue?"})

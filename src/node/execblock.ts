@@ -2,7 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { blockNodeView } from '../blockview'
-import { invoke, invokeStream, type StreamHandle } from '../bridge'
+import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
 
 // A runnable code block is an ordinary `code_block` whose first line starts
@@ -31,12 +31,60 @@ function createHandleDOM(pos: number): HTMLElement {
   return handle
 }
 
+async function copyPlainText(text: string): Promise<void> {
+  if (hasBridge()) {
+    try {
+      await invoke('copyText', { text })
+      return
+    } catch {
+      // Fall through to the web/execCommand paths.
+    }
+  }
+  try {
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      await navigator.clipboard.writeText(text)
+      return
+    }
+  } catch {
+    // Fall through to the legacy execCommand path.
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.append(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  textarea.remove()
+}
+
+function createCopyButton(getText: () => string): HTMLButtonElement {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'code-copy'
+  btn.title = 'Copy to clipboard'
+  btn.textContent = 'Copy'
+  // Keep the caret out of the button's label and stop the editor from treating
+  // the click as a selection change.
+  btn.addEventListener('mousedown', (e) => e.preventDefault())
+  btn.addEventListener('click', () => {
+    void copyPlainText(getText()).then(() => {
+      btn.textContent = 'Copied'
+      window.setTimeout(() => {
+        btn.textContent = 'Copy'
+      }, 1500)
+    })
+  })
+  return btn
+}
+
 class RunnableBlockNodeView implements NodeView {
   dom: HTMLElement
   contentDOM: HTMLElement
   private node: ProseNode
   private runButton: HTMLButtonElement | null = null
   private output: HTMLPreElement | null = null
+  private outputCopy: HTMLButtonElement | null = null
   private controlsLayer: HTMLElement | null = null
   private shebang: string | null
   private lastContent: string
@@ -68,6 +116,8 @@ class RunnableBlockNodeView implements NodeView {
     pre.appendChild(code)
     this.dom.appendChild(pre)
 
+    this.appendSourceCopyButton()
+
     if (this.shebang) this.buildControls(this.shebang)
   }
 
@@ -95,7 +145,13 @@ class RunnableBlockNodeView implements NodeView {
     output.hidden = true
     this.output = output
 
-    layer.append(toolbar, output)
+    const outputWrap = document.createElement('div')
+    outputWrap.className = 'exec-output-wrap'
+    this.outputCopy = createCopyButton(() => output.textContent ?? '')
+    outputWrap.append(output, this.outputCopy)
+    this.outputCopy.style.display = 'none'
+
+    layer.append(toolbar, outputWrap)
     this.dom.appendChild(layer)
 
     button.addEventListener('click', () => {
@@ -105,6 +161,15 @@ class RunnableBlockNodeView implements NodeView {
         void this.run(shebang)
       }
     })
+  }
+
+  private appendSourceCopyButton(): void {
+    const source = this.dom.querySelector('.runnable-source')
+    if (!source) return
+    source.classList.add('source-has-copy')
+    const btn = createCopyButton(() => this.node.textContent)
+    btn.classList.add('code-copy-source')
+    this.dom.appendChild(btn)
   }
 
   private clearControls(): void {
@@ -126,6 +191,7 @@ class RunnableBlockNodeView implements NodeView {
     this.controlsLayer = null
     this.runButton = null
     this.output = null
+    this.outputCopy = null
   }
 
   private setRunState(running: boolean): void {
@@ -152,6 +218,7 @@ class RunnableBlockNodeView implements NodeView {
     this.output.hidden = false
     this.output.textContent = ''
     this.output.classList.remove('exec-error')
+    if (this.outputCopy) this.outputCopy.style.display = ''
     this.setRunState(true)
     let handle: StreamHandle<CodeResult> | null = null
     try {
@@ -251,7 +318,11 @@ class RunnableBlockNodeView implements NodeView {
 
   stopEvent(event: Event): boolean {
     const t = event.target as HTMLElement
-    return t.closest('.exec-run') !== null || t.closest('.block-handle') !== null
+    return (
+      t.closest('.exec-run') !== null ||
+      t.closest('.block-handle') !== null ||
+      t.closest('.code-copy') !== null
+    )
   }
 
   destroy(): void {

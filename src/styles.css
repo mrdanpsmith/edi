@@ -649,6 +649,43 @@ body {
   border-top: 2px solid var(--danger);
 }
 
+.ProseMirror .exec-output-wrap {
+  position: relative;
+}
+
+/* Copy buttons: revealed on hover over their container. */
+.ProseMirror .code-copy {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+  cursor: pointer;
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 120ms;
+  z-index: 2;
+}
+
+.ProseMirror .runnable-source:hover ~ .code-copy-source,
+.ProseMirror .exec-output-wrap:hover .code-copy,
+.ProseMirror .code-copy:hover {
+  opacity: 1;
+}
+
+.ProseMirror .code-copy:hover {
+  background: var(--bg);
+}
+
+/* Leave room so the source copy button doesn't cover the first lines' text. */
+.ProseMirror .runnable-source.source-has-copy {
+  padding-right: 3.5em;
+}
+
 /* ── Block source mode (inline CodeMirror) ── */
 
 .block-source-mode {
