@@ -511,10 +511,16 @@ async function editPaste(): Promise<void> {
   // text when no HTML is available (insertPastedText handles line breaks and
   // linkifies bare URLs).
   if (html && html.trim() !== '') {
-    view.pasteHTML(html)
+    view.pasteHTML(html, pasteEvent())
   } else if (text && text.trim() !== '') {
     insertPastedText(view, text)
   }
+}
+
+function pasteEvent(): ClipboardEvent {
+  return typeof ClipboardEvent === 'function'
+    ? new ClipboardEvent('paste')
+    : ({ clipboardData: null } as unknown as ClipboardEvent)
 }
 
 function editSelectAll(): void {

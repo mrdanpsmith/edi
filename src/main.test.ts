@@ -1,8 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { EditorState } from 'prosemirror-state'
+import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
+
+const zeroRect = {
+  top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
+  toJSON: () => ({}),
+} as DOMRect
+
+function stubLayout() {
+  // jsdom lacks layout support; ProseMirror's scrollToSelection calls
+  // coordsAtPos → singleRect → getClientRects/getBoundingClientRect.
+  // Stub these on Element and Range so pasteHTML doesn't blow up in tests.
+  const fakeRectList = Object.assign([zeroRect], {
+    item: () => zeroRect,
+  }) as unknown as DOMRectList
+  Element.prototype.getClientRects = () => fakeRectList
+  Element.prototype.getBoundingClientRect = () => zeroRect
+  Range.prototype.getClientRects = () => fakeRectList
+  Range.prototype.getBoundingClientRect = () => zeroRect
+}
 
 const mainState = vi.hoisted(() => {
   const editorView = {
@@ -260,12 +278,13 @@ describe('keyboard shortcuts', () => {
     expect(container.scrollTop).toBe(123)
   })
 
-  it('pastes plain text via the text path even when HTML is present', async () => {
+  it('pastes rich HTML with formatting preserved (inner copy round-trip)', async () => {
     await loadMain()
+    stubLayout()
     mainState.hasBridge.mockReturnValue(true)
     mainState.invoke.mockResolvedValue({
       text: 'line1\nline2',
-      html: '<div>ignored html</div>',
+      html: '<strong>bold</strong> and <a href="https://example.com">link</a> text',
     })
 
     const host = document.createElement('div')
@@ -278,10 +297,61 @@ describe('keyboard shortcuts', () => {
     menu('paste')
     await flushAsync()
 
-    // Plain text is preferred, so the paste becomes two clean paragraphs
-    // (not the HTML branch, and no literal newline inside one paragraph).
+    // When HTML is present it is preferred so formatting is kept.
+    const md = proseToMarkdown(realView.state.doc)
+    expect(md).toContain('**bold**')
+    expect(md).toContain('[link](https://example.com)')
+    realView.destroy()
+    host.remove()
+  })
+
+  it('pastes plain text via the text path when no HTML is present', async () => {
+    await loadMain()
+    mainState.hasBridge.mockReturnValue(true)
+    mainState.invoke.mockResolvedValue({ text: 'line1\nline2', html: '' })
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('abc', schema) }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    menu('paste')
+    await flushAsync()
+
+    // No HTML, so plain text is parsed into two clean paragraphs.
     expect(proseToMarkdown(realView.state.doc)).toContain('line1\n\nline2')
-    expect(proseToMarkdown(realView.state.doc)).not.toContain('ignored html')
+    realView.destroy()
+    host.remove()
+  })
+
+  it('cut writes serialized rich content and deletes the selection', async () => {
+    await loadMain()
+    mainState.hasBridge.mockReturnValue(true)
+    mainState.invoke.mockResolvedValue(undefined)
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const cutDoc = markdownToProse('a **bold** tail', schema)
+    const realView = new EditorView(host, {
+      state: EditorState.create({
+        doc: cutDoc,
+        selection: TextSelection.create(cutDoc, 1, cutDoc.content.size - 1),
+      }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    menu('cut')
+    await flushAsync()
+
+    const sent = mainState.invoke.mock.calls.find(
+      (call) => call[0] === 'copyContent',
+    ) as [string, { html: string; text: string }] | undefined
+    expect(sent).toBeDefined()
+    expect(sent![1].html).toContain('<strong>')
+    expect(sent![1].text).toContain('bold')
+    expect(proseToMarkdown(realView.state.doc)).not.toContain('bold')
     realView.destroy()
     host.remove()
   })

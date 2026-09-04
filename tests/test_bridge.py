@@ -273,6 +273,25 @@ def test_copy_text_sets_clipboard(bridge):
     assert QGuiApplication.clipboard().text() == "hello"
 
 
+def test_copy_content_sets_html_and_text_clipboard(bridge):
+    from PySide6.QtGui import QGuiApplication
+
+    bridge_obj, _window, result = bridge
+    _invoke(
+        bridge_obj,
+        "copyContent",
+        {"html": "<strong>bold</strong>", "text": "bold"},
+        42,
+    )
+    message = _wait_for(lambda: result.get(42))
+    assert message["ok"] is True
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime.hasText()
+    assert mime.text() == "bold"
+    assert mime.hasHtml()
+    assert "<strong>bold</strong>" in mime.html()
+
+
 def test_confirm_uses_window(bridge):
     bridge_obj, window, result = bridge
     _invoke(bridge_obj, "confirm", {"message": "Continue?"})
