@@ -57,6 +57,7 @@ class Bridge(QObject):
             "stopCodeBlock": self._stop_code_block,
             "openUrl": self._open_url,
             "setDirty": self._set_dirty,
+            "setTitle": self._set_title,
             "setMenuState": self._set_menu_state,
             "quit": self._quit,
             "ping": self._ping,
@@ -275,6 +276,10 @@ class Bridge(QObject):
 
     def _set_dirty(self, request_id: int, args: dict) -> None:
         self._window.set_dirty(bool(args.get("dirty")))
+        self._reply(request_id, None)
+
+    def _set_title(self, request_id: int, args: dict) -> None:
+        self._window.set_title(str(args.get("title", "")))
         self._reply(request_id, None)
 
     def _set_menu_state(self, request_id: int, args: dict) -> None:

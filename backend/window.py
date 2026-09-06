@@ -394,6 +394,9 @@ class MainWindow(QMainWindow):
     def is_dirty(self) -> bool:
         return self._dirty
 
+    def set_title(self, title: str) -> None:
+        self.setWindowTitle(title or "Edi")
+
     def confirm(self, message: str, callback=None) -> None:
         """Show a non-blocking centered Yes/No dialog.
 

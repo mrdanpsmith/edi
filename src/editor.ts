@@ -150,6 +150,7 @@ export interface BlockEditor {
 
 export interface BlockEditorOptions {
   onOpenLink?: (href: string, text: string) => void
+  onChange?: () => void
   resolveImageSrc?: ResolveImage
 }
 
@@ -213,6 +214,17 @@ export function createBlockEditor(
     },
   })
 
+  let suppressChanges = false
+  const viewRef: { current: EditorView | null } = { current: null }
+  const dispatchTransaction = (transaction: import('prosemirror-state').Transaction) => {
+    const cur = viewRef.current
+    if (!cur) return
+    const next = cur.state.apply(transaction)
+    cur.updateState(next)
+    if (!suppressChanges && transaction.docChanged) {
+      options.onChange?.()
+    }
+  }
   const view = new EditorView(parent, {
     state: EditorState.create({
       doc,
@@ -249,7 +261,9 @@ export function createBlockEditor(
         }),
       ],
     }),
+    dispatchTransaction,
   })
+  viewRef.current = view
 
   attachBlockHandles(view)
 
@@ -261,8 +275,13 @@ export function createBlockEditor(
       return proseToMarkdown(view.state.doc)
     },
     setMarkdown(markdown: string) {
-      const newDoc = markdownToProse(markdown, view.state.schema)
-      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content))
+      suppressChanges = true
+      try {
+        const newDoc = markdownToProse(markdown, view.state.schema)
+        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content))
+      } finally {
+        suppressChanges = false
+      }
     },
     insertMarkdown(markdown: string) {
       view.dispatch(view.state.tr.insertText(markdown))

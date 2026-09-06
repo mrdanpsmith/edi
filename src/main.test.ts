@@ -48,6 +48,7 @@ const mainState = vi.hoisted(() => {
     readAnyTextFile: vi.fn(),
     markdown: 'Welcome',
     editorView,
+    editorOptions: undefined as { onChange?: () => void } | undefined,
   }
 })
 
@@ -75,13 +76,21 @@ vi.mock('./files', async () => {
 })
 
 vi.mock('./editor', () => ({
-  createBlockEditor: vi.fn((_parent: HTMLElement, markdown: string) => {
+  createBlockEditor: vi.fn((
+    _parent: HTMLElement,
+    markdown: string,
+    options?: { onChange?: () => void },
+  ) => {
+    mainState.editorOptions = options
     mainState.markdown = markdown
     return {
       getView: () => mainState.editorView,
       getMarkdown: () => mainState.markdown,
       setMarkdown: (value: string) => { mainState.markdown = value },
-      insertMarkdown: (value: string) => { mainState.markdown += value },
+      insertMarkdown: (value: string) => {
+        mainState.markdown += value
+        options?.onChange?.()
+      },
       resolveImages: vi.fn(),
       focus: vi.fn(),
       destroy: vi.fn(),
@@ -201,6 +210,7 @@ beforeEach(() => {
   mainState.invoke.mockReset().mockResolvedValue(undefined)
   mainState.confirmAction.mockReset().mockResolvedValue(true)
   mainState.markdown = 'Welcome'
+  mainState.editorOptions = undefined
   for (const mock of FILE_MOCKS) {
     mock.mockReset()
   }
@@ -402,6 +412,35 @@ describe('tabs', () => {
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(1)
     expect(mainState.confirmAction).toHaveBeenCalled()
+  })
+
+  it('marks the active tab dirty when the document is edited', async () => {
+    await loadMain()
+    expect(activeTabTitle()).toBe('Untitled')
+    expect(document.title).toBe('Untitled — Edi')
+    mainState.editorOptions!.onChange!()
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getActive()!.dirty).toBe(true)
+    expect(activeTabTitle()).toBe('* Untitled')
+    expect(document.title).toBe('* Untitled — Edi')
+  })
+
+  it('tracks a dirty document by filename in the tab and window title', async () => {
+    mainState.pickSavePath.mockResolvedValue('/tmp/notes.md')
+    mainState.writeTextFile.mockResolvedValue(undefined)
+    await loadMain()
+    menu('save')
+    await flushAsync()
+    expect(activeTabTitle()).toBe('notes.md')
+    mainState.editorOptions!.onChange!()
+    await flushAsync()
+    expect(activeTabTitle()).toBe('* notes.md')
+    expect(document.title).toBe('* notes.md — Edi')
+    expect(mainState.invoke).toHaveBeenCalledWith(
+      'setTitle',
+      { title: '* notes.md — Edi' },
+    )
   })
 })
 

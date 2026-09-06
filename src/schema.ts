@@ -223,35 +223,6 @@ const nodes: SchemaSpec['nodes'] = {
     },
   },
 
-  descriptionlist: {
-    group: 'block',
-    content: '(descriptionterm descriptiondetails*)+',
-    defining: true,
-    attrs: { _source: { default: false } },
-    parseDOM: [{ tag: 'dl' }],
-    toDOM() {
-      return ['dl', 0]
-    },
-  },
-
-  descriptionterm: {
-    content: 'inline*',
-    group: '',
-    parseDOM: [{ tag: 'dt' }],
-    toDOM() {
-      return ['dt', 0]
-    },
-  },
-
-  descriptiondetails: {
-    content: 'block+',
-    group: '',
-    parseDOM: [{ tag: 'dd' }],
-    toDOM() {
-      return ['dd', 0]
-    },
-  },
-
   text: {
     inline: true,
     group: 'inline',

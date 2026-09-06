@@ -2,7 +2,6 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 import remarkGfm from 'remark-gfm'
-import remarkDeflist from 'remark-deflist'
 import type { Node as ProseNode, Schema, Mark } from 'prosemirror-model'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
@@ -26,7 +25,6 @@ function createProcessor() {
   return unified()
     .use(remarkParse)
     .use(remarkGfm)
-    .use(remarkDeflist as never)
     .use(remarkStringify)
     .use(highlight.remarkPlugin)
     .use(subscript.remarkPlugin)
@@ -181,19 +179,6 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
     case 'mermaid_block':
       return schema.node('mermaid_block', { value: node.value ?? '' })
 
-    case 'descriptionlist': {
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
-      return schema.node('descriptionlist', {}, children)
-    }
-
-    case 'descriptionterm':
-      return schema.node('descriptionterm', {}, parseInline(node.children ?? [], schema))
-
-    case 'descriptiondetails': {
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
-      return schema.node('descriptiondetails', {}, children)
-    }
-
     default: {
       const text = node.value ?? ''
       if (text) return schema.node('paragraph', {}, [schema.text(text)])
@@ -328,20 +313,6 @@ function serializeNode(node: ProseNode, indent = ''): string {
     case 'table':
       return serializeTable(node, indent)
 
-    case 'descriptionlist':
-      return serializeDefList(node, indent)
-
-    case 'descriptionterm':
-      return serializeContent(node)
-
-    case 'descriptiondetails': {
-      const inner = collectChildren(node).map((c) => serializeNode(c, indent)).join('\n\n')
-      return inner
-        .split('\n')
-        .map((line: string) => (line ? '    ' + line : ''))
-        .join('\n')
-    }
-
     case 'text':
       return applyMarks(node.text ?? '', node.marks ?? [])
 
@@ -470,25 +441,6 @@ function serializeTable(node: ProseNode, indent: string): string {
   })
 
   return rows.map((r) => indent + r).join('\n')
-}
-
-function serializeDefList(node: ProseNode, indent: string): string {
-  const parts: string[] = []
-  let currentTerm = ''
-  node.content.forEach((child) => {
-    if (child.type.name === 'descriptionterm') {
-      currentTerm = serializeContent(child)
-    } else if (child.type.name === 'descriptiondetails') {
-      const details = collectChildren(child).map((c) => serializeNode(c, indent)).join('\n\n')
-      const indented = details
-        .split('\n')
-        .map((line: string) => (line ? '    ' + line : ''))
-        .join('\n')
-      parts.push(currentTerm + '\n' + ':   ' + indented.trim())
-      currentTerm = ''
-    }
-  })
-  return parts.join('\n\n')
 }
 
 // --- Public API ---

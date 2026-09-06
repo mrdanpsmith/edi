@@ -603,6 +603,14 @@ def test_is_dirty_reflects_set_dirty(visible):
     assert window.is_dirty() is False
 
 
+def test_set_title_updates_window_title(visible):
+    window = visible
+    window.set_title("notes.md — Edi")
+    assert window.windowTitle() == "notes.md — Edi"
+    window.set_title("")
+    assert window.windowTitle() == "Edi"
+
+
 def test_pick_save_path_cancel_returns_none(visible, qtbot):
     window = visible
     result = {}

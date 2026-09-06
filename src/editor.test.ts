@@ -311,4 +311,42 @@ describe('BlockEditor public API', () => {
     expect(() => editor.focus()).not.toThrow()
     editor.destroy()
   })
+
+  it('notifies onChange when a user transaction changes the document', () => {
+    const onChange = vi.fn()
+    const editor = createBlockEditor(document.body, 'hello', { onChange })
+    const view = editor.getView()
+    view.dispatch(view.state.tr.insertText(
+      '!',
+      view.state.doc.content.size - 1,
+      view.state.doc.content.size - 1,
+    ))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    editor.destroy()
+  })
+
+  it('does not notify onChange for selection-only transactions', () => {
+    const onChange = vi.fn()
+    const editor = createBlockEditor(document.body, 'hello', { onChange })
+    const view = editor.getView()
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)))
+    expect(onChange).not.toHaveBeenCalled()
+    editor.destroy()
+  })
+
+  it('does not notify onChange for setMarkdown (tab switches)', () => {
+    const onChange = vi.fn()
+    const editor = createBlockEditor(document.body, 'hello', { onChange })
+    editor.setMarkdown('replaced')
+    expect(onChange).not.toHaveBeenCalled()
+    editor.destroy()
+  })
+
+  it('notifies onChange for insertMarkdown', () => {
+    const onChange = vi.fn()
+    const editor = createBlockEditor(document.body, 'hello', { onChange })
+    editor.insertMarkdown(' world')
+    expect(onChange).toHaveBeenCalled()
+    editor.destroy()
+  })
 })

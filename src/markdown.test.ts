@@ -141,24 +141,6 @@ describe('further parse paths', () => {
     expect(serialize('a  \nb')).toBe('a  \nb\n')
   })
 
-  it('serializes a description list constructed directly', () => {
-    const dl = schema.nodes.descriptionlist.create(null, [
-      schema.nodes.descriptionterm.create(null, schema.text('Term')),
-      schema.nodes.descriptiondetails.create(null, [
-        schema.nodes.paragraph.create(null, schema.text('definition 1')),
-        schema.nodes.paragraph.create(null, schema.text('definition 2')),
-      ]),
-      schema.nodes.descriptionterm.create(null, schema.text('Second')),
-      schema.nodes.descriptiondetails.create(null, [
-        schema.nodes.paragraph.create(null, schema.text('x')),
-      ]),
-    ])
-    const md = proseToMarkdown(dl)
-    expect(md).toContain('Term\n:   definition 1')
-    expect(md).toContain('definition 2')
-    expect(md).toContain('\n\nSecond\n:   x')
-  })
-
   it('round-trips subscript, superscript, and highlight marks', () => {
     expect(serialize('x~s~y')).toBe('x~s~y\n')
     expect(serialize('x^p^y')).toBe('x^p^y\n')

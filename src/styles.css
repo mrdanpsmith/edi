@@ -471,20 +471,6 @@ body {
   margin: 0.5em 0;
 }
 
-.ProseMirror dl {
-  margin: 0.5em 0;
-}
-
-.ProseMirror dt {
-  font-weight: 600;
-  margin-top: 0.5em;
-}
-
-.ProseMirror dd {
-  margin: 0 0 0.5em 1.5em;
-  color: var(--md-quote);
-}
-
 /* ── Tables ── */
 
 .ProseMirror .tableWrapper {
@@ -878,20 +864,6 @@ body {
 .md-preview sup,
 .md-preview sub {
   line-height: 0;
-}
-
-.md-preview dl {
-  margin: 0.5em 0;
-}
-
-.md-preview dt {
-  font-weight: 600;
-  margin-top: 0.5em;
-}
-
-.md-preview dd {
-  margin: 0 0 0.5em 1.5em;
-  color: var(--md-quote);
 }
 
 .md-preview .footnote-sep {

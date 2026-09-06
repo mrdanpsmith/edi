@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
-import remarkDeflist from 'remark-deflist'
 import { highlight } from './highlight'
 import { subscript } from './sub'
 import { superscript } from './sup'
@@ -27,17 +26,6 @@ function roundTripMermaid(md: string): string {
   const processor = unified()
     .use(remarkParse)
     .use(rawMermaidRemarkPlugin)
-    .use(remarkStringify)
-
-  const tree = processor.parse(md)
-  const result = processor.stringify(tree)
-  return result
-}
-
-function roundTripDeflist(md: string): string {
-  const processor = unified()
-    .use(remarkParse)
-    .use(remarkDeflist as never)
     .use(remarkStringify)
 
   const tree = processor.parse(md)
@@ -139,17 +127,5 @@ describe('runnable code block (shebang) handling', () => {
     expect(block.textContent).toBe(
       '#!/usr/bin/env python3 -m http.server\nprint("hi")',
     )
-  })
-})
-
-describe('definition list remark plugin', () => {
-  it('definition list round-trips', () => {
-    const md = 'Term\n:   Definition\n'
-    expect(roundTripDeflist(md)).toBe(md)
-  })
-
-  it('preserves definition list content through round-trip', () => {
-    const md = 'Apple\n:   A fruit\n\nBanana\n:   Another fruit\n'
-    expect(roundTripDeflist(md)).toBe(md)
   })
 })

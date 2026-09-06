@@ -97,6 +97,8 @@ const statusLeft = document.querySelector<HTMLElement>('#status-left')!
 const statusRight = document.querySelector<HTMLElement>('#status-right')!
 const tabbar = document.querySelector<HTMLElement>('#tabbar')!
 
+let lastNativeTitle = ''
+
 let blockEditor: BlockEditor | null = null
 let formatToolbar: FormatToolbar | null = null
 
@@ -123,6 +125,10 @@ function updateTitle(): void {
   const active = getActive()
   const name = active?.path ? active.path.split('/').pop()! : UNTITLED
   document.title = `${active?.dirty ? '* ' : ''}${name} — Edi`
+  if (document.title !== lastNativeTitle) {
+    lastNativeTitle = document.title
+    void invoke('setTitle', { title: document.title }).catch(() => undefined)
+  }
 }
 
 function updateStatus(): void {
@@ -542,6 +548,7 @@ function init(): void {
   const welcome = getWelcomeDocument()
   blockEditor = createBlockEditor(editorContainer, welcome, {
     onOpenLink: openLink,
+    onChange: () => setActiveDirty(true),
     resolveImageSrc: resolveImageFileUrl,
   })
   formatToolbar = new FormatToolbar(formatBar, {
@@ -576,7 +583,10 @@ function init(): void {
     paste: () => void editPaste(),
     selectAll: () => editSelectAll(),
   })
-  subscribe(() => syncDirty())
+  subscribe(() => {
+    syncDirty()
+    updateTitle()
+  })
   // Re-resolve relative image references when the active document's path
   // changes (e.g. Save As into a different directory) so they keep pointing at
   // the current document's directory.

@@ -23,42 +23,28 @@ describe('schema parseDOM', () => {
     expect(para.child(1).type.name).toBe('hard_break')
   })
 
-  it('parses a description list, source block, and mermaid block', () => {
+  it('parses a source block and mermaid block', () => {
     const container = document.createElement('div')
     container.innerHTML =
-      '<dl><dt>Term</dt><dd><p>Definition</p></dd></dl>' +
       '<div data-source-block>md text</div>' +
       '<div data-mermaid-block>graph TD\nA</div>'
     const doc = DOMParser.fromSchema(schema).parse(container)
-    expect(doc.child(0).type.name).toBe('descriptionlist')
-    expect(doc.child(0).child(0).type.name).toBe('descriptionterm')
-    expect(doc.child(0).child(1).type.name).toBe('descriptiondetails')
-    expect(doc.child(1).type.name).toBe('source_block')
-    expect(doc.child(1).attrs.markdown).toBe('md text')
-    expect(doc.child(2).type.name).toBe('mermaid_block')
-    expect(doc.child(2).attrs.value).toBe('graph TD\nA')
+    expect(doc.child(0).type.name).toBe('source_block')
+    expect(doc.child(0).attrs.markdown).toBe('md text')
+    expect(doc.child(1).type.name).toBe('mermaid_block')
+    expect(doc.child(1).attrs.value).toBe('graph TD\nA')
   })
 })
 
 describe('schema toDOM via a plain view', () => {
   it('renders custom-block HTML', () => {
-    const dl = schema.nodes.descriptionlist.create(null, [
-      schema.nodes.descriptionterm.create(null, schema.text('Term')),
-      schema.nodes.descriptiondetails.create(null, [
-        schema.nodes.paragraph.create(null, schema.text('Definition')),
-      ]),
-    ])
     const doc = schema.nodes.doc.create(null, [
-      dl,
       schema.nodes.source_block.create({ markdown: 'src' }),
       schema.nodes.mermaid_block.create({ value: 'graph TD\nA' }),
     ])
     const editor = new EditorView(document.body, {
       state: EditorState.create({ schema, doc }),
     })
-    expect(editor.dom.querySelector('dl')).not.toBeNull()
-    expect(editor.dom.querySelector('dt')?.textContent).toBe('Term')
-    expect(editor.dom.querySelector('dd')?.textContent).toBe('Definition')
     expect(editor.dom.querySelector('[data-source-block]')?.textContent).toBe('src')
     expect(editor.dom.querySelector('[data-mermaid-block]')?.textContent).toContain('graph TD')
     editor.destroy()

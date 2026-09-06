@@ -19,6 +19,7 @@ class StubWindow(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.dirty = False
+        self.title = "Edi"
         self.closed = False
         self.confirm_messages: list[str] = []
         self.alert_messages: list[str] = []
@@ -36,6 +37,9 @@ class StubWindow(QObject):
 
     def set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
+
+    def set_title(self, title: str) -> None:
+        self.title = title
 
     def update_menu_state(
         self, can_revert=False, formatting_visible=True
@@ -145,6 +149,14 @@ def test_set_dirty(bridge):
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.dirty is True
+
+
+def test_set_title(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "setTitle", {"title": "notes.md — Edi"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert window.title == "notes.md — Edi"
 
 
 def test_set_menu_state(bridge):
