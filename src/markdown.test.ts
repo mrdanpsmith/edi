@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { schema } from './schema'
-import { markdownToProse, proseToMarkdown } from './markdown'
+import { markdownToProse, proseToMarkdown, buildBlockOffsets, extractBlockMarkdown } from './markdown'
 
 function serialize(markdown: string): string {
   return proseToMarkdown(markdownToProse(markdown, schema))
@@ -115,5 +115,103 @@ describe('table round-trip', () => {
       expect(dataRow.child(i).type.name).toBe('table_cell')
     }
     expect(proseToMarkdown(doc)).toBe(markdown + '\n')
+  })
+})
+
+describe('further parse paths', () => {
+  it('records a non-default list start value', () => {
+    const doc = markdownToProse('2. b\n3. c', schema)
+    const list = doc.firstChild!
+    expect(list.type.name).toBe('ordered_list')
+    expect(list.attrs.order).toBe(2)
+    expect(serialize('2. b\n3. c')).toBe('2. b\n3. c\n')
+  })
+
+  it('turns raw html into a paragraph', () => {
+    const doc = markdownToProse('<div>hi</div>', schema)
+    expect(doc.firstChild?.type.name).toBe('paragraph')
+    expect(doc.firstChild?.textContent).toBe('<div>hi</div>')
+    expect(serialize('<div>hi</div>')).toBe('<div>hi</div>\n')
+  })
+
+  it('keeps a hard break inline', () => {
+    const doc = markdownToProse('a  \nb', schema)
+    const para = doc.firstChild!
+    expect(para.child(1).type.name).toBe('hard_break')
+    expect(serialize('a  \nb')).toBe('a  \nb\n')
+  })
+
+  it('serializes a description list constructed directly', () => {
+    const dl = schema.nodes.descriptionlist.create(null, [
+      schema.nodes.descriptionterm.create(null, schema.text('Term')),
+      schema.nodes.descriptiondetails.create(null, [
+        schema.nodes.paragraph.create(null, schema.text('definition 1')),
+        schema.nodes.paragraph.create(null, schema.text('definition 2')),
+      ]),
+      schema.nodes.descriptionterm.create(null, schema.text('Second')),
+      schema.nodes.descriptiondetails.create(null, [
+        schema.nodes.paragraph.create(null, schema.text('x')),
+      ]),
+    ])
+    const md = proseToMarkdown(dl)
+    expect(md).toContain('Term\n:   definition 1')
+    expect(md).toContain('definition 2')
+    expect(md).toContain('\n\nSecond\n:   x')
+  })
+
+  it('round-trips subscript, superscript, and highlight marks', () => {
+    expect(serialize('x~s~y')).toBe('x~s~y\n')
+    expect(serialize('x^p^y')).toBe('x^p^y\n')
+    expect(serialize('x==h==y')).toBe('x==h==y\n')
+  })
+
+  it('round-trips a code span', () => {
+    expect(serialize('a `code` b')).toBe('a `code` b\n')
+  })
+
+  it('round-trips a multi-paragraph list item', () => {
+    const md = '- a\n\n  b'
+    const doc = markdownToProse(md, schema)
+    expect(doc.firstChild?.type.name).toBe('bullet_list')
+    expect(doc.firstChild?.firstChild?.childCount).toBe(2)
+    expect(serialize(md)).toBe('- a\n  b\n')
+  })
+
+  it('keeps a shebang inside a bare code fence', () => {
+    const doc = markdownToProse('```#!python\nprint(1)\n```', schema)
+    const block = doc.firstChild!
+    expect(block.type.name).toBe('code_block')
+    expect(block.textContent.startsWith('#!python')).toBe(true)
+    expect(serialize('```#!python\nprint(1)\n```')).toBe('```\n#!python\nprint(1)\n```\n')
+  })
+
+  it('parses an empty document into an empty paragraph', () => {
+    const doc = markdownToProse('', schema)
+    expect(doc.childCount).toBeGreaterThan(0)
+    expect(doc.firstChild?.type.name).toBe('paragraph')
+  })
+})
+
+describe('block offsets', () => {
+  it('builds one offset per top-level block', () => {
+    const doc = markdownToProse('aa\n\n```js\nb\n```', schema)
+    const offsets = buildBlockOffsets(doc)
+    expect(offsets.length).toBe(2)
+    expect(offsets[0].nodePos).toBe(1)
+    expect(offsets[0].id).toBeTruthy()
+  })
+
+  it('extracts the markdown for a single block', () => {
+    const doc = markdownToProse('# title\n\ntext', schema)
+    const offsets = buildBlockOffsets(doc)
+    expect(extractBlockMarkdown(doc, offsets, offsets[0].id)).toBe('# title')
+    expect(extractBlockMarkdown(doc, offsets, offsets[1].id)).toBe('text')
+    expect(extractBlockMarkdown(doc, offsets, 'nope')).toBe('')
+  })
+
+  it('extracts a nested list item directly', () => {
+    const doc = markdownToProse('- one\n- two', schema)
+    const offsets = buildBlockOffsets(doc)
+    expect(extractBlockMarkdown(doc, offsets, offsets[0].id)).toBe('- one\n- two')
   })
 })

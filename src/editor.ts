@@ -29,7 +29,7 @@ function createInputRules() {
     return new InputRule(new RegExp(`^${'#'.repeat(level)}\\s(.*)$`, 'm'), (state, match, start, end) => {
       const text = match[1]
       const nodeType = state.schema.nodes.heading
-      const content = state.schema.text(text)
+      const content = text ? state.schema.text(text) : null
       const headingNode = nodeType.create({ level }, content)
       return state.tr.replaceWith(start, end, headingNode)
     })

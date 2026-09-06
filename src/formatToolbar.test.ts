@@ -1,10 +1,19 @@
-import { beforeEach, afterEach, describe, expect, it } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
 import { FormatToolbar, getButtons, toggleTaskItems, applyLink } from './formatToolbar'
 import type { FormatToolbarContext } from './formatToolbar'
 import { markdownToProse, proseToMarkdown } from './markdown'
+import { promptForUrl } from './urlDialog'
+
+vi.mock('./urlDialog')
+
+async function runLinkButton(view: EditorView): Promise<boolean | undefined> {
+  const ctx: FormatToolbarContext = { getView: () => view }
+  const link = getButtons(ctx).find((b) => b.title === 'Hyperlink')!
+  return link.run(view)
+}
 
 function makeFixture() {
   const bar = document.createElement('div')
@@ -381,6 +390,245 @@ describe('hyperlink', () => {
     })
     applyLink(view, 'https://example.com')
     expect(proseToMarkdown(view.state.doc)).toContain('[https://example.com](https://example.com)')
+    view.destroy()
+    host.remove()
+  })
+})
+
+describe('hyperlink dialog flow', () => {
+  beforeEach(() => {
+    vi.mocked(promptForUrl).mockReset()
+    vi.mocked(promptForUrl).mockResolvedValue('https://new.example.org')
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.mocked(promptForUrl).mockReset()
+  })
+
+  it('prefills the href of a linked selection then applies the new link', async () => {
+    const doc = markdownToProse('[hello](https://old.example.com) world', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 1, 6) }),
+    })
+    const result = await runLinkButton(view)
+    expect(result).toBe(true)
+    expect(promptForUrl).toHaveBeenCalledWith('https://old.example.com')
+    expect(proseToMarkdown(view.state.doc)).toContain('[hello](https://new.example.org)')
+    view.destroy()
+    host.remove()
+  })
+
+  it('prefills the stored link mark for a collapsed selection', async () => {
+    const doc = markdownToProse('abc', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    const linkMark = view.state.schema.marks.link.create({ href: 'https://stored.example.com', title: null })
+    view.dispatch(view.state.tr.setStoredMarks([linkMark]))
+    await runLinkButton(view)
+    expect(promptForUrl).toHaveBeenCalledWith('https://stored.example.com')
+    expect(proseToMarkdown(view.state.doc)).toContain('https://new.example.org')
+    view.destroy()
+    host.remove()
+  })
+
+  it('does nothing when the dialog is dismissed', async () => {
+    const doc = markdownToProse('plain text', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, { state: EditorState.create({ doc }) })
+    vi.mocked(promptForUrl).mockResolvedValue(null)
+    const result = await runLinkButton(view)
+    expect(result).toBe(false)
+    expect(proseToMarkdown(view.state.doc)).toBe('plain text\n')
+    view.destroy()
+    host.remove()
+  })
+})
+
+describe('command buttons', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function runTitle(title: string, view: EditorView): boolean | Promise<boolean> {
+    const ctx: FormatToolbarContext = { getView: () => view }
+    const spec = getButtons(ctx).find((b) => b.title === title)!
+    return spec.run(view)
+  }
+
+  it('toggles inline marks via the toolbar commands', () => {
+    const doc = markdownToProse('abc', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    for (const title of ['Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Strikethrough', 'Highlight', 'Subscript', 'Superscript', 'Inline code']) {
+      runTitle(title, view)
+    }
+    const markNames = (view.state.storedMarks ?? []).map((m) => m.type.name).sort()
+    expect(markNames).toEqual(['code', 'em', 'highlight', 'strikethrough', 'strong', 'sub', 'sup'])
+    view.destroy()
+    host.remove()
+  })
+
+  it('converts the block to each heading level', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('abc', schema)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    for (const [title, level] of [['Heading 1', 1], ['Heading 2', 2], ['Heading 3', 3]] as const) {
+      runTitle(title, view)
+      expect(view.state.doc.firstChild?.attrs.level).toBe(level)
+    }
+    view.destroy()
+    host.remove()
+  })
+
+  it('wraps the paragraph in a blockquote via the quote button', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('quote me', schema)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    runTitle('Blockquote', view)
+    expect(view.state.doc.firstChild?.type.name).toBe('blockquote')
+    view.destroy()
+    host.remove()
+  })
+})
+
+describe('insertCodeBlock', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function runCodeBlock(view: EditorView): boolean | Promise<boolean> {
+    const ctx: FormatToolbarContext = { getView: () => view }
+    const spec = getButtons(ctx).find((b) => b.title === 'Code block')!
+    return spec.run(view)
+  }
+
+  it('replaces a selected paragraph with a code block', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('hello world', schema)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 1, doc.content.size - 1) }),
+    })
+    runCodeBlock(view)
+    expect(proseToMarkdown(view.state.doc)).toBe('```\nhello world\n```\n')
+    view.destroy()
+    host.remove()
+  })
+
+  it('replaces an empty paragraph with a code block', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('', schema) }),
+    })
+    runCodeBlock(view)
+    expect(view.state.doc.firstChild?.type.name).toBe('code_block')
+    view.destroy()
+    host.remove()
+  })
+
+  it('inserts a code block after the current block', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('hello world', schema)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    runCodeBlock(view)
+    expect(view.state.doc.childCount).toBe(2)
+    expect(view.state.doc.lastChild?.type.name).toBe('code_block')
+    view.destroy()
+    host.remove()
+  })
+})
+
+describe('task and list toggles', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function makeListView(markdown: string): EditorView {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse(markdown, schema)
+    return new EditorView(host, {
+      state: EditorState.create({
+        doc,
+        selection: TextSelection.create(doc, Math.floor(doc.content.size / 2)),
+      }),
+    })
+  }
+
+  it('converts a regular list into a task list', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = makeListView('- item')
+    const ctx: FormatToolbarContext = { getView: () => view }
+    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    btn.run(view)
+    expect(view.state.doc.firstChild?.type.name).toBe('bullet_list')
+    expect(view.state.doc.firstChild?.child(0).attrs.checked).toBe(false)
+    view.destroy()
+    host.remove()
+  })
+
+  it('turns a multi-item task list back into a plain list', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('- [x] one\n- [ ] two', schema)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    const ctx: FormatToolbarContext = { getView: () => view }
+    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    btn.run(view)
+    const item = view.state.doc.firstChild!.child(0)
+    expect(item.type.name).toBe('list_item')
+    expect(item.attrs.checked).toBe(null)
+    view.destroy()
+    host.remove()
+  })
+
+  it('unwraps a list built from markdown', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('- one', schema)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 4) }),
+    })
+    const ctx: FormatToolbarContext = { getView: () => view }
+    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    btn.run(view)
+    expect(view.state.doc.childCount).toBe(1)
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(view.state.doc.textContent).toBe('one')
+    view.destroy()
+    host.remove()
+  })
+
+  it('returns false when toggling task items outside a list', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('plain', schema) }),
+    })
+    expect(toggleTaskItems(view)).toBe(false)
     view.destroy()
     host.remove()
   })

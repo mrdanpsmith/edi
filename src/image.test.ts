@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { Node as ProseNode } from 'prosemirror-model'
 import { createBlockEditor } from './editor'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { schema } from './schema'
+import { imageNodeView, reResolveImages } from './image'
+
+interface ShallowNodeView {
+  dom: HTMLElement
+  update?: (node: ProseNode) => boolean
+  selectNode?: () => void
+  deselectNode?: () => void
+}
+
+function makeNodeView(resolve: (src: string) => string): (node: ProseNode) => ShallowNodeView {
+  return imageNodeView(resolve) as unknown as (node: ProseNode) => ShallowNodeView
+}
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -69,5 +82,55 @@ describe('image parsing and rendering', () => {
     const img = view.dom.querySelector<HTMLImageElement>('img.edi-image')
     expect(img!.getAttribute('title')).toBe('dog.png')
     view.destroy()
+  })
+})
+
+describe('image nodeView lifecycle', () => {
+  it('adds and removes the selected-node class on select/deselect', () => {
+    const node = schema.nodes.image.create({ src: 'a.png', alt: 'alt' })
+    const nv = makeNodeView((src) => `resolved/${src}`)(node)
+    nv.selectNode!()
+    expect(nv.dom.classList.contains('ProseMirror-selectednode')).toBe(true)
+    nv.deselectNode!()
+    expect(nv.dom.classList.contains('ProseMirror-selectednode')).toBe(false)
+  })
+
+  it('re-renders the img when the node attrs change', () => {
+    const a = schema.nodes.image.create({ src: 'a.png', alt: 'A' })
+    const b = schema.nodes.image.create({ src: 'b.png', alt: 'B' })
+    const nv = makeNodeView((src) => `resolved/${src}`)(a)
+    expect(nv.update!(b)).toBe(true)
+    expect(nv.dom.getAttribute('src')).toBe('resolved/b.png')
+    expect(nv.dom.getAttribute('title')).toBe('B')
+    expect(nv.dom.dataset.src).toBe('b.png')
+    // Updating with a different node type is rejected.
+    expect(nv.update!(schema.nodes.paragraph.create())).toBe(false)
+  })
+
+  it('keeps the img untouched when attrs are unchanged', () => {
+    const a = schema.nodes.image.create({ src: 'a.png', alt: 'A' })
+    const nv = makeNodeView((src) => `resolved/${src}`)(a)
+    expect(nv.update!(schema.nodes.image.create({ src: 'a.png', alt: 'A' }))).toBe(true)
+    expect(nv.dom.getAttribute('src')).toBe('resolved/a.png')
+  })
+})
+
+describe('reResolveImages', () => {
+  it('re-resolves only edi-image elements that carry a dataset.src', () => {
+    const host = document.createElement('div')
+    host.innerHTML =
+      '<img class="edi-image" data-src="./a.png">' +
+      '<img data-src="./b.png">' +
+      '<img class="edi-image">'
+    const seen: string[] = []
+    reResolveImages(host, (src) => {
+      seen.push(src)
+      return `new/${src}`
+    })
+    const imgs = host.querySelectorAll<HTMLImageElement>('img')
+    expect(imgs.item(0).getAttribute('src')).toBe('new/./a.png')
+    expect(imgs.item(1).getAttribute('src')).toBeNull()
+    expect(imgs.item(2).getAttribute('src')).toBeNull()
+    expect(seen).toEqual(['./a.png'])
   })
 })
