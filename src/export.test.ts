@@ -35,7 +35,8 @@ describe('buildExportHtml', () => {
     const html = buildExportHtml('T', '')
     expect(html).toContain('cdn.jsdelivr.net/npm/mermaid@11')
     expect(html).toContain('mermaid.initialize')
-    expect(html).toContain('startOnLoad:true')
+    expect(html).toContain('startOnLoad:false')
+    expect(html).toContain('mermaid.run')
   })
 
   it('does not set loose security level', () => {

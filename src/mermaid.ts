@@ -41,6 +41,81 @@ export function errorBlock(message: string): HTMLElement {
   return el
 }
 
+export function responsifySvg(svg: SVGSVGElement): number | null {
+  const parts = (svg.getAttribute('viewBox') ?? '').trim().split(/\s+/).map(Number)
+  const natural = parts.length === 4 && Number.isFinite(parts[2]) && parts[2] > 0 ? parts[2] : null
+
+  svg.style.height = 'auto'
+  svg.style.maxWidth = 'none'
+  svg.style.minWidth = ''
+  svg.style.width = natural !== null ? `${natural}px` : '100%'
+  return natural
+}
+
+const ZOOM_STEP = 1.25
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 4
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function createToolbarButton(label: string, title: string): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'mermaid-toolbar-btn'
+  button.textContent = label
+  button.title = title
+  button.setAttribute('aria-label', title)
+  return button
+}
+
+export function attachMermaidToolbar(host: HTMLElement, svg: SVGSVGElement, natural: number | null): void {
+  const zoomOut = createToolbarButton('−', 'Zoom out')
+  const zoomIn = createToolbarButton('+', 'Zoom in')
+  const reset = createToolbarButton('100%', 'Reset zoom')
+
+  const bar = document.createElement('div')
+  bar.className = 'mermaid-toolbar'
+  bar.append(zoomOut, zoomIn, reset)
+  host.appendChild(bar)
+
+  if (natural === null) {
+    zoomOut.disabled = true
+    zoomIn.disabled = true
+    reset.disabled = true
+    return
+  }
+
+  let factor = 1
+
+  const applyZoom = (): void => {
+    svg.style.width = `${natural * factor}px`
+    svg.style.minWidth = '0'
+    svg.style.maxWidth = 'none'
+    svg.style.height = 'auto'
+  }
+
+  const resetZoom = (): void => {
+    factor = 1
+    responsifySvg(svg)
+  }
+
+  bar.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+  })
+  zoomIn.addEventListener('click', () => {
+    factor = clamp(factor * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+    applyZoom()
+  })
+  zoomOut.addEventListener('click', () => {
+    factor = clamp(factor / ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+    applyZoom()
+  })
+  reset.addEventListener('click', resetZoom)
+}
+
 export async function renderPendingMermaid(container: HTMLElement): Promise<void> {
   const pending = collectPendingMermaid(container)
   if (pending.length === 0) {
@@ -61,6 +136,11 @@ export async function renderPendingMermaid(container: HTMLElement): Promise<void
       holder.className = MERMAID_CLASS
       holder.dataset.state = 'done'
       holder.innerHTML = svg
+      const svgEl = holder.querySelector<SVGSVGElement>('svg')
+      if (svgEl) {
+        const natural = responsifySvg(svgEl)
+        attachMermaidToolbar(holder, svgEl, natural)
+      }
       el.replaceWith(holder)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

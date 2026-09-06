@@ -258,8 +258,6 @@ body {
 /* ── ProseMirror editor ── */
 
 .ProseMirror {
-  max-width: 46rem;
-  margin: 0 auto;
   padding: 16px 24px 48px;
   outline: none;
   font-size: 14px;
@@ -540,16 +538,58 @@ body {
 }
 .ProseMirror .mermaid .mermaid-preview {
   overflow-x: auto;
-  display: flex;
-  justify-content: center;
 }
 .ProseMirror .mermaid .block-handle {
   z-index: 2;
 }
 
 .ProseMirror .mermaid svg {
-  max-width: 100%;
-  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.mermaid-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 150ms;
+  user-select: none;
+}
+
+.mermaid:hover > .mermaid-toolbar {
+  opacity: 1;
+}
+
+.mermaid-toolbar-btn {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 6px;
+  min-width: 24px;
+  cursor: pointer;
+}
+
+.mermaid-toolbar-btn:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.mermaid-toolbar-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
 }
 
 .ProseMirror .mermaid-error {

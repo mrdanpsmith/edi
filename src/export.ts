@@ -58,8 +58,6 @@ body {
 }
 
 .md-preview {
-  max-width: 46rem;
-  margin: 0 auto;
   padding: 16px 24px 48px;
 }
 
@@ -185,15 +183,13 @@ body {
 }
 
 .md-preview .mermaid {
-  display: flex;
-  justify-content: center;
   margin: 1em 0;
   overflow-x: auto;
 }
 
 .md-preview .mermaid svg {
-  max-width: 100%;
-  height: auto;
+  display: block;
+  margin: 0 auto;
 }
 
 .md-preview .mermaid-error {
@@ -242,7 +238,21 @@ export function buildExportHtml(title: string, bodyHtml: string): string {
     <meta name="color-scheme" content="light dark" />
     <title>${escapeHtml(title)}</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-    <script>mermaid.initialize({startOnLoad:true,theme:'default'})</script>
+    <script>
+      mermaid.initialize({startOnLoad:false,theme:'default'})
+      mermaid.run({ querySelector: '.mermaid' })
+        .catch(() => {})
+        .finally(() => {
+          for (const svg of document.querySelectorAll('.mermaid svg')) {
+            const parts = (svg.getAttribute('viewBox') ?? '').trim().split(/\\s+/).map(Number)
+            svg.style.height = 'auto'
+            svg.style.maxWidth = 'none'
+            if (parts.length === 4 && Number.isFinite(parts[2]) && parts[2] > 0) {
+              svg.style.width = parts[2] + 'px'
+            }
+          }
+        })
+    </script>
     <style>${EXPORT_CSS}</style>
   </head>
   <body>

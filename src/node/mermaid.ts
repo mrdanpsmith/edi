@@ -3,7 +3,7 @@ import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
 import { blockNodeView } from '../blockview'
-import { loadMermaid, errorBlock } from '../mermaid'
+import { loadMermaid, errorBlock, responsifySvg, attachMermaidToolbar } from '../mermaid'
 import { BLOCK_PLUGIN_KEY } from '../blockplugin'
 import { markdownToProse, serializeBlock } from '../markdown'
 import { createBlockCodeMirror } from '../codemirror-block'
@@ -209,6 +209,11 @@ class MermaidNodeView implements NodeView {
       const id = `mermaid-node-${Date.now()}-${seed++}`
       const { svg } = await mermaid.render(id, code)
       container.innerHTML = svg
+      const svgEl = container.querySelector<SVGSVGElement>('svg')
+      if (svgEl) {
+        const natural = responsifySvg(svgEl)
+        attachMermaidToolbar(this.dom, svgEl, natural)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       container.innerHTML = ''

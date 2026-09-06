@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { EditorState } from 'prosemirror-state'
@@ -10,6 +10,18 @@ import { mermaidNodeViewPlugin } from './node/mermaid'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { serializeBlock } from './markdown'
 import { Plugin } from 'prosemirror-state'
+
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn().mockResolvedValue({
+      svg: '<svg viewBox="0 0 900 300"></svg>',
+      diagramType: 'base',
+    }),
+  },
+}))
+
+import * as mermaidModule from 'mermaid'
 
 function createEditor(initialMarkdown: string) {
   const doc = markdownToProse(initialMarkdown, schema)
@@ -55,6 +67,11 @@ function blockNodeAt(view: EditorView, pos: number): ProseNode | null {
 
 beforeEach(() => {
   document.body.innerHTML = ''
+  window.matchMedia = ((_query: string) => ({
+    matches: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia
 })
 
 describe('blockPlugin state', () => {
@@ -506,6 +523,56 @@ describe('mermaid block handles', () => {
     const md = proseToMarkdown(view.state.doc)
     expect(md).toContain('graph TD')
     expect(md).toContain('A-->B')
+    view.destroy()
+  })
+})
+
+describe('mermaid visual mode rendering', () => {
+  beforeEach(() => {
+    vi.mocked(mermaidModule.default.render).mockReset()
+    vi.mocked(mermaidModule.default.render).mockResolvedValue({
+      svg: '<svg viewBox="0 0 900 300"><rect width="900" height="300"></rect></svg>',
+      diagramType: 'flowchart-elk',
+    })
+  })
+
+  it('renders the diagram at natural size and attaches the zoom toolbar', async () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    const block = view.dom.querySelector<HTMLElement>('.mermaid')
+    expect(block).not.toBeNull()
+
+    const svg = block!.querySelector<SVGSVGElement>('.mermaid-preview svg')
+    expect(svg).not.toBeNull()
+    expect(svg!.style.width).toBe('900px')
+    expect(svg!.style.maxWidth).toBe('none')
+
+    const bar = block!.querySelector<HTMLElement>('.mermaid-toolbar')
+    expect(bar).not.toBeNull()
+
+    const zoomIn = Array.from(bar!.querySelectorAll('button')).find((b) => b.textContent === '+')
+    zoomIn!.click()
+    expect(svg!.style.width).toBe('1125px')
+
+    view.destroy()
+  })
+
+  it('renders an error block when the diagram fails to render', async () => {
+    vi.mocked(mermaidModule.default.render).mockRejectedValue(new Error('syntax error near line 1'))
+    const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    const error = view.dom.querySelector<HTMLElement>('.mermaid-error')
+    expect(error).not.toBeNull()
+    expect(error!.textContent).toContain('syntax error near line 1')
+
     view.destroy()
   })
 })
