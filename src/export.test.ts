@@ -39,6 +39,21 @@ describe('buildExportHtml', () => {
     expect(html).toContain('mermaid.run')
   })
 
+  it('runs mermaid after the body is parsed so diagrams are found', () => {
+    const body = '<div class="md-preview"><div class="mermaid">graph TD</div></div>'
+    const html = buildExportHtml('T', body)
+    expect(html.indexOf('<script src="https://cdn.jsdelivr.net')).toBeGreaterThan(html.indexOf('<body>'))
+    expect(html.indexOf('mermaid.run')).toBeGreaterThan(body.length)
+  })
+
+  it('styles task list items beside their checkbox without a bullet', () => {
+    const html = buildExportHtml('T', '')
+    expect(html).toContain('.md-preview li[data-checked]')
+    expect(html).toContain('list-style: none')
+    expect(html).toContain('display: flex')
+    expect(html).toContain('align-items: baseline')
+  })
+
   it('does not set loose security level', () => {
     const html = buildExportHtml('T', '')
     expect(html).not.toContain('securityLevel')
@@ -107,6 +122,17 @@ describe('serializeDocToHtml', () => {
     expect(html).toContain('data-checked="false"')
     expect(html).toContain('done')
     expect(html).toContain('todo')
+  })
+
+  it('renders task list checkboxes disabled but with checked state preserved', () => {
+    const html = serializeDocToHtml(docFrom('- [x] done\n- [ ] todo'))
+    const inputs = html.match(/<input[^>]*data-task-check[^>]*>/g) ?? []
+    expect(inputs).toHaveLength(2)
+    for (const input of inputs) {
+      expect(input).toContain('disabled="true"')
+    }
+    expect(inputs[0]).toContain('checked="true"')
+    expect(inputs[1]).not.toContain('checked=')
   })
 
   it('renders tables', () => {

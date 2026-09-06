@@ -170,10 +170,23 @@ body {
   margin-top: 0.25em;
 }
 
-.md-preview input[type='checkbox'] {
-  margin-right: 0.4em;
-  vertical-align: -0.1em;
+.md-preview li[data-checked] {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+}
+
+.md-preview li[data-checked] > input[type='checkbox'] {
+  margin: 0 0.4em 0 0;
+  margin-top: 0.35em;
+  flex-shrink: 0;
+  cursor: pointer;
   accent-color: var(--accent);
+}
+
+.md-preview li[data-checked] p {
+  margin: 0;
 }
 
 .md-preview hr {
@@ -220,6 +233,16 @@ export function serializeDocToHtml(doc: ProseNode): string {
     return ['pre', ['code', markdown]]
   }
 
+  nodes.list_item = (node) => {
+    const checked = node.attrs.checked as boolean | null
+    if (checked === null) return ['li', 0]
+    return [
+      'li', { 'data-checked': String(checked) },
+      ['input', { type: 'checkbox', 'data-task-check': '', disabled: true, ...(checked ? { checked: true } : {}) }],
+      ['div', 0],
+    ]
+  }
+
   const serializer = new DOMSerializer(nodes, base.marks)
   const fragment = serializer.serializeFragment(doc.content)
   const div = document.createElement('div')
@@ -237,6 +260,10 @@ export function buildExportHtml(title: string, bodyHtml: string): string {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>${escapeHtml(title)}</title>
+    <style>${EXPORT_CSS}</style>
+  </head>
+  <body>
+${bodyHtml}
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
     <script>
       mermaid.initialize({startOnLoad:false,theme:'default'})
@@ -253,10 +280,6 @@ export function buildExportHtml(title: string, bodyHtml: string): string {
           }
         })
     </script>
-    <style>${EXPORT_CSS}</style>
-  </head>
-  <body>
-${bodyHtml}
   </body>
 </html>
 `
