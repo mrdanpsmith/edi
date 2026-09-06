@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QUrl, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QSize, QUrl, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
@@ -78,6 +78,13 @@ def visible(window, qtbot):
         window.show()
     qtbot.waitUntil(window.isVisible, timeout=3000)
     return window
+
+
+def test_window_minimum_size(window):
+    assert window.minimumSize() == QSize(800, 560)
+    window.resize(100, 100)
+    assert window.size() == window.minimumSize()
+    window.resize(1280, 800)
 
 
 def _call_confirm(window):

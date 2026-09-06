@@ -222,6 +222,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Edi")
+        self.setMinimumSize(800, 560)
         icon = load_app_icon()
         if icon is not None:
             self.setWindowIcon(icon)
