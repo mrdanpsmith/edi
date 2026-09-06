@@ -18,7 +18,7 @@ from .window import MainWindow, load_app_icon
 _PROBE_JS = """
     window.__selftest = {
       title: document.title,
-      cm: !!document.querySelector('.cm-content'),
+      editor: !!document.querySelector('.ProseMirror'),
       mermaid: !!document.querySelector('.mermaid'),
       bridge: !!window.bridge,
       ping: null,
@@ -58,7 +58,7 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
             return
 
         def on_done(v: object) -> None:
-            ok = isinstance(v, str) and '"cm":true' in v and '"mermaid":true' in v
+            ok = isinstance(v, str) and '"editor":true' in v and '"mermaid":true' in v
             icon_ok = load_app_icon() is not None
             data: dict = {}
             if isinstance(v, str):

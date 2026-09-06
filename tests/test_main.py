@@ -192,7 +192,7 @@ def test_run_selftest_passes_and_exits_zero(monkeypatch, capsys):
     app = _app()
     exits = _patch_selftest_harness(monkeypatch)
     page = _FakePage(
-        snapshot='{"title":"Edi","cm":true,"mermaid":true,"bridge":true,"ping":true}'
+        snapshot='{"title":"Edi","editor":true,"mermaid":true,"bridge":true,"ping":true}'
     )
     monkeypatch.setattr(main_module, "load_app_icon", lambda: object())
 
@@ -204,7 +204,7 @@ def test_run_selftest_passes_and_exits_zero(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert out.startswith("SELFTEST ")
     payload = json.loads(out[len("SELFTEST ") :])
-    assert payload["cm"] is True
+    assert payload["editor"] is True
     assert payload["mermaid"] is True
     assert payload["icon"] is True
     assert exits == [0]
@@ -213,7 +213,7 @@ def test_run_selftest_passes_and_exits_zero(monkeypatch, capsys):
 def test_run_selftest_waits_for_page_load(monkeypatch, capsys):
     app = _app()
     exits = _patch_selftest_harness(monkeypatch)
-    page = _FakePage(snapshot='{"cm":true,"mermaid":true}')
+    page = _FakePage(snapshot='{"editor":true,"mermaid":true}')
     monkeypatch.setattr(main_module, "load_app_icon", lambda: object())
 
     main_module._run_selftest(app, _FakeWindow(page))
@@ -242,7 +242,7 @@ def test_run_selftest_failure_exits_nonzero(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     payload = json.loads(out[len("SELFTEST ") :])
-    assert payload.get("cm") is not True
+    assert payload.get("editor") is not True
     assert exits == [1]
 
 
