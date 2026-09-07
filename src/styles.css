@@ -1147,6 +1147,41 @@ body {
   letter-spacing: 1px;
 }
 
+.masked-field-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.masked-field-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.masked-field-btn:hover {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--surface-raised);
+}
+
+.masked-field-btn svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
 .masked-field.masked-field-revealed {
   border-color: var(--accent);
   background: var(--surface-raised);

@@ -35,22 +35,31 @@ function errorLine(): HTMLDivElement {
   return error
 }
 
+export interface PasswordPromptOptions {
+  okText?: string
+  title?: string
+}
+
 /**
  * Prompt for the password of a single masked field. Resolves with the password
  * (or ``null`` on cancel). When ``validate`` is provided it is run on OK; a
  * non-``true`` return keeps the dialog open and shows the returned string as an
  * inline error (used to surface "incorrect password" without closing).
+ *
+ * ``opts.okText`` / ``opts.title`` customize the action button and dialog title
+ * (the default "Unlock" does not fit the create/re-encrypt flows).
  */
 export function promptForPassword(
   context: string,
   validate?: (password: string) => Promise<true | string>,
+  opts?: PasswordPromptOptions,
 ): Promise<string | null> {
   return new Promise((resolve) => {
     const { overlay, box, close } = createDialog()
 
     const title = document.createElement('div')
     title.className = 'edi-dialog-title'
-    title.textContent = `Enter password for ${context}`
+    title.textContent = opts?.title ?? `Enter password for ${context}`
     box.append(title)
 
     const label = document.createElement('label')
@@ -97,7 +106,7 @@ export function promptForPassword(
     const ok = document.createElement('button')
     ok.type = 'button'
     ok.className = 'fmt-btn fmt-primary'
-    ok.textContent = 'Unlock'
+    ok.textContent = opts?.okText ?? 'Unlock'
     actions.append(ok)
 
     box.append(actions)
@@ -107,7 +116,11 @@ export function promptForPassword(
       resolve(value)
     }
 
+    let submitting = false
+
     function submit(): void {
+      if (submitting) return
+      submitting = true
       const password = input.value
       if (!validate) {
         finish(password)
@@ -117,6 +130,7 @@ export function promptForPassword(
         if (result === true) {
           finish(password)
         } else {
+          submitting = false
           error.textContent = result
           error.hidden = false
           input.focus()

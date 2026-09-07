@@ -10,6 +10,11 @@ export const MASKED_TYPE = 'masked_field'
 const MASKED_TOKEN = 'maskedField'
 const MASKED_BULLETS = '••••••••••••'
 
+const EYE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
+
 // --- Syntax helpers ---------------------------------------------------------
 
 export function validateMaskedLabel(label: string): string | null {
@@ -48,6 +53,39 @@ export function maskedFieldToMarkdown(content: string, label: string): string {
     .replace(/"/gu, '\\"')
   const suffix = cleaned ? `{label="${cleaned}"}` : ''
   return `!masked[${content}]${suffix}`
+}
+
+// --- Clipboard ---------------------------------------------------------------
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      // QtWebEngine's async Clipboard API can return a promise that never
+      // settles; bail out quickly and fall back to the legacy path.
+      await Promise.race([
+        navigator.clipboard.writeText(text),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('clipboard timeout')), 400)),
+      ])
+      return true
+    } catch {
+      // fall through to the legacy path below
+    }
+  }
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } catch {
+    ok = false
+  }
+  ta.remove()
+  return ok
 }
 
 // --- Micromark extension -----------------------------------------------------
@@ -228,6 +266,7 @@ class MaskedFieldNodeView implements NodeView {
   private editCancelled = false
   private awaitingPassword = false
   private destroyed = false
+  private copiedTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -239,6 +278,7 @@ class MaskedFieldNodeView implements NodeView {
     this.dom.addEventListener('mousedown', (e) => e.preventDefault())
     this.dom.addEventListener('click', (e) => {
       e.preventDefault()
+      if ((e.target as HTMLElement).closest('.masked-field-btn')) return
       void this.onClick()
     })
     this.dom.addEventListener('dblclick', (e) => {
@@ -296,13 +336,61 @@ class MaskedFieldNodeView implements NodeView {
       value.className = 'masked-field-value'
       value.textContent = this.plaintext
       this.dom.appendChild(value)
-      return
+    } else {
+      const dots = document.createElement('span')
+      dots.className = 'masked-field-dots'
+      dots.textContent = label ? `${MASKED_BULLETS} (${label})` : MASKED_BULLETS
+      this.dom.appendChild(dots)
     }
 
-    const dots = document.createElement('span')
-    dots.className = 'masked-field-dots'
-    dots.textContent = label ? `${MASKED_BULLETS} (${label})` : MASKED_BULLETS
-    this.dom.appendChild(dots)
+    this.dom.appendChild(this.buildActions(revealed))
+  }
+
+  private buildActions(revealed: boolean): HTMLElement {
+    const actions = document.createElement('span')
+    actions.className = 'masked-field-actions'
+
+    const eye = this.buildButton(
+      revealed ? EYE_OFF_ICON : EYE_ICON,
+      revealed ? 'Hide value' : 'Show value',
+      'masked-field-eye',
+      () => {
+        if (revealed) {
+          this.hide()
+        } else {
+          void this.unlockAndShow()
+        }
+      },
+    )
+    actions.appendChild(eye)
+
+    const copy = this.buildButton(COPY_ICON, 'Copy value', 'masked-field-copy', () => {
+      void this.copyValue()
+    })
+    actions.appendChild(copy)
+
+    return actions
+  }
+
+  private buildButton(
+    iconSvg: string,
+    title: string,
+    cls: string,
+    onClick: () => void,
+  ): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = `masked-field-btn ${cls}`
+    button.title = title
+    button.setAttribute('aria-label', title)
+    button.innerHTML = iconSvg
+    button.addEventListener('mousedown', (e) => e.preventDefault())
+    button.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      onClick()
+    })
+    return button
   }
 
   private async onClick(): Promise<void> {
@@ -335,6 +423,52 @@ class MaskedFieldNodeView implements NodeView {
       return false
     }
     return this.setRevealed(true)
+  }
+
+  private async copyValue(): Promise<void> {
+    if (this.editActive) return
+    if (this.plaintext !== null) {
+      if (await copyToClipboard(this.plaintext)) this.flashCopied()
+      return
+    }
+    const pos = this.getPos()
+    if (pos === undefined) return
+    const node = this.view.state.doc.nodeAt(pos)
+    if (!node || node.type.name !== MASKED_TYPE) return
+    const label = String(node.attrs.label ?? '')
+    const content = String(node.attrs.content ?? '')
+    let copied = false
+    const password = await promptForPassword(label || 'encrypted field', async (pw) => {
+      try {
+        const value = await decryptField(content, pw)
+        copied = await copyToClipboard(value)
+        return true
+      } catch {
+        copied = false
+        return 'Incorrect password'
+      }
+    })
+    if (password !== null && copied) {
+      this.flashCopied()
+    }
+  }
+
+  private flashCopied(): void {
+    const button = this.dom.querySelector<HTMLButtonElement>('.masked-field-copy')
+    if (!button) return
+    button.innerHTML = CHECK_ICON
+    button.title = 'Copied'
+    button.setAttribute('aria-label', 'Copied')
+    if (this.copiedTimer !== null) clearTimeout(this.copiedTimer)
+    this.copiedTimer = setTimeout(() => {
+      this.copiedTimer = null
+      if (this.destroyed) return
+      const target = this.dom.querySelector<HTMLButtonElement>('.masked-field-copy')
+      if (!target) return
+      target.innerHTML = COPY_ICON
+      target.title = 'Copy value'
+      target.setAttribute('aria-label', 'Copy value')
+    }, 1200)
   }
 
   private hide(): void {
@@ -454,6 +588,10 @@ class MaskedFieldNodeView implements NodeView {
     this.destroyed = true
     this.plaintext = null
     this.dom.textContent = ''
+    if (this.copiedTimer !== null) {
+      clearTimeout(this.copiedTimer)
+      this.copiedTimer = null
+    }
   }
 }
 
@@ -473,7 +611,11 @@ export const maskedFieldNodeViewPlugin = new Plugin({
 export async function insertMaskedFieldCommand(view: EditorView): Promise<boolean> {
   const created = await promptForSecretCreate()
   if (!created) return false
-  const password = await promptForPassword(created.label || 'encrypted field')
+  const password = await promptForPassword(
+    created.label || 'encrypted field',
+    undefined,
+    { okText: 'Encrypt', title: `Set password for ${created.label || 'this field'}` },
+  )
   if (password === null) return false
   try {
     const envelope = await encryptFieldVerified(created.value, password)
