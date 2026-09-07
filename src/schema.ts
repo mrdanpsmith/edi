@@ -194,8 +194,6 @@ const nodes: SchemaSpec['nodes'] = {
     attrs: {
       content: { default: '' },
       label: { default: '' },
-      // Transient UI state — stripped during markdown serialization.
-      revealed: { default: false },
     },
     parseDOM: [{
       tag: 'span[data-masked-field]',

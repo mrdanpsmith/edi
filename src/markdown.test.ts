@@ -222,19 +222,19 @@ describe('masked field round-trip', () => {
     expect(node.type.name).toBe('masked_field')
     expect(node.attrs.content).toBe('AQIDBA==')
     expect(node.attrs.label).toBe('Recovery')
-    expect(node.attrs.revealed).toBe(false)
   })
 
-  it('never serializes the transient revealed attribute', () => {
-    const field = schema.nodes.masked_field.create({ content: 'ct', label: 'L', revealed: true })
+  it('never serializes any reveal state — the node model only holds content and label', () => {
+    const field = schema.nodes.masked_field.create({ content: 'ct', label: 'L' })
     const doc = schema.node('doc', null, [schema.node('paragraph', null, [field])])
+    expect(Object.keys(field.attrs).sort()).toEqual(['content', 'label'])
     const out = proseToMarkdown(doc)
     expect(out).toBe('!masked[ct]{label="L"}\n')
     expect(out).not.toContain('revealed')
   })
 
   it('strips rejected label characters during serialization', () => {
-    const field = schema.nodes.masked_field.create({ content: 'ct', label: 'a]b', revealed: false })
+    const field = schema.nodes.masked_field.create({ content: 'ct', label: 'a]b' })
     const doc = schema.node('doc', null, [schema.node('paragraph', null, [field])])
     expect(proseToMarkdown(doc)).toBe('!masked[ct]{label="ab"}\n')
   })

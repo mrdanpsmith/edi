@@ -14,6 +14,7 @@ const EYE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
 const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
 const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
+const EDIT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>'
 
 // --- Syntax helpers ---------------------------------------------------------
 
@@ -262,11 +263,13 @@ class MaskedFieldNodeView implements NodeView {
   private view: EditorView
   private getPos: () => number | undefined
   private plaintext: string | null = null
+  private unlockedContent = ''
   private editActive = false
   private editCancelled = false
   private awaitingPassword = false
   private destroyed = false
   private copiedTimer: ReturnType<typeof setTimeout> | null = null
+  private clickTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -279,23 +282,33 @@ class MaskedFieldNodeView implements NodeView {
     this.dom.addEventListener('click', (e) => {
       e.preventDefault()
       if ((e.target as HTMLElement).closest('.masked-field-btn')) return
-      void this.onClick()
+      this.scheduleToggle()
     })
     this.dom.addEventListener('dblclick', (e) => {
       e.preventDefault()
+      // A double click arrives after two single clicks; cancel the pending
+      // toggle so the first click does not reveal/hide before we edit.
+      if (this.clickTimer !== null) {
+        clearTimeout(this.clickTimer)
+        this.clickTimer = null
+      }
       void this.onEditStart()
     })
     this.render()
+  }
 
-    if (node.attrs['revealed']) {
-      queueMicrotask(() => this.dropStaleReveal())
-    }
+  private scheduleToggle(): void {
+    if (this.clickTimer !== null) clearTimeout(this.clickTimer)
+    this.clickTimer = setTimeout(() => {
+      this.clickTimer = null
+      void this.onClick()
+    }, 240)
   }
 
   private render(): void {
     const content = String(this.node.attrs.content ?? '')
     const label = String(this.node.attrs.label ?? '')
-    const revealed = Boolean(this.node.attrs['revealed']) && this.plaintext !== null
+    const revealed = this.plaintext !== null
 
     this.dom.dataset.content = content
     this.dom.dataset.label = label
@@ -369,6 +382,11 @@ class MaskedFieldNodeView implements NodeView {
     })
     actions.appendChild(copy)
 
+    const edit = this.buildButton(EDIT_ICON, 'Edit value', 'masked-field-edit-btn', () => {
+      void this.onEditStart()
+    })
+    actions.appendChild(edit)
+
     return actions
   }
 
@@ -409,20 +427,26 @@ class MaskedFieldNodeView implements NodeView {
     if (!node || node.type.name !== MASKED_TYPE) return false
     const label = String(node.attrs.label ?? '')
     const content = String(node.attrs.content ?? '')
+    if (content === '') return false
     const password = await promptForPassword(label || 'encrypted field', async (pw) => {
       try {
-        this.plaintext = await decryptField(content, pw)
+        const value = await decryptField(content, pw)
+        this.plaintext = value
+        this.unlockedContent = content
         return true
       } catch {
         this.plaintext = null
+        this.unlockedContent = ''
         return 'Incorrect password'
       }
     })
     if (password === null) {
       this.plaintext = null
+      this.unlockedContent = ''
       return false
     }
-    return this.setRevealed(true)
+    this.render()
+    return true
   }
 
   private async copyValue(): Promise<void> {
@@ -437,6 +461,7 @@ class MaskedFieldNodeView implements NodeView {
     if (!node || node.type.name !== MASKED_TYPE) return
     const label = String(node.attrs.label ?? '')
     const content = String(node.attrs.content ?? '')
+    if (content === '') return
     let copied = false
     const password = await promptForPassword(label || 'encrypted field', async (pw) => {
       try {
@@ -473,19 +498,8 @@ class MaskedFieldNodeView implements NodeView {
 
   private hide(): void {
     this.plaintext = null
-    if (!this.setRevealed(false)) this.render()
-  }
-
-  private setRevealed(revealed: boolean): boolean {
-    const pos = this.getPos()
-    if (pos === undefined) return false
-    const node = this.view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== MASKED_TYPE) return false
-    if (Boolean(node.attrs['revealed']) === revealed) return true
-    const tr = this.view.state.tr
-    tr.setNodeMarkup(pos, undefined, { ...node.attrs, revealed })
-    this.view.dispatch(tr)
-    return true
+    this.unlockedContent = ''
+    this.render()
   }
 
   private async onEditStart(): Promise<void> {
@@ -496,10 +510,13 @@ class MaskedFieldNodeView implements NodeView {
     if (!node || node.type.name !== MASKED_TYPE) return
     const label = String(node.attrs.label ?? '')
     const content = String(node.attrs.content ?? '')
+    if (content === '') return
     if (this.plaintext === null) {
       const password = await promptForPassword(label || 'encrypted field', async (pw) => {
         try {
-          this.plaintext = await decryptField(content, pw)
+          const value = await decryptField(content, pw)
+          this.plaintext = value
+          this.unlockedContent = content
           return true
         } catch {
           this.plaintext = null
@@ -530,7 +547,11 @@ class MaskedFieldNodeView implements NodeView {
       return
     }
     const label = String(node.attrs.label ?? '')
-    const password = await promptForPassword(label || 'encrypted field')
+    const password = await promptForPassword(
+      label || 'encrypted field',
+      undefined,
+      { okText: 'Encrypt', title: `Set password for ${label || 'this field'}` },
+    )
     this.awaitingPassword = false
     if (password === null) {
       this.render()
@@ -540,12 +561,14 @@ class MaskedFieldNodeView implements NodeView {
     try {
       const envelope = await encryptFieldVerified(value, password)
       this.plaintext = value
+      this.unlockedContent = envelope
       const tr = this.view.state.tr
-      tr.setNodeMarkup(pos, undefined, { content: envelope, label, revealed: true })
+      tr.setNodeMarkup(pos, undefined, { content: envelope, label })
       this.view.dispatch(tr)
       this.view.focus()
     } catch {
       this.plaintext = null
+      this.unlockedContent = ''
       this.render()
       this.view.focus()
     }
@@ -557,21 +580,13 @@ class MaskedFieldNodeView implements NodeView {
     this.render()
   }
 
-  private dropStaleReveal(): void {
-    if (this.destroyed) return
-    const pos = this.getPos()
-    if (pos === undefined) return
-    const node = this.view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== MASKED_TYPE || !node.attrs['revealed']) return
-    const tr = this.view.state.tr
-    tr.setNodeMarkup(pos, undefined, { ...node.attrs, revealed: false })
-    this.view.dispatch(tr)
-  }
-
   update(node: ProseNode): boolean {
     if (node.type.name !== MASKED_TYPE) return false
+    if (this.plaintext !== null && String(node.attrs.content ?? '') !== this.unlockedContent) {
+      this.plaintext = null
+      this.unlockedContent = ''
+    }
     this.node = node
-    if (!node.attrs['revealed']) this.plaintext = null
     this.render()
     return true
   }
@@ -587,10 +602,15 @@ class MaskedFieldNodeView implements NodeView {
   destroy(): void {
     this.destroyed = true
     this.plaintext = null
+    this.unlockedContent = ''
     this.dom.textContent = ''
     if (this.copiedTimer !== null) {
       clearTimeout(this.copiedTimer)
       this.copiedTimer = null
+    }
+    if (this.clickTimer !== null) {
+      clearTimeout(this.clickTimer)
+      this.clickTimer = null
     }
   }
 }
