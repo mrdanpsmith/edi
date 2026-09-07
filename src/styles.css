@@ -1106,3 +1106,70 @@ body {
   border-color: var(--accent);
   filter: brightness(1.1);
 }
+
+.edi-dialog-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.edi-dialog-input-row .edi-dialog-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.edi-dialog-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.edi-dialog-reveal-toggle {
+  flex: none;
+}
+
+.masked-field {
+  display: inline-block;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: baseline;
+}
+
+.masked-field .masked-field-dots {
+  letter-spacing: 1px;
+}
+
+.masked-field.masked-field-revealed {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.masked-field .masked-field-value {
+  letter-spacing: 0;
+}
+
+.masked-field.masked-field-edit {
+  cursor: auto;
+}
+
+.masked-field-input {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  width: 16em;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text-primary);
+  padding: 0 4px;
+}

@@ -200,6 +200,17 @@ body {
   overflow-x: auto;
 }
 
+.md-preview .masked-field {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .md-preview .mermaid svg {
   display: block;
   margin: 0 auto;
@@ -226,6 +237,11 @@ export function serializeDocToHtml(doc: ProseNode): string {
   nodes.mermaid_block = (node) => {
     const value = String(node.attrs.value ?? '')
     return ['div', { class: 'mermaid' }, value]
+  }
+
+  nodes.masked_field = (node) => {
+    const label = String(node.attrs.label ?? '')
+    return ['span', { class: 'masked-field' }, label ? `•••••••••••• (${label})` : '••••••••••••']
   }
 
   nodes.source_block = (node) => {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown, buildBlockOffsets, extractBlockMarkdown } from './markdown'
+import { encryptField } from './crypto'
 
 function serialize(markdown: string): string {
   return proseToMarkdown(markdownToProse(markdown, schema))
@@ -195,5 +196,46 @@ describe('block offsets', () => {
     const doc = markdownToProse('- one\n- two', schema)
     const offsets = buildBlockOffsets(doc)
     expect(extractBlockMarkdown(doc, offsets, offsets[0].id)).toBe('- one\n- two')
+  })
+})
+
+describe('masked field round-trip', () => {
+  it('survives a ProseMirror round-trip with a real ciphertext envelope', async () => {
+    const envelope = await encryptField('hunter2-secret', 'a password')
+    const mdTable = `token: !masked[${envelope}]`
+    const out = serialize(mdTable)
+    expect(out).toContain(envelope)
+    expect(out).not.toContain('hunter2-secret')
+    const reparsed = markdownToProse(out, schema)
+    const node = reparsed.firstChild!.child(1)
+    expect(node.type.name).toBe('masked_field')
+    expect(node.attrs.content).toBe(envelope)
+    expect(node.attrs.label).toBe('')
+  })
+
+  it('survives a ProseMirror round-trip with a label', () => {
+    const md = 'key: !masked[AQIDBA==]{label="Recovery"}'
+    const out = serialize(md)
+    expect(out).toBe('key: !masked[AQIDBA==]{label="Recovery"}\n')
+    const reparsed = markdownToProse(out, schema)
+    const node = reparsed.firstChild!.child(1)
+    expect(node.type.name).toBe('masked_field')
+    expect(node.attrs.content).toBe('AQIDBA==')
+    expect(node.attrs.label).toBe('Recovery')
+    expect(node.attrs.revealed).toBe(false)
+  })
+
+  it('never serializes the transient revealed attribute', () => {
+    const field = schema.nodes.masked_field.create({ content: 'ct', label: 'L', revealed: true })
+    const doc = schema.node('doc', null, [schema.node('paragraph', null, [field])])
+    const out = proseToMarkdown(doc)
+    expect(out).toBe('!masked[ct]{label="L"}\n')
+    expect(out).not.toContain('revealed')
+  })
+
+  it('strips rejected label characters during serialization', () => {
+    const field = schema.nodes.masked_field.create({ content: 'ct', label: 'a]b', revealed: false })
+    const doc = schema.node('doc', null, [schema.node('paragraph', null, [field])])
+    expect(proseToMarkdown(doc)).toBe('!masked[ct]{label="ab"}\n')
   })
 })

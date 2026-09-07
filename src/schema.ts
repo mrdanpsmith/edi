@@ -187,6 +187,36 @@ const nodes: SchemaSpec['nodes'] = {
     },
   },
 
+  masked_field: {
+    inline: true,
+    atom: true,
+    group: 'inline',
+    attrs: {
+      content: { default: '' },
+      label: { default: '' },
+      // Transient UI state — stripped during markdown serialization.
+      revealed: { default: false },
+    },
+    parseDOM: [{
+      tag: 'span[data-masked-field]',
+      getAttrs(dom: HTMLElement) {
+        return {
+          content: dom.getAttribute('data-content') ?? '',
+          label: dom.getAttribute('data-label') ?? '',
+        }
+      },
+    }],
+    toDOM(node) {
+      const label = node.attrs.label as string
+      const text = label ? `•••••••••••• (${label})` : '••••••••••••'
+      return ['span', {
+        'data-masked-field': 'true',
+        'data-content': node.attrs.content as string,
+        'data-label': label,
+      }, text]
+    },
+  },
+
   mermaid_block: {
     group: 'block',
     marks: '',

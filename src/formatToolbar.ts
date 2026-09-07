@@ -4,6 +4,7 @@ import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands'
 import { wrapInList } from 'prosemirror-schema-list'
 import { TextSelection, Plugin } from 'prosemirror-state'
 import { promptForUrl } from './urlDialog'
+import { insertMaskedFieldCommand } from './node/masked'
 
 const FORMATTING_VISIBLE_KEY = 'edi.formattingVisible'
 
@@ -370,6 +371,14 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
         '<path d="M4.5 8l2.5 2.5 4.5-4.5" stroke="white" stroke-width="2"/>',
       ),
       run: toggleTaskList,
+    },
+    {
+      label: 'Encrypted field', title: 'Insert encrypted field', markup: icon(
+        '<rect x="3.25" y="7" width="9.5" height="6.5" rx="1.2"/>' +
+        '<path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7"/>' +
+        '<circle cx="8" cy="10.2" r="0.7" fill="currentColor" stroke="none"/>',
+      ),
+      run: (view) => insertMaskedFieldCommand(view),
     },
   ]
 }

@@ -16,6 +16,7 @@ import { codeBlockNodeViewPlugin } from './node/execblock'
 import { attachBlockHandles } from './blockhandle'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { spreadsheetPlugin } from './node/spreadsheet'
+import { maskedFieldNodeViewPlugin } from './node/masked'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
@@ -244,6 +245,7 @@ export function createBlockEditor(
         misleadingLinkPlugin,
         blockPlugin,
         mermaidNodeViewPlugin,
+        maskedFieldNodeViewPlugin,
         spreadsheetPlugin,
         taskClickPlugin(),
         codeBlockNodeViewPlugin,

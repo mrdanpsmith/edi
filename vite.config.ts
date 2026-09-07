@@ -6,6 +6,7 @@ export default defineConfig({
   base: './',
   test: {
     environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
     exclude: ['**/node_modules/**', '**/.cache/**', '**/dist/**'],
     coverage: {
       provider: 'v8',

@@ -7,6 +7,10 @@ import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { remarkPlugin as mermaidRemarkPlugin } from './node/mermaid'
+import {
+  remarkPlugin as maskedFieldRemarkPlugin,
+  maskedFieldToMarkdown,
+} from './node/masked'
 import { shebangFromFenceInfo } from './exec'
 
 export interface BlockOffset {
@@ -30,6 +34,7 @@ function createProcessor() {
     .use(subscript.remarkPlugin)
     .use(superscript.remarkPlugin)
     .use(mermaidRemarkPlugin)
+    .use(maskedFieldRemarkPlugin)
 }
 
 const MARK_TYPES = new Set([
@@ -74,6 +79,8 @@ interface MdastNode {
   src?: string
   // custom types
   shebang?: string
+  content?: string
+  label?: string
   // GFM table
   align?: (string | null)[]
   // GFM task list
@@ -179,6 +186,12 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
     case 'mermaid_block':
       return schema.node('mermaid_block', { value: node.value ?? '' })
 
+    case 'masked_field':
+      return schema.node('masked_field', {
+        content: node.content ?? '',
+        label: node.label ?? '',
+      })
+
     default: {
       const text = node.value ?? ''
       if (text) return schema.node('paragraph', {}, [schema.text(text)])
@@ -204,6 +217,8 @@ function parseInline(
     } else if (child.type === 'image') {
       // mdast exposes the image destination on `url`, not `src`.
       result.push(schema.node('image', { src: child.url ?? child.src ?? '', alt: child.alt ?? '' }))
+    } else if (child.type === 'masked_field') {
+      result.push(schema.node('masked_field', { content: child.content ?? '', label: child.label ?? '' }))
     } else if (isMarkType(child.type)) {
       const markType = schema.marks[MARK_TYPE_ALIASES[child.type] ?? child.type]
       if (markType) {
@@ -232,7 +247,7 @@ function parseBlockContent(children: MdastNode[], schema: Schema): ProseNode[] {
 
 const INLINE_TYPES = new Set([
   'text', 'inlineCode', 'strong', 'em', 'strikethrough', 'link',
-  'image', 'break', 'highlight', 'sub', 'sup',
+  'image', 'break', 'highlight', 'sub', 'sup', 'masked_field',
 ])
 
 function isInlineOnly(children: MdastNode[]): boolean {
@@ -304,6 +319,9 @@ function serializeNode(node: ProseNode, indent = ''): string {
 
     case 'image':
       return `![${node.attrs.alt as string}](${node.attrs.src as string})`
+
+    case 'masked_field':
+      return maskedFieldToMarkdown(node.attrs.content as string, node.attrs.label as string)
 
     case 'mermaid_block': {
       const val = (node.attrs.value as string) ?? ''
