@@ -46,18 +46,37 @@ Write-Host "==> Building Edi $Version for Windows"
 if (-not (Test-Path 'package.json')) { throw 'run this from the repository root' }
 
 # --- Toolchain: prefer what's already on PATH, install via Chocolatey when out
-# of range (the GitLab Windows runner preinstalls Node and Python, but self
-# builds and other hosts may not).
-if (Test-Command node) {
-    $nodeMajor = [int]((& node --version).Trim() -replace '^v(\d+).*', '$1')
-} else {
-    $nodeMajor = 0
+# of range (the GitLab Windows runner preinstalls Node and Python, but the
+# frontend needs Node ^20.19.0 || >=22.12.0 — the runner's preinstalled Node
+# 21, for example, misses every gate — and PySide6 6.11 needs Python >= 3.10).
+function Test-NodeSupported {
+    if (-not (Test-Command node)) {
+        return $false
+    }
+    $v = (& node --version).Trim()
+    if ($v -notmatch '^v(\d+)\.(\d+)') {
+        return $false
+    }
+    $nMaj = [int]$Matches[1]
+    $nMin = [int]$Matches[2]
+    return ($nMaj -eq 20 -and $nMin -ge 19) -or ($nMaj -eq 22 -and $nMin -ge 12) -or $nMaj -gt 22
 }
-if ($nodeMajor -lt 20) {
+
+if (-not (Test-NodeSupported)) {
     Write-Host 'Installing Node.js LTS via Chocolatey...'
     choco install nodejs-lts -y --no-progress | Out-Null
     Assert-ExitCode 'choco install nodejs-lts'
     Update-Path
+    if (-not (Test-NodeSupported)) {
+        # The preinstalled node may still shadow the LTS install on PATH.
+        $ltsNode = 'C:\Program Files\nodejs\node.exe'
+        if (Test-Path $ltsNode) {
+            $env:PATH = (Split-Path $ltsNode) + ';' + $env:PATH
+        }
+        if (-not (Test-NodeSupported)) {
+            throw 'no supported Node found (need ^20.19.0 || >=22.12.0); install via Chocolatey or nvm'
+        }
+    }
 }
 
 $pyOk = $false
