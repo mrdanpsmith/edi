@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 import backend.window as window_module
-from backend.window import DIST_DIR, MainWindow, __version__
+from backend.window import DIST_DIR, MainWindow, __version__, _is_main_index_file
 
 import pytest
 
@@ -509,6 +509,28 @@ def test_page_allows_non_main_frame_navigation(visible):
             QUrl("https://example.com/iframe"),
             QWebEnginePage.NavigationType.NavigationTypeLinkClicked,
             False,
+        )
+        is True
+    )
+
+
+def test_is_main_index_file_accepts_windows_and_native_separators():
+    """QUrl.toLocalFile() keeps forward slashes on Windows while Path uses
+    backslashes; _AppPage must match index.html either way or the webview
+    renders blank."""
+    expected = str(DIST_DIR / "index.html")
+    assert _is_main_index_file(expected) is True
+    assert _is_main_index_file(expected.replace("/", "\\")) is True
+
+
+def test_main_frame_index_navigation_is_accepted(visible):
+    page = visible._web.page()
+    url = QUrl.fromLocalFile(str(DIST_DIR / "index.html"))
+    assert (
+        page.acceptNavigationRequest(
+            url,
+            QWebEnginePage.NavigationType.NavigationTypeTyped,
+            True,
         )
         is True
     )

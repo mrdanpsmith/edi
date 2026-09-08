@@ -33,6 +33,19 @@ CONFIRM_QUIT_MESSAGE = "Unsaved changes will be lost. Quit anyway?"
 _QWEBCHANNEL_JS = Path(__file__).resolve().parent / "qwebchannel.js"
 
 
+def _is_main_index_file(local: str) -> bool:
+    """True if ``local`` is the app's index.html, separator-agnostic.
+
+    QUrl.toLocalFile() keeps forward slashes on every platform (Qt never
+    converts them), while ``DIST_DIR / "index.html"`` uses the native
+    separator. On Windows the two would never string-match, so the initial
+    load would be rejected and the webview would stay blank; normalize both.
+    """
+    return (
+        local.replace("\\", "/") == str(DIST_DIR / "index.html").replace("\\", "/")
+    )
+
+
 class _AppPage(QWebEnginePage):
     """Webview page that never lets the main frame leave the app.
 
@@ -43,7 +56,7 @@ class _AppPage(QWebEnginePage):
 
     def acceptNavigationRequest(self, url: QUrl, _navigation_type, is_main_frame: bool) -> bool:
         if is_main_frame:
-            return url.toLocalFile() == str(DIST_DIR / "index.html")
+            return _is_main_index_file(url.toLocalFile())
         return True
 
 
