@@ -45,6 +45,18 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 Write-Host "==> Building Edi $Version for Windows"
 if (-not (Test-Path 'package.json')) { throw 'run this from the repository root' }
 
+# The runner's real-time AV thrashes every file write in this workspace (pip
+# installs into .venv-win, the onefile self-extraction to %TEMP%\_MEI*, the exe
+# itself) and has aborted the onefile bootloader with exit -1 (Z_ERRNO). The VM
+# is ephemeral and the runner is elevated, so exclude the whole checkout to
+# keep the job inside the free-runner time budget and make the smoke
+# deterministic. Exclusions are dropped with the VM at job end.
+try {
+    Add-MpPreference -ExclusionPath (Resolve-Path '.').Path -ErrorAction Stop | Out-Null
+} catch {
+    Write-Host "WARN: could not add Defender exclusion: $($_.Exception.Message)"
+}
+
 # --- Toolchain: Python only (PySide6 6.11 needs >= 3.10). The frontend and
 # icons are consumed from the `frontend` CI job artifacts, so Node is never
 # needed on this runner.
@@ -78,6 +90,7 @@ function Invoke-Py {
 # --- Python venv (writes into the checkout like the Linux .venv; not committed)
 Write-Host '==> Creating Python venv'
 New-Item -ItemType Directory -Force -Path 'build' | Out-Null
+$env:PIP_CACHE_DIR = Join-Path $PWD 'build\.pip-cache'
 Invoke-Py -m venv '.venv-win'
 $PyVenv = Join-Path $PWD '.venv-win\Scripts\python.exe'
 & $PyVenv -m pip install --upgrade pip --quiet
@@ -97,43 +110,84 @@ Assert-ExitCode 'pyinstaller'
 # same verdict line to a file we can parse.
 Write-Host '==> Smoke test'
 $SmokeFile = Join-Path (Resolve-Path 'build') 'selftest-win.json'
+$SmokeExe = Join-Path $PWD 'dist-app\Edi.exe'
 $env:EDI_SELFTEST = '1'
 $env:EDI_SELFTEST_OUT = $SmokeFile
 $env:QT_QPA_PLATFORM = 'offscreen'
 $env:QTWEBENGINE_DISABLE_SANDBOX = '1'
 $env:QTWEBENGINE_CHROMIUM_FLAGS = '--disable-dev-shm-usage --disable-gpu'
-if (Test-Path $SmokeFile) { Remove-Item $SmokeFile -Force }
-$SmokeExe = Join-Path $PWD 'dist-app\Edi.exe'
-$proc = Start-Process -FilePath $SmokeExe -WorkingDirectory $PWD -PassThru
 
-# The onefile's first run self-extracts the whole Qt/WebEngine payload, and the
-# runner's real-time AV can make that take minutes; the backend only writes a
-# verdict once Python reaches _run_selftest. Poll instead of a fixed wait: bail
-# the moment a verdict (or the watchdog's post-boot timeout) appears, but allow
-# up to 10 min while the boot heartbeat (or nothing yet) shows.
-$deadline = (Get-Date).AddMinutes(10)
-$line = $null
-do {
-    Start-Sleep -Seconds 5
-    if (-not $line -and (Test-Path $SmokeFile)) {
-        try { $line = (Get-Content -Raw $SmokeFile).Trim() } catch { $line = $null }
+# The onefile bootloader self-extracts to %TEMP%\_MEI*. The runner's real-time
+# AV races that extraction; a blocked/failed write makes the bootloader abort
+# with exit code -1 (Z_ERRNO) BEFORE Python ever starts, so no selftest file is
+# written. Point TEMP at a dir under the workspace (already covered by the
+# Defender exclusion above) so the extraction is deterministic.
+$SmokeTmp = Join-Path (Resolve-Path '.') 'build\smoke-tmp'
+New-Item -ItemType Directory -Force -Path $SmokeTmp | Out-Null
+$env:TEMP = $SmokeTmp
+$env:TMP = $SmokeTmp
+
+function Invoke-SmokeRun {
+    if (Test-Path $SmokeFile) { Remove-Item $SmokeFile -Force }
+    $p = Start-Process -FilePath $SmokeExe -WorkingDirectory $PWD -PassThru
+    # Poll instead of a fixed wait: succeed the moment a verdict (or the
+    # watchdog's post-boot timeout) appears, but allow the full budget while
+    # the boot heartbeat (or nothing yet) shows.
+    $deadline = (Get-Date).AddMinutes(10)
+    $ln = $null
+    do {
+        Start-Sleep -Seconds 5
+        if (-not $ln -and (Test-Path $SmokeFile)) {
+            try { $ln = (Get-Content -Raw $SmokeFile).Trim() } catch { $ln = $null }
+        }
+        $pending = $null -eq $ln -or $ln -eq 'SELFTEST_BOOTING'
+    } while (-not $p.HasExited -and (Get-Date) -lt $deadline -and $pending)
+
+    if (-not $p.HasExited) {
+        try { $p.Kill() } catch { }
     }
-    $pending = $null -eq $line -or $line -eq 'SELFTEST_BOOTING'
-} while (-not $proc.HasExited -and (Get-Date) -lt $deadline -and $pending)
+    if (-not $ln -or $ln -eq 'SELFTEST_BOOTING') {
+        # A verdict written right at process exit can lose a race against a
+        # stale heartbeat read; give the fsync'd file one last chance.
+        Start-Sleep -Milliseconds 250
+        try { $ln = (Get-Content -Raw $SmokeFile).Trim() } catch { $ln = $null }
+    }
+    $p.Refresh()
+    return @($p, $ln)
+}
 
-if (-not $proc.HasExited) {
-    try { $proc.Kill() } catch { }
+$proc = $null
+$line = ''
+for ($attempt = 1; $attempt -le 2 -and -not $line; $attempt++) {
+    if ($attempt -gt 1) {
+        # Process exited before Python with no verdict (an AV/extraction abort)
+        # — flaky, so give it one clean retry. A 10-min hang is NOT retried.
+        Write-Host "==> Bootloader aborted before Python; retrying smoke test (attempt $attempt)"
+        $env:TEMP = $SmokeTmp
+        $env:TMP = $SmokeTmp
+    }
+    $proc, $line = Invoke-SmokeRun
+    if (-not $line -and $proc -and -not $proc.HasExited) {
+        # Killed at the 10-min budget without a verdict: a real hang, not a flake.
+        break
+    }
 }
-if (-not $line -or $line -eq 'SELFTEST_BOOTING') {
-    # A verdict written right at process exit can lose a race against a stale
-    # heartbeat read; give the fsync'd file one last chance before failing.
-    Start-Sleep -Milliseconds 250
-    try { $line = (Get-Content -Raw $SmokeFile).Trim() } catch { $line = $null }
-    if (-not $line) { $line = '' }
-}
-$proc.Refresh()
+
 $exitNote = ''
-if ($proc.HasExited) { $exitNote = " (exit code $($proc.ExitCode))" }
+if ($proc -and $proc.HasExited) {
+    $exitNote = " (exit code $($proc.ExitCode))"
+} elseif (-not $line) {
+    $exitNote = ' (killed after the 10-min budget)'
+}
+if (-not $line) {
+    # Diagnostics: partial extractions and free space separate an AV/extract
+    # abort from other boot failures.
+    $drv = [System.IO.DriveInfo]::new($SmokeTmp)
+    Write-Host "DIAG smoke-tmp=$SmokeTmp free=$([math]::Round($drv.AvailableFreeSpace / 1MB))MB"
+    Get-ChildItem (Join-Path $SmokeTmp '_MEI*') -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Write-Host "DIAG partial extract $($_.Name): $($_.GetFiles().Count) files" }
+    throw "unexpected selftest state: '$line'$exitNote"
+}
 if ($line -eq 'SELFTEST_BOOTING') {
     throw "selftest hung: Python booted but QtWebEngine never produced a verdict in 10 min$exitNote"
 }
