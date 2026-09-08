@@ -26,3 +26,10 @@ __pycache__/
 .env
 .env.local
 .venv/
+.venv-win/
+.venv-macos/
+
+# Generated icon variants (rebuilt by scripts/generate-icon.mjs at build time;
+# only app-icon.png is committed)
+scripts/assets/app-icon.ico
+scripts/assets/app-icon.icns

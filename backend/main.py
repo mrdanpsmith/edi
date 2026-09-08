@@ -34,15 +34,35 @@ _PROBE_JS = """
     """
 
 
+def _selftest_exit(line: str, code: int) -> None:
+    """Emit the selftest verdict and exit.
+
+    The verdict goes to stdout (``SELFTEST {...}`` or ``SELFTEST_TIMEOUT``); on
+    Windows GUI builds there is no attached console, so when ``EDI_SELFTEST_OUT``
+    names a file the same line is also written (and flushed) there. All exit
+    paths bypass normal Qt/Python teardown (``os._exit``) so a wedged renderer
+    cannot hang the smoke test or swallow buffered output.
+    """
+    print(line, flush=True)
+    out = os.environ.get("EDI_SELFTEST_OUT")
+    if out:
+        try:
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        except OSError:
+            pass
+    os._exit(code)
+
+
 def _run_selftest(app: QApplication, window: MainWindow) -> None:
     """Smoke-test a packaged build: webview rendered + bridge round-trip.
 
     Fires the probe after the webview has had time to boot, waits for the page
-    to finish loading (``loadFinished``), then reads the snapshot back. Prints
-    a single ``SELFTEST {...}`` line and exits 0 on success; a short watchdog
-    exits 1 with ``SELFTEST_TIMEOUT`` if the page never loads. All exit paths
-    bypass normal Qt/Python teardown (``os._exit``) so a wedged renderer cannot
-    hang the smoke test or swallow buffered output.
+    to finish loading (``loadFinished``), then reads the snapshot back.
+    Emits a single ``SELFTEST {...}`` line and exits 0 on success; a short
+    watchdog exits 1 with ``SELFTEST_TIMEOUT`` if the page never loads.
     """
 
     page = window._web.page()
@@ -67,8 +87,7 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
                 except json.JSONDecodeError:
                     pass
             data["icon"] = icon_ok
-            print("SELFTEST", json.dumps(data), flush=True)
-            os._exit(0 if ok and icon_ok else 1)
+            _selftest_exit("SELFTEST " + json.dumps(data), 0 if ok and icon_ok else 1)
 
         page.runJavaScript("JSON.stringify(window.__selftest)", on_done)
 
@@ -76,9 +95,7 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
     QTimer.singleShot(5000, read)
     # A plain thread (not a QTimer) so the watchdog still fires even if the Qt
     # event loop is wedged waiting on the renderer/GPU process.
-    threading.Timer(
-        25.0, lambda: (print("SELFTEST_TIMEOUT", flush=True), os._exit(1))
-    ).start()
+    threading.Timer(25.0, lambda: _selftest_exit("SELFTEST_TIMEOUT", 1)).start()
 
 
 def main() -> int:
@@ -103,6 +120,18 @@ def main() -> int:
     window.show()
     if os.environ.get("EDI_SELFTEST"):
         _run_selftest(app, window)
+    if sys.platform == "win32":
+        # Persistent taskbar identity so Windows groups the app under the .exe
+        # icon instead of a generic placeholder (and taskbar pinning works).
+        # Must not be the application title string.
+        import ctypes
+
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "com.mrdanpsmith.edi"
+            )
+        except Exception:
+            pass
     return app.exec()
 
 

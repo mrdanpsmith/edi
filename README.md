@@ -30,7 +30,7 @@ Implemented: a Python desktop app (PySide6 + QtWebEngine) with a CodeMirror 6 ma
 
 - **Frontend**: CodeMirror 6 + Mermaid + spreadsheet formulas in TypeScript, built with Vite into a single static `dist/`.
 - **Backend**: Python 3 + PySide6 (QtWidgets / QtWebEngine). A native `QWebEngineView` hosts the frontend; the page talks to Python through `QWebChannel` (`backend/bridge.py`), which provides file dialogs, file IO, and code-block execution.
-- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too.
+- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too. Windows binaries are built on a hosted Windows runner; macOS has a manual build script (PyInstaller cannot cross-compile — both need their native OS).
 
 ## Features
 
@@ -175,6 +175,41 @@ Build all four from an existing binary locally:
 Requires `dpkg-deb`, `rpmbuild` (`sudo apt-get install rpm`), and `curl`; the
 tarball's `install.sh` and the .deb are also what `install-desktop.sh` covers
 for the bare binary.
+
+### Windows and macOS binaries
+
+Windows and macOS bundles must be built on those OSes — PyInstaller cannot
+cross-compile.
+
+Each `vX.Y.Z` release also publishes **Windows** binaries (built by the CI
+`build-windows` job on a hosted Windows runner):
+
+| Artifact | Format | Install |
+| --- | --- | --- |
+| `Edi-X.Y.Z-win64.exe` | portable onefile | run directly |
+| `Edi-X.Y.Z-win64-setup.exe` | NSIS installer | installs to `Program Files`, Start Menu/Desktop shortcuts, Add/Remove Programs entry |
+
+Build Windows binaries locally on a Windows box:
+
+```sh
+powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Version 0.5.0
+```
+
+(Requires Node 20+ and Python 3.10+; missing toolchains are installed via
+Chocolatey.)
+
+**macOS** has no CI job — GitLab's hosted macOS runners are Premium/Ultimate-only.
+`scripts/build-macos.sh` builds `Edi-X.Y.Z-macos-arm64.dmg` (drag-to-Applications;
+Apple Silicon only) on any Mac; attach it to a release manually to publish it:
+
+```sh
+./scripts/build-macos.sh [x.y.z]   # version defaults to scripts/version.sh
+```
+
+The macOS app is ad-hoc code-signed (arm64 requires it) but not notarized (no
+Apple Developer account in CI), so the first open on another Mac shows a
+Gatekeeper warning — open via right-click → Open, or clear the quarantine flag:
+`xattr -dr com.apple.quarantine Edi.app`.
 
 ## Checks and tests
 
