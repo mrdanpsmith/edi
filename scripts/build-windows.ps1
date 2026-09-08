@@ -1,4 +1,4 @@
-# Builds the Windows Edi binaries: the PyInstaller onefile + an NSIS installer.
+# Builds the Windows Edi binary: the PyInstaller onefile.
 #
 # PyInstaller cannot cross-compile, so this must run on real Windows (GitLab
 # hosted Windows runner, `saas-windows-medium-amd64`, PowerShell shell). The
@@ -10,7 +10,11 @@
 #   2. pyinstaller - edi.spec  ->  dist-app\Edi.exe
 #   3. smoke test it offscreen (EDI_SELFTEST=1, verdict via EDI_SELFTEST_OUT)
 #   4. copy to dist-app\Edi-<ver>-win64.exe
-#   5. NSIS installer -> dist-app\Edi-<ver>-win64-setup.exe
+#
+# The onefile is shipped as-is; the NSIS installer is NOT built in CI — the
+# previous make-it-mandatory attempts burned many runs on runner-specific
+# quirks (makensis not on PATH, then undebuggable File-path resolution). Build
+# packaging/edi.nsi on a real desktop when an installer is wanted.
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Version 0.5.0
 
@@ -265,48 +269,4 @@ Remove-Item (Join-Path $PWD 'dist-app\Edi-selftest.exe') -Force
 $OneFile = Join-Path $PWD ("dist-app\Edi-$Version-win64.exe")
 Move-Item -Force (Join-Path $PWD 'dist-app\Edi.exe') $OneFile
 
-# --- NSIS ------------------------------------------------------------------
-# Chocolatey's nsis package installs makensis.exe fine but does NOT reliably
-# land it on the session PATH (observed on the SaaS runner), so after any
-# choco install also probe the standard NSIS install dirs explicitly and call
-# the resulting full path.
-$Makensis = $null
-$NSIS_DIRS = @(
-    'C:\Program Files (x86)\NSIS\makensis.exe',
-    'C:\Program Files\NSIS\makensis.exe',
-    "$env:ProgramData\chocolatey\bin\makensis.exe"
-)
-$cmdFound = Get-Command makensis -ErrorAction SilentlyContinue
-if ($cmdFound) { $Makensis = $cmdFound.Source }
-if (-not $Makensis) {
-    $installed = $false
-    foreach ($p in $NSIS_DIRS) { if (Test-Path $p) { $Makensis = $p; $installed = $true; break } }
-    if (-not $installed) {
-        Write-Host 'Installing NSIS via Chocolatey...'
-        choco install nsis -y --no-progress | Out-Null
-        Assert-ExitCode 'choco install nsis'
-        Update-Path
-        $cmdFound = Get-Command makensis -ErrorAction SilentlyContinue
-        if ($cmdFound) { $Makensis = $cmdFound.Source }
-        foreach ($p in $NSIS_DIRS) {
-            if ($Makensis) { break }
-            if (Test-Path $p) { $Makensis = $p }
-        }
-    }
-}
-if (-not $Makensis) {
-    throw 'makensis.exe not found: looked on PATH, at "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS", and "$env:ProgramData\chocolatey\bin" after "choco install nsis" exited 0'
-}
-$Ico = (Resolve-Path 'scripts\assets\app-icon.ico').Path
-# Forward slashes avoid backslash-escape ambiguity on the makensis command line.
-& $Makensis "/DVERSION=$Version" "/DSETUPEXE=$($OneFile.Replace('\', '/'))" "/DICO=$($Ico.Replace('\', '/'))" 'packaging\edi.nsi'
-Assert-ExitCode 'makensis'
-
-$Setup = Join-Path $PWD "dist-app\Edi-$Version-win64-setup.exe"
-if (-not (Test-Path $Setup)) {
-    throw "installer was not produced: $Setup"
-}
-
-Write-Host "==> Done:
-  $OneFile
-  $Setup"
+Write-Host "==> Done: $OneFile"

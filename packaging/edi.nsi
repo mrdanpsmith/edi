@@ -1,12 +1,9 @@
 ; NSIS installer for Edi (Windows).
 ;
-; Built by scripts/build-windows.ps1 with defines:
-;   /DVERSION=<x.y.z>            release version (embeds in name, registry)
-;   /DSETUPEXE=<path\Edi-x.y.z-win64.exe>  the prebuilt onefile to install
-;   /DICO=<path\app-icon.ico>    app icon (optional; defaults to the bundled one)
-;
+; Built manually on a Windows desktop (CI ships the bare onefile):
 ;   makensis /DVERSION=0.5.0 /DSETUPEXE=dist-app\Edi-0.5.0-win64.exe \
 ;            /DICO=scripts\assets\app-icon.ico packaging\edi.nsi
+; Define values are absolute paths when run from any directory.
 
 !ifndef VERSION
   !error "VERSION not defined (run with /DVERSION=0.5.0)"

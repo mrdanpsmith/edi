@@ -197,7 +197,7 @@ build:
     - mkdir -p build/tmp
     - TMPDIR="$CI_PROJECT_DIR/build/tmp" EDI_SELFTEST=1 timeout 60 ./dist-app/edi
 
-# Windows onefile + NSIS installer, built on a GitLab-hosted Windows runner
+# Windows onefile, built on a GitLab-hosted Windows runner
 # (`saas-windows-medium-amd64`, PowerShell shell, elevated) because PyInstaller
 # cannot cross-compile — the Windows binary MUST be produced on Windows.
 # Windows runners take no image/services (shell executor; the inherited
@@ -205,7 +205,10 @@ build:
 # the `frontend` job artifacts (byte-identical on every platform), so this job
 # needs NO Node/npm at all — it only gates Python >= 3.10 (Chocolatey fallback).
 # It builds the onefile, runs the offscreen selftest (verdict via
-# EDI_SELFTEST_OUT), then makes the versioned .exe + NSIS installer. Like
+# EDI_SELFTEST_OUT; skipped-environmental on Server-SKU runners that lack
+# QtWebEngine's system DLLs), then renames it to the versioned .exe (NSIS
+# installer deliberately NOT built in CI — it burned many runs on runner-only
+# makensis quirks; build packaging/edi.nsi on a desktop when wanted). Like
 # `build`, only on v* tags; the .exe artifacts feed the `release` job via
 # `needs`.
 build-windows:
