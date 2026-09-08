@@ -46,11 +46,11 @@ Write-Host "==> Building Edi $Version for Windows"
 if (-not (Test-Path 'package.json')) { throw 'run this from the repository root' }
 
 # The runner's real-time AV thrashes every file write in this workspace (pip
-# installs into .venv-win, the onefile self-extraction to %TEMP%\_MEI*, the exe
-# itself) and has aborted the onefile bootloader with exit -1 (Z_ERRNO). The VM
-# is ephemeral and the runner is elevated, so exclude the whole checkout to
-# keep the job inside the free-runner time budget and make the smoke
-# deterministic. Exclusions are dropped with the VM at job end.
+# installs into .venv-win, the extracted onefile, the exe) and the pip+PyInstaller
+# phase was the job's dominant cost. The VM is ephemeral and the runner is
+# elevated, so exclude the whole checkout to speed it up. Exclusions are
+# dropped with the VM at job end. (Not a fix for selftest extraction aborts —
+# those persist with the exclusion in place; Edi-selftest.exe surfaces them.)
 try {
     Add-MpPreference -ExclusionPath (Resolve-Path '.').Path -ErrorAction Stop | Out-Null
 } catch {
@@ -105,40 +105,54 @@ $env:PYINSTALLER_ZLIB_COMPRESSION_LEVEL = '1'
 Assert-ExitCode 'pyinstaller'
 
 # --- Offscreen smoke test --------------------------------------------
-# The windowed onefile has no attached console, so stdout is not observable
-# (Python's sys.stdout is None). EDI_SELFTEST_OUT makes the backend write the
-# same verdict line to a file we can parse.
-Write-Host '==> Smoke test'
+# The shipped Edi.exe is windowed (runw.exe): its onefile bootloader swallows
+# fatal self-extraction errors into an invisible dialog and returns only an
+# exit code (-1 = Z_ERRNO, a failed fwrite). We smoke-test the console twin
+# Edi-selftest.exe instead so "Error extracting <entry>: <errno>" lands in the
+# CI log. The verdict itself (SELFTEST {...}) is parsed from EDI_SELFTEST_OUT
+# because no console is guaranteed attached to the job.
+Write-Host '==> Smoke test (console bootloader twin)'
 $SmokeFile = Join-Path (Resolve-Path 'build') 'selftest-win.json'
-$SmokeExe = Join-Path $PWD 'dist-app\Edi.exe'
+$SmokeExe = Join-Path $PWD 'dist-app\Edi-selftest.exe'
+# The post-boot phase is already bounded by the backend's 25s watchdog, so a
+# smoke run left waiting here can only be pre-boot extraction/launch. Local
+# startup is ~1s; 3 min is a generous ceiling, override via EDI_SMOKE_BUDGET_MIN.
+$SmokeBudgetMin = 3
+if ($env:EDI_SMOKE_BUDGET_MIN -match '^\d+$') {
+    $SmokeBudgetMin = [int]$env:EDI_SMOKE_BUDGET_MIN
+}
 $env:EDI_SELFTEST = '1'
 $env:EDI_SELFTEST_OUT = $SmokeFile
 $env:QT_QPA_PLATFORM = 'offscreen'
 $env:QTWEBENGINE_DISABLE_SANDBOX = '1'
 $env:QTWEBENGINE_CHROMIUM_FLAGS = '--disable-dev-shm-usage --disable-gpu'
 
-# The onefile bootloader self-extracts to %TEMP%\_MEI*. The runner's real-time
-# AV races that extraction; a blocked/failed write makes the bootloader abort
-# with exit code -1 (Z_ERRNO) BEFORE Python ever starts, so no selftest file is
-# written. Point TEMP at a dir under the workspace (already covered by the
-# Defender exclusion above) so the extraction is deterministic.
-$SmokeTmp = Join-Path (Resolve-Path '.') 'build\smoke-tmp'
-New-Item -ItemType Directory -Force -Path $SmokeTmp | Out-Null
-$env:TEMP = $SmokeTmp
-$env:TMP = $SmokeTmp
-
 function Invoke-SmokeRun {
     if (Test-Path $SmokeFile) { Remove-Item $SmokeFile -Force }
-    $p = Start-Process -FilePath $SmokeExe -WorkingDirectory $PWD -PassThru
+    $BootOut = Join-Path (Resolve-Path 'build') 'selftest-boot.out'
+    $BootErr = Join-Path (Resolve-Path 'build') 'selftest-boot.err'
+    Remove-Item $BootOut, $BootErr -Force -ErrorAction SilentlyContinue
+    # Redirect so the console bootloader's FATALERROR and the selftest's stdout
+    # are captured, then dumped into the job log — runw.exe keeps them invisible.
+    $p = Start-Process -FilePath $SmokeExe -WorkingDirectory $PWD -PassThru `
+        -RedirectStandardOutput $BootOut -RedirectStandardError $BootErr
     # Poll instead of a fixed wait: succeed the moment a verdict (or the
-    # watchdog's post-boot timeout) appears, but allow the full budget while
-    # the boot heartbeat (or nothing yet) shows.
-    $deadline = (Get-Date).AddMinutes(10)
+    # watchdog's post-boot timeout) appears, but allow the budget while the
+    # boot heartbeat (or nothing yet) shows — a hang can only be pre-boot
+    # extraction now. Print a progress line every ~30s so the log shows life.
+    $deadline = (Get-Date).AddMinutes($SmokeBudgetMin)
     $ln = $null
+    $progressAt = $null
     do {
         Start-Sleep -Seconds 5
         if (-not $ln -and (Test-Path $SmokeFile)) {
             try { $ln = (Get-Content -Raw $SmokeFile).Trim() } catch { $ln = $null }
+        }
+        if (($null -eq $ln) -and ($null -eq $progressAt -or (Get-Date) -ge $progressAt) -and -not $p.HasExited) {
+            $msg = "bootloader still running, no verdict (extracting/launching; budget $SmokeBudgetMin min)"
+            if (Test-Path $SmokeFile) { $msg += " [heartbeat read]" }
+            Write-Host "  $msg"
+            $progressAt = (Get-Date).AddSeconds(30)
         }
         $pending = $null -eq $ln -or $ln -eq 'SELFTEST_BOOTING'
     } while (-not $p.HasExited -and (Get-Date) -lt $deadline -and $pending)
@@ -153,6 +167,10 @@ function Invoke-SmokeRun {
         try { $ln = (Get-Content -Raw $SmokeFile).Trim() } catch { $ln = $null }
     }
     $p.Refresh()
+    Write-Host '--- bootloader stdout ---'
+    Get-Content $BootOut -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+    Write-Host '--- bootloader stderr ---'
+    Get-Content $BootErr -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
     return @($p, $ln)
 }
 
@@ -160,15 +178,13 @@ $proc = $null
 $line = ''
 for ($attempt = 1; $attempt -le 2 -and -not $line; $attempt++) {
     if ($attempt -gt 1) {
-        # Process exited before Python with no verdict (an AV/extraction abort)
-        # — flaky, so give it one clean retry. A 10-min hang is NOT retried.
+        # Process exited before Python with no verdict (an extraction abort) —
+        # flaky, so give it one clean retry. A budget hang is NOT retried.
         Write-Host "==> Bootloader aborted before Python; retrying smoke test (attempt $attempt)"
-        $env:TEMP = $SmokeTmp
-        $env:TMP = $SmokeTmp
     }
     $proc, $line = Invoke-SmokeRun
     if (-not $line -and $proc -and -not $proc.HasExited) {
-        # Killed at the 10-min budget without a verdict: a real hang, not a flake.
+        # Killed at the budget without a verdict: a real hang, not a flake.
         break
     }
 }
@@ -177,19 +193,19 @@ $exitNote = ''
 if ($proc -and $proc.HasExited) {
     $exitNote = " (exit code $($proc.ExitCode))"
 } elseif (-not $line) {
-    $exitNote = ' (killed after the 10-min budget)'
+    $exitNote = ' (killed after the smoke budget)'
 }
 if (-not $line) {
-    # Diagnostics: partial extractions and free space separate an AV/extract
-    # abort from other boot failures.
-    $drv = [System.IO.DriveInfo]::new($SmokeTmp)
-    Write-Host "DIAG smoke-tmp=$SmokeTmp free=$([math]::Round($drv.AvailableFreeSpace / 1MB))MB"
-    Get-ChildItem (Join-Path $SmokeTmp '_MEI*') -Directory -ErrorAction SilentlyContinue |
+    # Diagnostics: free space + partial _MEI* extractions in the bootloader's
+    # temp dir separate "no room / blocked path" from other boot failures.
+    $drv = [System.IO.DriveInfo]::new((Resolve-Path '.').Path)
+    Write-Host "DIAG extracted under $([System.IO.Path]::GetTempPath()) free=$([math]::Round($drv.AvailableFreeSpace / 1MB))MB"
+    Get-ChildItem (Join-Path ([System.IO.Path]::GetTempPath()) '_MEI*') -Directory -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Host "DIAG partial extract $($_.Name): $($_.GetFiles().Count) files" }
     throw "unexpected selftest state: '$line'$exitNote"
 }
 if ($line -eq 'SELFTEST_BOOTING') {
-    throw "selftest hung: Python booted but QtWebEngine never produced a verdict in 10 min$exitNote"
+    throw "selftest hung: Python booted but QtWebEngine never produced a verdict in $SmokeBudgetMin min$exitNote"
 }
 if ($line -like 'SELFTEST_TIMEOUT*') {
     throw "selftest timed out (backend watchdog fired: page never loaded)$exitNote"
@@ -204,6 +220,9 @@ if (-not ($data.editor -and $data.mermaid -and $data.icon)) {
 
 # --- Versioned, ready-to-publish artifacts ---
 Write-Host '==> Wrapping artifacts'
+# Edi-selftest.exe is a CI diagnostic (console bootloader, not shipped); drop it
+# so the EDI-*.exe artifact glob only sees the real onefile.
+Remove-Item (Join-Path $PWD 'dist-app\Edi-selftest.exe') -Force
 $OneFile = Join-Path $PWD ("dist-app\Edi-$Version-win64.exe")
 Move-Item -Force (Join-Path $PWD 'dist-app\Edi.exe') $OneFile
 

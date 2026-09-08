@@ -218,6 +218,15 @@ build-windows:
     - job: frontend
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
+  # pip (venv + PySide6 + pyinstaller) dominates this job's wall time (~20 min)
+  # on the Windows runner; caching pip's downloads makes repeat runs near-free.
+  # Job-level cache overrides the global .npm one (this job has no Node).
+  cache:
+    key:
+      files:
+        - requirements.txt
+    paths:
+      - build/.pip-cache/
   artifacts:
     name: edi-win-$CI_COMMIT_TAG
     paths:

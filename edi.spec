@@ -143,6 +143,35 @@ if sys.platform == 'win32':
         version=vs_version_info,
     )
 
+    # Console-bootloader twin (not shipped): runw.exe swallows the onefile
+    # bootloader's fatal messages into an invisible dialog and returns only an
+    # exit code (-1 = Z_ERRNO, a failed fwrite while self-extracting to
+    # %TEMP%\_MEI*). build-windows.ps1 smoke-tests run.exe so the actual
+    # "Error extracting <entry>: <errno>" line lands in the CI log instead of
+    # being lost. Shares pyz/a so this is just a second ~25s PKG pack.
+    selftest_exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name='Edi-selftest',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=True,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='scripts/assets/app-icon.ico',
+        version=vs_version_info,
+    )
+
 elif sys.platform == 'darwin':
     from pathlib import Path
 
