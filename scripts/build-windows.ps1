@@ -1,16 +1,16 @@
 # Builds the Windows Edi binaries: the PyInstaller onefile + an NSIS installer.
 #
 # PyInstaller cannot cross-compile, so this must run on real Windows (GitLab
-# hosted Windows runner, `saas-windows-medium-amd64`, PowerShell shell). It
-# detects Node >= 20 and Python >= 3.10 on PATH and installs them via Chocolatey
-# only when missing, then:
-#   1. npm ci + npm run build (frontend dist/)
-#   2. python venv with PySide6==6.11.1 + pyinstaller==6.22.0 (same pins as Linux)
-#   3. node scripts/generate-icon.mjs  (scripts/assets/app-icon.ico/.icns)
-#   4. pyinstaller - edi.spec  ->  dist-app\Edi.exe
-#   5. smoke test it offscreen (EDI_SELFTEST=1, verdict via EDI_SELFTEST_OUT)
-#   6. copy to dist-app\Edi-<ver>-win64.exe
-#   7. NSIS installer -> dist-app\Edi-<ver>-win64-setup.exe
+# hosted Windows runner, `saas-windows-medium-amd64`, PowerShell shell). The
+# frontend `dist/` and `scripts/assets/app-icon.ico` come from the `frontend`
+# CI job (byte-identical on every platform), so NO Node/npm is needed here.
+# It detects Python >= 3.10 on PATH (installs via Chocolatey only when missing),
+# then:
+#   1. python venv with PySide6==6.11.1 + pyinstaller==6.22.0 (same pins as Linux)
+#   2. pyinstaller - edi.spec  ->  dist-app\Edi.exe
+#   3. smoke test it offscreen (EDI_SELFTEST=1, verdict via EDI_SELFTEST_OUT)
+#   4. copy to dist-app\Edi-<ver>-win64.exe
+#   5. NSIS installer -> dist-app\Edi-<ver>-win64-setup.exe
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Version 0.5.0
 
@@ -45,38 +45,14 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 Write-Host "==> Building Edi $Version for Windows"
 if (-not (Test-Path 'package.json')) { throw 'run this from the repository root' }
 
-# --- Toolchain: prefer what's already on PATH, install via Chocolatey when out
-# of range (the GitLab Windows runner preinstalls Node and Python, but the
-# frontend needs Node ^20.19.0 || >=22.12.0 — the runner's preinstalled Node
-# 21, for example, misses every gate — and PySide6 6.11 needs Python >= 3.10).
-function Test-NodeSupported {
-    if (-not (Test-Command node)) {
-        return $false
-    }
-    $v = (& node --version).Trim()
-    if ($v -notmatch '^v(\d+)\.(\d+)') {
-        return $false
-    }
-    $nMaj = [int]$Matches[1]
-    $nMin = [int]$Matches[2]
-    return ($nMaj -eq 20 -and $nMin -ge 19) -or ($nMaj -eq 22 -and $nMin -ge 12) -or $nMaj -gt 22
+# --- Toolchain: Python only (PySide6 6.11 needs >= 3.10). The frontend and
+# icons are consumed from the `frontend` CI job artifacts, so Node is never
+# needed on this runner.
+if (-not (Test-Path 'dist\index.html')) {
+    throw 'dist\index.html missing — the `frontend` CI job artifact was not downloaded; run npm ci && npm run build locally first'
 }
-
-if (-not (Test-NodeSupported)) {
-    Write-Host 'Installing Node.js LTS via Chocolatey...'
-    choco install nodejs-lts -y --no-progress | Out-Null
-    Assert-ExitCode 'choco install nodejs-lts'
-    Update-Path
-    if (-not (Test-NodeSupported)) {
-        # The preinstalled node may still shadow the LTS install on PATH.
-        $ltsNode = 'C:\Program Files\nodejs\node.exe'
-        if (Test-Path $ltsNode) {
-            $env:PATH = (Split-Path $ltsNode) + ';' + $env:PATH
-        }
-        if (-not (Test-NodeSupported)) {
-            throw 'no supported Node found (need ^20.19.0 || >=22.12.0); install via Chocolatey or nvm'
-        }
-    }
+if (-not (Test-Path 'scripts\assets\app-icon.ico')) {
+    throw 'scripts\assets\app-icon.ico missing — the `frontend` CI job artifact was not downloaded; run node scripts/generate-icon.mjs locally first'
 }
 
 $pyOk = $false
@@ -99,13 +75,6 @@ function Invoke-Py {
     Assert-ExitCode "py -3 $($PyArgs -join ' ')"
 }
 
-# --- Frontend ---
-Write-Host '==> Building frontend'
-npm ci --no-audit --no-fund
-Assert-ExitCode 'npm ci'
-npm run build
-Assert-ExitCode 'npm run build'
-
 # --- Python venv (writes into the checkout like the Linux .venv; not committed)
 Write-Host '==> Creating Python venv'
 New-Item -ItemType Directory -Force -Path 'build' | Out-Null
@@ -115,11 +84,6 @@ $PyVenv = Join-Path $PWD '.venv-win\Scripts\python.exe'
 Assert-ExitCode 'pip upgrade'
 & $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' --quiet
 Assert-ExitCode 'pip install PySide6/pyinstaller'
-
-# --- Icons (ico + icns from the 1024 master, pure Node) ---
-Write-Host '==> Generating icons'
-node scripts/generate-icon.mjs
-Assert-ExitCode 'generate-icon'
 
 # --- PyInstaller onefile ---
 Write-Host '==> PyInstaller onefile'
@@ -138,21 +102,46 @@ $env:EDI_SELFTEST_OUT = $SmokeFile
 $env:QT_QPA_PLATFORM = 'offscreen'
 $env:QTWEBENGINE_DISABLE_SANDBOX = '1'
 $env:QTWEBENGINE_CHROMIUM_FLAGS = '--disable-dev-shm-usage --disable-gpu'
+if (Test-Path $SmokeFile) { Remove-Item $SmokeFile -Force }
 $SmokeExe = Join-Path $PWD 'dist-app\Edi.exe'
 $proc = Start-Process -FilePath $SmokeExe -WorkingDirectory $PWD -PassThru
-if (-not $proc.WaitForExit(120000)) {
-    $proc.Kill()
-    throw 'selftest timed out after 120 s'
+
+# The onefile's first run self-extracts the whole Qt/WebEngine payload, and the
+# runner's real-time AV can make that take minutes; the backend only writes a
+# verdict once Python reaches _run_selftest. Poll instead of a fixed wait: bail
+# the moment a verdict (or the watchdog's post-boot timeout) appears, but allow
+# up to 10 min while the boot heartbeat (or nothing yet) shows.
+$deadline = (Get-Date).AddMinutes(10)
+$line = $null
+do {
+    Start-Sleep -Seconds 5
+    if (-not $line -and (Test-Path $SmokeFile)) {
+        try { $line = (Get-Content -Raw $SmokeFile).Trim() } catch { $line = $null }
+    }
+    $pending = $null -eq $line -or $line -eq 'SELFTEST_BOOTING'
+} while (-not $proc.HasExited -and (Get-Date) -lt $deadline -and $pending)
+
+if (-not $proc.HasExited) {
+    try { $proc.Kill() } catch { }
 }
-if ($proc.ExitCode -ne 0) {
-    throw "selftest exited with code $($proc.ExitCode)"
+if (-not $line -or $line -eq 'SELFTEST_BOOTING') {
+    # A verdict written right at process exit can lose a race against a stale
+    # heartbeat read; give the fsync'd file one last chance before failing.
+    Start-Sleep -Milliseconds 250
+    try { $line = (Get-Content -Raw $SmokeFile).Trim() } catch { $line = $null }
+    if (-not $line) { $line = '' }
 }
-$line = (Get-Content -Raw $SmokeFile).Trim()
+$proc.Refresh()
+$exitNote = ''
+if ($proc.HasExited) { $exitNote = " (exit code $($proc.ExitCode))" }
+if ($line -eq 'SELFTEST_BOOTING') {
+    throw "selftest hung: Python booted but QtWebEngine never produced a verdict in 10 min$exitNote"
+}
 if ($line -like 'SELFTEST_TIMEOUT*') {
-    throw 'selftest timed out (backend watchdog fired)'
+    throw "selftest timed out (backend watchdog fired: page never loaded)$exitNote"
 }
 if (-not $line.StartsWith('SELFTEST ')) {
-    throw "unexpected selftest line: $line"
+    throw "unexpected selftest state: '$line'$exitNote"
 }
 $data = $line.Substring(9) | ConvertFrom-Json
 if (-not ($data.editor -and $data.mermaid -and $data.icon)) {

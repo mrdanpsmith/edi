@@ -267,6 +267,25 @@ def test_run_selftest_watchdog_fires(monkeypatch, capsys):
     assert exits == [1]
 
 
+def test_run_selftest_writes_boot_heartbeat(monkeypatch, capsys, tmp_path):
+    app = _app()
+    exits = _patch_selftest_harness(monkeypatch)
+    out_file = tmp_path / "selftest.json"
+    monkeypatch.setenv("EDI_SELFTEST_OUT", str(out_file))
+    page = _FakePage(snapshot='{"editor":true,"mermaid":true}')
+    monkeypatch.setattr(main_module, "load_app_icon", lambda: object())
+
+    main_module._run_selftest(app, _FakeWindow(page))
+    assert out_file.read_text(encoding="utf-8") == "SELFTEST_BOOTING\n"
+
+    page.loadFinished.emit(True)
+    _FakeQTimer.drain()
+
+    text = out_file.read_text(encoding="utf-8")
+    assert text.startswith("SELFTEST ")
+    assert exits == [0]
+
+
 def test_main_entry_point_runs_as_module(monkeypatch):
     """The ``if __name__ == "__main__"`` guard runs main() and exits cleanly."""
     monkeypatch.delenv("EDI_SELFTEST", raising=False)

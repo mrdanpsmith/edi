@@ -65,6 +65,18 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
     watchdog exits 1 with ``SELFTEST_TIMEOUT`` if the page never loads.
     """
 
+    if os.environ.get("EDI_SELFTEST_OUT"):
+        # Windowed builds have no console, so write a boot heartbeat before
+        # kicking off the Qt timers: lets the smoke script tell "onefile is
+        # still self-extracting / Qt is still starting" apart from "Python
+        # booted but QtWebEngine never finished loading".
+        try:
+            with open(os.environ["EDI_SELFTEST_OUT"], "w", encoding="utf-8") as fh:
+                fh.write("SELFTEST_BOOTING\n")
+                fh.flush()
+        except OSError:
+            pass
+
     page = window._web.page()
     loaded = {"ok": False}
     page.loadFinished.connect(lambda ok: loaded.__setitem__("ok", ok))

@@ -133,19 +133,48 @@ test:
         coverage_format: cobertura
         path: '**/cobertura-coverage.xml'
 
+# The frontend bundle and application icons are byte-for-byte identical on
+# every platform, so produce them once (on the pinned Node 22 builder image)
+# and share them with the Linux and Windows binary jobs instead of rebuilding
+# per-OS. This also keeps the ~193 MB PyInstaller payload out of the Windows
+# job's artifact downloads. On v* tags only; `build` and `build-windows`
+# consume the artifacts via `needs`.
+frontend:
+  stage: build
+  needs:
+    - job: build-image
+      optional: true
+  before_script:
+    - npm ci --no-audit --no-fund
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  artifacts:
+    name: edi-web-$CI_COMMIT_TAG
+    paths:
+      - dist/
+      - scripts/assets/app-icon.ico
+      - scripts/assets/app-icon.icns
+    expire_in: 30 days
+  script:
+    - node scripts/generate-icon.mjs
+    # lint keeps the release gated on style; npm run build typechecks and emits dist/
+    - npm run lint
+    - npm run build
+
 # The PyInstaller binary only matters for releases; bundle it on v* tags only,
 # not on the default branch or MR pushes.
 build:
   stage: build
   # build is deliberately decoupled from `test` (parallel, both waiting only on
-  # build-image): npm run build typechecks, and npm run lint keeps the release
-  # gated on style. Runs in parallel with `test` on the tag pipeline.
+  # the frontend producer job + build-image): the frontend quality gate (lint +
+  # typecheck) lives in the `frontend` job that this job and build-windows both
+  # consume.
   needs:
     - job: build-image
       optional: true
+    - job: frontend
   before_script:
     - *setup_venv
-    - npm ci --no-audit --no-fund
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
   artifacts:
@@ -154,8 +183,6 @@ build:
       - dist-app/edi
     expire_in: 30 days
   script:
-    - npm run lint
-    - npm run build
     # PKG archive at zlib level 1 (default is 9, level 6 was ~2x): ~3x faster
     # pack step; the binary grows ~18 MiB but every release wrapper (.deb/.rpm/
     # .tar.gz/.AppImage) recompresses it anyway.
@@ -174,9 +201,10 @@ build:
 # (`saas-windows-medium-amd64`, PowerShell shell, elevated) because PyInstaller
 # cannot cross-compile — the Windows binary MUST be produced on Windows.
 # Windows runners take no image/services (shell executor; the inherited
-# default.image is ignored). The runner preinstalls Node/Python (Chocolatey is
-# the fallback if out of range); scripts/build-windows.ps1 detects-and-installs.
-# It builds dist/, the onefile, runs the offscreen selftest (verdict via
+# default.image is ignored). The frontend `dist/` and the app icons come from
+# the `frontend` job artifacts (byte-identical on every platform), so this job
+# needs NO Node/npm at all — it only gates Python >= 3.10 (Chocolatey fallback).
+# It builds the onefile, runs the offscreen selftest (verdict via
 # EDI_SELFTEST_OUT), then makes the versioned .exe + NSIS installer. Like
 # `build`, only on v* tags; the .exe artifacts feed the `release` job via
 # `needs`.
@@ -187,6 +215,7 @@ build-windows:
   needs:
     - job: build-image
       optional: true
+    - job: frontend
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
   artifacts:
