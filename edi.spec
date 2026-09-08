@@ -120,6 +120,36 @@ if sys.platform == 'win32':
         ],
     )
 
+    # QtWebEngineCore.dll's Qt dependencies are resolved on Linux via ELF
+    # DT_NEEDED (which PyInstaller's binary analysis follows) but on Windows are
+    # imported by Qt6WebEngineCore.dll in a way the import-table analysis misses
+    # (delay-load / versioned imports). A packaged run then dies at
+    # `import QtWebEngineCore` with "DLL load failed ... could not be found" even
+    # though extraction succeeded. Explicitly bundle the companion set into
+    # PySide6/ (deduped against what the Analysis already collected).
+    import os as _os
+
+    _pyside_dir = _os.path.dirname(__import__('PySide6').__file__)
+    _webengine_companions = (
+        'Qt6WebEngineCore.dll',
+        'Qt6WebEngineWidgets.dll',
+        'Qt6Network.dll',
+        'Qt6Positioning.dll',
+        'Qt6PrintSupport.dll',
+        'Qt6Qml.dll',
+        'Qt6QmlModels.dll',
+        'Qt6QmlWorkerscript.dll',
+        'Qt6Quick.dll',
+        'Qt6QuickWidgets.dll',
+        'Qt6WebChannel.dll',
+    )
+    _collected_dests = {b[0].lower() for b in a.binaries}
+    for _dll in _webengine_companions:
+        _dll_src = _os.path.join(_pyside_dir, _dll)
+        _dest = 'PySide6/' + _dll
+        if _os.path.isfile(_dll_src) and _dest.lower() not in _collected_dests:
+            a.binaries.append((_dest, _dll_src, 'BINARY'))
+
     exe = EXE(
         pyz,
         a.scripts,

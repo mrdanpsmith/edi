@@ -29,17 +29,25 @@ _QT_COMPANION_DLLS = (
 
 
 def _dump_dll_inventory() -> None:
+    import glob as _glob
+
     base = getattr(sys, "_MEIPASS", None)
     if not base:
         return
     print(f"[selftest] _MEIPASS={base}", file=sys.stderr, flush=True)
-    present = sorted(os.listdir(base)) if os.path.isdir(base) else []
     for name in _QT_COMPANION_DLLS:
-        here = os.path.join(base, name)
-        if os.path.isfile(here):
-            print(f"[selftest]  present {name} ({os.path.getsize(here)} bytes)", file=sys.stderr, flush=True)
+        hits = _glob.glob(os.path.join(base, "**", name), recursive=True)
+        if hits:
+            rel = os.path.relpath(hits[0], base)
+            print(f"[selftest]  present {name} -> {rel}", file=sys.stderr, flush=True)
         else:
-            print(f"[selftest]  MISSING {name}", file=sys.stderr, flush=True)
+            print(f"[selftest]  ABSENT  {name} (not anywhere in the bundle)",
+                  file=sys.stderr, flush=True)
+    qt_dlls = sorted(_glob.glob(os.path.join(base, "**", "Qt6*.dll"), recursive=True))
+    print(f"[selftest] Qt6 DLLs bundled: {len(qt_dlls)}", file=sys.stderr, flush=True)
+    for p in qt_dlls:
+        print(f"[selftest]   {os.path.relpath(p, base)}", file=sys.stderr, flush=True)
+    present = sorted(os.listdir(base)) if os.path.isdir(base) else []
     top_dlls = [n for n in present if n.lower().endswith(".dll")]
     print(f"[selftest] {len(present)} entries at bundle root; {len(top_dlls)} DLLs:",
           file=sys.stderr, flush=True)
