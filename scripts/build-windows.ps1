@@ -124,16 +124,20 @@ Assert-ExitCode 'pyinstaller'
 # smoke with an explicit environmental verdict and continue into packaging.
 # On normal desktop Windows the probe passes and the full smoke still runs.
 Write-Host '==> Host capability probe (QtWebEngineCore import)'
-$ProbeOut = Join-Path (Resolve-Path 'build') 'host-probe.out'
-$ProbeErr = Join-Path (Resolve-Path 'build') 'host-probe.err'
-Remove-Item $ProbeOut, $ProbeErr -Force -ErrorAction SilentlyContinue
-$probe = & $PyVenv -c "from PySide6.QtWebEngineCore import QWebEngineSettings; print('WEBENGINE_HOST_OK')" 1>$ProbeOut 2>$ProbeErr
+# Run under $ErrorActionPreference 'Continue': Windows PowerShell 5.1 promotes
+# native-command stderr to a terminating NativeCommandError when EAP is 'Stop',
+# which would abort here before the skip logic below can run. The probe's
+# stderr (a python traceback on failure) is useful, so capture it via 2>&1 and
+# decide on the process exit code + the 'WEBENGINE_HOST_OK' marker.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$probeLines = & $PyVenv -c "from PySide6.QtWebEngineCore import QWebEngineSettings; print('WEBENGINE_HOST_OK')" 2>&1
 $probeExit = $LASTEXITCODE
-$probeOk = ($probeExit -eq 0) -and (Get-Content -Raw $ProbeOut -ErrorAction SilentlyContinue) -match 'WEBENGINE_HOST_OK'
+$ErrorActionPreference = $prevEAP
+$probeOk = ($probeExit -eq 0) -and (($probeLines -join "`n") -match 'WEBENGINE_HOST_OK')
 if (-not $probeOk) {
     Write-Host "  host cannot import QtWebEngineCore (exit $probeExit) -- this runner lacks Desktop Experience (no dcomp.dll/bthprops.cpl); frozen smoke SKIPPED (environmental)"
-    Write-Host '--- host probe stderr ---'
-    Get-Content $ProbeErr -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+    $probeLines | ForEach-Object { Write-Host "  probe: $_" }
 }
 
 if ($probeOk) {
