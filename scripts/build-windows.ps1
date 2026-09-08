@@ -115,12 +115,12 @@ Assert-ExitCode 'pyinstaller'
 # Qt6WebEngineCore.dll has hard static imports of dcomp.dll (Desktop Window
 # Manager composition) and bthprops.cpl (Bluetooth shell). GitLab's SaaS
 # Windows runners are Server SKUs that lack those; there QtWebEngine cannot
-# load AT ALL — even `python -c "import PySide6.QtWebEngineCore"` fails with
+# load AT ALL -- even `python -c "import PySide6.QtWebEngineCore"` fails with
 # the identical ImportError, so no bundle (and no amount of extra PyInstaller
 # bundling) could ever pass the selftest there. Redistributing the missing MS
 # system files is not an option. So we probe the freshly-installed venv
 # directly (same VM, same wheels): if the HOST cannot import QtWebEngineCore,
-# that is an environment limitation, not a bundle regression — skip the frozen
+# that is an environment limitation, not a bundle regression -- skip the frozen
 # smoke with an explicit environmental verdict and continue into packaging.
 # On normal desktop Windows the probe passes and the full smoke still runs.
 Write-Host '==> Host capability probe (QtWebEngineCore import)'
@@ -131,7 +131,7 @@ $probe = & $PyVenv -c "from PySide6.QtWebEngineCore import QWebEngineSettings; p
 $probeExit = $LASTEXITCODE
 $probeOk = ($probeExit -eq 0) -and (Get-Content -Raw $ProbeOut -ErrorAction SilentlyContinue) -match 'WEBENGINE_HOST_OK'
 if (-not $probeOk) {
-    Write-Host "  host cannot import QtWebEngineCore (exit $probeExit) — this runner lacks Desktop Experience (no dcomp.dll/bthprops.cpl); frozen smoke SKIPPED (environmental)"
+    Write-Host "  host cannot import QtWebEngineCore (exit $probeExit) -- this runner lacks Desktop Experience (no dcomp.dll/bthprops.cpl); frozen smoke SKIPPED (environmental)"
     Write-Host '--- host probe stderr ---'
     Get-Content $ProbeErr -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
 }
@@ -243,13 +243,14 @@ $data = $line.Substring(9) | ConvertFrom-Json
 if (-not ($data.editor -and $data.mermaid -and $data.icon)) {
     throw "selftest probes missing: $line"
 }
-} else {
-    # Host probe failed: QtWebEngine cannot load on this Server-SKU runner at
-    # all (missing dcomp.dll/bthprops.cpl), so no bundle could pass the smoke.
-    # Leave an unambiguous marker for any EDI_SELFTEST_OUT consumer and proceed
-    # straight into packaging — the build/installer still get validated.
-    $SmokeFile = Join-Path (Resolve-Path 'build') 'selftest-win.json'
-    Set-Content -Path $SmokeFile -Value 'SELFTEST_SKIPPED_ENVIRONMENTAL' -NoNewline
+}
+# Host probe failed: QtWebEngine cannot load on this Server-SKU runner at all
+# (missing dcomp.dll/bthprops.cpl), so no bundle could pass the smoke. Leave an
+# unambiguous marker for any EDI_SELFTEST_OUT consumer and proceed straight
+# into packaging -- the build/installer still get validated.
+if (-not $probeOk) {
+    $SkipFile = Join-Path (Resolve-Path 'build') 'selftest-win.json'
+    Set-Content -Path $SkipFile -Value 'SELFTEST_SKIPPED_ENVIRONMENTAL' -NoNewline
 }
 
 # --- Versioned, ready-to-publish artifacts ---
