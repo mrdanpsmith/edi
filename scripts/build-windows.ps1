@@ -265,15 +265,41 @@ Remove-Item (Join-Path $PWD 'dist-app\Edi-selftest.exe') -Force
 $OneFile = Join-Path $PWD ("dist-app\Edi-$Version-win64.exe")
 Move-Item -Force (Join-Path $PWD 'dist-app\Edi.exe') $OneFile
 
-if (-not (Test-Command makensis)) {
-    Write-Host 'Installing NSIS via Chocolatey...'
-    choco install nsis -y --no-progress | Out-Null
-    Assert-ExitCode 'choco install nsis'
-    Update-Path
+# --- NSIS ------------------------------------------------------------------
+# Chocolatey's nsis package installs makensis.exe fine but does NOT reliably
+# land it on the session PATH (observed on the SaaS runner), so after any
+# choco install also probe the standard NSIS install dirs explicitly and call
+# the resulting full path.
+$Makensis = $null
+$NSIS_DIRS = @(
+    'C:\Program Files (x86)\NSIS\makensis.exe',
+    'C:\Program Files\NSIS\makensis.exe',
+    "$env:ProgramData\chocolatey\bin\makensis.exe"
+)
+$cmdFound = Get-Command makensis -ErrorAction SilentlyContinue
+if ($cmdFound) { $Makensis = $cmdFound.Source }
+if (-not $Makensis) {
+    $installed = $false
+    foreach ($p in $NSIS_DIRS) { if (Test-Path $p) { $Makensis = $p; $installed = $true; break } }
+    if (-not $installed) {
+        Write-Host 'Installing NSIS via Chocolatey...'
+        choco install nsis -y --no-progress | Out-Null
+        Assert-ExitCode 'choco install nsis'
+        Update-Path
+        $cmdFound = Get-Command makensis -ErrorAction SilentlyContinue
+        if ($cmdFound) { $Makensis = $cmdFound.Source }
+        foreach ($p in $NSIS_DIRS) {
+            if ($Makensis) { break }
+            if (Test-Path $p) { $Makensis = $p }
+        }
+    }
+}
+if (-not $Makensis) {
+    throw 'makensis.exe not found: looked on PATH, at "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS", and "$env:ProgramData\chocolatey\bin" after "choco install nsis" exited 0'
 }
 $Ico = (Resolve-Path 'scripts\assets\app-icon.ico').Path
 # Forward slashes avoid backslash-escape ambiguity on the makensis command line.
-& makensis "/DVERSION=$Version" "/DSETUPEXE=$($OneFile.Replace('\', '/'))" "/DICO=$($Ico.Replace('\', '/'))" 'packaging\edi.nsi'
+& $Makensis "/DVERSION=$Version" "/DSETUPEXE=$($OneFile.Replace('\', '/'))" "/DICO=$($Ico.Replace('\', '/'))" 'packaging\edi.nsi'
 Assert-ExitCode 'makensis'
 
 $Setup = Join-Path $PWD "dist-app\Edi-$Version-win64-setup.exe"
