@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import os
-import pty
-import select
 import subprocess
 import threading
 import time
+
+try:
+    import pty
+except ImportError:
+    pty = None  # Windows has no POSIX pseudo-terminals ('termios' is missing)
+
+import select
 
 EXEC_TIMEOUT_SECONDS = 30
 
@@ -134,6 +139,8 @@ def run_code_block_streamed(
     line-buffering when they see a tty, so ``print``/``echo`` output arrives
     incrementally just as it would when run from a real shell. stderr stays an
     ordinary pipe (it is unbuffered everywhere) so the two stay distinguishable.
+    On Windows there is no pty, so stdout streams over an ordinary pipe instead
+    (still incremental, just without the tty line-buffering hint).
     """
     parts = parse_shebang(shebang)
     if parts is None:
@@ -149,27 +156,31 @@ def run_code_block_streamed(
         env.pop("PYTHONHOME", None)
         env.pop("PYTHONPATH", None)
 
-    stdout_master, stdout_slave = pty.openpty()
+    has_pty = pty is not None
+    if has_pty:
+        stdout_master, stdout_slave = pty.openpty()
     try:
         proc = subprocess.Popen(
             [program, *args],
             stdin=subprocess.PIPE,
-            stdout=stdout_slave,
+            stdout=stdout_slave if has_pty else subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            start_new_session=True,
+            start_new_session=has_pty,
         )
     except FileNotFoundError as exc:
-        os.close(stdout_master)
+        if has_pty:
+            os.close(stdout_master)
         raise ValueError(f"Failed to start {program}: {exc}") from exc
     finally:
-        # The parent closes its copy of the slave; the child keeps the one it
-        # inherited. If Popen failed the slave is still open here, so closing it
-        # in finally means we never leak it and never double-close.
-        try:
-            os.close(stdout_slave)
-        except OSError:
-            pass
+        if has_pty:
+            # The parent closes its copy of the slave; the child keeps the one it
+            # inherited. If Popen failed the slave is still open here, so closing it
+            # in finally means we never leak it and never double-close.
+            try:
+                os.close(stdout_slave)
+            except OSError:
+                pass
 
     if on_start is not None:
         on_start(proc)
@@ -229,7 +240,11 @@ def run_code_block_streamed(
                 pass
 
     readers = [
-        threading.Thread(target=pty_reader, args=(stdout_master, "stdout", stdout_chunks), daemon=True),
+        threading.Thread(
+            target=pty_reader if has_pty else pipe_reader,
+            args=(stdout_master if has_pty else proc.stdout, "stdout", stdout_chunks),
+            daemon=True,
+        ),
         threading.Thread(target=pipe_reader, args=(proc.stderr, "stderr", stderr_chunks), daemon=True),
     ]
     for thread in readers:

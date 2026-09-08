@@ -520,6 +520,28 @@ def test_run_code_block_direct():
     assert result["exitCode"] == 0
 
 
+def test_run_code_block_streamed_without_pty(monkeypatch):
+    """With no pseudo-terminal (Windows: pty import fails on missing termios),
+    stdout must stream over a plain pipe instead of crashing at import time."""
+    monkeypatch.setattr(exec_module, "pty", None)
+    events: list[tuple[str, str]] = []
+
+    def on_output(stream, text):
+        events.append((stream, text))
+
+    result = exec_module.run_code_block_streamed(
+        "#!/usr/bin/env python3",
+        "print('piped')",
+        on_output,
+        lambda: False,
+    )
+    assert result["exitCode"] == 0
+    assert result["timedOut"] is False
+    assert result["stopped"] is False
+    assert result["stdout"].strip() == "piped"
+    assert ("stdout", "piped\n") in events
+
+
 def test_invalid_payload_replies_error(bridge):
     bridge_obj, _window, result = bridge
     bridge_obj.invoke("ping", 1, "{not json")
