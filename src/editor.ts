@@ -145,6 +145,11 @@ export interface BlockEditor {
   setMarkdown(markdown: string): void
   insertMarkdown(markdown: string): void
   commitSource(): boolean
+  // Per-tab editor state: each document owns its own ProseMirror EditorState
+  // (doc, undo/redo history, selection). Tabs swap whole states into the view.
+  createState(markdown: string): EditorState
+  getState(): EditorState
+  applyState(state: EditorState): void
   resolveImages(): void
   focus(): void
   destroy(): void
@@ -161,7 +166,6 @@ export function createBlockEditor(
   initialMarkdown: string,
   options: BlockEditorOptions = {},
 ): BlockEditor {
-  const doc = markdownToProse(initialMarkdown, schema)
   const resolveImageSrc = options.resolveImageSrc
 
   const linkClickPlugin = new Plugin({
@@ -216,54 +220,58 @@ export function createBlockEditor(
     },
   })
 
-  let suppressChanges = false
+  const plugins = [
+    history(),
+    undoKeymap,
+    listKeymap,
+    keymap(baseKeymap),
+    formattingKeymap,
+    createInputRules(),
+    blockToggleKeymap,
+    tableEditing(),
+    gapCursor(),
+    dropCursor(),
+    linkClickPlugin,
+    urlPastePlugin,
+    misleadingLinkPlugin,
+    blockPlugin,
+    mermaidNodeViewPlugin,
+    maskedFieldNodeViewPlugin,
+    spreadsheetPlugin,
+    taskClickPlugin(),
+    codeBlockNodeViewPlugin,
+    new Plugin({
+      props: {
+        nodeViews: {
+          ...Object.fromEntries(
+            [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+          ),
+          ...(resolveImageSrc
+            ? { image: imageNodeView(resolveImageSrc) }
+            : {}),
+        },
+      },
+    }),
+  ]
+
+  const createState = (markdown: string): EditorState =>
+    EditorState.create({
+      doc: markdownToProse(markdown, schema),
+      plugins,
+    })
+
   const viewRef: { current: EditorView | null } = { current: null }
   const dispatchTransaction = (transaction: import('prosemirror-state').Transaction) => {
     const cur = viewRef.current
     if (!cur) return
     const next = cur.state.apply(transaction)
     cur.updateState(next)
-    if (!suppressChanges && transaction.docChanged) {
+    if (transaction.docChanged) {
       options.onChange?.()
     }
   }
   const view = new EditorView(parent, {
-    state: EditorState.create({
-      doc,
-      plugins: [
-        history(),
-        undoKeymap,
-        listKeymap,
-        keymap(baseKeymap),
-        formattingKeymap,
-        createInputRules(),
-        blockToggleKeymap,
-        tableEditing(),
-        gapCursor(),
-        dropCursor(),
-        linkClickPlugin,
-        urlPastePlugin,
-        misleadingLinkPlugin,
-        blockPlugin,
-        mermaidNodeViewPlugin,
-        maskedFieldNodeViewPlugin,
-        spreadsheetPlugin,
-        taskClickPlugin(),
-        codeBlockNodeViewPlugin,
-        new Plugin({
-          props: {
-            nodeViews: {
-              ...Object.fromEntries(
-                [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
-              ),
-              ...(resolveImageSrc
-                ? { image: imageNodeView(resolveImageSrc) }
-                : {}),
-            },
-          },
-        }),
-      ],
-    }),
+    state: createState(initialMarkdown),
     dispatchTransaction,
   })
   viewRef.current = view
@@ -278,24 +286,24 @@ export function createBlockEditor(
       return proseToMarkdown(view.state.doc)
     },
     setMarkdown(markdown: string) {
-      suppressChanges = true
-      try {
-        const newDoc = markdownToProse(markdown, view.state.schema)
-        const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content)
-        // A swapped-in document is a fresh editing context: release any
-        // source-mode block from the previous document so the "only one block
-        // open" limit never leaks across tabs.
-        tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
-        view.dispatch(tr)
-      } finally {
-        suppressChanges = false
-      }
+      // A swapped-in document is a fresh editing context: build a brand-new
+      // EditorState so the tab owns its own doc, selection, and undo history,
+      // and any source-mode block from the previous document is dropped.
+      view.updateState(createState(markdown))
+    },
+    createState,
+    getState() {
+      return view.state
+    },
+    applyState(state: EditorState) {
+      view.updateState(state)
     },
     insertMarkdown(markdown: string) {
       view.dispatch(view.state.tr.insertText(markdown))
       const newDoc = markdownToProse(proseToMarkdown(view.state.doc), view.state.schema)
       const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content)
       tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
+      tr.setMeta('addToHistory', false)
       view.dispatch(tr)
       view.focus()
     },

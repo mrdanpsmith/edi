@@ -104,15 +104,23 @@ let formatToolbar: FormatToolbar | null = null
 
 const tabs = new Tabs(tabbar, {
   getMarkdown(): string {
-    // When leaving a tab (switch or close) while a block is in source mode,
-    // commit the code editor's in-progress content into the document first so
-    // it is not silently discarded. This is the tab boundary: source mode
-    // belongs to a single document.
     blockEditor?.commitSource()
     return blockEditor?.getMarkdown() ?? ''
   },
   setMarkdown(value: string): void {
     blockEditor?.setMarkdown(value)
+  },
+  createState(markdown: string): unknown {
+    return blockEditor?.createState(markdown)
+  },
+  getState(): unknown {
+    // Same tab boundary as getMarkdown: commit any in-progress source-mode
+    // content into the document before capturing the live editor state.
+    blockEditor?.commitSource()
+    return blockEditor?.getState()
+  },
+  setState(state: unknown): void {
+    blockEditor?.applyState(state as import('prosemirror-state').EditorState)
   },
   getScroll(): number {
     return editorContainer.scrollTop
@@ -348,7 +356,7 @@ async function revertFile(): Promise<void> {
   }
   try {
     const content = await readTextFile(path)
-    blockEditor?.setMarkdown(content)
+    tabs.setActiveContent(content)
     setActiveDirty(false)
     tabs.snapshotActive()
     afterActivate()
@@ -564,9 +572,9 @@ function init(): void {
   // Drive content from the native shell (QWebChannel): the desktop shell loads
   // documents and the smoke/selftest harness drives headless runs via this hook.
   window.ediSetContent = (markdown: string) => {
-    blockEditor?.setMarkdown(markdown)
-    // The shell loads a document into the current tab: reset its scroll to top.
-    editorContainer.scrollTop = 0
+    // Loads the document into the current tab: reset its scroll to top and
+    // record that the view now holds this session's content.
+    tabs.setActiveContent(markdown)
     tabs.snapshotActive()
     afterActivate()
   }
