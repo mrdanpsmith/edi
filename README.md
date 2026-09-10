@@ -181,13 +181,16 @@ for the bare binary.
 Windows and macOS bundles must be built on those OSes — PyInstaller cannot
 cross-compile.
 
-Each `vX.Y.Z` release also publishes **Windows** binaries (built by the CI
+Each `vX.Y.Z` release also publishes the **Windows** onefile (built by the CI
 `build-windows` job on a hosted Windows runner):
 
 | Artifact | Format | Install |
 | --- | --- | --- |
 | `Edi-X.Y.Z-win64.exe` | portable onefile | run directly |
-| `Edi-X.Y.Z-win64-setup.exe` | NSIS installer | installs to `Program Files`, Start Menu/Desktop shortcuts, Add/Remove Programs entry |
+
+No Windows installer is shipped from CI (the `build-windows` job builds only
+the onefile); an NSIS installer can be produced manually on a Windows desktop
+with `packaging/edi.nsi` if one is wanted.
 
 Build Windows binaries locally on a Windows box:
 
