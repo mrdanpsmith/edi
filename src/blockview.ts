@@ -18,6 +18,21 @@ function createHandleDOM(pos: number): HTMLElement {
   return handle
 }
 
+/**
+ * What the visual-mode wrapper DOM depends on. The node view rebuilds the
+ * wrapper only when this changes: type changes already force a fresh node
+ * view, but attr-only changes (heading level, list start order, code language)
+ * would otherwise keep the old element — e.g. an `<h1>` staying an `<h1>`
+ * after the block was set to level 2.
+ */
+function visualSignature(node: ProseNode): string {
+  const type = node.type.name
+  if (type === 'heading') return `heading:${node.attrs.level as number}`
+  if (type === 'ordered_list') return `ordered_list:${node.attrs.order as number}`
+  if (type === 'code_block') return `code_block:${node.attrs.language as string}`
+  return type
+}
+
 function buildSourceCommitTransaction(
   view: EditorView,
   pos: number,
@@ -177,8 +192,10 @@ class BlockSourceNodeView implements NodeView {
 class BlockVisualNodeView implements NodeView {
   dom: HTMLElement
   contentDOM: HTMLElement
+  private sig: string
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
+    this.sig = visualSignature(node)
     this.dom = document.createElement('div')
     this.dom.className = 'block-visual-mode'
 
@@ -203,6 +220,7 @@ class BlockVisualNodeView implements NodeView {
 
   update(node: ProseNode): boolean {
     if (node.attrs._source) return false
+    if (visualSignature(node) !== this.sig) return false
     return true
   }
 

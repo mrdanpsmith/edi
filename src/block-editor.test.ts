@@ -1,9 +1,10 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { EditorState } from 'prosemirror-state'
+import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Node as ProseNode } from 'prosemirror-model'
+import { setBlockType } from 'prosemirror-commands'
 import { blockPlugin, enterSourceMode, exitSourceMode, toggleSourceMode, getSourceBlockState, BLOCK_PLUGIN_KEY } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { mermaidNodeViewPlugin } from './node/mermaid'
@@ -221,6 +222,37 @@ describe('block nodeView factory', () => {
     const dom = view.nodeDOM(pos) as HTMLElement
     const handle = dom.querySelector('.block-handle')
     expect(handle).toBeNull()
+    view.destroy()
+  })
+
+  it('re-renders the heading element when the level changes', () => {
+    const view = createEditor('# Hello')
+    const pos = firstBlockPos(view)
+    const before = (view.nodeDOM(pos) as HTMLElement).querySelector('h1') as HTMLElement
+    expect(before).not.toBeNull()
+
+    const doc = view.state.doc
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, 2)))
+    setBlockType(view.state.schema.nodes.heading, { level: 3 })(view.state, view.dispatch)
+
+    const after = (view.nodeDOM(pos) as HTMLElement).querySelector('h3') as HTMLElement
+    expect(after).not.toBeNull()
+    expect(after.textContent).toBe('Hello')
+    view.destroy()
+  })
+
+  it('re-renders the element when a paragraph becomes a heading (and back)', () => {
+    const view = createEditor('Hello')
+    const pos = firstBlockPos(view)
+    expect((view.nodeDOM(pos) as HTMLElement).querySelector('p')).not.toBeNull()
+
+    const doc = view.state.doc
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, 2)))
+    setBlockType(view.state.schema.nodes.heading, { level: 1 })(view.state, view.dispatch)
+    expect((view.nodeDOM(pos) as HTMLElement).querySelector('h1')).not.toBeNull()
+
+    setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch)
+    expect((view.nodeDOM(pos) as HTMLElement).querySelector('p')).not.toBeNull()
     view.destroy()
   })
 })
