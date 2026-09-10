@@ -134,9 +134,14 @@ class BlockSourceNodeView implements NodeView {
     const markdown = (node.attrs.markdown as string ?? '') ||
       serializeBlock(this.node) ||
       ''
+    let initialPos: number | undefined
+    if (markdown.startsWith('```')) {
+      const nl = markdown.indexOf('\n')
+      if (nl >= 0) initialPos = nl + 1
+    }
     this.cm = createBlockCodeMirror(this.dom, markdown, (value) => {
       this.exitSource(value)
-    })
+    }, initialPos)
 
     requestAnimationFrame(() => this.cm?.focus())
   }

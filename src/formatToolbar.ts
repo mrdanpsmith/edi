@@ -82,6 +82,7 @@ interface ButtonSpec {
   className?: string
   markup?: string
   run(view: EditorView): boolean | Promise<boolean>
+  options?: { label: string; run(view: EditorView): boolean | Promise<boolean> }[]
 }
 
 function toggleMarkCmd(markType: MarkType): (view: EditorView) => boolean {
@@ -322,9 +323,17 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
     },
     { label: 'Sub', title: 'Subscript', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view) },
     { label: 'Sup', title: 'Superscript', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view) },
-    { label: 'H1', title: 'Heading 1', className: 'fmt-heading', run: (view) => setBlockType(view.state.schema.nodes.heading, { level: 1 })(view.state, view.dispatch) },
-    { label: 'H2', title: 'Heading 2', className: 'fmt-heading', run: (view) => setBlockType(view.state.schema.nodes.heading, { level: 2 })(view.state, view.dispatch) },
-    { label: 'H3', title: 'Heading 3', className: 'fmt-heading', run: (view) => setBlockType(view.state.schema.nodes.heading, { level: 3 })(view.state, view.dispatch) },
+    {
+      label: 'Paragraph', title: 'Heading', className: 'fmt-heading',
+      run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch),
+      options: [
+        { label: 'Paragraph', run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch) },
+        ...Array.from({ length: 6 }, (_, i) => ({
+          label: `Heading ${i + 1}`,
+          run: (view: EditorView) => setBlockType(view.state.schema.nodes.heading, { level: i + 1 })(view.state, view.dispatch),
+        })),
+      ],
+    },
     {
       label: 'Horizontal rule', title: 'Horizontal rule', markup: icon('<path d="M2.5 8h11"/>'),
       run: (view) => {
@@ -415,6 +424,28 @@ export class FormatToolbar {
 
   private build(): void {
     for (const spec of getButtons(this.ctx)) {
+      if (spec.options) {
+        const select = document.createElement('select')
+        select.className = spec.className ? `fmt-btn ${spec.className} fmt-select` : 'fmt-btn fmt-select'
+        select.title = spec.title
+        select.ariaLabel = spec.title
+        for (const option of spec.options) {
+          const el = document.createElement('option')
+          el.textContent = option.label
+          select.append(el)
+        }
+        select.addEventListener('change', () => {
+          const index = select.selectedIndex
+          select.selectedIndex = 0
+          const option = spec.options?.[index]
+          if (!option) return
+          const view = this.ctx.getView()
+          view.focus()
+          option.run(view)
+        })
+        this.bar.append(select)
+        continue
+      }
       const button = document.createElement('button')
       button.type = 'button'
       button.className = spec.className ? `fmt-btn ${spec.className}` : 'fmt-btn'

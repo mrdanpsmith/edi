@@ -8,6 +8,7 @@ import { InputRule, inputRules } from 'prosemirror-inputrules'
 import { tableEditing } from 'prosemirror-tables'
 import { gapCursor } from 'prosemirror-gapcursor'
 import { dropCursor } from 'prosemirror-dropcursor'
+import { blockStartKeymap, blockStartRules } from './blockstart'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { blockPlugin, getSourceBlockState, toggleSourceMode, BLOCK_PLUGIN_KEY } from './blockplugin'
@@ -25,17 +26,7 @@ import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
 import { imageNodeView, reResolveImages, type ResolveImage } from './image'
 
-function createInputRules() {
-  function headingRule(level: number): InputRule {
-    return new InputRule(new RegExp(`^${'#'.repeat(level)}\\s(.*)$`, 'm'), (state, match, start, end) => {
-      const text = match[1]
-      const nodeType = state.schema.nodes.heading
-      const content = text ? state.schema.text(text) : null
-      const headingNode = nodeType.create({ level }, content)
-      return state.tr.replaceWith(start, end, headingNode)
-    })
-  }
-
+function inlineMarkRules(): InputRule[] {
   function markRule(pattern: RegExp, markType: import('prosemirror-model').MarkType): InputRule {
     return new InputRule(pattern, (state, match, start, end) => {
       if (match[1]) {
@@ -45,13 +36,7 @@ function createInputRules() {
     })
   }
 
-  return inputRules({ rules: [
-    headingRule(1),
-    headingRule(2),
-    headingRule(3),
-    headingRule(4),
-    headingRule(5),
-    headingRule(6),
+  return [
     markRule(/\*\*([^*]+)\*\*$/, schema.marks.strong),
     markRule(/(?<!\*)\*([^*]+)\*(?!\*)$/, schema.marks.em),
     markRule(/`([^`]+)`$/, schema.marks.code),
@@ -59,10 +44,11 @@ function createInputRules() {
     highlight.createInputRule(schema),
     subscript.createInputRule(schema),
     superscript.createInputRule(schema),
-    new InputRule(/^---$/, (state, _match, start) => {
-      return state.tr.replaceWith(start, start + 3, state.schema.nodes.horizontal_rule.create())
-    }),
-  ] })
+  ]
+}
+
+function createInputRules() {
+  return inputRules({ rules: [...inlineMarkRules(), ...blockStartRules()] })
 }
 
 const undoKeymap = keymap({
@@ -222,6 +208,11 @@ export function createBlockEditor(
 
   const plugins = [
     history(),
+    // Block-start markers convert on Enter as well. Can't go after the base
+    // keymap: prosemirror-view iterates plugins from index 0, so an earlier
+    // plugin wins. Right after history() outranks baseKeymap's undoInputRule /
+    // splitBlock and listKeymap's splitListItem.
+    blockStartKeymap(),
     undoKeymap,
     listKeymap,
     keymap(baseKeymap),

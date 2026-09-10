@@ -144,6 +144,26 @@ describe('FormatToolbar', () => {
     expect(view.state.doc.lastChild!.type.name).toBe('horizontal_rule')
   })
 
+  it('renders the heading dropdown with Paragraph and H1–H6', () => {
+    const { bar, ctx } = makeFixtureWithCursor(5)
+    new FormatToolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.fmt-btn.fmt-select.fmt-heading')!
+    expect(select).not.toBeNull()
+    const labels = Array.from(select.options).map((o) => o.textContent)
+    expect(labels).toEqual(['Paragraph', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 'Heading 5', 'Heading 6'])
+  })
+
+  it('applies the selected heading level from the dropdown', () => {
+    const { bar, view, ctx } = makeFixtureWithCursor(5)
+    vi.spyOn(view, 'focus').mockImplementation(() => {})
+    new FormatToolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.fmt-select')!
+    select.value = 'Heading 5'
+    select.dispatchEvent(new Event('change'))
+    expect(view.state.doc.firstChild?.attrs.level).toBe(5)
+    expect(select.selectedIndex).toBe(0)
+  })
+
   it('wraps paragraph in bullet list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
     const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
@@ -478,17 +498,24 @@ describe('command buttons', () => {
     host.remove()
   })
 
-  it('converts the block to each heading level', () => {
+  it('converts the block to each heading level via the dropdown', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const doc = markdownToProse('abc', schema)
     const view = new EditorView(host, {
       state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
     })
-    for (const [title, level] of [['Heading 1', 1], ['Heading 2', 2], ['Heading 3', 3]] as const) {
-      runTitle(title, view)
+    const ctx: FormatToolbarContext = { getView: () => view }
+    const heading = getButtons(ctx).find((b) => b.title === 'Heading')!
+    expect(heading.options).toHaveLength(7)
+    for (const [label, level] of [['Heading 1', 1], ['Heading 2', 2], ['Heading 3', 3], ['Heading 4', 4], ['Heading 5', 5], ['Heading 6', 6]] as const) {
+      const option = heading.options!.find((o) => o.label === label)!
+      expect(option.run(view)).toBe(true)
       expect(view.state.doc.firstChild?.attrs.level).toBe(level)
     }
+    const paragraph = heading.options!.find((o) => o.label === 'Paragraph')!
+    expect(paragraph.run(view)).toBe(true)
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
     view.destroy()
     host.remove()
   })

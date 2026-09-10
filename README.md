@@ -91,7 +91,7 @@ Document actions live in a native menu bar instead of toolbar buttons:
 
 ### Formatting toolbar
 
-The toolbar above the editor toggles markdown formatting on the selection: **bold**, *italic*, strikethrough, H1/H2, blockquote, inline code, fenced code blocks, task/bullet/numbered lists, horizontal rules, and links. `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` trigger bold, italic, and strikethrough. Hide it anytime via `View → Formatting Toolbar`.
+The toolbar above the editor toggles markdown formatting on the selection: **bold**, *italic*, strikethrough, a heading dropdown (Paragraph + Heading 1–6, replacing the old H1/H2 buttons), blockquote, inline code, fenced code blocks, task/bullet/numbered lists, horizontal rules, and links. `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` trigger bold, italic, and strikethrough. Hide it anytime via `View → Formatting Toolbar`.
 
 ### Copy tables
 

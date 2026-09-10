@@ -1,4 +1,4 @@
-import { EditorState } from '@codemirror/state'
+import { EditorState, EditorSelection } from '@codemirror/state'
 import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
 import { history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
@@ -68,6 +68,7 @@ export function createBlockCodeMirror(
   parent: HTMLElement,
   doc: string,
   onExit: (value: string) => void,
+  initialPos?: number,
 ): BlockCodeMirror {
   const view = new EditorView({
     state: EditorState.create({
@@ -96,6 +97,10 @@ export function createBlockCodeMirror(
     }),
     parent,
   })
+
+  if (initialPos !== undefined) {
+    view.dispatch({ selection: EditorSelection.cursor(initialPos) })
+  }
 
   return {
     view,
