@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
-import { FormatToolbar, getButtons, toggleTaskItems, applyLink } from './formatToolbar'
+import { FormatToolbar, getButtons, toggleTaskItems, applyLink, blockTypeSelectPlugin } from './formatToolbar'
 import type { FormatToolbarContext } from './formatToolbar'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { promptForUrl } from './urlDialog'
@@ -67,6 +67,27 @@ function makeFixtureWithCursor(cursorPos: number) {
   const state = EditorState.create({
     doc,
     selection: new TextSelection(doc.resolve(cursorPos)),
+  })
+  const view = new EditorView(host, { state })
+
+  const ctx: FormatToolbarContext = {
+    getView: () => view,
+  }
+  return { bar, view, ctx, host }
+}
+
+function makeHeadingFixture(level: number, withParagraph = false) {
+  const bar = document.createElement('div')
+  const host = document.createElement('div')
+  document.body.append(bar, host)
+
+  const blocks = [schema.node('heading', { level }, [schema.text('title')])]
+  if (withParagraph) blocks.push(schema.node('paragraph', null, [schema.text('body text')]))
+  const doc = schema.node('doc', null, blocks)
+  const state = EditorState.create({
+    doc,
+    selection: new TextSelection(doc.resolve(2)),
+    plugins: [blockTypeSelectPlugin()],
   })
   const view = new EditorView(host, { state })
 
@@ -144,13 +165,13 @@ describe('FormatToolbar', () => {
     expect(view.state.doc.lastChild!.type.name).toBe('horizontal_rule')
   })
 
-  it('renders the heading dropdown with Paragraph and H1–H6', () => {
+  it('renders the heading dropdown with Normal and H1–H6', () => {
     const { bar, ctx } = makeFixtureWithCursor(5)
     new FormatToolbar(bar, ctx)
     const select = bar.querySelector<HTMLSelectElement>('select.fmt-btn.fmt-select.fmt-heading')!
     expect(select).not.toBeNull()
     const labels = Array.from(select.options).map((o) => o.textContent)
-    expect(labels).toEqual(['Paragraph', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 'Heading 5', 'Heading 6'])
+    expect(labels).toEqual(['Normal', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 'Heading 5', 'Heading 6'])
   })
 
   it('applies the selected heading level from the dropdown', () => {
@@ -161,6 +182,31 @@ describe('FormatToolbar', () => {
     select.value = 'Heading 5'
     select.dispatchEvent(new Event('change'))
     expect(view.state.doc.firstChild?.attrs.level).toBe(5)
+    expect(select.selectedIndex).toBe(0)
+  })
+
+  it('dropdown reflects the block under the cursor', () => {
+    const { bar, view, ctx } = makeHeadingFixture(3, true)
+    new FormatToolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.fmt-select')!
+    expect(select.selectedIndex).toBe(3)
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, view.state.doc.content.size - 2)))
+    expect(select.selectedIndex).toBe(0)
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2)))
+    expect(select.selectedIndex).toBe(3)
+  })
+
+  it('selecting Normal converts an existing heading back to a paragraph', () => {
+    const { bar, view, ctx } = makeHeadingFixture(1)
+    vi.spyOn(view, 'focus').mockImplementation(() => {})
+    new FormatToolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.fmt-select')!
+    expect(select.selectedIndex).toBe(1)
+    select.value = 'Normal'
+    select.dispatchEvent(new Event('change'))
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
     expect(select.selectedIndex).toBe(0)
   })
 
@@ -513,7 +559,7 @@ describe('command buttons', () => {
       expect(option.run(view)).toBe(true)
       expect(view.state.doc.firstChild?.attrs.level).toBe(level)
     }
-    const paragraph = heading.options!.find((o) => o.label === 'Paragraph')!
+    const paragraph = heading.options!.find((o) => o.label === 'Normal')!
     expect(paragraph.run(view)).toBe(true)
     expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
     view.destroy()

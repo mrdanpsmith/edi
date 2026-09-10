@@ -324,10 +324,10 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
     { label: 'Sub', title: 'Subscript', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view) },
     { label: 'Sup', title: 'Superscript', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view) },
     {
-      label: 'Paragraph', title: 'Heading', className: 'fmt-heading',
+      label: 'Normal', title: 'Heading', className: 'fmt-heading',
       run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch),
       options: [
-        { label: 'Paragraph', run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch) },
+        { label: 'Normal', run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch) },
         ...Array.from({ length: 6 }, (_, i) => ({
           label: `Heading ${i + 1}`,
           run: (view: EditorView) => setBlockType(view.state.schema.nodes.heading, { level: i + 1 })(view.state, view.dispatch),
@@ -402,6 +402,7 @@ export class FormatToolbar {
     this.visible = readBool(FORMATTING_VISIBLE_KEY, true)
     this.build()
     this.applyVisibility()
+    updateBlockTypeSelect(this.ctx.getView())
   }
 
   isVisible(): boolean {
@@ -469,4 +470,32 @@ export class FormatToolbar {
 function readBool(key: string, fallback: boolean): boolean {
   const value = localStorage.getItem(key)
   return value === null ? fallback : value === 'true'
+}
+
+/**
+ * Keep the heading dropdown (`<select class="fmt-heading fmt-select">` in the
+ * document) showing the block the cursor is actually in: "Normal" for plain
+ * paragraphs and any other textblock, else the heading level. Runs on every
+ * view update so typing, selecting, undoing, and toolbar clicks all stay in
+ * sync. No-ops while the toolbar (and its select) do not exist yet.
+ */
+export function updateBlockTypeSelect(view: EditorView): void {
+  const select = document.querySelector<HTMLSelectElement>('.fmt-heading.fmt-select')
+  if (!select) return
+  const parent = view.state?.selection?.$from?.parent
+  if (!parent) return
+  let index = 0
+  if (parent.type.name === 'heading') {
+    index = Math.min(6, Math.max(1, Number(parent.attrs.level) || 1))
+  }
+  if (select.selectedIndex !== index) select.selectedIndex = index
+}
+
+export function blockTypeSelectPlugin(): Plugin {
+  return new Plugin({
+    view(view) {
+      updateBlockTypeSelect(view)
+      return { update: updateBlockTypeSelect }
+    },
+  })
 }

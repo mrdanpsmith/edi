@@ -21,7 +21,7 @@ import { maskedFieldNodeViewPlugin } from './node/masked'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
-import { taskClickPlugin, toggleTaskItems } from './formatToolbar'
+import { taskClickPlugin, toggleTaskItems, blockTypeSelectPlugin } from './formatToolbar'
 import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
 import { imageNodeView, reResolveImages, type ResolveImage } from './image'
@@ -230,6 +230,7 @@ export function createBlockEditor(
     maskedFieldNodeViewPlugin,
     spreadsheetPlugin,
     taskClickPlugin(),
+    blockTypeSelectPlugin(),
     codeBlockNodeViewPlugin,
     new Plugin({
       props: {
