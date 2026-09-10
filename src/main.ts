@@ -104,6 +104,11 @@ let formatToolbar: FormatToolbar | null = null
 
 const tabs = new Tabs(tabbar, {
   getMarkdown(): string {
+    // When leaving a tab (switch or close) while a block is in source mode,
+    // commit the code editor's in-progress content into the document first so
+    // it is not silently discarded. This is the tab boundary: source mode
+    // belongs to a single document.
+    blockEditor?.commitSource()
     return blockEditor?.getMarkdown() ?? ''
   },
   setMarkdown(value: string): void {

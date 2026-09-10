@@ -10,7 +10,7 @@ import { gapCursor } from 'prosemirror-gapcursor'
 import { dropCursor } from 'prosemirror-dropcursor'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { blockPlugin, getSourceBlockState, toggleSourceMode } from './blockplugin'
+import { blockPlugin, getSourceBlockState, toggleSourceMode, BLOCK_PLUGIN_KEY } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES, commitSourceMode } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { attachBlockHandles } from './blockhandle'
@@ -144,6 +144,7 @@ export interface BlockEditor {
   getMarkdown(): string
   setMarkdown(markdown: string): void
   insertMarkdown(markdown: string): void
+  commitSource(): boolean
   resolveImages(): void
   focus(): void
   destroy(): void
@@ -280,7 +281,12 @@ export function createBlockEditor(
       suppressChanges = true
       try {
         const newDoc = markdownToProse(markdown, view.state.schema)
-        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content))
+        const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content)
+        // A swapped-in document is a fresh editing context: release any
+        // source-mode block from the previous document so the "only one block
+        // open" limit never leaks across tabs.
+        tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
+        view.dispatch(tr)
       } finally {
         suppressChanges = false
       }
@@ -288,8 +294,16 @@ export function createBlockEditor(
     insertMarkdown(markdown: string) {
       view.dispatch(view.state.tr.insertText(markdown))
       const newDoc = markdownToProse(proseToMarkdown(view.state.doc), view.state.schema)
-      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content))
+      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content)
+      tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
+      view.dispatch(tr)
       view.focus()
+    },
+    commitSource(): boolean {
+      const tr = commitSourceMode(view)
+      if (!tr) return false
+      view.dispatch(tr)
+      return true
     },
     resolveImages() {
       if (resolveImageSrc) reResolveImages(view.dom, resolveImageSrc)

@@ -91,6 +91,7 @@ vi.mock('./editor', () => ({
         mainState.markdown += value
         options?.onChange?.()
       },
+      commitSource: vi.fn(),
       resolveImages: vi.fn(),
       focus: vi.fn(),
       destroy: vi.fn(),
