@@ -75,6 +75,18 @@ class _AppPage(QWebEnginePage):
         return True
 
 
+class _AppWebView(QWebEngineView):
+    """Webview with no default right-click context menu.
+
+    QWebEngineView's default ``contextMenuEvent`` raises Chromium's
+    Cut/Copy/Paste menu; swallowing the event leaves right-clicks inert so the
+    app can later provide its own menu if it wants one.
+    """
+
+    def contextMenuEvent(self, event) -> None:
+        event.accept()
+
+
 def _child_env() -> dict[str, str]:
     """Environment for spawned children, minus the PyInstaller bundle path.
 
@@ -261,7 +273,7 @@ class MainWindow(QMainWindow):
         self._insert_actions = None
 
         self._bridge = Bridge(self)
-        self._web = QWebEngineView()
+        self._web = _AppWebView()
         self._web.setPage(_AppPage(self._web))
         self._setup_web()
         self.setCentralWidget(self._web)

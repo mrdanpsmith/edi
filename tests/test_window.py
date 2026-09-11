@@ -10,8 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QSettings, QSize, QUrl, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QPointF, QSettings, QSize, QUrl, Qt
+from PySide6.QtGui import QContextMenuEvent, QMouseEvent
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
     QApplication,
@@ -24,7 +24,13 @@ from PySide6.QtWidgets import (
 )
 
 import backend.window as window_module
-from backend.window import DIST_DIR, MainWindow, __version__, _is_main_index_file
+from backend.window import (
+    DIST_DIR,
+    MainWindow,
+    __version__,
+    _AppWebView,
+    _is_main_index_file,
+)
 
 import pytest
 
@@ -653,6 +659,20 @@ def test_recent_files_single_entry_reads_back_across_processes(window):
         assert window.recent_files() == ["/only/x.md"]
     finally:
         settings.setValue("recentFiles", saved)
+
+
+def test_right_click_context_menu_is_suppressed(window):
+    web = window._web
+    assert isinstance(web, _AppWebView)
+    event = QContextMenuEvent(
+        QContextMenuEvent.Reason.Mouse,
+        QPoint(20, 20),
+        QPoint(20, 20),
+    )
+    QApplication.sendEvent(web, event)
+    assert event.isAccepted()
+    QApplication.processEvents()
+    assert QApplication.activePopupWidget() is None
 
 
 def test_add_recent_file_deduplicates_and_caps(window):
