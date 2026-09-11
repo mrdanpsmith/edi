@@ -406,6 +406,12 @@ body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-primary);
+  /* ProseMirror's default `pre-wrap` renders a single newline inside a
+   * paragraph as a visible line break, which looks identical to a hard break.
+   * CommonMark collapses single newlines to a space (soft line break), so
+   * override it. Hard breaks still show because they are hard_break nodes
+   * rendered as <br>, and code blocks keep pre-wrap via `.ProseMirror pre`. */
+  white-space: normal;
 }
 
 .ProseMirror:focus {

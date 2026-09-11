@@ -142,6 +142,22 @@ describe('further parse paths', () => {
     expect(serialize('a  \nb')).toBe('a  \nb\n')
   })
 
+  it('keeps a single newline as a soft break inside one paragraph', () => {
+    // Claude-style manually wrapped lines: single \n is NOT a paragraph or hard
+    // break — it stays in one paragraph text node and renders as a plain space.
+    const doc = markdownToProse('line one\nline two\nline three', schema)
+    expect(doc.childCount).toBe(1)
+    const para = doc.firstChild!
+    expect(para.type.name).toBe('paragraph')
+    expect(para.childCount).toBe(1)
+    const text = para.firstChild!
+    expect(text.isText).toBe(true)
+    expect(text.text).toBe('line one\nline two\nline three')
+    expect(serialize('line one\nline two\nline three')).toBe(
+      'line one\nline two\nline three\n',
+    )
+  })
+
   it('round-trips subscript, superscript, and highlight marks', () => {
     expect(serialize('x~s~y')).toBe('x~s~y\n')
     expect(serialize('x^p^y')).toBe('x^p^y\n')
