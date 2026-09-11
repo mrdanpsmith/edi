@@ -175,6 +175,53 @@ describe('further parse paths', () => {
   })
 })
 
+describe('code fence robustness', () => {
+  it('does not crash parsing an empty fenced code block', () => {
+    const doc = markdownToProse('intro\n\n```markdown\n```\n\noutro', schema)
+    const blocks = doc.content
+    expect(blocks.child(1).type.name).toBe('code_block')
+    expect(blocks.child(1).childCount).toBe(0)
+    expect(blocks.child(1).textContent).toBe('')
+    expect(proseToMarkdown(doc)).toBe('intro\n\n```markdown\n\n```\n\noutro\n')
+  })
+
+  it('does not crash re-parsing the mangled nested-fence output', () => {
+    const broken = '```markdown\n```#!sh\necho "Hello from a code block!"\n```\n```'
+    // The mangled fences parse as two code blocks (the trailing one empty) —
+    // the crash was schema.text('') on that empty block. Re-serializing must
+    // stay parseable and stable instead of throwing.
+    const out = proseToMarkdown(markdownToProse(broken, schema))
+    expect(proseToMarkdown(markdownToProse(out, schema))).toBe(out)
+  })
+
+  it('round-trips a 4-backtick outer fence holding a ```example``` inner fence', () => {
+    const md = '````markdown\n```#!sh\necho "Hello from a code block!"\n```\n````'
+    expect(serialize(md)).toBe(md + '\n')
+  })
+
+  it('uses a longer fence when the content itself contains a long backtick run', () => {
+    const md = '`````\na ````` b\n`````'
+    const doc = markdownToProse(md, schema)
+    const block = doc.firstChild!
+    expect(block.type.name).toBe('code_block')
+    expect(block.textContent).toBe('a ````` b')
+    // 5 backticks inside ⇒ 6-backtick fence outside.
+    expect(proseToMarkdown(doc)).toBe('``````\na ````` b\n``````\n')
+  })
+
+  it('round-trips a mermaid block containing a backtick run', () => {
+    const md = '```mermaid\ngraph TD\n  a --> b\n```'
+    expect(serialize(md)).toBe(md + '\n')
+    const withTicks = '````mermaid\n``` something\n````'
+    const out = proseToMarkdown(markdownToProse(withTicks, schema))
+    expect(out).toBe('````mermaid\n``` something\n````\n')
+    // Longer inner run ⇒ longer outer fence: a 4-backtick run needs 5.
+    expect(serialize('`````mermaid\n```` x ````\n`````')).toBe(
+      '`````mermaid\n```` x ````\n`````\n',
+    )
+  })
+})
+
 describe('block offsets', () => {
   it('builds one offset per top-level block', () => {
     const doc = markdownToProse('aa\n\n```js\nb\n```', schema)

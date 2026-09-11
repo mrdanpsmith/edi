@@ -64,6 +64,21 @@ function isMarkType(type: string): boolean {
 
 // --- Parse: MDAST → ProseMirror ---
 
+// A closing fence must have at least as many backticks as the opener, and a
+// content line can't be the closing fence while it also appears inside the
+// block only if it holds more backticks than the opener. So an opening fence
+// length of (longest backtick run in the content) + 1 — minimum 3 — always
+// round-trips in CommonMark.
+function codeFence(content: string): string {
+  let maxRun = 0
+  const re = /`+/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(content)) !== null) {
+    if (match[0].length > maxRun) maxRun = match[0].length
+  }
+  return '`'.repeat(Math.max(3, maxRun + 1))
+}
+
 interface MdastNode {
   type: string
   value?: string
@@ -136,9 +151,12 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
         // starts with `#!`.
         const firstLine = value.split('\n', 1)[0] ?? ''
         const content = firstLine.startsWith('#!') ? value : infoShebang + '\n' + value
-        return schema.node('code_block', { language: '' }, [schema.text(content)])
+        return schema.node('code_block', { language: '' }, content ? [schema.text(content)] : [])
       }
-      return schema.node('code_block', { language: lang }, [schema.text(value)])
+      // An empty fence (``` + `` with nothing between) yields empty content;
+      // schema.text('') is invalid, so emit the block without children instead
+      // of crashing the whole parse.
+      return schema.node('code_block', { language: lang }, value ? [schema.text(value)] : [])
     }
 
     case 'thematicBreak':
@@ -308,7 +326,10 @@ function serializeNode(node: ProseNode, indent = ''): string {
       // A runnable block just has its shebang as the first content line; the
       // info string must stay empty so it round-trips as a bare fence.
       const language = lang.startsWith('#!') ? '' : lang
-      return indent + '```' + language + '\n' + content + '\n' + indent + '```'
+      // Match the fence to the content so embedded fences (e.g. a ```example```
+      // shown inside a ```markdown fence) survive a save/reload round-trip.
+      const fence = codeFence(content)
+      return indent + fence + language + '\n' + content + '\n' + indent + fence
     }
 
     case 'horizontal_rule':
@@ -325,7 +346,8 @@ function serializeNode(node: ProseNode, indent = ''): string {
 
     case 'mermaid_block': {
       const val = (node.attrs.value as string) ?? ''
-      return indent + '```mermaid\n' + val + '\n' + indent + '```'
+      const fence = codeFence(val)
+      return indent + fence + 'mermaid\n' + val + '\n' + indent + fence
     }
 
     case 'table':
