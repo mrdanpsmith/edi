@@ -43,7 +43,6 @@ export class Tabs {
     private readonly callbacks: TabCallbacks,
   ) {
     subscribe(() => this.render())
-    this.addSession()
   }
 
   get activeId(): string {
@@ -122,7 +121,9 @@ export class Tabs {
     this.snapshots.delete(id)
     this.states.delete(id)
     if (nextActive === null) {
-      this.addSession()
+      // No sessions left: stay on the home screen (data-view switches to
+      // "home"), do not invent an empty tab.
+      this.render()
       return
     }
     this.restoreActive()

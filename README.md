@@ -69,6 +69,10 @@ print("Hello from Python!")
 
 The shebang is interpreted like a shell's, so all of these forms work: `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/python3`, `#!/usr/bin/env node`, and `#!node --harmony` (flags are passed through). Supported interpreters: `python`/`python3`/`py`, `sh`/`shell`, `bash`, `node`/`js`/`javascript`, `ruby`/`rb`, and `perl`/`pl`. Code runs locally with a 30-second timeout; stdout, stderr, and the exit code are shown in an output cell after the run. Each block owns its own result cell, and results are never shared — every **Run** executes fresh, and identical-looking blocks in different documents (or later runs of the same block) do not reuse each other's output, since a block may legitimately produce different results each time (random values, current time, changing files, etc.).
 
+### Home screen
+
+Edi starts on a home screen instead of an unsaved document. From there you can start a new document (`Ctrl+N`), open one (`Ctrl+O`), jump back into a recently opened file (the last 8, remembered per machine), reopen the welcome document, or quit. The editor is shown again automatically the moment a document is opened or created, and returns to the home screen when you close the last tab.
+
 ### Tabs
 
 Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Each tab keeps its own undo history and scroll position. `File → Open` always opens the file in a new tab, and closing a tab with unsaved changes asks for confirmation first.

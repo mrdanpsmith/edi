@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QFile, QPoint, QUrl, Qt
+from PySide6.QtCore import QFile, QPoint, QSettings, QUrl, Qt
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
@@ -30,6 +30,8 @@ DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
 CONFIRM_QUIT_MESSAGE = "Unsaved changes will be lost. Quit anyway?"
 
+RECENT_LIMIT = 8
+
 _QWEBCHANNEL_JS = Path(__file__).resolve().parent / "qwebchannel.js"
 
 
@@ -44,6 +46,19 @@ def _is_main_index_file(local: str) -> bool:
     return (
         local.replace("\\", "/") == str(DIST_DIR / "index.html").replace("\\", "/")
     )
+
+
+def _app_url(is_selftest: bool = False) -> QUrl:
+    """URL for the frontend index file, optionally tagged for selftest mode.
+
+    ``?selftest=1`` makes the frontend boot the Welcome document into a tab so
+    the packaged-build smoke probe (``.ProseMirror`` + ``.mermaid``) still has a
+    rendered editor to test, instead of the home screen shown on normal launch.
+    """
+    url = QUrl.fromLocalFile(str(DIST_DIR / "index.html"))
+    if is_selftest:
+        url.setQuery("selftest=1")
+    return url
 
 
 class _AppPage(QWebEnginePage):
@@ -270,7 +285,7 @@ class MainWindow(QMainWindow):
         script.setSourceCode(_load_qwebchannel_js())
         self._web.page().scripts().insert(script)
 
-        self._web.load(QUrl.fromLocalFile(str(DIST_DIR / "index.html")))
+        self._web.load(_app_url(is_selftest=os.environ.get("EDI_SELFTEST") == "1"))
 
     def _build_menus(self) -> None:
         menubar = self.menuBar()
@@ -409,6 +424,30 @@ class MainWindow(QMainWindow):
 
     def set_title(self, title: str) -> None:
         self.setWindowTitle(title or "Edi")
+
+    def recent_files(self) -> list[str]:
+        """Most-recently-opened documents, most recent first (capped).
+
+        Stored in QSettings under ``recentFiles``; ``QSettings()`` uses the
+        org="Edi" / app="Edi" names set in ``backend.main`` (Linux:
+        ``~/.config/Edi/Edi.conf``).
+
+        QSettings' native format stores a one-element QStringList as a bare
+        scalar, so a fresh process reads it back as a str rather than a list;
+        treat that as a single-entry list (empty strings are just ignored).
+        """
+        value = QSettings().value("recentFiles", [])
+        if isinstance(value, str):
+            return [value] if value else []
+        return list(value) if isinstance(value, list) else []
+
+    def add_recent_file(self, path: str) -> None:
+        """Record ``path`` as the most recent document, deduped and capped."""
+        current = self.recent_files()
+        if path in current:
+            current.remove(path)
+        current.insert(0, path)
+        QSettings().setValue("recentFiles", current[:RECENT_LIMIT])
 
     def confirm(self, message: str, callback=None) -> None:
         """Show a non-blocking centered Yes/No dialog.

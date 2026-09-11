@@ -12,6 +12,23 @@
       <main id="workspace">
         <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
         <section id="editor-container" aria-label="Editor"></section>
+        <section id="home-screen" aria-label="Home">
+          <h1>Edi</h1>
+          <p class="home-subtitle">Markdown editor with Mermaid, spreadsheets, and more</p>
+          <div class="home-action-row">
+            <button type="button" class="home-btn home-primary" id="home-new">New</button>
+            <button type="button" class="home-btn home-primary" id="home-open">Open…</button>
+          </div>
+          <div class="home-recent-box">
+            <button type="button" class="home-btn" id="home-recent-toggle">Recent documents</button>
+            <ul id="home-recent-list" hidden></ul>
+          </div>
+          <div class="home-action-row">
+            <button type="button" class="home-btn" id="home-welcome">Open Welcome</button>
+            <button type="button" class="home-btn" id="home-exit">Exit</button>
+          </div>
+          <p class="home-hint">Ctrl+N new · Ctrl+O open</p>
+        </section>
       </main>
       <footer id="statusbar">
         <span id="status-left"></span>

@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { Tabs, type TabContent, type TabCallbacks } from './tabs'
 import { createBlockEditor } from './editor'
 import { redo, undo } from 'prosemirror-history'
+import { getState } from './state'
 
 let markdownReturn = ''
 
@@ -62,6 +63,7 @@ describe('Tabs.addSession', () => {
     }
     const tabs = new Tabs(createTabbar(), content, makeCallbacks())
 
+    tabs.addSession()
     const originalId = tabs.activeId
     markdownReturn = '# Welcome\n\nHello world'
 
@@ -79,12 +81,33 @@ describe('Tabs.addSession', () => {
     }
     const tabs = new Tabs(createTabbar(), content, makeCallbacks())
 
+    tabs.addSession()
     const originalId = tabs.activeId
     markdownReturn = '# My Document\n\nParagraph text'
 
     tabs.addSession()
 
     expect(tabs.getMarkdownSnapshot(originalId)).toContain('My Document')
+  })
+
+  it('closing the last tab leaves zero sessions', () => {
+    const content: TabContent = {
+      getMarkdown: () => '',
+      setMarkdown: vi.fn(),
+    }
+    const tabs = new Tabs(createTabbar(), content, makeCallbacks())
+
+    // The state module is shared across tests, so assert relative to its
+    // current length rather than an absolute count.
+    const start = getState().sessions.length
+    tabs.addSession()
+    tabs.addSession()
+    expect(getState().sessions.length).toBe(start + 2)
+
+    tabs.close(tabs.activeId)
+    tabs.close(tabs.activeId)
+
+    expect(getState().sessions.length).toBe(start)
   })
 })
 
@@ -107,6 +130,7 @@ describe('Tabs scroll position', () => {
   it('restores a tab to its own saved scroll position', () => {
     const { content, state } = makeContent()
     const tabs = new Tabs(createTabbar(), content, makeCallbacks())
+    tabs.addSession()
     const firstId = tabs.activeId
 
     // User scrolls tab 1 down and creates tab 2, which scrolls to top.
@@ -127,6 +151,7 @@ describe('Tabs scroll position', () => {
   it('a brand-new tab starts scrolled to the top', () => {
     const { content, state } = makeContent(300)
     const tabs = new Tabs(createTabbar(), content, makeCallbacks())
+    tabs.addSession()
 
     // Current tab is scrolled down; adding a new tab resets to top.
     state.scroll = 300
@@ -159,9 +184,9 @@ describe('Tabs content isolation', () => {
       },
       makeCallbacks(),
     )
-    // Mirrors main.ts init(): the constructor seeded the first tab as empty;
-    // re-seat the initial document into it and snapshot.
-    tabs.setActiveContent('welcome')
+    // Mirrors main.ts init(): the first real tab is created explicitly and
+    // the welcome document is seated into it before snapshotting.
+    tabs.addSession('welcome')
     tabs.snapshotActive()
     return { editor, tabs }
   }

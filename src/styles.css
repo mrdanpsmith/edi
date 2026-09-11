@@ -286,6 +286,118 @@ body {
   overflow: auto;
 }
 
+/* ── Home / start screen ── */
+
+#home-screen {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex: 1;
+  padding: 32px 24px;
+  overflow-y: auto;
+  text-align: center;
+}
+
+#app[data-view='home'] #home-screen {
+  display: flex;
+}
+
+#app[data-view='home'] #tabbar,
+#app[data-view='home'] #formatbar,
+#app[data-view='home'] #editor-container {
+  display: none;
+}
+
+#home-screen h1 {
+  margin: 0;
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.home-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.home-action-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.home-btn {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.home-btn:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.home-btn.home-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.home-btn.home-primary:hover {
+  color: var(--accent-contrast);
+  opacity: 0.9;
+}
+
+.home-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.home-recent-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+#home-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 240px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+#home-recent-list li {
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+#home-recent-list li:hover {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.home-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 24px;
+}
+
 /* ── ProseMirror editor ── */
 
 .ProseMirror {

@@ -46,6 +46,8 @@ const mainState = vi.hoisted(() => {
     pickImportPath: vi.fn(),
     pickTextImportPath: vi.fn(),
     readAnyTextFile: vi.fn(),
+    getRecentFiles: vi.fn().mockResolvedValue([]),
+    addRecentFile: vi.fn().mockResolvedValue(undefined),
     markdown: 'Welcome',
     editorView,
     editorOptions: undefined as { onChange?: () => void } | undefined,
@@ -125,16 +127,40 @@ vi.mock('./export', async () => {
   }
 })
 
+vi.mock('./recents', () => ({
+  getRecentFiles: mainState.getRecentFiles,
+  addRecentFile: mainState.addRecentFile,
+}))
+
 const DOM_TEMPLATE = `
-  <nav id="tabbar" role="tablist" aria-label="Documents"></nav>
-  <main id="workspace">
-    <section id="editor-container" aria-label="Editor"></section>
-  </main>
-  <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
-  <footer id="statusbar">
-    <span id="status-left"></span>
-    <span id="status-right"></span>
-  </footer>
+  <div id="app">
+    <nav id="tabbar" role="tablist" aria-label="Documents"></nav>
+    <main id="workspace">
+      <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
+      <section id="editor-container" aria-label="Editor"></section>
+      <section id="home-screen" aria-label="Home">
+        <h1>Edi</h1>
+        <p class="home-subtitle">Markdown editor with Mermaid, spreadsheets, and more</p>
+        <div class="home-action-row">
+          <button type="button" class="home-btn home-primary" id="home-new">New</button>
+          <button type="button" class="home-btn home-primary" id="home-open">Open…</button>
+        </div>
+        <div class="home-recent-box">
+          <button type="button" class="home-btn" id="home-recent-toggle">Recent documents</button>
+          <ul id="home-recent-list" hidden></ul>
+        </div>
+        <div class="home-action-row">
+          <button type="button" class="home-btn" id="home-welcome">Open Welcome</button>
+          <button type="button" class="home-btn" id="home-exit">Exit</button>
+        </div>
+        <p class="home-hint">Ctrl+N new · Ctrl+O open</p>
+      </section>
+    </main>
+    <footer id="statusbar">
+      <span id="status-left"></span>
+      <span id="status-right"></span>
+    </footer>
+  </div>
 `
 
 function tick(): Promise<void> {
@@ -163,6 +189,10 @@ function press(key: string, extra: KeyboardEventInit = {}): void {
 
 function tabbarEl(): HTMLElement {
   return document.querySelector<HTMLElement>('#tabbar')!
+}
+
+function appEl(): HTMLElement {
+  return document.querySelector<HTMLElement>('#app')!
 }
 
 function statusLeft(): HTMLElement {
@@ -208,11 +238,14 @@ const FILE_MOCKS = [
 
 beforeEach(() => {
   document.body.innerHTML = DOM_TEMPLATE
+  window.history.replaceState(null, '', '/')
   localStorage.clear()
   window.matchMedia = matchMediaStub()
   mainState.hasBridge.mockReturnValue(false)
   mainState.invoke.mockReset().mockResolvedValue(undefined)
   mainState.confirmAction.mockReset().mockResolvedValue(true)
+  mainState.getRecentFiles.mockReset().mockResolvedValue([])
+  mainState.addRecentFile.mockReset().mockResolvedValue(undefined)
   mainState.markdown = 'Welcome'
   mainState.editorOptions = undefined
   for (const mock of FILE_MOCKS) {
@@ -222,13 +255,24 @@ beforeEach(() => {
 })
 
 describe('init', () => {
-  it('boots the welcome document', async () => {
+  it('boots the home screen', async () => {
+    await loadMain()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(0)
+    expect(document.title).toBe('Edi')
+    expect(appEl().dataset.view).toBe('home')
+    expect(tabbarEl().querySelectorAll('.tab')).toHaveLength(0)
+    expect(statusLeft().textContent).toBe('')
+    expect(statusRight().textContent).toBe('')
+  })
+
+  it('boots the welcome doc in selftest mode', async () => {
+    window.history.replaceState(null, '', '?selftest=1')
     await loadMain()
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(1)
     expect(document.title).toBe('Untitled — Edi')
-    expect(statusLeft().textContent).toBe('Untitled')
-    expect(statusRight().textContent).toContain('words')
+    expect(appEl().dataset.view).toBe('editor')
     expect(tabbarEl().querySelectorAll('.tab')).toHaveLength(1)
   })
 
@@ -236,7 +280,7 @@ describe('init', () => {
     await loadMain()
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' }))
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(1)
+    expect(state.getState().sessions).toHaveLength(0)
   })
 
   it('ignores bridge errors while syncing state', async () => {
@@ -259,11 +303,11 @@ describe('keyboard shortcuts', () => {
 
     press('n')
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(2)
+    expect(state.getState().sessions).toHaveLength(1)
 
     press('w')
     await flushAsync()
-    expect(state.getState().sessions).toHaveLength(1)
+    expect(state.getState().sessions).toHaveLength(0)
 
     press('o')
     press('s', { shiftKey: true })
@@ -376,21 +420,24 @@ describe('tabs', () => {
     await loadMain()
     press('n')
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(2)
-    expect(tabbarEl().querySelectorAll('.tab')).toHaveLength(2)
+    expect(state.getState().sessions).toHaveLength(1)
+    expect(tabbarEl().querySelectorAll('.tab')).toHaveLength(1)
   })
 
-  it('closes the active tab with Ctrl+W', async () => {
+  it('closes the active tab with Ctrl+W and returns to home', async () => {
     await loadMain()
     press('n')
     press('w')
     await flushAsync()
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(1)
+    expect(state.getState().sessions).toHaveLength(0)
+    expect(document.title).toBe('Edi')
+    expect(appEl().dataset.view).toBe('home')
   })
 
   it('keeps the tab when closing a dirty document is cancelled', async () => {
     await loadMain()
+    press('n')
     mainState.markdown = 'unsaved content'
     const state = await stateModule()
     const { setActiveDirty } = await import('./state')
@@ -407,6 +454,7 @@ describe('tabs', () => {
 
   it('closes a dirty document after confirming', async () => {
     await loadMain()
+    press('n')
     mainState.markdown = 'unsaved content'
     const { setActiveDirty } = await import('./state')
     setActiveDirty(true)
@@ -414,12 +462,13 @@ describe('tabs', () => {
     press('w')
     await flushAsync()
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(1)
+    expect(state.getState().sessions).toHaveLength(0)
     expect(mainState.confirmAction).toHaveBeenCalled()
   })
 
   it('marks the active tab dirty when the document is edited', async () => {
     await loadMain()
+    press('n')
     expect(activeTabTitle()).toBe('Untitled')
     expect(document.title).toBe('Untitled — Edi')
     mainState.editorOptions!.onChange!()
@@ -434,6 +483,7 @@ describe('tabs', () => {
     mainState.pickSavePath.mockResolvedValue('/tmp/notes.md')
     mainState.writeTextFile.mockResolvedValue(undefined)
     await loadMain()
+    press('n')
     menu('save')
     await flushAsync()
     expect(activeTabTitle()).toBe('notes.md')
@@ -456,7 +506,7 @@ describe('open and save', () => {
     menu('open')
     await flushAsync()
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(2)
+    expect(state.getState().sessions).toHaveLength(1)
     expect(document.title).toBe('notes.md — Edi')
     expect(statusLeft().textContent).toBe('/tmp/notes.md')
   })
@@ -470,7 +520,7 @@ describe('open and save', () => {
     menu('open')
     await flushAsync()
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(2)
+    expect(state.getState().sessions).toHaveLength(1)
     expect(mainState.readTextFile).toHaveBeenCalledTimes(1)
   })
 
@@ -480,7 +530,7 @@ describe('open and save', () => {
     menu('open')
     await flushAsync()
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(1)
+    expect(state.getState().sessions).toHaveLength(0)
     expect(mainState.readTextFile).not.toHaveBeenCalled()
   })
 
@@ -493,7 +543,7 @@ describe('open and save', () => {
     menu('open')
     await flushAsync()
     const state = await stateModule()
-    expect(state.getState().sessions).toHaveLength(3)
+    expect(state.getState().sessions).toHaveLength(2)
     expect(mainState.readTextFile).toHaveBeenNthCalledWith(1, '/tmp/a.md')
     expect(mainState.readTextFile).toHaveBeenNthCalledWith(2, '/tmp/b.md')
   })
@@ -540,13 +590,12 @@ describe('open and save', () => {
   it('prompts for a path when saving an unsaved document', async () => {
     mainState.pickSavePath.mockResolvedValue('/tmp/new.md')
     await loadMain()
+    window.ediSetContent?.('Welcome to Edi')
+    await flushAsync()
     menu('save')
     await flushAsync()
     expect(mainState.pickSavePath).toHaveBeenCalledWith('Untitled')
-    expect(mainState.writeTextFile).toHaveBeenCalledWith(
-      '/tmp/new.md',
-      expect.stringContaining('Welcome'),
-    )
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/new.md', 'Welcome to Edi')
     expect(document.title).toBe('new.md — Edi')
   })
 
@@ -566,6 +615,7 @@ describe('open and save', () => {
   it('asks before saving to an unsupported extension', async () => {
     mainState.pickSavePath.mockResolvedValue('/tmp/out.csv')
     await loadMain()
+    press('n')
     menu('save')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(expect.stringContaining('/tmp/out.csv'))
@@ -576,6 +626,7 @@ describe('open and save', () => {
     mainState.pickSavePath.mockResolvedValue('/tmp/new.md')
     mainState.writeTextFile.mockRejectedValue(new Error('disk full'))
     await loadMain()
+    press('n')
     menu('save')
     await flushAsync()
     expect(mainState.showError).toHaveBeenCalledWith(
@@ -639,6 +690,7 @@ describe('export', () => {
   it('exports to HTML', async () => {
     mainState.pickExportPath.mockResolvedValue('/tmp/out.html')
     await loadMain()
+    press('n')
     menu('export')
     await flushAsync()
     expect(mainState.pickExportPath).toHaveBeenCalledWith('Untitled')
@@ -652,6 +704,7 @@ describe('export', () => {
   it('does nothing when the export dialog is cancelled', async () => {
     mainState.pickExportPath.mockResolvedValue(null)
     await loadMain()
+    press('n')
     menu('export')
     await flushAsync()
     expect(mainState.writeTextFile).not.toHaveBeenCalled()
@@ -661,11 +714,42 @@ describe('export', () => {
     mainState.pickExportPath.mockResolvedValue('/tmp/out.html')
     mainState.writeTextFile.mockRejectedValue(new Error('boom'))
     await loadMain()
+    press('n')
     menu('export')
     await flushAsync()
     expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to export /tmp/out.html'),
     )
+  })
+})
+
+describe('recent files', () => {
+  it('renders recent files on the home screen', async () => {
+    mainState.getRecentFiles.mockResolvedValue(['/x/a.md', '/x/b.md'])
+    await loadMain()
+    const items = document.querySelectorAll<HTMLElement>('#home-recent-list li')
+    expect(items).toHaveLength(2)
+    expect(items[0]?.textContent).toBe('a.md')
+    expect(items[1]?.dataset.path).toBe('/x/b.md')
+  })
+
+  it('records an opened file as recent', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    expect(mainState.addRecentFile).toHaveBeenCalledWith('/tmp/notes.md')
+  })
+
+  it('records a saved file as recent', async () => {
+    mainState.pickSavePath.mockResolvedValue('/tmp/new.md')
+    await loadMain()
+    window.ediSetContent?.('content')
+    await flushAsync()
+    menu('save')
+    await flushAsync()
+    expect(mainState.addRecentFile).toHaveBeenCalledWith('/tmp/new.md')
   })
 })
 

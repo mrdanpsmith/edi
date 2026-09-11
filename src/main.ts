@@ -34,7 +34,11 @@ import { FormatToolbar } from './formatToolbar'
 import { bindMenuCommands } from './menus'
 import { createBlockEditor, type BlockEditor } from './editor'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
+import { HomeScreen } from './home'
+import { addRecentFile, getRecentFiles } from './recents'
 import { Tabs } from './tabs'
+
+const IS_SELFTEST = new URLSearchParams(window.location.search).has('selftest')
 
 const WELCOME_DOCUMENT = `# Welcome to Edi
 
@@ -101,6 +105,7 @@ let lastNativeTitle = ''
 
 let blockEditor: BlockEditor | null = null
 let formatToolbar: FormatToolbar | null = null
+let homeScreen: HomeScreen | null = null
 
 const tabs = new Tabs(tabbar, {
   getMarkdown(): string {
@@ -134,19 +139,39 @@ const tabs = new Tabs(tabbar, {
   onActivate: () => afterActivate(),
 })
 
+function updateView(): void {
+  const app = document.querySelector<HTMLElement>('#app')
+  if (!app) return
+  app.dataset.view = getState().sessions.length === 0 ? 'home' : 'editor'
+}
+
 function updateTitle(): void {
   const active = getActive()
-  const name = active?.path ? active.path.split('/').pop()! : UNTITLED
-  document.title = `${active?.dirty ? '* ' : ''}${name} — Edi`
+  if (!active) {
+    document.title = 'Edi'
+    if (document.title !== lastNativeTitle) {
+      lastNativeTitle = document.title
+      void invoke('setTitle', { title: 'Edi' }).catch(() => undefined)
+    }
+    return
+  }
+  const name = active.path ? active.path.split('/').pop()! : UNTITLED
+  const title = `${active.dirty ? '* ' : ''}${name} — Edi`
+  document.title = title
   if (document.title !== lastNativeTitle) {
     lastNativeTitle = document.title
-    void invoke('setTitle', { title: document.title }).catch(() => undefined)
+    void invoke('setTitle', { title }).catch(() => undefined)
   }
 }
 
 function updateStatus(): void {
   const active = getActive()
-  statusLeft.textContent = active?.path ?? UNTITLED
+  if (!active) {
+    statusLeft.textContent = ''
+    statusRight.textContent = ''
+    return
+  }
+  statusLeft.textContent = active.path ?? UNTITLED
   const text = blockEditor?.getMarkdown() ?? ''
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
@@ -185,8 +210,8 @@ function flashStatus(message: string): void {
 }
 
 async function exportHtml(): Promise<void> {
-  const active = getActive()
-  const base = active?.path ? fileName(active.path) : UNTITLED
+  if (!getActive()) return
+  const base = getActive()!.path ? fileName(getActive()!.path!) : UNTITLED
   const path = await pickExportPath(base)
   if (!path) {
     return
@@ -206,6 +231,37 @@ async function exportHtml(): Promise<void> {
 
 function openNewTab(): void {
   tabs.addSession()
+}
+
+function openWelcome(): void {
+  tabs.addSession(WELCOME_DOCUMENT)
+  afterActivate()
+}
+
+function buildHomeScreen(): HomeScreen {
+  const root = document.querySelector<HTMLElement>('#home-screen')!
+  return new HomeScreen(root, {
+    onNew: () => openNewTab(),
+    onOpen: () => void openFile(),
+    onOpenWelcome: () => openWelcome(),
+    onExit: () => requestQuit(),
+    onOpenRecent: (path) => void openDocument(path),
+  })
+}
+
+function refreshRecents(): void {
+  getRecentFiles()
+    .then((paths) => homeScreen?.setRecents(paths))
+    .catch(() => undefined)
+}
+
+async function rememberRecent(path: string): Promise<void> {
+  try {
+    await addRecentFile(path)
+  } catch {
+    // Recent-files persistence is best-effort (e.g. no native bridge).
+  }
+  refreshRecents()
 }
 
 async function closeTab(id: string): Promise<void> {
@@ -241,6 +297,7 @@ async function openDocument(path: string): Promise<void> {
     // The path is set before the content is rendered so that relative image
     // references in opened documents resolve against the document's directory.
     tabs.addSession(content, path)
+    void rememberRecent(path)
     afterActivate()
   } catch (error) {
     reportError(`Failed to open ${path}`, error)
@@ -303,8 +360,9 @@ async function openLink(href: string, text: string): Promise<void> {
 }
 
 async function saveFile(): Promise<void> {
-  const active = getActive()
-  let path = active?.path ?? null
+  if (!getActive()) return
+  const active = getActive()!
+  let path = active.path ?? null
   if (!path) {
     path = await pickSavePath(UNTITLED)
     if (!path) {
@@ -315,8 +373,8 @@ async function saveFile(): Promise<void> {
 }
 
 async function saveFileAs(): Promise<void> {
-  const current = getActive()?.path ?? null
-  const defaultName = current ? current.split('/').pop()! : UNTITLED
+  if (!getActive()) return
+  const defaultName = getActive()!.path?.split('/').pop() ?? UNTITLED
   const path = await pickSavePath(defaultName)
   if (!path) {
     return
@@ -337,14 +395,16 @@ async function saveTo(path: string): Promise<void> {
     updateStatus()
     syncDirty()
     syncMenuState()
+    void rememberRecent(path)
   } catch (error) {
     reportError(`Failed to save ${path}`, error)
   }
 }
 
 async function revertFile(): Promise<void> {
-  const active = getActive()
-  const path = active?.path ?? null
+  if (!getActive()) return
+  const active = getActive()!
+  const path = active.path ?? null
   if (!path) {
     return
   }
@@ -457,10 +517,6 @@ function requestQuit(event?: CloseRequestEvent): void {
   window.close()
 }
 
-function getWelcomeDocument(): string {
-  return WELCOME_DOCUMENT
-}
-
 function toggleFormatting(): void {
   formatToolbar?.toggle()
   syncMenuState()
@@ -558,8 +614,7 @@ function editSelectAll(): void {
 }
 
 function init(): void {
-  const welcome = getWelcomeDocument()
-  blockEditor = createBlockEditor(editorContainer, welcome, {
+  blockEditor = createBlockEditor(editorContainer, '', {
     onOpenLink: openLink,
     onChange: () => setActiveDirty(true),
     resolveImageSrc: resolveImageFileUrl,
@@ -567,14 +622,20 @@ function init(): void {
   formatToolbar = new FormatToolbar(formatBar, {
     getView: () => blockEditor!.getView(),
   })
-  tabs.snapshotActive()
+  homeScreen = buildHomeScreen()
   registerShortcuts()
   // Drive content from the native shell (QWebChannel): the desktop shell loads
   // documents and the smoke/selftest harness drives headless runs via this hook.
   window.ediSetContent = (markdown: string) => {
-    // Loads the document into the current tab: reset its scroll to top and
-    // record that the view now holds this session's content.
-    tabs.setActiveContent(markdown)
+    if (getState().sessions.length === 0) {
+      // A document arrived on the home screen: create a tab for it.
+      tabs.addSession(markdown)
+    } else {
+      // Loads the document into the current tab: reset its scroll to top and
+      // record that the view now holds this session's content.
+      tabs.setActiveContent(markdown)
+      editorContainer.scrollTop = 0
+    }
     tabs.snapshotActive()
     afterActivate()
   }
@@ -597,8 +658,11 @@ function init(): void {
     selectAll: () => editSelectAll(),
   })
   subscribe(() => {
-    syncDirty()
+    updateView()
     updateTitle()
+    updateStatus()
+    syncDirty()
+    syncMenuState()
   })
   // Re-resolve relative image references when the active document's path
   // changes (e.g. Save As into a different directory) so they keep pointing at
@@ -611,6 +675,15 @@ function init(): void {
       blockEditor?.resolveImages()
     }
   })
+  if (IS_SELFTEST) {
+    // The packaged smoke test probes the rendered editor + mermaid diagram, so
+    // boot the welcome document into a tab instead of the home screen.
+    openWelcome()
+  }
+  refreshRecents()
+  // The subscribe() below only runs on state transitions; boot has none, so
+  // render the initial view (home) explicitly.
+  updateView()
   syncDirty()
   afterActivate()
 }

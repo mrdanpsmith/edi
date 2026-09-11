@@ -59,6 +59,8 @@ class Bridge(QObject):
             "setDirty": self._set_dirty,
             "setTitle": self._set_title,
             "setMenuState": self._set_menu_state,
+            "getRecentFiles": self._get_recent_files,
+            "addRecentFile": self._add_recent_file,
             "quit": self._quit,
             "ping": self._ping,
         }
@@ -287,6 +289,15 @@ class Bridge(QObject):
             can_revert=bool(args.get("canRevert")),
             formatting_visible=bool(args.get("formattingVisible")),
         )
+        self._reply(request_id, None)
+
+    def _get_recent_files(self, request_id: int, _args: dict) -> None:
+        self._reply(request_id, self._window.recent_files())
+
+    def _add_recent_file(self, request_id: int, args: dict) -> None:
+        path = args.get("path", "")
+        if path:
+            self._window.add_recent_file(str(path))
         self._reply(request_id, None)
 
     def _quit(self, request_id: int, _args: dict) -> None:

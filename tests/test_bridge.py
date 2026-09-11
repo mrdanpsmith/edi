@@ -26,6 +26,7 @@ class StubWindow(QObject):
         self.can_revert = False
         self.formatting_visible = True
         self.opened_urls: list[str] = []
+        self.recent_files_list: list[str] = []
 
     def confirm(self, message, callback=None) -> None:
         self.confirm_messages.append(message)
@@ -76,6 +77,14 @@ class StubWindow(QObject):
 
     def open_external_url(self, url: str) -> None:
         self.opened_urls.append(url)
+
+    def recent_files(self) -> list[str]:
+        return self.recent_files_list
+
+    def add_recent_file(self, path: str) -> None:
+        if path in self.recent_files_list:
+            self.recent_files_list.remove(path)
+        self.recent_files_list.insert(0, path)
 
 
 @pytest.fixture
@@ -336,6 +345,27 @@ def test_open_url_forwards_to_window(bridge):
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.opened_urls == ["https://example.com/a"]
+
+
+def test_get_recent_files_returns_empty_initially(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "getRecentFiles")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == []
+
+
+def test_add_recent_file_then_get_recent_files(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "addRecentFile", {"path": "/x.md"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert window.recent_files_list == ["/x.md"]
+
+    _invoke(bridge_obj, "getRecentFiles", request_id=2)
+    message = _wait_for(lambda: result.get(2))
+    assert message["ok"] is True
+    assert message["data"] == ["/x.md"]
 
 
 def test_open_url_missing_url_errors(bridge):

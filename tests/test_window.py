@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QSize, QUrl, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QSettings, QSize, QUrl, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
@@ -631,6 +631,53 @@ def test_set_title_updates_window_title(visible):
     assert window.windowTitle() == "notes.md — Edi"
     window.set_title("")
     assert window.windowTitle() == "Edi"
+
+
+def test_app_url_selftest_query():
+    assert window_module._app_url(is_selftest=True).query() == "selftest=1"
+    assert window_module._app_url(is_selftest=False).query() == ""
+    assert (
+        window_module._app_url(is_selftest=True).toLocalFile()
+        == str(DIST_DIR / "index.html")
+    )
+
+
+def test_recent_files_single_entry_reads_back_across_processes(window):
+    # QSettings' native format stores a one-element QStringList as a scalar
+    # (`recentFiles=/only/x.md`), so a fresh process reads a str, not a list.
+    # Simulate that persisted shape and confirm it still round-trips.
+    settings = QSettings()
+    saved = settings.value("recentFiles", [])
+    settings.setValue("recentFiles", "/only/x.md")
+    try:
+        assert window.recent_files() == ["/only/x.md"]
+    finally:
+        settings.setValue("recentFiles", saved)
+
+
+def test_add_recent_file_deduplicates_and_caps(window):
+    # QSettings() resolves its file at first use per-process and then caches the
+    # location, so XDG_CONFIG_HOME cannot redirect it mid-session. Save and
+    # restore the real value instead so the test is self-contained.
+    settings = QSettings()
+    saved = settings.value("recentFiles", [])
+    settings.setValue("recentFiles", [])
+    try:
+        assert window.recent_files() == []
+
+        window.add_recent_file("/x/a.md")
+        window.add_recent_file("/x/b.md")
+        window.add_recent_file("/x/a.md")  # dup moves back to the front
+        assert window.recent_files() == ["/x/a.md", "/x/b.md"]
+
+        for i in range(10):
+            window.add_recent_file(f"/x/f{i}.md")
+        recent = window.recent_files()
+        assert len(recent) == window_module.RECENT_LIMIT
+        assert recent[0] == "/x/f9.md"
+        assert "/x/b.md" not in recent
+    finally:
+        settings.setValue("recentFiles", saved)
 
 
 def test_pick_save_path_cancel_returns_none(visible, qtbot):
