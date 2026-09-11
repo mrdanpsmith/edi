@@ -1351,3 +1351,62 @@ body {
   color: var(--text-primary);
   padding: 0 4px;
 }
+
+/* Context menu */
+.edi-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  outline: none;
+}
+
+.edi-menu-item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.9em;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: default;
+}
+
+.edi-menu-item:focus {
+  outline: none;
+}
+
+.edi-menu-item:hover:not(:disabled),
+.edi-menu-item.active:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.edi-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.edi-menu-item.danger:not(:disabled) {
+  color: var(--danger);
+}
+
+.edi-menu-item.danger:hover:not(:disabled),
+.edi-menu-item.danger.active:not(:disabled) {
+  background: var(--danger);
+  color: var(--accent-contrast);
+}
+
+.edi-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}

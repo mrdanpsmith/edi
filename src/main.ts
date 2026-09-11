@@ -6,7 +6,7 @@ import './styles.css'
 import { confirmAction, hasBridge, invoke, showError } from './bridge'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
-import { undo, redo } from 'prosemirror-history'
+import { redo, redoDepth, redoNoScroll, undo, undoDepth, undoNoScroll } from 'prosemirror-history'
 import { selectAll } from 'prosemirror-commands'
 import {
   dirname,
@@ -28,7 +28,10 @@ import {
 } from './files'
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText } from './paste'
-import { writeClipboard } from './clipboard'
+import { copyText, writeClipboard } from './clipboard'
+import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
+import { toggleSourceMode } from './blockplugin'
+import { commitSourceMode } from './blockview'
 import { isMisleadingLink } from './linkSecurity'
 import { FormatToolbar } from './formatToolbar'
 import { bindMenuCommands } from './menus'
@@ -106,6 +109,7 @@ let lastNativeTitle = ''
 let blockEditor: BlockEditor | null = null
 let formatToolbar: FormatToolbar | null = null
 let homeScreen: HomeScreen | null = null
+let contextMenu: ContextMenu | null = null
 
 const tabs = new Tabs(tabbar, {
   getMarkdown(): string {
@@ -538,6 +542,24 @@ function editRedo(): void {
   }
 }
 
+// Menu-triggered undo/redo must not scroll: the transaction is dispatched with
+// scrollIntoView=false so the viewport stays put (undoNoScroll/redoNoScroll).
+function editUndoNoScroll(): void {
+  const view = blockEditor?.getView()
+  if (view) {
+    view.focus()
+    undoNoScroll(view.state, view.dispatch, view)
+  }
+}
+
+function editRedoNoScroll(): void {
+  const view = blockEditor?.getView()
+  if (view) {
+    view.focus()
+    redoNoScroll(view.state, view.dispatch, view)
+  }
+}
+
 function editCut(): void {
   const view = blockEditor?.getView()
   if (!view || view.state.selection.empty) return
@@ -613,6 +635,105 @@ function editSelectAll(): void {
   }
 }
 
+function hasEditorSelection(): boolean {
+  const selection = blockEditor?.getView().state.selection
+  return !!selection && !selection.empty
+}
+
+/**
+ * Build the right-click menu for a point in the document. Always starts with
+ * the standard editing commands, then appends block-specific actions for the
+ * element under the pointer: Run/Stop + Copy source for runnable code blocks,
+ * commit back to visual mode for source-mode blocks, and Edit source for
+ * visual-mode blocks with a known position (e.g. Mermaid diagrams).
+ */
+function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
+  const view = blockEditor?.getView()
+  // Only offer undo/redo when there is actually history to traverse; a
+  // enabled-but-no-op Redo just looks broken.
+  const undoable = !!view && undoDepth(view.state) > 0
+  const redoable = !!view && redoDepth(view.state) > 0
+  const entries: ContextMenuEntry[] = [
+    { type: 'item', label: 'Undo', disabled: !undoable, onSelect: () => editUndoNoScroll() },
+    { type: 'item', label: 'Redo', disabled: !redoable, onSelect: () => editRedoNoScroll() },
+    { type: 'separator' },
+    {
+      type: 'item',
+      label: 'Cut',
+      disabled: !hasEditorSelection(),
+      onSelect: () => editCut(),
+    },
+    {
+      type: 'item',
+      label: 'Copy',
+      disabled: !hasEditorSelection(),
+      onSelect: () => editCopy(),
+    },
+    { type: 'item', label: 'Paste', onSelect: () => void editPaste() },
+    { type: 'item', label: 'Select all', onSelect: () => editSelectAll() },
+  ]
+  if (event.target instanceof Element) {
+    const blockEntries = buildBlockMenuItems(event.target)
+    if (blockEntries.length > 0) {
+      entries.push({ type: 'separator' })
+      entries.push(...blockEntries)
+    }
+  }
+  return entries
+}
+
+function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
+  const view = blockEditor?.getView()
+  if (!view) return []
+  const entries: ContextMenuEntry[] = []
+  const addItem = (
+    label: string,
+    onSelect: () => void,
+    extra: Partial<Pick<ContextMenuItem, 'disabled' | 'danger'>> = {},
+  ): void => {
+    entries.push({ type: 'item', label, onSelect, ...extra })
+  }
+
+  const runnable = target.closest('.runnable-block')
+  if (runnable) {
+    const runButton = runnable.querySelector<HTMLButtonElement>('.exec-run')
+    if (runButton) {
+      const running = runButton.classList.contains('exec-stop')
+      addItem(running ? 'Stop' : 'Run', () => runButton.click())
+    }
+    const source = runnable.querySelector<HTMLElement>('.runnable-source')
+    if (source?.textContent !== null && source?.textContent !== undefined) {
+      const text = source.textContent
+      addItem('Copy source', () => {
+        void copyText(text)
+      })
+    }
+    return entries
+  }
+
+  if (target.closest('.block-source-mode')) {
+    // Source/visual (Mermaid) mode: commit the edited source back to the
+    // document and leave source mode, exactly like the toolbar exit button.
+    addItem('Visual mode', () => {
+      const tr = commitSourceMode(view)
+      if (tr) view.dispatch(tr)
+    })
+    return entries
+  }
+
+  const visual = target.closest('.mermaid, .block-visual-mode')
+  if (visual) {
+    const handle = visual.querySelector<HTMLElement>('.block-handle[data-block-pos]')
+    const pos = handle ? Number(handle.dataset.blockPos) : NaN
+    if (Number.isInteger(pos) && pos >= 0 && pos < view.state.doc.content.size) {
+      addItem('Edit source', () => {
+        view.dispatch(toggleSourceMode(view.state, pos))
+      })
+    }
+  }
+  return entries
+}
+
 function init(): void {
   blockEditor = createBlockEditor(editorContainer, '', {
     onOpenLink: openLink,
@@ -624,6 +745,14 @@ function init(): void {
   })
   homeScreen = buildHomeScreen()
   registerShortcuts()
+  // Right-click opens a custom menu (the browser's native one is suppressed by
+  // the desktop shell). On the home screen there is no document to act on.
+  editorContainer.addEventListener('contextmenu', (event) => {
+    if (getState().sessions.length === 0) return
+    event.preventDefault()
+    contextMenu ??= new ContextMenu()
+    contextMenu.show(buildContextMenu(event), event.clientX, event.clientY)
+  })
   // Drive content from the native shell (QWebChannel): the desktop shell loads
   // documents and the smoke/selftest harness drives headless runs via this hook.
   window.ediSetContent = (markdown: string) => {

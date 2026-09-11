@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
+import { history } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 
@@ -824,6 +825,182 @@ describe('import', () => {
     await loadMain()
     menu('insertImage')
     await flushAsync()
+  })
+})
+
+describe('context menu', () => {
+  it('opens the clipboard menu on right-click inside the editor', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+
+    const editor = document.querySelector<HTMLElement>('#editor-container')!
+    editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
+    const labels = Array.from(document.querySelectorAll('.edi-menu-item'))
+      .map((button) => (button as HTMLButtonElement).textContent ?? '')
+    expect(labels).toEqual([
+      'Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Select all',
+    ])
+    // Repeated right-clicks replace the open menu instead of stacking menus.
+    editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 30, clientY: 30 }))
+    expect(document.querySelectorAll('.edi-context-menu')).toHaveLength(1)
+  })
+
+  it('disables cut and copy without a selection', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    document.querySelector<HTMLElement>('#editor-container')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 0, clientY: 0 }))
+    const cut = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .find((button) => button.textContent === 'Cut')!
+    const copy = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .find((button) => button.textContent === 'Copy')!
+    expect(cut.disabled).toBe(true)
+    expect(copy.disabled).toBe(true)
+    expect(
+      Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+        .find((button) => button.textContent === 'Select all')!.disabled,
+    ).toBe(false)
+  })
+
+  it('disables undo and redo when there is nothing to undo or redo', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    document.querySelector<HTMLElement>('#editor-container')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 0, clientY: 0 }))
+    const findItem = (label: string): HTMLButtonElement =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+        .find((button) => button.textContent === label)!
+    expect(findItem('Undo').disabled).toBe(true)
+    expect(findItem('Redo').disabled).toBe(true)
+  })
+
+  it('enables undo and redo per history depth without scrolling', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({
+        doc: markdownToProse('one two', schema),
+        plugins: [history()],
+      }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+    realView.dispatch(realView.state.tr.insertText('!'))
+    const dispatch = vi.spyOn(realView, 'dispatch')
+
+    const openMenu = (): void => {
+      document.querySelector<HTMLElement>('#editor-container')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    }
+    const findItem = (label: string): HTMLButtonElement =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+        .find((button) => button.textContent === label)!
+
+    openMenu()
+    expect(findItem('Undo').disabled).toBe(false)
+    expect(findItem('Redo').disabled).toBe(true)
+
+    findItem('Undo').click()
+    expect(realView.state.doc.textContent).toBe('one two')
+    expect(dispatch).toHaveBeenCalled()
+    // Menu undo must not scroll the editor to the undone selection.
+    expect((dispatch.mock.calls[0]![0] as { scrolledIntoView: boolean }).scrolledIntoView).toBe(false)
+
+    openMenu()
+    expect(findItem('Undo').disabled).toBe(true)
+    expect(findItem('Redo').disabled).toBe(false)
+    findItem('Redo').click()
+    expect(realView.state.doc.textContent).toBe('!one two')
+
+    realView.destroy()
+    host.remove()
+  })
+
+  it('opens no context menu on the home screen', async () => {
+    await loadMain()
+    document.querySelector<HTMLElement>('#editor-container')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 0, clientY: 0 }))
+    expect(document.querySelector('.edi-context-menu')).toBeNull()
+  })
+
+  it('offers Run and Copy source on a runnable block, Stop while running', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+
+    const runnable = document.createElement('div')
+    runnable.className = 'runnable-block'
+    runnable.innerHTML = [
+      '<pre class="runnable-source">#!/usr/bin/env python3',
+      'print("hi")</pre>',
+      '<button type="button" class="exec-run">Run</button>',
+    ].join('\n')
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(runnable)
+    const source = runnable.querySelector<HTMLElement>('.runnable-source')!
+
+    source.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    let labels = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .map((button) => button.textContent ?? '')
+    expect(labels).toContain('Run')
+    expect(labels).toContain('Copy source')
+    expect(labels).not.toContain('Stop')
+
+    runnable.querySelector<HTMLElement>('.exec-run')!.classList.add('exec-stop')
+    source.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    labels = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .map((button) => button.textContent ?? '')
+    expect(labels).toContain('Stop')
+    expect(labels).not.toContain('Run')
+    runnable.remove()
+  })
+
+  it('offers Visual mode when right-clicking source-mode blocks', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const sourceMode = document.createElement('div')
+    sourceMode.className = 'block-source-mode'
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sourceMode)
+
+    sourceMode.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    const labels = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .map((button) => button.textContent ?? '')
+    expect(labels).toContain('Visual mode')
+    expect(labels).not.toContain('Edit source')
+    sourceMode.remove()
+  })
+
+  it('enters source mode from Edit source on a mermaid block', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    const mermaid = document.createElement('div')
+    mermaid.className = 'mermaid'
+    mermaid.innerHTML = '<div class="block-handle" data-block-pos="1"></div><div class="mermaid-preview"></div>'
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(mermaid)
+
+    mermaid.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    const editSource = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .find((button) => button.textContent === 'Edit source')!
+    expect(editSource).toBeDefined()
+    editSource.click()
+    expect(realView.state.doc.child(0)?.attrs._source).toBe(true)
+
+    realView.destroy()
+    host.remove()
+    mermaid.remove()
   })
 })
 
