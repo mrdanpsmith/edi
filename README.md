@@ -5,27 +5,6 @@ However, while markdown is becoming an all-encompassing, modern version of offic
 
 Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets you write up all of the amazing things that modern markdown has become, lets you compose diagrams in mermaid, and allows you to do in-line data processing on tables just like a mini-spreadsheet.
 
-## Status
-
-Implemented: a Python desktop app (PySide6 + QtWebEngine) with a CodeMirror 6 markdown editor and a live, resizable, toggleable preview that renders Mermaid diagrams, computes spreadsheet formulas in tables, runs `#!` code blocks, imports spreadsheets, copies tables to the clipboard, and exports the rendered document as a self-contained HTML file.
-
-| Feature | Status |
-| --- | --- |
-| Fast, small-footprint editor (Python + QtWebEngine) | Done |
-| Markdown editing with syntax highlighting | Done |
-| Live preview as you type (debounced, resizable, toggleable) | Done |
-| In-line Mermaid diagrams | Done |
-| Open / Save / Save As / Revert | Done |
-| Multiple documents in tabs | Done |
-| Native menus (File / View) | Done |
-| In-line spreadsheet capabilities | Done |
-| Spreadsheet import (CSV / TSV / ODS / XLSX) | Done |
-| Text-file and image insertion | Done |
-| Formatting toolbar (bold, italic, headings, lists, links, …) | Done |
-| Copy preview tables to the clipboard (Word / email / Excel) | Done |
-| Executable code blocks (`#!` kernel syntax) | Done |
-| HTML export | Done |
-
 ## Architecture
 
 - **Frontend**: CodeMirror 6 + Mermaid + spreadsheet formulas in TypeScript, built with Vite into a single static `dist/`.
