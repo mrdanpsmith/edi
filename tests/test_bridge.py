@@ -314,18 +314,22 @@ def test_copy_content_sets_html_and_text_clipboard(bridge):
 
 
 def test_copy_image_sets_clipboard(bridge):
-    from PySide6.QtGui import QGuiApplication, QImage
+    import base64
+
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+    from PySide6.QtGui import QColor, QGuiApplication, QImage
 
     bridge_obj, _window, result = bridge
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" '
-        'viewBox="0 0 10 5">'
-        '<rect x="4" y="1" width="2" height="3" fill="#d6e4ff"/>'
-        '<text x="5" y="3" text-anchor="middle" font-family="sans-serif" '
-        'font-size="2">AB</text></svg>'
-    )
+    # A 10x5 PNG, produced exactly as the webview's canvas does.
+    png = QImage(10, 5, QImage.Format.Format_ARGB32)
+    png.fill(QColor("#ffffff"))
+    png.setPixelColor(5, 2, QColor("#d6e4ff"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    png.save(buffer, "PNG")
+    data = base64.b64encode(buffer.data()).decode("ascii")
 
-    _invoke(bridge_obj, "copyImage", {"svg": svg}, 43)
+    _invoke(bridge_obj, "copyImage", {"data": data}, 43)
     message = _wait_for(lambda: result.get(43))
     assert message["ok"] is True
 
@@ -334,55 +338,53 @@ def test_copy_image_sets_clipboard(bridge):
     pasted = mime.imageData()
     assert isinstance(pasted, QImage)
     assert not pasted.isNull()
-    # Rasterized at 2x the SVG size.
-    assert pasted.size().width() == 20
-    assert pasted.size().height() == 10
-    # Background defaults to white when the theme color is absent.
+    assert pasted.size().width() == 10
+    assert pasted.size().height() == 5
+    assert pasted.pixelColor(5, 2).name() == "#d6e4ff"
     assert pasted.pixelColor(0, 0).name() == "#ffffff"
-    assert pasted.pixelColor(19, 9).name() == "#ffffff"
 
 
-def test_copy_image_background_follows_theme(bridge):
-    from PySide6.QtGui import QGuiApplication, QImage
+def test_copy_image_accepts_theme_background_rendered_by_webview(bridge):
+    import base64
+
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QColor, QGuiApplication, QImage
 
     bridge_obj, _window, result = bridge
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" '
-        'viewBox="0 0 10 5">'
-        '<rect x="4" y="1" width="2" height="3" fill="#d6e4ff"/>'
-        '<text x="5" y="3" text-anchor="middle" font-family="sans-serif" '
-        'font-size="2">AB</text></svg>'
-    )
+    png = QImage(10, 5, QImage.Format.Format_ARGB32)
+    png.fill(QColor("#0d1117"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    png.save(buffer, "PNG")
+    data = base64.b64encode(buffer.data()).decode("ascii")
 
-    _invoke(bridge_obj, "copyImage", {"svg": svg, "background": "#0d1117"}, 43)
+    # The theme background is baked into the PNG by the webview; the bridge no
+    # longer needs a background argument.
+    _invoke(bridge_obj, "copyImage", {"data": data, "background": "red"}, 43)
     message = _wait_for(lambda: result.get(43))
     assert message["ok"] is True
 
     pasted = QGuiApplication.clipboard().mimeData().imageData()
     assert pasted.pixelColor(0, 0).name() == "#0d1117"
-    assert pasted.pixelColor(19, 9).name() == "#0d1117"
 
 
-def test_copy_image_rejects_bad_background(bridge):
-    from PySide6.QtGui import QGuiApplication, QImage
+def test_copy_image_rejects_garbage_base64(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "copyImage", {"data": "not base64!?"}, 43)
+    message = _wait_for(lambda: result.get(43))
+    assert message["ok"] is False
+
+
+def test_copy_image_rejects_non_image_bytes(bridge):
+    import base64
 
     bridge_obj, _window, result = bridge
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" '
-        'viewBox="0 0 10 5">'
-        '<rect x="4" y="1" width="2" height="3" fill="#d6e4ff"/>'
-        '</svg>'
-    )
-
-    _invoke(bridge_obj, "copyImage", {"svg": svg, "background": "red"}, 43)
+    _invoke(bridge_obj, "copyImage", {"data": base64.b64encode(b"hello").decode()}, 43)
     message = _wait_for(lambda: result.get(43))
-    assert message["ok"] is True
-
-    pasted = QGuiApplication.clipboard().mimeData().imageData()
-    assert pasted.pixelColor(0, 0).name() == "#ffffff"
+    assert message["ok"] is False
 
 
-def test_copy_image_rejects_missing_svg(bridge):
+def test_copy_image_rejects_missing_data(bridge):
     bridge_obj, _window, result = bridge
     _invoke(bridge_obj, "copyImage", {}, 44)
     message = _wait_for(lambda: result.get(44))

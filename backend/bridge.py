@@ -15,14 +15,13 @@ thread via a queued connection.
 
 from __future__ import annotations
 
+import base64
 import json
-import re
 import subprocess
 import threading
 
-from PySide6.QtCore import Q_ARG, QByteArray, QMimeData, QMetaObject, QObject, QRectF, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter
-from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
+from PySide6.QtGui import QGuiApplication, QImage
 
 from .exec import run_code_block, run_code_block_streamed
 from .files import read_any_text_file, read_text_file, write_text_file
@@ -153,45 +152,25 @@ class Bridge(QObject):
         self._reply(request_id, None)
 
     def _copy_image(self, request_id: int, args: dict) -> None:
-        """Rasterize a mermaid SVG to a PNG on the clipboard.
+        """Put a PNG (base64, rasterized by the webview) on the clipboard.
 
-        The webview can't rasterize the diagram itself: drawing an SVG into a
-        canvas taints it under QtWebEngine's file:// origin, so Qt renders the
-        SVG natively (QSvgRenderer) instead.
+        The frontend rasterizes the diagram with its own Chromium renderer
+        (pixel-identical to what the user sees) and ships the PNG bytes here;
+        Qt's job is only to own the clipboard.
         """
-        svg = str(args.get("svg") or "")
-        if not svg:
-            self._reply_error(request_id, "Missing svg")
+        data = str(args.get("data") or "")
+        if not data:
+            self._reply_error(request_id, "Missing image data")
             return
-        renderer = QSvgRenderer()
-        renderer.load(QByteArray(svg.encode("utf-8")))
-        if not renderer.isValid():
-            self._reply_error(request_id, "Invalid SVG data")
+        try:
+            raw = base64.b64decode(data, validate=False)
+        except (ValueError, TypeError) as exc:
+            self._reply_error(request_id, f"Invalid image data: {exc}")
             return
-        size = renderer.defaultSize()
-        if size.isEmpty():
-            size = renderer.viewBoxF().size().toSize()
-        if size.isEmpty():
-            self._reply_error(request_id, "SVG has no size")
+        image = QImage.fromData(raw, "PNG")
+        if image.isNull():
+            self._reply_error(request_id, "Invalid PNG data")
             return
-        # 2x for a crisp paste; diagrams pasted into Confluence/Word etc.
-        scale = 2
-        # Backing color matching the editor theme (the frontend sends the
-        # current --bg), so a dark-theme diagram stays legible anywhere.
-        background = str(args.get("background") or "")
-        if not re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", background):
-            background = "#ffffff"
-        image = QImage(
-            max(1, size.width() * scale),
-            max(1, size.height() * scale),
-            QImage.Format.Format_ARGB32,
-        )
-        image.fill(QColor(background))
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        renderer.render(painter, QRectF(0, 0, image.width(), image.height()))
-        painter.end()
-
         mime = QMimeData()
         mime.setImageData(image)
         QGuiApplication.clipboard().setMimeData(mime)

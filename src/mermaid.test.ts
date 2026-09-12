@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   renderPendingMermaid,
@@ -252,23 +252,104 @@ describe('copyMermaidAsImage', () => {
     return svg
   }
 
-  it('passes the current theme --bg to the native rasterizer', async () => {
+  /** Minimal valid PNG header bytes; content is irrelevant for the tests. */
+  const PNG_BYTES = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  ])
+
+  interface CanvasStub {
+    ctx: {
+      fillStyle: string
+      fillRect: ReturnType<typeof vi.fn>
+      drawImage: ReturnType<typeof vi.fn>
+    }
+    blob: { arrayBuffer: () => Promise<ArrayBuffer> }
+  }
+
+  function stubRasterization(): CanvasStub {
+    const ctx = {
+      fillStyle: '',
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+    }
+    const blob = { arrayBuffer: () => Promise.resolve(PNG_BYTES.buffer as ArrayBuffer) }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      ctx as unknown as CanvasRenderingContext2D,
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(
+      (callback: BlobCallback) => callback(blob as Blob),
+    )
+    vi.stubGlobal(
+      'Image',
+      class FakeImage {
+        src = ''
+        decode = async (): Promise<void> => undefined
+      },
+    )
+    return { ctx, blob }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('rasterizes the diagram to a PNG for the native clipboard', async () => {
     document.documentElement.style.setProperty('--bg', '#0d1117')
+    const { ctx } = stubRasterization()
     const result = await copyMermaidAsImage(sizedSvg())
     expect(result.ok).toBe(true)
     expect(bridgeModule.invoke).toHaveBeenCalledWith(
       'copyImage',
-      expect.objectContaining({ background: '#0d1117' }),
+      expect.objectContaining({
+        data: expect.stringMatching(/^[A-Za-z0-9+/=]+$/),
+      }),
     )
+    const payload = vi.mocked(bridgeModule.invoke).mock.calls.at(-1)?.[1] as {
+      data: string
+    }
+    // Decodes to the PNG signature.
+    const raw = atob(payload.data)
+    expect(raw.charCodeAt(0)).toBe(0x89)
+    expect(raw.charCodeAt(1)).toBe(0x50)
+    expect(raw.charCodeAt(2)).toBe(0x4e)
+    expect(raw.charCodeAt(3)).toBe(0x47)
+    // Rendered at 2x the displayed size.
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 200, 120)
+    expect(ctx.drawImage).toHaveBeenCalledTimes(1)
+  })
+
+  it('fills the canvas with the current theme --bg', async () => {
+    document.documentElement.style.setProperty('--bg', '#0d1117')
+    const { ctx } = stubRasterization()
+    const result = await copyMermaidAsImage(sizedSvg())
+    expect(result.ok).toBe(true)
+    expect(ctx.fillStyle).toBe('#0d1117')
   })
 
   it('falls back to white when the theme sets no --bg', async () => {
     document.documentElement.style.removeProperty('--bg')
+    const { ctx } = stubRasterization()
     const result = await copyMermaidAsImage(sizedSvg())
     expect(result.ok).toBe(true)
-    expect(bridgeModule.invoke).toHaveBeenCalledWith(
-      'copyImage',
-      expect.objectContaining({ background: '#ffffff' }),
-    )
+    expect(ctx.fillStyle).toBe('#ffffff')
+  })
+
+  it('reports an error when the canvas is unavailable', async () => {
+    document.documentElement.style.setProperty('--bg', '#ffffff')
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+    vi.stubGlobal('Image', class FakeImage { decode = async () => undefined })
+    const result = await copyMermaidAsImage(sizedSvg())
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('rasterize')
+  })
+
+  it('reports an error when the native bridge is missing', async () => {
+    vi.mocked(bridgeModule.hasBridge).mockReturnValue(false)
+    stubRasterization()
+    const result = await copyMermaidAsImage(sizedSvg())
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('native app')
+    expect(bridgeModule.invoke).not.toHaveBeenCalled()
   })
 })
