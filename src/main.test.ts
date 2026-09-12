@@ -60,6 +60,10 @@ vi.mock('./bridge', () => ({
   invoke: mainState.invoke,
   confirmAction: mainState.confirmAction,
   showError: mainState.showError,
+  onBridgeReady: (callback: (bridge: unknown) => void) => {
+    callback(undefined)
+    return Promise.resolve()
+  },
 }))
 
 vi.mock('./files', async () => {
@@ -119,6 +123,14 @@ vi.mock('./mermaid', () => ({
     render: vi.fn().mockResolvedValue({ svg: '<svg></svg>' }),
   },
 }))
+
+vi.mock('./node/mermaid', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./node/mermaid')>()
+  return {
+    ...actual,
+    rethemeMermaid: vi.fn(),
+  }
+})
 
 vi.mock('./export', async () => {
   const actual = await vi.importActual('./export')

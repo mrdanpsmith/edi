@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { renderPendingMermaid, mermaidFenceTokens, responsifySvg, attachMermaidToolbar } from './mermaid'
+import {
+  renderPendingMermaid,
+  mermaidFenceTokens,
+  responsifySvg,
+  attachMermaidToolbar,
+  reinitializeMermaidTheme,
+} from './mermaid'
 
 vi.mock('mermaid', () => ({
   default: {
@@ -206,5 +212,17 @@ describe('mermaidFenceTokens', () => {
 
   it('returns empty array when there are no mermaid blocks', () => {
     expect(mermaidFenceTokens('# just text')).toEqual([])
+  })
+
+  it('re-initializes mermaid with the requested theme palette', async () => {
+    window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
+    await reinitializeMermaidTheme(true)
+    const config = vi.mocked(mermaid.initialize).mock.calls.at(-1)?.[0] as {
+      theme: string
+      themeVariables: Record<string, string>
+    }
+    expect(config.theme).toBe('base')
+    expect(config.themeVariables.primaryColor).toBe('#1d3a5f')
+    expect(config.themeVariables.primaryTextColor).toBe('#e6edf3')
   })
 })

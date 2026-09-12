@@ -3,7 +3,7 @@ import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
 import { blockNodeView } from '../blockview'
-import { loadMermaid, errorBlock, responsifySvg, attachMermaidToolbar } from '../mermaid'
+import { loadMermaid, errorBlock, responsifySvg, attachMermaidToolbar, reinitializeMermaidTheme } from '../mermaid'
 import { BLOCK_PLUGIN_KEY } from '../blockplugin'
 import { markdownToProse, serializeBlock } from '../markdown'
 import { createBlockCodeMirror } from '../codemirror-block'
@@ -75,6 +75,8 @@ export const mermaidSchema = {
 
 let seed = 0
 
+const mermaidViews = new Set<MermaidNodeView>()
+
 function createHandleDOM(pos: number): HTMLElement {
   const handle = document.createElement('div')
   handle.className = 'block-handle'
@@ -96,6 +98,7 @@ class MermaidNodeView implements NodeView {
   private cm: BlockCodeMirror | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
+    mermaidViews.add(this)
     this.node = node
     this.view = view
     this.getPos = getPos
@@ -108,6 +111,11 @@ class MermaidNodeView implements NodeView {
       this.currentCode = String(node.attrs.value ?? '')
       this.showPreview(this.currentCode)
     }
+  }
+
+  retheme(): void {
+    if (this.node.attrs._source || this.cm) return
+    this.buildPreview(this.currentCode)
   }
 
   update(node: ProseNode): boolean {
@@ -187,6 +195,11 @@ class MermaidNodeView implements NodeView {
   }
 
   private showPreview(code: string): void {
+    this.currentCode = code
+    this.buildPreview(code)
+  }
+
+  private buildPreview(code: string): void {
     this.dom.innerHTML = ''
     this.dom.className = 'mermaid'
 
@@ -230,9 +243,16 @@ class MermaidNodeView implements NodeView {
   }
 
   destroy(): void {
+    mermaidViews.delete(this)
     this.cm?.destroy()
     this.dom.innerHTML = ''
   }
+}
+
+export function rethemeMermaid(dark: boolean): void {
+  void reinitializeMermaidTheme(dark).then(() => {
+    for (const view of mermaidViews) view.retheme()
+  })
 }
 
 export const mermaidNodeViewPlugin = new Plugin({

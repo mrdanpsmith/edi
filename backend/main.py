@@ -10,6 +10,7 @@ import threading
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from .theme import watch_color_scheme
 from .window import MainWindow, load_app_icon
 
 # QtWebEngine's runJavaScript does not await Promises, so the selftest probe
@@ -130,6 +131,7 @@ def main() -> int:
     window = MainWindow()
     window.resize(1280, 800)
     window.show()
+    watch_color_scheme(app, window)
     if os.environ.get("EDI_SELFTEST"):
         _run_selftest(app, window)
     if sys.platform == "win32":

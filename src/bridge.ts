@@ -11,6 +11,9 @@ export interface BridgeObject {
   stream?: {
     connect: (callback: (payload: string) => void) => void
   }
+  notify?: {
+    connect: (callback: (payload: string) => void) => void
+  }
 }
 
 export interface StreamEvent {
@@ -109,6 +112,10 @@ function ensureChannel(): Promise<void> {
 
 export function hasBridge(): boolean {
   return Boolean(window.bridge)
+}
+
+export function onBridgeReady(callback: (bridge: BridgeObject | undefined) => void): void {
+  void ensureChannel().then(() => callback(window.bridge))
 }
 
 export async function invoke<T = unknown>(

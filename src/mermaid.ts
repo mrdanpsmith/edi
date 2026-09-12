@@ -54,6 +54,11 @@ export async function loadMermaid(): Promise<typeof import('mermaid')['default']
   return mermaidPromise
 }
 
+export async function reinitializeMermaidTheme(dark: boolean): Promise<void> {
+  const mermaid = await loadMermaid()
+  mermaid.initialize(baseMermaidConfig(mermaidThemeVariables(dark)))
+}
+
 export function errorBlock(message: string): HTMLElement {
   const el = document.createElement('div')
   el.className = `${MERMAID_CLASS}-error`

@@ -437,6 +437,10 @@ class MainWindow(QMainWindow):
     def set_title(self, title: str) -> None:
         self.setWindowTitle(title or "Edi")
 
+    def push_event(self, event: dict) -> None:
+        """Push a backend event to the webview (e.g. system color-scheme change)."""
+        self._bridge.emit_event(event)
+
     def recent_files(self) -> list[str]:
         """Most-recently-opened documents, most recent first (capped).
 

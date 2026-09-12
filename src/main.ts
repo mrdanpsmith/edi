@@ -4,6 +4,7 @@ import 'prosemirror-gapcursor/style/gapcursor.css'
 import './styles.css'
 
 import { confirmAction, hasBridge, invoke, showError } from './bridge'
+import { startThemeWatcher } from './theme'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
 import { redo, redoDepth, redoNoScroll, undo, undoDepth, undoNoScroll } from 'prosemirror-history'
@@ -795,6 +796,7 @@ function init(): void {
     paste: () => void editPaste(),
     selectAll: () => editSelectAll(),
   })
+  startThemeWatcher()
   subscribe(() => {
     updateView()
     updateTitle()

@@ -31,6 +31,7 @@ from .tables import parse_table_file
 class Bridge(QObject):
     result = Signal(str)
     stream = Signal(str)
+    notify = Signal(str)
 
     def __init__(self, window) -> None:
         super().__init__()
@@ -386,3 +387,15 @@ class Bridge(QObject):
     @Slot(str)
     def _emit_result(self, payload: str) -> None:
         self.result.emit(payload)
+
+    def emit_event(self, event: dict) -> None:
+        QMetaObject.invokeMethod(
+            self,
+            "_emit_notify",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, json.dumps(event, separators=(",", ":"))),
+        )
+
+    @Slot(str)
+    def _emit_notify(self, payload: str) -> None:
+        self.notify.emit(payload)

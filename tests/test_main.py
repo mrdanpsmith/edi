@@ -32,6 +32,10 @@ class _FakeWindow:
     def show(self) -> None:
         self._shown = True
 
+    def push_event(self, event: dict) -> None:
+        self._pushed_events = getattr(self, "_pushed_events", [])
+        self._pushed_events.append(event)
+
 
 class _FakeWeb:
     def __init__(self, page: object | None) -> None:
@@ -106,6 +110,11 @@ def _app() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
+class _SignalStub:
+    def connect(self, *args, **kwargs) -> None:
+        pass
+
+
 class _AppProxy:
     """Delegates to the real app but records ``setWindowIcon`` calls.
 
@@ -128,6 +137,9 @@ class _AppProxy:
 
     def setWindowIcon(self, icon) -> None:
         self.set_icon_calls.append(icon)
+
+    def styleHints(self):
+        return self._real.styleHints()
 
     def exec(self) -> int:
         return self._real.exec()
@@ -311,6 +323,18 @@ def test_main_entry_point_runs_as_module(monkeypatch):
 
         def setWindowIcon(self, icon) -> None:
             pass
+
+        def styleHints(self):
+            class _Hints:
+                def __init__(self):
+                    self.colorSchemeChanged = _SignalStub()
+
+                def colorScheme(self):
+                    from PySide6.QtCore import Qt
+
+                    return Qt.ColorScheme.Unknown
+
+            return _Hints()
 
         def exec(self) -> int:
             return 0
