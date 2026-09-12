@@ -313,6 +313,39 @@ def test_copy_content_sets_html_and_text_clipboard(bridge):
     assert "<strong>bold</strong>" in mime.html()
 
 
+def test_copy_image_sets_clipboard(bridge):
+    from PySide6.QtGui import QGuiApplication, QImage
+
+    bridge_obj, _window, result = bridge
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" '
+        'viewBox="0 0 10 5">'
+        '<rect x="0" y="0" width="10" height="5" fill="#d6e4ff"/>'
+        '<text x="5" y="3" text-anchor="middle" font-family="sans-serif" '
+        'font-size="2">AB</text></svg>'
+    )
+
+    _invoke(bridge_obj, "copyImage", {"svg": svg}, 43)
+    message = _wait_for(lambda: result.get(43))
+    assert message["ok"] is True
+
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime.hasImage()
+    pasted = mime.imageData()
+    assert isinstance(pasted, QImage)
+    assert not pasted.isNull()
+    # Rasterized at 2x the SVG size.
+    assert pasted.size().width() == 20
+    assert pasted.size().height() == 10
+
+
+def test_copy_image_rejects_missing_svg(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "copyImage", {}, 44)
+    message = _wait_for(lambda: result.get(44))
+    assert message["ok"] is False
+
+
 def test_confirm_uses_window(bridge):
     bridge_obj, window, result = bridge
     _invoke(bridge_obj, "confirm", {"message": "Continue?"})

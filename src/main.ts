@@ -29,6 +29,7 @@ import {
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText } from './paste'
 import { copyText, writeClipboard } from './clipboard'
+import { copyMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
 import { toggleSourceMode } from './blockplugin'
 import { commitSourceMode } from './blockview'
@@ -723,6 +724,14 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
 
   const visual = target.closest('.mermaid, .block-visual-mode')
   if (visual) {
+    const svg = visual.querySelector<SVGSVGElement>('.mermaid svg[id]')
+    if (svg) {
+      addItem('Copy image', () => {
+        void copyMermaidAsImage(svg).then((result) => {
+          if (!result.ok) showError(result.error ?? 'Could not copy image')
+        })
+      })
+    }
     const handle = visual.querySelector<HTMLElement>('.block-handle[data-block-pos]')
     const pos = handle ? Number(handle.dataset.blockPos) : NaN
     if (Number.isInteger(pos) && pos >= 0 && pos < view.state.doc.content.size) {

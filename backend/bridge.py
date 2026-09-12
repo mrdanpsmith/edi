@@ -19,8 +19,9 @@ import json
 import subprocess
 import threading
 
-from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import Q_ARG, QByteArray, QMimeData, QMetaObject, QObject, QRectF, Qt, Signal, Slot
+from PySide6.QtGui import QGuiApplication, QImage, QPainter
+from PySide6.QtSvg import QSvgRenderer
 
 from .exec import run_code_block, run_code_block_streamed
 from .files import read_any_text_file, read_text_file, write_text_file
@@ -51,6 +52,7 @@ class Bridge(QObject):
             "copyTable": self._copy_table,
             "copyText": self._copy_text,
             "copyContent": self._copy_content,
+            "copyImage": self._copy_image,
             "readClipboardText": self._read_clipboard_text,
             "runCodeBlock": self._run_code_block,
             "streamCodeBlock": self._stream_code_block,
@@ -145,6 +147,46 @@ class Bridge(QObject):
         mime = QMimeData()
         mime.setHtml(str(args.get("html") or ""))
         mime.setText(str(args.get("text") or ""))
+        QGuiApplication.clipboard().setMimeData(mime)
+        self._reply(request_id, None)
+
+    def _copy_image(self, request_id: int, args: dict) -> None:
+        """Rasterize a mermaid SVG to a PNG on the clipboard.
+
+        The webview can't rasterize the diagram itself: drawing an SVG into a
+        canvas taints it under QtWebEngine's file:// origin, so Qt renders the
+        SVG natively (QSvgRenderer) instead.
+        """
+        svg = str(args.get("svg") or "")
+        if not svg:
+            self._reply_error(request_id, "Missing svg")
+            return
+        renderer = QSvgRenderer()
+        renderer.load(QByteArray(svg.encode("utf-8")))
+        if not renderer.isValid():
+            self._reply_error(request_id, "Invalid SVG data")
+            return
+        size = renderer.defaultSize()
+        if size.isEmpty():
+            size = renderer.viewBoxF().size().toSize()
+        if size.isEmpty():
+            self._reply_error(request_id, "SVG has no size")
+            return
+        # 2x for a crisp paste; diagrams pasted into Confluence/Word etc.
+        scale = 2
+        image = QImage(
+            max(1, size.width() * scale),
+            max(1, size.height() * scale),
+            QImage.Format.Format_ARGB32,
+        )
+        image.fill(Qt.GlobalColor.white)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        renderer.render(painter, QRectF(0, 0, image.width(), image.height()))
+        painter.end()
+
+        mime = QMimeData()
+        mime.setImageData(image)
         QGuiApplication.clipboard().setMimeData(mime)
         self._reply(request_id, None)
 
