@@ -6,7 +6,13 @@ import {
   responsifySvg,
   attachMermaidToolbar,
   reinitializeMermaidTheme,
+  copyMermaidAsImage,
 } from './mermaid'
+
+vi.mock('./bridge', () => ({
+  hasBridge: vi.fn(() => true),
+  invoke: vi.fn(() => Promise.resolve()),
+}))
 
 vi.mock('mermaid', () => ({
   default: {
@@ -16,6 +22,7 @@ vi.mock('mermaid', () => ({
 }))
 
 import * as mermaidModule from 'mermaid'
+import * as bridgeModule from './bridge'
 
 const mermaid = vi.mocked(mermaidModule.default)
 
@@ -224,5 +231,44 @@ describe('mermaidFenceTokens', () => {
     expect(config.theme).toBe('base')
     expect(config.themeVariables.primaryColor).toBe('#1d3a5f')
     expect(config.themeVariables.primaryTextColor).toBe('#e6edf3')
+  })
+})
+
+describe('copyMermaidAsImage', () => {
+  function sizedSvg(): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 100 60')
+    vi.spyOn(svg, 'getBoundingClientRect').mockReturnValue({
+      width: 100,
+      height: 60,
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 100,
+      bottom: 60,
+      left: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+    return svg
+  }
+
+  it('passes the current theme --bg to the native rasterizer', async () => {
+    document.documentElement.style.setProperty('--bg', '#0d1117')
+    const result = await copyMermaidAsImage(sizedSvg())
+    expect(result.ok).toBe(true)
+    expect(bridgeModule.invoke).toHaveBeenCalledWith(
+      'copyImage',
+      expect.objectContaining({ background: '#0d1117' }),
+    )
+  })
+
+  it('falls back to white when the theme sets no --bg', async () => {
+    document.documentElement.style.removeProperty('--bg')
+    const result = await copyMermaidAsImage(sizedSvg())
+    expect(result.ok).toBe(true)
+    expect(bridgeModule.invoke).toHaveBeenCalledWith(
+      'copyImage',
+      expect.objectContaining({ background: '#ffffff' }),
+    )
   })
 })

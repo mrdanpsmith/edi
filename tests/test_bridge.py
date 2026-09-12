@@ -320,7 +320,7 @@ def test_copy_image_sets_clipboard(bridge):
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" '
         'viewBox="0 0 10 5">'
-        '<rect x="0" y="0" width="10" height="5" fill="#d6e4ff"/>'
+        '<rect x="4" y="1" width="2" height="3" fill="#d6e4ff"/>'
         '<text x="5" y="3" text-anchor="middle" font-family="sans-serif" '
         'font-size="2">AB</text></svg>'
     )
@@ -337,6 +337,49 @@ def test_copy_image_sets_clipboard(bridge):
     # Rasterized at 2x the SVG size.
     assert pasted.size().width() == 20
     assert pasted.size().height() == 10
+    # Background defaults to white when the theme color is absent.
+    assert pasted.pixelColor(0, 0).name() == "#ffffff"
+    assert pasted.pixelColor(19, 9).name() == "#ffffff"
+
+
+def test_copy_image_background_follows_theme(bridge):
+    from PySide6.QtGui import QGuiApplication, QImage
+
+    bridge_obj, _window, result = bridge
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" '
+        'viewBox="0 0 10 5">'
+        '<rect x="4" y="1" width="2" height="3" fill="#d6e4ff"/>'
+        '<text x="5" y="3" text-anchor="middle" font-family="sans-serif" '
+        'font-size="2">AB</text></svg>'
+    )
+
+    _invoke(bridge_obj, "copyImage", {"svg": svg, "background": "#0d1117"}, 43)
+    message = _wait_for(lambda: result.get(43))
+    assert message["ok"] is True
+
+    pasted = QGuiApplication.clipboard().mimeData().imageData()
+    assert pasted.pixelColor(0, 0).name() == "#0d1117"
+    assert pasted.pixelColor(19, 9).name() == "#0d1117"
+
+
+def test_copy_image_rejects_bad_background(bridge):
+    from PySide6.QtGui import QGuiApplication, QImage
+
+    bridge_obj, _window, result = bridge
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" '
+        'viewBox="0 0 10 5">'
+        '<rect x="4" y="1" width="2" height="3" fill="#d6e4ff"/>'
+        '</svg>'
+    )
+
+    _invoke(bridge_obj, "copyImage", {"svg": svg, "background": "red"}, 43)
+    message = _wait_for(lambda: result.get(43))
+    assert message["ok"] is True
+
+    pasted = QGuiApplication.clipboard().mimeData().imageData()
+    assert pasted.pixelColor(0, 0).name() == "#ffffff"
 
 
 def test_copy_image_rejects_missing_svg(bridge):

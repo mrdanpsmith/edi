@@ -16,11 +16,12 @@ thread via a queued connection.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import threading
 
 from PySide6.QtCore import Q_ARG, QByteArray, QMimeData, QMetaObject, QObject, QRectF, Qt, Signal, Slot
-from PySide6.QtGui import QGuiApplication, QImage, QPainter
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
 from .exec import run_code_block, run_code_block_streamed
@@ -175,12 +176,17 @@ class Bridge(QObject):
             return
         # 2x for a crisp paste; diagrams pasted into Confluence/Word etc.
         scale = 2
+        # Backing color matching the editor theme (the frontend sends the
+        # current --bg), so a dark-theme diagram stays legible anywhere.
+        background = str(args.get("background") or "")
+        if not re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", background):
+            background = "#ffffff"
         image = QImage(
             max(1, size.width() * scale),
             max(1, size.height() * scale),
             QImage.Format.Format_ARGB32,
         )
-        image.fill(Qt.GlobalColor.white)
+        image.fill(QColor(background))
         painter = QPainter(image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         renderer.render(painter, QRectF(0, 0, image.width(), image.height()))

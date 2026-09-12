@@ -435,8 +435,9 @@ export interface CopyMermaidResult {
  * be pasted into apps with no real mermaid support, e.g. Confluence.
  *
  * The live rendered SVG is serialized as-is (current zoom level, editor theme),
- * so the image matches what the user sees. Rasterization is done natively by
- * Qt (QSvgRenderer): drawing an SVG into a canvas taints it in QtWebEngine
+ * so the image matches what the user sees, including the theme's background
+ * color behind the diagram. Rasterization is done natively by Qt
+ * (QSvgRenderer): drawing an SVG into a canvas taints it in QtWebEngine
  * because the app runs from a file:// origin, so the web Clipboard image API
  * can never work. Never throws; the error message is returned so the caller can
  * show it to the user.
@@ -451,7 +452,9 @@ export async function copyMermaidAsImage(svg: SVGSVGElement): Promise<CopyMermai
         error: 'Copying mermaid images requires the native app (no developer browser support).',
       }
     }
-    await invoke('copyImage', { svg: xml })
+    const background =
+      getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#ffffff'
+    await invoke('copyImage', { svg: xml, background })
     return { ok: true }
   } catch (error) {
     return {
