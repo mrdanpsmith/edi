@@ -182,6 +182,11 @@ class Bridge(QObject):
             self._reply_error(request_id, "Invalid PNG data")
             return
         mime = QMimeData()
+        # Provide the raw PNG bytes explicitly. On macOS the Cocoa clipboard
+        # plugin lazily serializes QImage → TIFF for NSPasteboard; that lazy
+        # conversion can crash (SIGTRAP). Setting the PNG data directly lets
+        # the pasteboard serve it without the problematic conversion path.
+        mime.setData("image/png", raw)
         mime.setImageData(image)
         QGuiApplication.clipboard().setMimeData(mime)
         self._reply(request_id, None)
