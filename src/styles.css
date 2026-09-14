@@ -673,14 +673,33 @@ body {
 }
 .ProseMirror .mermaid .mermaid-preview {
   overflow-x: auto;
+  position: relative;
+  /* Keep clicks from ever starting a text selection inside a diagram — diagram
+     text is meant to be read, not selected (copy-as-image uses the vector
+     source and is unaffected). */
+  -webkit-user-select: none;
+  user-select: none;
 }
-.ProseMirror .mermaid .block-handle {
-  z-index: 2;
+/* Diagrams are displayed as baked bitmaps (see bakeDiagram in src/mermaid.ts):
+   on-screen glyphs must be raster the repaint bug cannot touch. The vector SVG
+   stays in the DOM, hidden, as the source for copy-as-image and re-bakes. */
+.ProseMirror .mermaid .mermaid-img {
+  display: block;
+  margin: 0 auto;
 }
-
+.ProseMirror .mermaid .mermaid-source {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .ProseMirror .mermaid svg {
   display: block;
   margin: 0 auto;
+}
+.ProseMirror .mermaid .block-handle {
+  z-index: 2;
 }
 
 .mermaid-toolbar {

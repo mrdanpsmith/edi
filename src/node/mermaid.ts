@@ -3,7 +3,7 @@ import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
 import { blockNodeView } from '../blockview'
-import { loadMermaid, errorBlock, responsifySvg, attachMermaidToolbar, reinitializeMermaidTheme } from '../mermaid'
+import { loadMermaid, errorBlock, responsifySvg, adaptDiagramColors, pinSvgTextColors, attachMermaidToolbar, bakeDiagram, reinitializeMermaidTheme } from '../mermaid'
 import { BLOCK_PLUGIN_KEY } from '../blockplugin'
 import { markdownToProse, serializeBlock } from '../markdown'
 import { createBlockCodeMirror } from '../codemirror-block'
@@ -225,7 +225,10 @@ class MermaidNodeView implements NodeView {
       const svgEl = container.querySelector<SVGSVGElement>('svg')
       if (svgEl) {
         const natural = responsifySvg(svgEl)
+        adaptDiagramColors(svgEl)
+        pinSvgTextColors(svgEl)
         attachMermaidToolbar(this.dom, svgEl, natural)
+        void bakeDiagram(this.dom, svgEl, natural)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

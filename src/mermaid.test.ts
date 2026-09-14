@@ -4,7 +4,11 @@ import {
   renderPendingMermaid,
   mermaidFenceTokens,
   responsifySvg,
+  pinSvgTextColors,
+  adaptDiagramColors,
+  diagramNeedsBake,
   attachMermaidToolbar,
+  bakeDiagram,
   reinitializeMermaidTheme,
   copyMermaidAsImage,
 } from './mermaid'
@@ -173,6 +177,17 @@ describe('attachMermaidToolbar', () => {
     expect(svg.style.maxWidth).toBe('none')
   })
 
+  it('reset emits the zoom event so a baked image is re-rasterized', () => {
+    const { host } = makeBlock()
+    const seen: number[] = []
+    host.addEventListener('edi-mermaid-zoom', (event) => {
+      seen.push(Number((event as CustomEvent<{ factor: number }>).detail.factor))
+    })
+    button(host, '+').click()
+    button(host, '100%').click()
+    expect(seen).toEqual([1.25, 1])
+  })
+
   it('disables the buttons when the natural width is unavailable', () => {
     const host = document.createElement('div')
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -221,16 +236,339 @@ describe('mermaidFenceTokens', () => {
     expect(mermaidFenceTokens('# just text')).toEqual([])
   })
 
-  it('re-initializes mermaid with the requested theme palette', async () => {
+  it('re-initializes mermaid with the requested light base palette', async () => {
     window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
-    await reinitializeMermaidTheme(true)
+    await reinitializeMermaidTheme(false)
     const config = vi.mocked(mermaid.initialize).mock.calls.at(-1)?.[0] as {
       theme: string
       themeVariables: Record<string, string>
     }
     expect(config.theme).toBe('base')
+    expect(config.themeVariables.primaryColor).toBe('#d6e4ff')
+    expect(config.themeVariables.primaryTextColor).toBe('#1f2328')
+  })
+
+  it('re-initializes mermaid with the complete dark palette for dark mode', async () => {
+    window.matchMedia = (() => ({ matches: true })) as unknown as typeof window.matchMedia
+    await reinitializeMermaidTheme(true)
+    const config = vi.mocked(mermaid.initialize).mock.calls.at(-1)?.[0] as {
+      theme: string
+      themeVariables: Record<string, string>
+    }
+    expect(config.theme).toBe('dark')
     expect(config.themeVariables.primaryColor).toBe('#1d3a5f')
     expect(config.themeVariables.primaryTextColor).toBe('#e6edf3')
+    // Wardley/xychart-style diagrams paint their backdrop from this variable;
+    // without a dark value they go white-on-white (light labels, white bg).
+    expect(config.themeVariables.background).toBe('#0d1117')
+    expect(config.themeVariables.fontFamily).toBe('var(--font-sans)')
+  })
+})
+
+describe('adaptDiagramColors', () => {
+  function stubBBox(el: SVGElement, x: number, y: number, w: number, h: number): void {
+    Object.defineProperty(el, 'getBBox', {
+      configurable: true,
+      value: () => ({ x, y, width: w, height: h, top: y, left: x, right: x + w, bottom: y + h }),
+    })
+  }
+
+  function makeSvg(inner: string, scheme: 'dark' | 'light' = 'dark'): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 800 600')
+    document.documentElement.dataset.colorScheme = scheme
+    stubBBox(svg, 0, 0, 800, 600)
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    bg.setAttribute('width', '800')
+    bg.setAttribute('height', '600')
+    bg.setAttribute('fill', scheme === 'dark' ? '#0d1117' : '#ffffff')
+    stubBBox(bg, 0, 0, 800, 600)
+    svg.appendChild(bg)
+    svg.insertAdjacentHTML('beforeend', inner)
+    return svg
+  }
+
+  afterEach(() => {
+    document.documentElement.dataset.colorScheme = 'light'
+  })
+
+  it('flips dark-on-dark text to the dark palette in dark mode', () => {
+    const svg = makeSvg('<text x="10" y="30" fill="#444444">Uses</text>')
+    adaptDiagramColors(svg)
+    const text = svg.querySelector<SVGTextElement>('text')!
+    expect(text.style.fill).toBe('#e6edf3')
+    expect(text.style.color).toBe('rgb(230, 237, 243)')
+  })
+
+  it('judges text against its enclosing shape fill, not the editor bg', () => {
+    const svg = makeSvg(
+      '<g class="person-man"><rect x="0" y="0" width="200" height="120" fill="#08427B"></rect>' +
+        '<text x="100" y="60" fill="#FFFFFF">User</text></g>',
+    )
+    stubBBox(svg.querySelector('rect')!, 0, 0, 200, 120)
+    stubBBox(svg.querySelector('text')!, 95, 45, 10, 10)
+    adaptDiagramColors(svg)
+    const text = svg.querySelector<SVGTextElement>('text')!
+    expect(text.style.fill).toBe('')
+  })
+
+  it('keeps theme-driven text on the diagram background', () => {
+    const svg = makeSvg('<text x="10" y="30" fill="#e6edf3">label</text>')
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGTextElement>('text')!.style.fill).toBe('')
+  })
+
+  it('flips light-on-light text to the light palette in light mode', () => {
+    const svg = makeSvg('<text x="10" y="30" fill="#ffffff">label</text>', 'light')
+    adaptDiagramColors(svg)
+    const text = svg.querySelector<SVGTextElement>('text')!
+    expect(text.style.fill).toBe('#1f2328')
+    expect(text.style.color).toBe('rgb(31, 35, 40)')
+  })
+
+  it('never touches foreignObject HTML labels', () => {
+    const svg = makeSvg(
+      '<text x="10" y="30" fill="#000000">native</text>' +
+        '<foreignObject width="100" height="50"><p style="color:white">html</p></foreignObject>',
+    )
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGTextElement>('text')!.style.fill).toBe('#e6edf3')
+    expect(svg.querySelector<HTMLParagraphElement>('p')!.style.color).toBe('white')
+  })
+
+  it('flips near-black connector strokes and arrowheads to lineColor in dark mode', () => {
+    const svg = makeSvg(
+      '<g><line x1="0" y1="0" x2="100" y2="0" stroke="#444444"></line><text x="50" y="-5" fill="#444444">Uses</text></g>' +
+        '<defs><marker id="m"><path d="M0 0 L10 5 z" fill="#000000"></path></marker></defs>',
+    )
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGLineElement>('line')!.style.stroke).toBe('#8b949e')
+    expect(svg.querySelector<SVGPathElement>('marker path')!.style.fill).toBe('#8b949e')
+  })
+
+  it('leaves theme-driven strokes (lighter lineColor) untouched in dark mode', () => {
+    const svg = makeSvg('<line x1="0" y1="0" x2="100" y2="0" stroke="#8b949e"></line>')
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGLineElement>('line')!.style.stroke).toBe('')
+  })
+
+  it('does no stroke surgery in light mode', () => {
+    const svg = makeSvg('<line x1="0" y1="0" x2="100" y2="0" stroke="#000000"></line>', 'light')
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGLineElement>('line')!.style.stroke).toBe('')
+  })
+
+  it('is a no-op without a scheme set', () => {
+    document.documentElement.removeAttribute('data-color-scheme')
+    const svg = makeSvg('<text x="10" y="30" fill="#444444">Uses</text>')
+    document.documentElement.removeAttribute('data-color-scheme')
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGTextElement>('text')!.style.fill).toBe('')
+  })
+})
+
+describe('pinSvgTextColors', () => {
+  function host(): HTMLElement {
+    const div = document.createElement('div')
+    div.style.color = '#000000'
+    document.body.appendChild(div)
+    return div
+  }
+
+  function makeSvg(inner: string): SVGSVGElement {
+    const div = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    div.innerHTML = inner
+    return div
+  }
+
+  it('bakes the text fill into inline fill and color', () => {
+    const h = host()
+    const svg = makeSvg('<text fill="#FFFFFF">C4 label</text>')
+    h.appendChild(svg)
+    h.style.color = '#000000'
+    pinSvgTextColors(svg)
+    const text = svg.querySelector<SVGTextElement>('text')!
+    expect(text.style.fill).toBe('#FFFFFF')
+    expect(text.style.color).toBe('rgb(255, 255, 255)')
+    h.remove()
+  })
+
+  it('uses an inline style fill when present', () => {
+    const h = host()
+    const svg = makeSvg(`<text style="fill: rgb(230, 237, 243)">dark label</text>`)
+    h.appendChild(svg)
+    pinSvgTextColors(svg)
+    const text = svg.querySelector<SVGTextElement>('text')!
+    expect(text.style.fill).toBe('rgb(230, 237, 243)')
+    expect(text.style.color).toBe('rgb(230, 237, 243)')
+    h.remove()
+  })
+
+  it('pins tspans to the same color, inheriting from the parent text', () => {
+    const h = host()
+    const svg = makeSvg('<text fill="#FFFFFF"><tspan>T1</tspan></text>')
+    h.appendChild(svg)
+    pinSvgTextColors(svg)
+    const tspan = svg.querySelector<SVGTextElement>('tspan')!
+    expect(tspan.style.fill).toBe('#FFFFFF')
+    expect(tspan.style.color).toBe('rgb(255, 255, 255)')
+    h.remove()
+  })
+
+  it('leaves HTML labels inside foreignObject untouched', () => {
+    const h = host()
+    const svg = makeSvg(
+      '<text fill="#FFFFFF">native</text>' +
+        '<foreignObject><div><span style="color:white">html</span></div></foreignObject>',
+    )
+    h.appendChild(svg)
+    pinSvgTextColors(svg)
+    expect(svg.querySelector<SVGTextElement>('text')!.style.color).toBe('rgb(255, 255, 255)')
+    h.remove()
+  })
+
+  it('is a no-op when no text resolves a fill', () => {
+    const h = host()
+    const svg = makeSvg('<rect width="10" height="10"></rect>')
+    h.appendChild(svg)
+    expect(() => pinSvgTextColors(svg)).not.toThrow()
+    h.remove()
+  })
+})
+
+describe('diagramNeedsBake', () => {
+  function makeSvg(inner: string): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.innerHTML = inner
+    return svg
+  }
+
+  it('is true for native light text like C4 labels', () => {
+    expect(
+      diagramNeedsBake(makeSvg('<text fill="#FFFFFF">Bank Customer</text>')),
+    ).toBe(true)
+    expect(diagramNeedsBake(makeSvg('<text fill="rgb(230, 237, 243)">actor</text>'))).toBe(true)
+  })
+
+  it('is false for dark native text', () => {
+    expect(diagramNeedsBake(makeSvg('<text fill="#1f2328">label</text>'))).toBe(false)
+    expect(diagramNeedsBake(makeSvg('<text fill="#444444">title</text>'))).toBe(false)
+  })
+
+  it('is false for foreignObject HTML labels (flowchart, class, …)', () => {
+    const svg = makeSvg(
+      '<foreignObject><div><span style="color:white">html label</span></div></foreignObject>',
+    )
+    expect(diagramNeedsBake(svg)).toBe(false)
+  })
+
+  it('is false when the diagram has no text at all', () => {
+    expect(diagramNeedsBake(makeSvg('<rect width="10" height="10"></rect>'))).toBe(false)
+  })
+})
+
+describe('bakeDiagram', () => {
+  const PNG_BYTES = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  ])
+
+  function makeBlock(text = '<text fill="#FFFFFF">label</text>'): {
+    holder: HTMLElement
+    svg: SVGSVGElement
+    ctx: { fillStyle: string; fillRect: ReturnType<typeof vi.fn>; drawImage: ReturnType<typeof vi.fn> }
+  } {
+    const holder = document.createElement('div')
+    holder.className = 'mermaid'
+    const preview = document.createElement('div')
+    preview.className = 'mermaid-preview'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('id', 'mermaid-0')
+    svg.setAttribute('viewBox', '0 0 800 450')
+    svg.innerHTML = text
+    preview.appendChild(svg)
+    holder.appendChild(preview)
+    const ctx = {
+      fillStyle: '',
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+    }
+    const blob = { arrayBuffer: () => Promise.resolve(PNG_BYTES.buffer as ArrayBuffer) }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      ctx as unknown as CanvasRenderingContext2D,
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(
+      (callback: BlobCallback) => callback(blob as Blob),
+    )
+    vi.stubGlobal(
+      'Image',
+      class FakeImage {
+        src = ''
+        decode = async (): Promise<void> => undefined
+      },
+    )
+    return { holder, svg, ctx }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('replaces the live svg with a baked bitmap at 2x resolution', async () => {
+    const { holder, svg, ctx } = makeBlock()
+    const ok = await bakeDiagram(holder, svg, 800)
+    expect(ok).toBe(true)
+    const img = holder.querySelector<HTMLImageElement>('.mermaid-img')
+    expect(img).not.toBeNull()
+    expect(img!.src).toContain('iVBORw0KGgoAAAAN')
+    expect(img!.getAttribute('src')).toMatch(/^data:image\//)
+    expect(img!.style.width).toBe('800px')
+    expect(img!.style.height).toBe('450px')
+    expect(svg.classList.contains('mermaid-source')).toBe(true)
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 1600, 900)
+  })
+
+  it('keeps the svg inside the preview so copy still has the vector source', async () => {
+    const { holder, svg } = makeBlock()
+    await bakeDiagram(holder, svg, 800)
+    expect(holder.querySelector('.mermaid-preview svg')).toBe(svg)
+  })
+
+  it('re-bakes at the current zoom factor on a zoom event', async () => {
+    const { holder, svg, ctx } = makeBlock()
+    attachMermaidToolbar(holder, svg, 800)
+    await bakeDiagram(holder, svg, 800)
+    expect(ctx.fillRect).toHaveBeenCalledTimes(1)
+
+    holder.querySelector<HTMLButtonElement>('.mermaid-toolbar-btn[title="Zoom in"]')!.click()
+    await vi.waitFor(() => expect(ctx.fillRect).toHaveBeenCalledTimes(2))
+    const img = holder.querySelector<HTMLImageElement>('.mermaid-img')
+    expect(img!.style.width).toBe('1000px')
+    await vi.waitFor(() => expect(img!.style.height).toBe('563px'))
+  })
+
+  it('is a no-op when the natural size is unavailable', async () => {
+    const { holder, svg } = makeBlock()
+    const ok = await bakeDiagram(holder, svg, null)
+    expect(ok).toBe(false)
+    expect(holder.querySelector('.mermaid-img')).toBeNull()
+  })
+
+  it('keeps vector rendering for diagrams with no light native text', async () => {
+    const { holder, svg } = makeBlock('<text fill="#1f2328">dark</text>')
+    const ok = await bakeDiagram(holder, svg, 800)
+    expect(ok).toBe(false)
+    expect(holder.querySelector('.mermaid-img')).toBeNull()
+    expect(svg.classList.contains('mermaid-source')).toBe(false)
+  })
+
+  it('falls back to the live svg when rasterization fails', async () => {
+    const { holder, svg } = makeBlock()
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+    const ok = await bakeDiagram(holder, svg, 800)
+    expect(ok).toBe(false)
+    expect(holder.querySelector('.mermaid-img')).toBeNull()
+    expect(svg.classList.contains('mermaid-source')).toBe(false)
   })
 })
 

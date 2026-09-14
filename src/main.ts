@@ -725,10 +725,11 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
 
   const visual = target.closest('.mermaid, .block-visual-mode')
   if (visual) {
+    const img = visual.querySelector<HTMLImageElement>('.mermaid-img')
     const svg = visual.querySelector<SVGSVGElement>('.mermaid svg[id]')
-    if (svg) {
+    if (img ?? svg) {
       addItem('Copy image', () => {
-        void copyMermaidAsImage(svg).then((result) => {
+        void copyMermaidAsImage(img ?? (svg as SVGSVGElement)).then((result) => {
           if (!result.ok) showError(result.error ?? 'Could not copy image')
         })
       })
