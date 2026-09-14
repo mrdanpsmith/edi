@@ -186,14 +186,18 @@ def test_probe_scheme_gsettings_cli_no_preference_is_unknown(qapp, monkeypatch):
 
 
 def test_probe_gsettings_cli_gated_to_gnome(monkeypatch):
+    # Gate on the desktop env only, never on a working gsettings/dconf (a
+    # headless container has neither), so stub the subprocess deterministically.
+    fake = _gsettings_fake_run({"gtk-theme": "'Yaru'\n"})
+    monkeypatch.setattr(theme_module.subprocess, "run", fake)
     monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
     monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
     assert theme_module._probe_gsettings_cli() is None
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
-    assert theme_module._probe_gsettings_cli() is not None
+    assert theme_module._probe_gsettings_cli() == "prefer-light"
     monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "Pantheon")
-    assert theme_module._probe_gsettings_cli() is not None
+    assert theme_module._probe_gsettings_cli() == "prefer-light"
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
     assert theme_module._probe_gsettings_cli() is None
 
