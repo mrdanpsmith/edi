@@ -1,4 +1,5 @@
 import { hasBridge, invoke } from './bridge'
+import { pickImageSavePath, writeBinaryFile } from './files'
 
 export const MERMAID_LANG = 'mermaid'
 export const MERMAID_CLASS = 'mermaid'
@@ -664,18 +665,46 @@ async function rasterizeSvgToBase64Png(
 export interface CopyMermaidResult {
   ok: boolean
   error?: string
+  /** Set when a file was actually written (Save image), so callers can report it. */
+  path?: string
+}
+
+/**
+ * Rasterize the on-screen diagram (live SVG vector or, after a bake, the shown
+ * image) to a base64 PNG at 2x the *displayed* pixel footprint, so the result
+ * matches what the user sees — including the theme's background. Shared by the
+ * copy and save-as-image flows.
+ */
+async function rasterizeMermaidSource(
+  source: SVGSVGElement | HTMLImageElement,
+): Promise<{ data: string | null; error: string | null }> {
+  const preview = source.closest?.('.mermaid-preview') as HTMLElement | null
+  const shown = preview?.querySelector<HTMLImageElement>(`.${MERMAID_IMG_CLASS}`) ?? null
+  const display = shown ?? source
+  const svg =
+    shown !== null
+      ? (preview?.querySelector<SVGSVGElement>('svg') ?? null)
+      : (source as SVGSVGElement)
+  if (!svg) return { data: null, error: 'Could not find the diagram' }
+  const rect = display.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return { data: null, error: 'Could not rasterize the diagram' }
+  }
+  // 2x for a crisp result; diagrams pasted into Confluence/Word etc.
+  const data = await rasterizeSvgToBase64Png(
+    svg,
+    Math.round(rect.width * 2),
+    Math.round(rect.height * 2),
+  )
+  if (!data) return { data: null, error: 'Could not rasterize the diagram' }
+  return { data, error: null }
 }
 
 /**
  * Copy the on-screen mermaid diagram (as PNG) to the system clipboard so it can
- * be pasted into apps with no real mermaid support, e.g. Confluence.
- *
- * Accepts either the live SVG or (after a bake) the displayed image; either
- * way the diagram is rasterized from the hidden vector source at 2x the
- * *displayed* pixel footprint, so a pasted image matches what the user sees —
- * including the theme's background color behind the diagram. The PNG bytes are
- * shipped to the native shell which owns the clipboard. Never throws; the
- * error message is returned so the caller can show it to the user.
+ * be pasted into apps with no real mermaid support, e.g. Confluence. The PNG
+ * bytes are shipped to the native shell which owns the clipboard. Never throws;
+ * the error message is returned so the caller can show it to the user.
  */
 export async function copyMermaidAsImage(
   source: SVGSVGElement | HTMLImageElement,
@@ -687,25 +716,42 @@ export async function copyMermaidAsImage(
         error: 'Copying mermaid images requires the native app (no developer browser support).',
       }
     }
-    const preview = source.closest?.('.mermaid-preview') as HTMLElement | null
-    const shown = preview?.querySelector<HTMLImageElement>(`.${MERMAID_IMG_CLASS}`) ?? null
-    const display = shown ?? source
-    const svg =
-      shown !== null
-        ? (preview?.querySelector<SVGSVGElement>('svg') ?? null)
-        : (source as SVGSVGElement)
-    if (!svg) return { ok: false, error: 'Could not find the diagram' }
-    const rect = display.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) return { ok: false, error: 'Could not rasterize the diagram' }
-    // 2x for a crisp paste; diagrams pasted into Confluence/Word etc.
-    const data = await rasterizeSvgToBase64Png(
-      svg,
-      Math.round(rect.width * 2),
-      Math.round(rect.height * 2),
-    )
-    if (!data) return { ok: false, error: 'Could not rasterize the diagram' }
+    const { data, error } = await rasterizeMermaidSource(source)
+    if (!data) return { ok: false, error: error ?? 'Could not rasterize the diagram' }
     await invoke('copyImage', { data })
     return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+/**
+ * Save the on-screen mermaid diagram as a PNG file. The native shell shows a
+ * save dialog first (default name from the open document); on cancel this
+ * resolves immediately with ``ok: true`` (nothing to report). On confirm the
+ * diagram is rasterized and written to the chosen path; ``path`` is set on
+ * success so the caller can flash it in the status bar.
+ */
+export async function saveMermaidAsImage(
+  source: SVGSVGElement | HTMLImageElement,
+  defaultName: string,
+): Promise<CopyMermaidResult> {
+  try {
+    if (!hasBridge()) {
+      return {
+        ok: false,
+        error: 'Saving mermaid images requires the native app (no developer browser support).',
+      }
+    }
+    const path = await pickImageSavePath(defaultName)
+    if (!path) return { ok: true }
+    const { data, error } = await rasterizeMermaidSource(source)
+    if (!data) return { ok: false, error: error ?? 'Could not rasterize the diagram' }
+    await writeBinaryFile(path, data)
+    return { ok: true, path }
   } catch (error) {
     return {
       ok: false,

@@ -30,7 +30,7 @@ import {
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText } from './paste'
 import { copyText, writeClipboard } from './clipboard'
-import { copyMermaidAsImage } from './mermaid'
+import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
 import { toggleSourceMode } from './blockplugin'
 import { commitSourceMode } from './blockview'
@@ -731,6 +731,17 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
       addItem('Copy image', () => {
         void copyMermaidAsImage(img ?? (svg as SVGSVGElement)).then((result) => {
           if (!result.ok) showError(result.error ?? 'Could not copy image')
+        })
+      })
+      addItem('Save image…', () => {
+        const active = getActive()
+        const base = active?.path ? fileName(active.path) : UNTITLED
+        void saveMermaidAsImage(img ?? (svg as SVGSVGElement), base).then((result) => {
+          if (!result.ok) {
+            showError(result.error ?? 'Could not save image')
+          } else if (result.path) {
+            flashStatus(`Saved ${result.path}`)
+          }
         })
       })
     }

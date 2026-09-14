@@ -559,6 +559,14 @@ class MainWindow(QMainWindow):
         dialog.selectFile(f"{default_name}.html")
         self._run_dialog(dialog, callback)
 
+    def pick_image_save_path(self, default_name, callback=None) -> None:
+        dialog = QFileDialog(self, "Save image")
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.setNameFilter("PNG images (*.png);;All files (*)")
+        dialog.setDefaultSuffix("png")
+        dialog.selectFile(f"{default_name}.png")
+        self._run_dialog(dialog, callback)
+
     def pick_import_path(self, callback=None) -> None:
         dialog = QFileDialog(self, "Import spreadsheet")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)

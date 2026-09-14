@@ -11,11 +11,17 @@ import {
   bakeDiagram,
   reinitializeMermaidTheme,
   copyMermaidAsImage,
+  saveMermaidAsImage,
 } from './mermaid'
 
 vi.mock('./bridge', () => ({
   hasBridge: vi.fn(() => true),
   invoke: vi.fn(() => Promise.resolve()),
+}))
+
+vi.mock('./files', () => ({
+  pickImageSavePath: vi.fn(() => Promise.resolve('/tmp/diagram.png')),
+  writeBinaryFile: vi.fn(() => Promise.resolve()),
 }))
 
 vi.mock('mermaid', () => ({
@@ -27,11 +33,17 @@ vi.mock('mermaid', () => ({
 
 import * as mermaidModule from 'mermaid'
 import * as bridgeModule from './bridge'
+import * as filesModule from './files'
 
 const mermaid = vi.mocked(mermaidModule.default)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(bridgeModule.hasBridge).mockImplementation(() => true)
+  vi.mocked(filesModule.pickImageSavePath).mockImplementation(() =>
+    Promise.resolve('/tmp/diagram.png'),
+  )
+  vi.mocked(filesModule.writeBinaryFile).mockImplementation(() => Promise.resolve())
   window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
 })
 
@@ -689,5 +701,104 @@ describe('copyMermaidAsImage', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toContain('native app')
     expect(bridgeModule.invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe('saveMermaidAsImage', () => {
+  function sizedSvg(): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 100 60')
+    vi.spyOn(svg, 'getBoundingClientRect').mockReturnValue({
+      width: 100,
+      height: 60,
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 100,
+      bottom: 60,
+      left: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+    return svg
+  }
+
+  const PNG_BYTES = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  ])
+
+  function stubRasterization(): void {
+    const ctx = {
+      fillStyle: '',
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+    }
+    const blob = { arrayBuffer: () => Promise.resolve(PNG_BYTES.buffer as ArrayBuffer) }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      ctx as unknown as CanvasRenderingContext2D,
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(
+      (callback: BlobCallback) => callback(blob as Blob),
+    )
+    vi.stubGlobal('Image', class FakeImage { decode = async () => undefined })
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('picks a save path then rasterizes and writes the PNG', async () => {
+    document.documentElement.style.setProperty('--bg', '#0d1117')
+    stubRasterization()
+    const result = await saveMermaidAsImage(sizedSvg(), 'notes')
+    expect(result.ok).toBe(true)
+    expect(result.path).toBe('/tmp/diagram.png')
+    expect(filesModule.pickImageSavePath).toHaveBeenCalledWith('notes')
+    expect(filesModule.writeBinaryFile).toHaveBeenCalledTimes(1)
+    const payload = vi.mocked(filesModule.writeBinaryFile).mock.calls.at(-1)?.[1] as string
+    // The payload decodes to the PNG signature.
+    const raw = atob(payload)
+    expect(raw.charCodeAt(0)).toBe(0x89) // \x89
+    expect(raw.charCodeAt(1)).toBe(0x50) // 'P'
+    expect(raw.charCodeAt(2)).toBe(0x4e) // 'N'
+    expect(raw.charCodeAt(3)).toBe(0x47) // 'G'
+  })
+
+  it('does not rasterize when the user cancels the dialog', async () => {
+    vi.mocked(filesModule.pickImageSavePath).mockResolvedValue(null)
+    stubRasterization()
+    const result = await saveMermaidAsImage(sizedSvg(), 'notes')
+    expect(result.ok).toBe(true)
+    expect(result.path).toBeUndefined()
+    expect(filesModule.writeBinaryFile).not.toHaveBeenCalled()
+  })
+
+  it('reports an error when the native bridge is missing', async () => {
+    vi.mocked(bridgeModule.hasBridge).mockReturnValue(false)
+    stubRasterization()
+    const result = await saveMermaidAsImage(sizedSvg(), 'notes')
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('native app')
+    expect(filesModule.pickImageSavePath).not.toHaveBeenCalled()
+  })
+
+  it('reports an error when the canvas is unavailable', async () => {
+    document.documentElement.style.setProperty('--bg', '#ffffff')
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+    vi.stubGlobal('Image', class FakeImage { decode = async () => undefined })
+    const result = await saveMermaidAsImage(sizedSvg(), 'notes')
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('rasterize')
+    expect(filesModule.writeBinaryFile).not.toHaveBeenCalled()
+  })
+
+  it('reports an error when writing the file fails', async () => {
+    stubRasterization()
+    vi.mocked(filesModule.writeBinaryFile).mockRejectedValue(
+      new Error('permission denied'),
+    )
+    const result = await saveMermaidAsImage(sizedSvg(), 'notes')
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('permission denied')
   })
 })

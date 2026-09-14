@@ -43,12 +43,14 @@ class Bridge(QObject):
             "pickOpenPath": self._pick_open_path,
             "pickSavePath": self._pick_save_path,
             "pickExportPath": self._pick_export_path,
+            "pickImageSavePath": self._pick_image_save_path,
             "pickImportPath": self._pick_import_path,
             "pickTextImportPath": self._pick_text_import_path,
             "pickImageImportPath": self._pick_image_import_path,
             "readTextFile": self._read_text_file,
             "readAnyTextFile": self._read_any_text_file,
             "writeTextFile": self._write_text_file,
+            "writeBinaryFile": self._write_binary_file,
             "parseTableFile": self._parse_table_file,
             "copyTable": self._copy_table,
             "copyText": self._copy_text,
@@ -105,6 +107,12 @@ class Bridge(QObject):
     def _pick_export_path(self, request_id: int, args: dict) -> None:
         self._window.pick_export_path(
             str(args.get("defaultName", "Untitled")),
+            lambda path: self._reply(request_id, path or None),
+        )
+
+    def _pick_image_save_path(self, request_id: int, args: dict) -> None:
+        self._window.pick_image_save_path(
+            str(args.get("defaultName", "diagram")),
             lambda path: self._reply(request_id, path or None),
         )
 
@@ -221,6 +229,37 @@ class Bridge(QObject):
         def work() -> None:
             try:
                 write_text_file(str(path), str(args.get("content") or ""))
+            except Exception as exc:  # noqa: BLE001
+                self._reply_error(request_id, str(exc))
+            else:
+                self._reply(request_id, None)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _write_binary_file(self, request_id: int, args: dict) -> None:
+        """Persist a base64-encoded blob (e.g. a rasterized diagram PNG).
+
+        The payload is base64 text from the page, so it round-trips QtWebChannel
+        cleanly. We validate the decoded bytes with QImage (adds a PNG header
+        check) but write back the *original* bytes — re-encoding could change
+        the file the user asked for.
+        """
+        path = args.get("path")
+        data = args.get("data")
+        if not path or not data:
+            self._reply_error(request_id, "Missing path or data")
+            return
+
+        def work() -> None:
+            try:
+                raw = base64.b64decode(str(data), validate=True)
+                if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise ValueError("Not a PNG payload")
+                image = QImage.fromData(raw, "PNG")
+                if image.isNull():
+                    raise ValueError("Invalid PNG data")
+                with open(str(path), "wb") as fh:
+                    fh.write(raw)
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:

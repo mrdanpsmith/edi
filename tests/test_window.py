@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import sys
 import time
+import base64
+import json
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QPointF, QSettings, QSize, QUrl, Qt
-from PySide6.QtGui import QContextMenuEvent, QMouseEvent
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QItemSelectionModel, QPoint, QPointF, QSettings, QSize, QUrl, Qt
+from PySide6.QtGui import QContextMenuEvent, QImage, QMouseEvent
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
     QApplication,
@@ -724,6 +726,72 @@ def test_pick_export_path_cancel_returns_none(visible, qtbot):
     QApplication.activeModalWidget().reject()
     qtbot.waitUntil(lambda: "path" in result, timeout=3000)
     assert result["path"] is None
+
+
+def test_pick_image_save_path_cancel_returns_none(visible, qtbot):
+    window = visible
+    result = {}
+    window.pick_image_save_path("diagram", lambda path: result.__setitem__("path", path))
+
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    QApplication.activeModalWidget().reject()
+    qtbot.waitUntil(lambda: "path" in result, timeout=3000)
+    assert result["path"] is None
+
+
+def test_save_image_flow_via_bridge(visible, qtbot, tmp_path):
+    """Save-image round trip: dialog yields a path, then writeBinaryFile writes
+    the rasterized base64 PNG (validated by QImage) to disk byte-for-byte."""
+    window = visible
+    target = tmp_path / "diagram.png"
+
+    image = QImage(4, 4, QImage.Format_ARGB32)
+    image.fill(Qt.GlobalColor.darkCyan)
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, "PNG")
+    png = bytes(buffer.data())
+    encoded = base64.b64encode(png).decode("ascii")
+
+    js = (
+        "window.__saveFlow = 'pending';"
+        "window.bridge.result.connect(function (payload) {"
+        "  var message = JSON.parse(payload);"
+        "  if (message.id === 4010) {"
+        "    if (message.ok) window.bridge.invoke('writeBinaryFile', 4011, "
+        f"JSON.stringify({json.dumps({'path': str(target), 'data': encoded})}));"
+        "    else window.__saveFlow = 'pick failed: ' + message.error;"
+        "  } else if (message.id === 4011) {"
+        "    window.__saveFlow = message.ok ? 'written' : 'write failed: ' + message.error;"
+        "  }"
+        "});"
+        "window.bridge.invoke('pickImageSavePath', 4010, '{\"defaultName\":\"diagram\"}');"
+        "true"
+    )
+    window._web.page().runJavaScript(js, lambda _v: None)
+
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    dialog = QApplication.activeModalWidget()
+    dialog.selectFile(str(target))
+    dialog.accept()
+
+    result = {}
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "window.__saveFlow", lambda v: result.__setitem__("value", v)
+        )
+        return (
+            "value" in result and result["value"] is not None and result["value"] != "pending"
+        )
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "written"
+    assert target.read_bytes() == png
 
 
 def test_pick_text_import_path_cancel_returns_none(visible, qtbot):

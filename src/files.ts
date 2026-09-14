@@ -53,6 +53,10 @@ export async function writeTextFile(path: string, content: string): Promise<void
   await invoke('writeTextFile', { path, content })
 }
 
+export async function writeBinaryFile(path: string, data: string): Promise<void> {
+  await invoke('writeBinaryFile', { path, data })
+}
+
 export async function pickOpenPath(): Promise<string[] | null> {
   return invoke<string[] | null>('pickOpenPath', {})
 }
@@ -63,6 +67,10 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
 
 export async function pickExportPath(defaultName: string): Promise<string | null> {
   return invoke<string | null>('pickExportPath', { defaultName })
+}
+
+export async function pickImageSavePath(defaultName: string): Promise<string | null> {
+  return invoke<string | null>('pickImageSavePath', { defaultName })
 }
 
 export async function pickImportPath(): Promise<string | null> {
