@@ -45,6 +45,10 @@ export async function readTextFile(path: string): Promise<string> {
   return invoke<string>('readTextFile', { path })
 }
 
+export async function getPendingFiles(): Promise<string[]> {
+  return invoke<string[]>('getPendingFiles', {})
+}
+
 export async function readAnyTextFile(path: string): Promise<string> {
   return invoke<string>('readAnyTextFile', { path })
 }

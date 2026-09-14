@@ -33,9 +33,10 @@ class Bridge(QObject):
     stream = Signal(str)
     notify = Signal(str)
 
-    def __init__(self, window) -> None:
+    def __init__(self, window, pending_files: list[str] | None = None) -> None:
         super().__init__()
         self._window = window
+        self._pending_files = list(pending_files or [])
         self._procs: dict[int, subprocess.Popen] = {}
         self._handlers = {
             "confirm": self._confirm,
@@ -66,6 +67,7 @@ class Bridge(QObject):
             "setMenuState": self._set_menu_state,
             "getRecentFiles": self._get_recent_files,
             "addRecentFile": self._add_recent_file,
+            "getPendingFiles": self._get_pending_files,
             "quit": self._quit,
             "ping": self._ping,
         }
@@ -366,6 +368,11 @@ class Bridge(QObject):
         if path:
             self._window.add_recent_file(str(path))
         self._reply(request_id, None)
+
+    def _get_pending_files(self, request_id: int, _args: dict) -> None:
+        # File paths passed on the command line (e.g. Edi opened for a .md file
+        # from the file manager); the frontend opens them once the page boots.
+        self._reply(request_id, list(self._pending_files))
 
     def _quit(self, request_id: int, _args: dict) -> None:
         self._window.close()

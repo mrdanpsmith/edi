@@ -128,7 +128,8 @@ def main() -> int:
     icon = load_app_icon()
     if icon is not None:
         app.setWindowIcon(icon)
-    window = MainWindow()
+    pending_files = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    window = MainWindow(pending_files)
     window.resize(1280, 800)
     window.show()
     watch_color_scheme(app, window)

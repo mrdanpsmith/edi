@@ -446,6 +446,29 @@ def test_add_recent_file_then_get_recent_files(bridge):
     assert message["data"] == ["/x.md"]
 
 
+def test_pending_files_returned_from_bridge(bridge):
+    _bridge, window, result = bridge
+    pending = Bridge(window, ["/tmp/notes.md", "/tmp/other.txt"])
+
+    def on_result(payload):
+        message = json.loads(payload)
+        result[message["id"]] = message
+
+    pending.result.connect(on_result)
+    _invoke(pending, "getPendingFiles")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == ["/tmp/notes.md", "/tmp/other.txt"]
+
+
+def test_get_pending_files_empty_by_default(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "getPendingFiles")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == []
+
+
 def test_open_url_missing_url_errors(bridge):
     bridge_obj, _window, result = bridge
     _invoke(bridge_obj, "openUrl", {})

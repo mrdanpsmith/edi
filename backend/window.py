@@ -259,7 +259,7 @@ class _AboutDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, pending_files: list[str] | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Edi")
         self.setMinimumSize(800, 560)
@@ -272,7 +272,7 @@ class MainWindow(QMainWindow):
         self._formatting_action = None
         self._insert_actions = None
 
-        self._bridge = Bridge(self)
+        self._bridge = Bridge(self, pending_files)
         self._web = _AppWebView()
         self._web.setPage(_AppPage(self._web))
         self._setup_web()

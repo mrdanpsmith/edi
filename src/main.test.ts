@@ -39,6 +39,7 @@ const mainState = vi.hoisted(() => {
     confirmAction: vi.fn().mockResolvedValue(true),
     showError: vi.fn().mockResolvedValue(undefined),
     pickOpenPath: vi.fn(),
+    getPendingFiles: vi.fn().mockResolvedValue([]),
     readTextFile: vi.fn(),
     pickSavePath: vi.fn(),
     writeTextFile: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock('./files', async () => {
   return {
     ...actual,
     pickOpenPath: mainState.pickOpenPath,
+    getPendingFiles: mainState.getPendingFiles,
     readTextFile: mainState.readTextFile,
     pickSavePath: mainState.pickSavePath,
     writeTextFile: mainState.writeTextFile,
@@ -258,6 +260,7 @@ beforeEach(() => {
   mainState.invoke.mockReset().mockResolvedValue(undefined)
   mainState.confirmAction.mockReset().mockResolvedValue(true)
   mainState.getRecentFiles.mockReset().mockResolvedValue([])
+  mainState.getPendingFiles.mockReset().mockResolvedValue([])
   mainState.addRecentFile.mockReset().mockResolvedValue(undefined)
   mainState.markdown = 'Welcome'
   mainState.editorOptions = undefined
@@ -559,6 +562,36 @@ describe('open and save', () => {
     expect(state.getState().sessions).toHaveLength(2)
     expect(mainState.readTextFile).toHaveBeenNthCalledWith(1, '/tmp/a.md')
     expect(mainState.readTextFile).toHaveBeenNthCalledWith(2, '/tmp/b.md')
+  })
+
+  it('opens files Edi was launched with', async () => {
+    mainState.getPendingFiles.mockResolvedValue(['/tmp/notes.md', '/tmp/other.txt'])
+    mainState.readTextFile
+      .mockResolvedValueOnce('content a')
+      .mockResolvedValueOnce('content b')
+    await loadMain()
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(2)
+    expect(mainState.readTextFile).toHaveBeenNthCalledWith(1, '/tmp/notes.md')
+    expect(mainState.readTextFile).toHaveBeenNthCalledWith(2, '/tmp/other.txt')
+    expect(document.title).toBe('other.txt — Edi')
+  })
+
+  it('ignores unsupported pending files and a missing bridge', async () => {
+    mainState.getPendingFiles.mockResolvedValue(['/tmp/a.md', '/tmp/b.bin'])
+    mainState.readTextFile.mockResolvedValue('content')
+    await loadMain()
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(1)
+    expect(mainState.readTextFile).toHaveBeenCalledTimes(1)
+
+    mainState.getPendingFiles.mockRejectedValue(new Error('no bridge'))
+    mainState.readTextFile.mockClear()
+    await loadMain()
+    await flushAsync()
+    expect(mainState.readTextFile).not.toHaveBeenCalled()
   })
 
   it('reports a failed open', async () => {

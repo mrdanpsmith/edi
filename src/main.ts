@@ -12,6 +12,7 @@ import { selectAll } from 'prosemirror-commands'
 import {
   dirname,
   fileName,
+  getPendingFiles,
   imageReference,
   isAbsolutePath,
   isSupportedFile,
@@ -288,6 +289,22 @@ async function openFile(): Promise<void> {
   }
   for (const path of paths) {
     await openDocument(path)
+  }
+}
+
+/**
+ * Open files Edi was launched with (e.g. a .md double-clicked in the file
+ * manager, delivered as command-line arguments and surfaced via the bridge).
+ * Runs after the bridge is up; unsupported extensions are ignored so a stray
+ * argument never pops an error dialog on an otherwise clean launch.
+ */
+async function openPendingFiles(): Promise<void> {
+  const paths = await getPendingFiles().catch(() => undefined)
+  if (!paths || paths.length === 0) return
+  for (const path of paths) {
+    if (isSupportedFile(path)) {
+      await openDocument(path)
+    }
   }
 }
 
@@ -833,6 +850,9 @@ function init(): void {
     openWelcome()
   }
   refreshRecents()
+  // Open any document Edi was launched with (silently ignored when there is
+  // no native shell, e.g. plain `vite dev` in a browser).
+  void openPendingFiles()
   // The subscribe() below only runs on state transitions; boot has none, so
   // render the initial view (home) explicitly.
   updateView()
