@@ -92,7 +92,8 @@ def _render(win, code, timeout=20):
             " err: !!e, errT: e ? String(e.textContent).slice(0, 80) : null }; })()",
         )
 
-    js(f"window.ediSetContent({json.dumps('```mermaid\n' + code + '\n```')}); true")
+    payload = json.dumps(f"```mermaid\n{code}\n```")
+    js(f"window.ediSetContent({payload}); true")
 
     def probe():
         nonlocal prev

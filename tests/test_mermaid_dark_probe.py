@@ -33,7 +33,8 @@ def _set_scheme(win, dark):
 
 def _load(win, code, marker, dark):
     js = win._web.page().runJavaScript
-    js(f"window.ediSetContent({json.dumps('```mermaid\n' + code + '\n```')}); true")
+    payload = json.dumps(f"```mermaid\n{code}\n```")
+    js(f"window.ediSetContent({payload}); true")
     out = {"done": False}
     want = ("dark" if dark else "light")
 
