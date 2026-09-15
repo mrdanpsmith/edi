@@ -812,6 +812,16 @@ body {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
+/* Cell content is wrapped so column auto-sizes measure the real content
+   width (max-content) instead of the column's own fixed width. */
+.spreadsheet .ss-grid .ss-cell-content {
+  display: block;
+  width: max-content;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .spreadsheet .ss-grid td.ss-formula {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
@@ -1666,11 +1676,6 @@ body {
 }
 
 .masked-field.masked-field-cell .masked-field-actions {
-  display: none;
-}
-
-.masked-field.masked-field-cell:hover .masked-field-actions,
-.masked-field.masked-field-cell.masked-field-revealed .masked-field-actions {
   display: inline-flex;
 }
 

@@ -19,7 +19,9 @@ const MIN_COL_WIDTH = 48
 const MAX_COL_WIDTH = 480
 const COL_PAD = 22
 const MIN_ROW_HEIGHT = 24
+const ROW_GUTTER_WIDTH = 30
 const MAX_ROW_HEIGHT = 480
+const EDIT_INPUT_PAD = 20
 
 function createHandleDOM(pos: number): HTMLElement {
   const handle = document.createElement('div')
@@ -244,6 +246,10 @@ class TableNodeView implements NodeView, InlineCellHost {
     const cols = this.rows[0]?.length ?? 0
 
     const colgroup = document.createElement('colgroup')
+    const gutterCol = document.createElement('col')
+    gutterCol.className = 'ss-gutter'
+    gutterCol.style.width = `${ROW_GUTTER_WIDTH}px`
+    colgroup.appendChild(gutterCol)
     this.colEls = []
     for (let c = 0; c < cols; c++) {
       const col = document.createElement('col')
@@ -263,7 +269,10 @@ class TableNodeView implements NodeView, InlineCellHost {
       const th = document.createElement('th')
       th.className = 'ss-col'
       th.dataset.col = String(c)
-      th.textContent = colToLetters(c + 1)
+      const label = document.createElement('span')
+      label.className = 'ss-cell-content'
+      label.textContent = colToLetters(c + 1)
+      th.appendChild(label)
       const resize = document.createElement('div')
       resize.className = 'ss-col-resize'
       resize.dataset.col = String(c)
@@ -348,11 +357,11 @@ class TableNodeView implements NodeView, InlineCellHost {
   private measureColDefault(col: number): number {
     let max = 0
     for (let r = 0; r < this.rows.length; r++) {
-      const cell = this.cells[r]?.[col]
-      if (cell) max = Math.max(max, cell.scrollWidth)
+      const inner = this.cells[r]?.[col]?.querySelector<HTMLElement>('.ss-cell-content')
+      if (inner) max = Math.max(max, inner.offsetWidth)
     }
-    const head = this.headCells[col]
-    if (head) max = Math.max(max, head.scrollWidth)
+    const head = this.headCells[col]?.querySelector<HTMLElement>('.ss-cell-content')
+    if (head) max = Math.max(max, head.offsetWidth)
     return Math.max(MIN_COL_WIDTH, Math.ceil(max) + COL_PAD)
   }
 
@@ -415,13 +424,17 @@ class TableNodeView implements NodeView, InlineCellHost {
         const cellSol = solution.cells[r]?.[c]
         td.classList.remove('ss-formula', 'ss-error')
         td.removeAttribute('title')
+        const inner = document.createElement('span')
+        inner.className = 'ss-cell-content'
         if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
-          td.textContent = cellSol.display
+          inner.textContent = cellSol.display
           td.classList.add(cellSol.kind === 'error' ? 'ss-error' : 'ss-formula')
         } else {
           const display = cellSol?.display ?? ''
-          if (!display) td.textContent = ''
-          else td.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true })
+          if (display) inner.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true })
+        }
+        td.appendChild(inner)
+        if (!cellSol || (cellSol.kind !== 'formula' && cellSol.kind !== 'error')) {
           this.bindMaskedPills(td, r, c)
         }
         const raw = this.rows[r]?.[c] ?? ''
@@ -798,8 +811,23 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (!this.editing) return
     const colEl = this.colEls[this.editing.col]
     if (!colEl) return
-    const width = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, input.scrollWidth + COL_PAD))
+    const width = Math.max(
+      MIN_COL_WIDTH,
+      Math.min(MAX_COL_WIDTH, Math.ceil(this.measureTextWidth(input)) + EDIT_INPUT_PAD),
+    )
     colEl.style.width = `${width}px`
+  }
+
+  /** Measure the actual text width of the edit input's value at the table
+   * font, independent of the input's forced 100% width. */
+  private measureTextWidth(input: HTMLInputElement): number {
+    const probe = document.createElement('span')
+    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:0;left:0;font:inherit;'
+    probe.textContent = input.value || ' '
+    this.dom.appendChild(probe)
+    const width = probe.getBoundingClientRect().width
+    probe.remove()
+    return width
   }
 
   private onEditKeydown(event: KeyboardEvent): void {
@@ -1195,6 +1223,13 @@ class TablePlainView implements NodeView {
     this.body = document.createElement('div')
     this.body.className = 'ss-plain-body'
     this.dom.appendChild(this.body)
+    this.dom.addEventListener('dblclick', (event) => {
+      const target = event.target as HTMLElement
+      if (target.closest('.masked-field, .ss-tool, a, button, .block-handle')) return
+      event.preventDefault()
+      event.stopPropagation()
+      enterSpreadsheetMode(this.view, this.getPos())
+    })
     this.renderBody()
   }
 
@@ -1347,6 +1382,12 @@ export function insertTable(view: EditorView, cols: number, rows: number): boole
   const grid: string[][] = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ''))
   const node = view.state.schema.nodes.table.create({ value: tableToPipes(grid) })
   const { $from } = view.state.selection
+  if ($from.parent.isTextblock && $from.parent.content.size === 0) {
+    view.dispatch(
+      view.state.tr.replaceWith($from.before($from.depth), $from.after($from.depth), node),
+    )
+    return true
+  }
   if ($from.depth > 0) {
     view.dispatch(view.state.tr.insert($from.after(1), node))
   } else {

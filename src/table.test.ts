@@ -311,11 +311,19 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('inserts a table at the start of a new document without a leading paragraph', () => {
+    const view = createEditor('')
+    insertTable(view, 3, 2)
+    expect(view.state.doc.childCount).toBe(1)
+    expect(view.state.doc.firstChild?.type.name).toBe('table')
+    view.destroy()
+  })
+
   it('sizes columns and rows by content with sane fallbacks', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     const grid = tableGrid(view)
     const cols = grid.querySelectorAll('colgroup col')
-    expect(cols.length).toBe(2)
+    expect(cols.length).toBe(3)
     for (const col of Array.from(cols)) {
       expect((col as HTMLTableColElement).style.width).not.toBe('')
     }
@@ -332,7 +340,7 @@ describe('TableNodeView grid', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     const grid = tableGrid(view)
     const handle = grid.querySelector<HTMLElement>('.ss-col-resize[data-col="0"]')!
-    const col = grid.querySelectorAll<HTMLTableColElement>('colgroup col')[0]!
+    const col = grid.querySelectorAll<HTMLTableColElement>('colgroup col:not(.ss-gutter)')[0]!
     const start = Number.parseFloat(col.style.width)
     mousedown(handle, { clientX: 100 })
     document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160 }))
@@ -347,7 +355,7 @@ describe('TableNodeView grid', () => {
     fx.value = '7'
     fx.dispatchEvent(new FocusEvent('blur'))
     const rebuilt = tableGrid(view)
-    const rebuiltCol = rebuilt.querySelectorAll<HTMLTableColElement>('colgroup col')[0]!
+    const rebuiltCol = rebuilt.querySelectorAll<HTMLTableColElement>('colgroup col:not(.ss-gutter)')[0]!
     expect(Number.parseFloat(rebuiltCol.style.width)).toBe(resized)
     expect(parsePipes(docValue(view))).toEqual([
       ['A', 'B'],
@@ -615,6 +623,33 @@ describe('TableNodeView grid', () => {
     expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
     expect(view.dom.querySelector('.spreadsheet')).toBeNull()
     expect(proseToMarkdown(view.state.doc)).toBe('| A |\n| --- |\n| 1 |\n')
+    view.destroy()
+  })
+
+  it('double-clicking a plain table opens the spreadsheet view', () => {
+    const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
+    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    expect(view.dom.querySelector('.ss-plain')).toBeNull()
+    view.destroy()
+  })
+
+  it('double-clicking a masked-field pill in a plain table keeps its actions', async () => {
+    const envelope = await encryptField('s3cret', 'pw')
+    const view = createPlainTable(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
+    const pill = view.dom.querySelector('.masked-field') as HTMLElement
+    pill.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    view.destroy()
+  })
+
+  it('keeps the row gutter a small fixed width', () => {
+    const view = createEditor('| A |\n| --- |\n| 1 |')
+    const gutter = view.dom.querySelector('.ss-gutter') as HTMLTableColElement
+    expect(gutter).toBeTruthy()
+    expect(gutter.style.width).toBe('30px')
     view.destroy()
   })
 
