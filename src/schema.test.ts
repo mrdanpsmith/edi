@@ -34,6 +34,25 @@ describe('schema parseDOM', () => {
     expect(doc.child(1).type.name).toBe('mermaid_block')
     expect(doc.child(1).attrs.value).toBe('graph TD\nA')
   })
+
+  it('keeps a real link title from HTML', () => {
+    const container = document.createElement('div')
+    container.innerHTML = '<a href="https://e.com/a" title="documents the API">docs</a>'
+    const doc = DOMParser.fromSchema(schema).parse(container)
+    const link = doc.firstChild!.firstChild!.marks.find((m) => m.type.name === 'link')!
+    expect(link.attrs.href).toBe('https://e.com/a')
+    expect(link.attrs.title).toBe('documents the API')
+  })
+
+  it('drops a link title that merely duplicates the href (toDOM tooltip leak)', () => {
+    // toDOM writes title = href for the hover tooltip; that synthetic value
+    // must not survive a copy/paste round trip as a spurious title.
+    const container = document.createElement('div')
+    container.innerHTML = '<a href="https://e.com/a" title="https://e.com/a">docs</a>'
+    const doc = DOMParser.fromSchema(schema).parse(container)
+    const link = doc.firstChild!.firstChild!.marks.find((m) => m.type.name === 'link')!
+    expect(link.attrs.title).toBeNull()
+  })
 })
 
 describe('schema toDOM via a plain view', () => {

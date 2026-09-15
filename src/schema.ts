@@ -292,8 +292,12 @@ const marks: SchemaSpec['marks'] = {
       {
         tag: 'a',
         getAttrs(dom: HTMLElement) {
+          const href = dom.getAttribute('href') ?? ''
+          // toDOM always writes title = href for the hover tooltip; ignore
+          // that synthetic value so a copy/paste round trip never bakes a
+          // spurious `title="<url>"` into the mark (and thus saved Markdown).
           const title = dom.getAttribute('title')
-          return { href: dom.getAttribute('href') ?? '', title }
+          return { href, title: title && title !== href ? title : null }
         },
       },
     ],

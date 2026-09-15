@@ -302,3 +302,47 @@ describe('masked field round-trip', () => {
     expect(proseToMarkdown(doc)).toBe('!masked[ct]{label="ab"}\n')
   })
 })
+
+describe('nested inline mark round-trip (bold wrapping code spans)', () => {
+  // Regression: ProseMirror sorts marks by type rank, and Markdown code spans
+  // are literal, so a code mark nested inside bold must be emitted *innermost*
+  // (``**`x`**``), never outermost (`` `**x**` ``).
+
+  it('keeps bold wrapping a code span', () => {
+    expect(serialize('**`netbiosName`**')).toBe('**`netbiosName`**\n')
+  })
+
+  it('keeps bold code spans in a list item', () => {
+    const md =
+      '- **`netbiosName`** is deliberately populated from **`osProfile.computerName`**'
+    expect(serialize(md)).toBe(
+      '- **`netbiosName`** is deliberately populated from **`osProfile.computerName`**\n',
+    )
+  })
+
+  it('keeps bold code minimal repro stable', () => {
+    expect(serialize('**`inline_code`** and more text.')).toBe('**`inline_code`** and more text.\n')
+  })
+
+  it('keeps a code span inside em/italic', () => {
+    expect(serialize("*`em code`*")).toBe("*`em code`*\n")
+  })
+
+  it('keeps a code span inside a link', () => {
+    expect(serialize('[`code`](https://example.com/a)')).toBe(
+      '[`code`](https://example.com/a)\n',
+    )
+  })
+
+  it('keeps a code span inside strikethrough', () => {
+    expect(serialize('~~`struck code`~~')).toBe('~~`struck code`~~\n')
+  })
+
+  it('keeps bold + italic wrapping code', () => {
+    expect(serialize('***`bold italic code`***')).toBe('***`bold italic code`***\n')
+  })
+
+  it('leaves literal asterisks inside a plain code span alone', () => {
+    expect(serialize('`**was literal**`')).toBe('`**was literal**`\n')
+  })
+})

@@ -377,6 +377,18 @@ function serializeContent(node: ProseNode): string {
 }
 
 function applyMarks(text: string, marks: readonly Mark[]): string {
+  // ProseMirror sorts marks by type rank, and the view renders array order as
+  // outer→inner. For *most* mark types the wrap order doesn't matter (bold,
+  // italic, link, strike all render the same either way), but a Markdown code
+  // span is literal: `` `**x**` `` would swallow the asterisks as plain text
+  // instead of rendering **x** as bold. So a nested code mark must always be
+  // emitted innermost: `` **`x`** ``, `` *`x`* ``, `` [**`x`**](url) `` — never
+  // `` `**x**` ``. Hoist the code wrap to the front of the application order.
+  if (marks.some((m) => m.type.name === 'code')) {
+    const code = marks.find((m) => m.type.name === 'code')!
+    const rest = marks.filter((m) => m.type.name !== 'code')
+    marks = [code, ...rest]
+  }
   for (const mark of marks) {
     switch (mark.type.name) {
       case 'strong':
