@@ -8,7 +8,7 @@ import { promptForPassword, promptForSecretCreate } from '../crypto-dialog'
 export const MASKED_TYPE = 'masked_field'
 
 const MASKED_TOKEN = 'maskedField'
-const MASKED_BULLETS = '••••••••••••'
+export const MASKED_BULLETS = '••••••••••••'
 
 const EYE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
 const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
@@ -257,177 +257,72 @@ export function remarkPlugin(this: any) {
 
 // --- Node view ----------------------------------------------------------------
 
-class MaskedFieldNodeView implements NodeView {
-  dom: HTMLElement
-  private node: ProseNode
-  private view: EditorView
-  private getPos: () => number | undefined
+// --- Shared field controller -------------------------------------------------
+
+export interface MaskedFieldBackend {
+  content(): string
+  label(): string
+  commit(content: string, label: string): void | Promise<void>
+  present(): void
+}
+
+/**
+ * One reveal/copy/edit state machine shared by inline masked-field nodes and
+ * masked-field cells in spreadsheet tables, so both surfaces behave the same.
+ * Editing an existing field unlocks it with its password (a single prompt);
+ * saving re-encrypts with that same password, so updating a value never re-
+ * prompts and never touches the label.
+ */
+export class MaskedFieldInteractions {
+  copyButton: HTMLButtonElement | null = null
+  private password: string | null = null
   private plaintext: string | null = null
   private unlockedContent = ''
   private editActive = false
   private editCancelled = false
   private awaitingPassword = false
-  private destroyed = false
   private copiedTimer: ReturnType<typeof setTimeout> | null = null
-  private clickTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly backend: MaskedFieldBackend
 
-  constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
-    this.node = node
-    this.view = view
-    this.getPos = getPos
-
-    this.dom = document.createElement('span')
-    this.dom.className = 'masked-field'
-    this.dom.addEventListener('mousedown', (e) => e.preventDefault())
-    this.dom.addEventListener('click', (e) => {
-      e.preventDefault()
-      if ((e.target as HTMLElement).closest('.masked-field-btn')) return
-      this.scheduleToggle()
-    })
-    this.dom.addEventListener('dblclick', (e) => {
-      e.preventDefault()
-      // A double click arrives after two single clicks; cancel the pending
-      // toggle so the first click does not reveal/hide before we edit.
-      if (this.clickTimer !== null) {
-        clearTimeout(this.clickTimer)
-        this.clickTimer = null
-      }
-      void this.onEditStart()
-    })
-    this.render()
+  constructor(backend: MaskedFieldBackend) {
+    this.backend = backend
   }
 
-  private scheduleToggle(): void {
-    if (this.clickTimer !== null) clearTimeout(this.clickTimer)
-    this.clickTimer = setTimeout(() => {
-      this.clickTimer = null
-      void this.onClick()
-    }, 240)
+  get isRevealed(): boolean {
+    return this.plaintext !== null
   }
 
-  private render(): void {
-    const content = String(this.node.attrs.content ?? '')
-    const label = String(this.node.attrs.label ?? '')
-    const revealed = this.plaintext !== null
+  get plaintextValue(): string | null {
+    return this.plaintext
+  }
 
-    this.dom.dataset.content = content
-    this.dom.dataset.label = label
-    this.dom.classList.toggle('masked-field-revealed', revealed)
-    this.dom.classList.toggle('masked-field-edit', this.editActive)
-    this.dom.textContent = ''
+  get isEditActive(): boolean {
+    return this.editActive
+  }
 
-    if (this.editActive && this.plaintext !== null) {
-      const existing = this.dom.querySelector<HTMLInputElement>('.masked-field-input')
-      const input = document.createElement('input')
-      input.type = 'text'
-      input.className = 'masked-field-input'
-      input.value = existing?.value ?? this.plaintext
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          void this.commitEdit(input.value)
-        } else if (e.key === 'Escape') {
-          e.preventDefault()
-          this.cancelEdit()
-        }
-      })
-      input.addEventListener('blur', () => {
-        if (!this.editCancelled && !this.awaitingPassword) {
-          void this.commitEdit(input.value)
-        }
-      })
-      this.dom.appendChild(input)
-      requestAnimationFrame(() => {
-        input.focus()
-        input.select()
-      })
-      return
+  /** Drop the revealed plaintext when the ciphertext changed out from under us. */
+  syncContent(content: string): void {
+    if (this.plaintext !== null && content !== this.unlockedContent) {
+      this.plaintext = null
+      this.unlockedContent = ''
+      this.password = null
+      this.editCancelled = true
     }
-
-    if (revealed) {
-      const value = document.createElement('span')
-      value.className = 'masked-field-value'
-      value.textContent = this.plaintext
-      this.dom.appendChild(value)
-    } else {
-      const dots = document.createElement('span')
-      dots.className = 'masked-field-dots'
-      dots.textContent = label ? `${MASKED_BULLETS} (${label})` : MASKED_BULLETS
-      this.dom.appendChild(dots)
-    }
-
-    this.dom.appendChild(this.buildActions(revealed))
   }
 
-  private buildActions(revealed: boolean): HTMLElement {
-    const actions = document.createElement('span')
-    actions.className = 'masked-field-actions'
-
-    const eye = this.buildButton(
-      revealed ? EYE_OFF_ICON : EYE_ICON,
-      revealed ? 'Hide value' : 'Show value',
-      'masked-field-eye',
-      () => {
-        if (revealed) {
-          this.hide()
-        } else {
-          void this.unlockAndShow()
-        }
-      },
-    )
-    actions.appendChild(eye)
-
-    const copy = this.buildButton(COPY_ICON, 'Copy value', 'masked-field-copy', () => {
-      void this.copyValue()
-    })
-    actions.appendChild(copy)
-
-    const edit = this.buildButton(EDIT_ICON, 'Edit value', 'masked-field-edit-btn', () => {
-      void this.onEditStart()
-    })
-    actions.appendChild(edit)
-
-    return actions
-  }
-
-  private buildButton(
-    iconSvg: string,
-    title: string,
-    cls: string,
-    onClick: () => void,
-  ): HTMLButtonElement {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = `masked-field-btn ${cls}`
-    button.title = title
-    button.setAttribute('aria-label', title)
-    button.innerHTML = iconSvg
-    button.addEventListener('mousedown', (e) => e.preventDefault())
-    button.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      onClick()
-    })
-    return button
-  }
-
-  private async onClick(): Promise<void> {
+  async toggle(): Promise<void> {
     if (this.editActive) return
     if (this.plaintext !== null) {
       this.hide()
-    } else {
-      await this.unlockAndShow()
+      return
     }
+    await this.reveal()
   }
 
-  private async unlockAndShow(): Promise<boolean> {
-    const pos = this.getPos()
-    if (pos === undefined) return false
-    const node = this.view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== MASKED_TYPE) return false
-    const label = String(node.attrs.label ?? '')
-    const content = String(node.attrs.content ?? '')
+  private async reveal(): Promise<boolean> {
+    const content = this.backend.content()
     if (content === '') return false
+    const label = this.backend.label()
     const password = await promptForPassword(label || 'encrypted field', async (pw) => {
       try {
         const value = await decryptField(content, pw)
@@ -445,27 +340,32 @@ class MaskedFieldNodeView implements NodeView {
       this.unlockedContent = ''
       return false
     }
-    this.render()
+    this.password = password
+    this.backend.present()
     return true
   }
 
-  private async copyValue(): Promise<void> {
+  hide(): void {
+    this.plaintext = null
+    this.unlockedContent = ''
+    this.backend.present()
+  }
+
+  async copy(): Promise<void> {
     if (this.editActive) return
     if (this.plaintext !== null) {
       if (await copyToClipboard(this.plaintext)) this.flashCopied()
       return
     }
-    const pos = this.getPos()
-    if (pos === undefined) return
-    const node = this.view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== MASKED_TYPE) return
-    const label = String(node.attrs.label ?? '')
-    const content = String(node.attrs.content ?? '')
+    const content = this.backend.content()
     if (content === '') return
+    const label = this.backend.label()
     let copied = false
     const password = await promptForPassword(label || 'encrypted field', async (pw) => {
       try {
         const value = await decryptField(content, pw)
+        this.plaintext = value
+        this.unlockedContent = content
         copied = await copyToClipboard(value)
         return true
       } catch {
@@ -473,22 +373,61 @@ class MaskedFieldNodeView implements NodeView {
         return 'Incorrect password'
       }
     })
-    if (password !== null && copied) {
-      this.flashCopied()
+    if (password !== null) {
+      this.password = password
+      if (copied) this.flashCopied()
     }
   }
 
+  async startEdit(): Promise<boolean> {
+    if (this.editActive || this.awaitingPassword) return false
+    if (this.plaintext === null && !(await this.reveal())) return false
+    this.editActive = true
+    this.editCancelled = false
+    this.backend.present()
+    return true
+  }
+
+  async commitEdit(value: string): Promise<void> {
+    if (this.editCancelled || this.awaitingPassword) return
+    this.editActive = false
+    // Unchanged value (or no unlock password available) just closes the edit.
+    if (value === this.plaintext || this.password === null) {
+      this.backend.present()
+      return
+    }
+    const label = this.backend.label()
+    this.awaitingPassword = true
+    try {
+      const envelope = await encryptFieldVerified(value, this.password)
+      this.plaintext = value
+      this.unlockedContent = envelope
+      await this.backend.commit(envelope, label)
+    } catch {
+      this.plaintext = null
+      this.unlockedContent = ''
+    } finally {
+      this.awaitingPassword = false
+    }
+    this.backend.present()
+  }
+
+  cancelEdit(): void {
+    this.editCancelled = true
+    this.editActive = false
+    this.backend.present()
+  }
+
   private flashCopied(): void {
-    const button = this.dom.querySelector<HTMLButtonElement>('.masked-field-copy')
-    if (!button) return
+    const button = this.copyButton
+    if (!button || !button.isConnected) return
     button.innerHTML = CHECK_ICON
     button.title = 'Copied'
     button.setAttribute('aria-label', 'Copied')
     if (this.copiedTimer !== null) clearTimeout(this.copiedTimer)
     this.copiedTimer = setTimeout(() => {
       this.copiedTimer = null
-      if (this.destroyed) return
-      const target = this.dom.querySelector<HTMLButtonElement>('.masked-field-copy')
+      const target = this.copyButton
       if (!target) return
       target.innerHTML = COPY_ICON
       target.title = 'Copy value'
@@ -496,96 +435,180 @@ class MaskedFieldNodeView implements NodeView {
     }, 1200)
   }
 
-  private hide(): void {
-    this.plaintext = null
-    this.unlockedContent = ''
+  destroy(): void {
+    this.copyButton = null
+    if (this.copiedTimer !== null) {
+      clearTimeout(this.copiedTimer)
+      this.copiedTimer = null
+    }
+  }
+}
+
+function buildMaskedButton(
+  iconSvg: string,
+  title: string,
+  cls: string,
+  onClick: () => void,
+): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = `masked-field-btn ${cls}`
+  button.title = title
+  button.setAttribute('aria-label', title)
+  button.innerHTML = iconSvg
+  button.addEventListener('mousedown', (e) => e.preventDefault())
+  button.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onClick()
+  })
+  return button
+}
+
+function buildMaskedFieldActions(it: MaskedFieldInteractions, revealed: boolean): HTMLElement {
+  const actions = document.createElement('span')
+  actions.className = 'masked-field-actions'
+  actions.appendChild(
+    buildMaskedButton(
+      revealed ? EYE_OFF_ICON : EYE_ICON,
+      revealed ? 'Hide value' : 'Show value',
+      'masked-field-eye',
+      () => {
+        void it.toggle()
+      },
+    ),
+  )
+  const copy = buildMaskedButton(COPY_ICON, 'Copy value', 'masked-field-copy', () => {
+    void it.copy()
+  })
+  it.copyButton = copy
+  actions.appendChild(copy)
+  actions.appendChild(
+    buildMaskedButton(EDIT_ICON, 'Edit value', 'masked-field-edit-btn', () => {
+      void it.startEdit()
+    }),
+  )
+  return actions
+}
+
+function createMaskedEditInput(it: MaskedFieldInteractions): HTMLInputElement {
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'masked-field-input'
+  input.value = it.plaintextValue ?? ''
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void it.commitEdit(input.value)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      it.cancelEdit()
+    }
+  })
+  input.addEventListener('blur', () => {
+    void it.commitEdit(input.value)
+  })
+  return input
+}
+
+class MaskedFieldNodeView implements NodeView {
+  dom: HTMLElement
+  private node: ProseNode
+  private view: EditorView
+  private getPos: () => number | undefined
+  private interactions: MaskedFieldInteractions
+  private clickTimer: ReturnType<typeof setTimeout> | null = null
+  private destroyed = false
+
+  constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
+    this.node = node
+    this.view = view
+    this.getPos = getPos
+
+    this.interactions = new MaskedFieldInteractions({
+      content: () => String(this.node.attrs.content ?? ''),
+      label: () => String(this.node.attrs.label ?? ''),
+      commit: (content, label) => {
+        const pos = this.getPos()
+        if (pos === undefined) return
+        const tr = this.view.state.tr.setNodeMarkup(pos, undefined, { content, label })
+        this.view.dispatch(tr)
+        this.view.focus()
+      },
+      present: () => this.render(),
+    })
+
+    this.dom = document.createElement('span')
+    this.dom.className = 'masked-field'
+    this.dom.addEventListener('mousedown', (e) => e.preventDefault())
+    this.dom.addEventListener('click', (e) => {
+      e.preventDefault()
+      if ((e.target as HTMLElement).closest('.masked-field-btn')) return
+      this.scheduleToggle()
+    })
+    this.dom.addEventListener('dblclick', (e) => {
+      e.preventDefault()
+      // A double click arrives after two single clicks; cancel the pending
+      // toggle so the first click does not reveal/hide before we edit.
+      if (this.clickTimer !== null) {
+        clearTimeout(this.clickTimer)
+        this.clickTimer = null
+      }
+      void this.interactions.startEdit()
+    })
     this.render()
   }
 
-  private async onEditStart(): Promise<void> {
-    if (this.editActive) return
-    const pos = this.getPos()
-    if (pos === undefined) return
-    const node = this.view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== MASKED_TYPE) return
-    const label = String(node.attrs.label ?? '')
-    const content = String(node.attrs.content ?? '')
-    if (content === '') return
-    if (this.plaintext === null) {
-      const password = await promptForPassword(label || 'encrypted field', async (pw) => {
-        try {
-          const value = await decryptField(content, pw)
-          this.plaintext = value
-          this.unlockedContent = content
-          return true
-        } catch {
-          this.plaintext = null
-          return 'Incorrect password'
+  private scheduleToggle(): void {
+    if (this.clickTimer !== null) clearTimeout(this.clickTimer)
+    this.clickTimer = setTimeout(() => {
+      this.clickTimer = null
+      if (this.destroyed) return
+      void this.interactions.toggle()
+    }, 240)
+  }
+
+  private render(): void {
+    const content = String(this.node.attrs.content ?? '')
+    const label = String(this.node.attrs.label ?? '')
+    const revealed = this.interactions.isRevealed
+
+    this.dom.dataset.content = content
+    this.dom.dataset.label = label
+    this.dom.classList.toggle('masked-field-revealed', revealed)
+    this.dom.classList.toggle('masked-field-edit', this.interactions.isEditActive)
+    this.dom.textContent = ''
+
+    if (this.interactions.isEditActive) {
+      const input = createMaskedEditInput(this.interactions)
+      this.dom.appendChild(input)
+      requestAnimationFrame(() => {
+        if (input.isConnected) {
+          input.focus()
+          input.select()
         }
       })
-      if (password === null || this.plaintext === null) return
+      return
     }
-    this.editActive = true
-    this.editCancelled = false
-    this.render()
-  }
 
-  private async commitEdit(value: string): Promise<void> {
-    if (this.editCancelled || this.awaitingPassword) return
-    this.editActive = false
-    this.awaitingPassword = true
-    const pos = this.getPos()
-    if (pos === undefined) {
-      this.awaitingPassword = false
-      this.render()
-      return
+    if (revealed) {
+      const value = document.createElement('span')
+      value.className = 'masked-field-value'
+      value.textContent = this.interactions.plaintextValue
+      this.dom.appendChild(value)
+    } else {
+      const dots = document.createElement('span')
+      dots.className = 'masked-field-dots'
+      dots.textContent = label ? `${MASKED_BULLETS} (${label})` : MASKED_BULLETS
+      this.dom.appendChild(dots)
     }
-    const node = this.view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== MASKED_TYPE) {
-      this.awaitingPassword = false
-      this.render()
-      return
-    }
-    const label = String(node.attrs.label ?? '')
-    const password = await promptForPassword(
-      label || 'encrypted field',
-      undefined,
-      { okText: 'Encrypt', title: `Set password for ${label || 'this field'}` },
-    )
-    this.awaitingPassword = false
-    if (password === null) {
-      this.render()
-      this.view.focus()
-      return
-    }
-    try {
-      const envelope = await encryptFieldVerified(value, password)
-      this.plaintext = value
-      this.unlockedContent = envelope
-      const tr = this.view.state.tr
-      tr.setNodeMarkup(pos, undefined, { content: envelope, label })
-      this.view.dispatch(tr)
-      this.view.focus()
-    } catch {
-      this.plaintext = null
-      this.unlockedContent = ''
-      this.render()
-      this.view.focus()
-    }
-  }
 
-  private cancelEdit(): void {
-    this.editCancelled = true
-    this.editActive = false
-    this.render()
+    this.dom.appendChild(buildMaskedFieldActions(this.interactions, revealed))
   }
 
   update(node: ProseNode): boolean {
     if (node.type.name !== MASKED_TYPE) return false
-    if (this.plaintext !== null && String(node.attrs.content ?? '') !== this.unlockedContent) {
-      this.plaintext = null
-      this.unlockedContent = ''
-    }
+    this.interactions.syncContent(String(node.attrs.content ?? ''))
     this.node = node
     this.render()
     return true
@@ -601,18 +624,88 @@ class MaskedFieldNodeView implements NodeView {
 
   destroy(): void {
     this.destroyed = true
-    this.plaintext = null
-    this.unlockedContent = ''
+    this.interactions.destroy()
     this.dom.textContent = ''
-    if (this.copiedTimer !== null) {
-      clearTimeout(this.copiedTimer)
-      this.copiedTimer = null
-    }
     if (this.clickTimer !== null) {
       clearTimeout(this.clickTimer)
       this.clickTimer = null
     }
   }
+}
+
+// --- Cell pills ---------------------------------------------------------------
+
+export interface CellMaskedToken {
+  content: string
+  label: string
+  raw: string
+}
+
+/**
+ * Turn a static ``.masked-field`` pill inside a spreadsheet cell into an
+ * interactive one with the usual show/copy/edit actions. The token lives in the
+ * cell's raw markdown (not a ProseMirror node), so ``onCommit`` reports a new
+ * (re-encrypted) token back to the grid, which swaps it into the cell text.
+ */
+export function bindCellMaskedField(
+  pill: HTMLElement,
+  token: CellMaskedToken,
+  onCommit: (rawToken: string) => void,
+): void {
+  const { content, label, raw } = token
+  const it = new MaskedFieldInteractions({
+    content: () => content,
+    label: () => label,
+    commit: (envelope, fieldLabel) => {
+      onCommit(maskedFieldToMarkdown(envelope, fieldLabel))
+    },
+    present: () => {
+      if (pill.isConnected) render()
+    },
+  })
+
+  pill.classList.add('masked-field-cell')
+  pill.addEventListener('mousedown', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+  })
+  pill.addEventListener('click', (e) => {
+    e.preventDefault()
+    if ((e.target as HTMLElement).closest('.masked-field-btn')) return
+    void it.toggle()
+  })
+
+  function render(): void {
+    pill.textContent = ''
+    pill.classList.toggle('masked-field-revealed', it.isRevealed)
+    if (it.isEditActive) {
+      const input = createMaskedEditInput(it)
+      pill.appendChild(input)
+      requestAnimationFrame(() => {
+        if (input.isConnected) {
+          input.focus()
+          input.select()
+        }
+      })
+      return
+    }
+    if (it.isRevealed) {
+      const value = document.createElement('span')
+      value.className = 'masked-field-value'
+      value.textContent = it.plaintextValue
+      pill.appendChild(value)
+    } else {
+      const dots = document.createElement('span')
+      dots.className = 'masked-field-dots'
+      dots.textContent = label ? `${MASKED_BULLETS} (${label})` : MASKED_BULLETS
+      pill.appendChild(dots)
+    }
+    pill.appendChild(buildMaskedFieldActions(it, it.isRevealed))
+  }
+
+  if (!raw) return
+  pill.textContent = ''
+  render()
 }
 
 export const maskedFieldNodeViewPlugin = new Plugin({
@@ -628,33 +721,45 @@ export const maskedFieldNodeViewPlugin = new Plugin({
 
 // --- Insert command ------------------------------------------------------------
 
-export async function insertMaskedFieldCommand(view: EditorView): Promise<boolean> {
+export interface NewSecret {
+  envelope: string
+  label: string
+}
+
+/** One prompt to create a brand-new secret: name it, type the value, set its password. */
+export async function promptForNewSecret(): Promise<NewSecret | null> {
   const created = await promptForSecretCreate()
-  if (!created) return false
+  if (!created) return null
   const password = await promptForPassword(
     created.label || 'encrypted field',
     undefined,
     { okText: 'Encrypt', title: `Set password for ${created.label || 'this field'}` },
   )
-  if (password === null) return false
+  if (password === null) return null
   try {
     const envelope = await encryptFieldVerified(created.value, password)
-    const node = view.state.schema.nodes[MASKED_TYPE].create({
-      content: envelope,
-      label: created.label,
-    })
-    const { state } = view
-    const { $from, $to } = state.selection
-    if (!$from.sameParent($to) || !$from.parent.isTextblock) {
-      view.focus()
-      return false
-    }
-    const tr = state.tr
-    tr.replaceSelectionWith(node, false)
-    view.dispatch(tr)
-    view.focus()
-    return true
+    return { envelope, label: created.label }
   } catch {
+    return null
+  }
+}
+
+export async function insertMaskedFieldCommand(view: EditorView): Promise<boolean> {
+  const secret = await promptForNewSecret()
+  if (!secret) return false
+  const node = view.state.schema.nodes[MASKED_TYPE].create({
+    content: secret.envelope,
+    label: secret.label,
+  })
+  const { state } = view
+  const { $from, $to } = state.selection
+  if (!$from.sameParent($to) || !$from.parent.isTextblock) {
+    view.focus()
     return false
   }
+  const tr = state.tr
+  tr.replaceSelectionWith(node, false)
+  view.dispatch(tr)
+  view.focus()
+  return true
 }

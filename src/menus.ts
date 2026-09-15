@@ -7,6 +7,7 @@ export interface MenuCommands {
   importTable: () => void
   importText: () => void
   insertImage: () => void
+  insertTableDefault: () => void
   export: () => void
   toggleFormatting: () => void
   undo: () => void

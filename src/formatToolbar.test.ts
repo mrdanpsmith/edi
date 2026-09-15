@@ -706,3 +706,50 @@ describe('task and list toggles', () => {
     host.remove()
   })
 })
+
+describe('table grid size picker', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('highlights the hovered N×M rect and inserts a table atom of that size', () => {
+    const { bar, view, ctx } = makeFixture()
+    new FormatToolbar(bar, ctx)
+
+    const boxes = bar.querySelectorAll<HTMLElement>('.grid-picker-box')
+    expect(boxes.length).toBe(25)
+    const label = bar.querySelector<HTMLElement>('.grid-picker-label')
+    expect(label?.textContent).toBe('1 rows × 1 columns')
+
+    const target = bar.querySelector<HTMLElement>(
+      '.grid-picker-box[data-r="1"][data-c="2"]',
+    )!
+    target.dispatchEvent(new MouseEvent('mouseenter'))
+    expect(label?.textContent).toBe('2 rows × 3 columns')
+    expect(bar.querySelectorAll('.grid-picker-box.grid-picker-hover').length).toBe(6)
+
+    target.click()
+    expect(view.state.doc.lastChild?.type.name).toBe('table')
+    expect(proseToMarkdown(view.state.doc)).toContain(
+      '|  |  |  |\n| --- | --- | --- |\n|  |  |  |',
+    )
+    view.destroy()
+  })
+
+  it('opens as a fixed layer anchored to the button rect and closes on toggle', () => {
+    const { bar, view, ctx } = makeFixture()
+    new FormatToolbar(bar, ctx)
+    const button = bar.querySelector<HTMLElement>('.fmt-menu-host .fmt-btn')!
+    const popover = bar.querySelector<HTMLElement>('.fmt-menu-host .fmt-popover')!
+    expect(popover.hidden).toBe(true)
+
+    button.click()
+    expect(popover.hidden).toBe(false)
+    expect(popover.style.top).not.toBe('')
+    expect(popover.style.left).not.toBe('')
+
+    button.click()
+    expect(popover.hidden).toBe(true)
+    view.destroy()
+  })
+})

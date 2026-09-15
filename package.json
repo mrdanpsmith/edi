@@ -38,7 +38,6 @@
     "prosemirror-model": "^1.25.11",
     "prosemirror-schema-list": "^1.5.1",
     "prosemirror-state": "^1.4.4",
-    "prosemirror-tables": "^1.8.5",
     "prosemirror-view": "^1.42.2",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",

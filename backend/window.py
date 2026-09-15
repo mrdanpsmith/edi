@@ -364,6 +364,11 @@ class MainWindow(QMainWindow):
 
         self._insert_menu = menubar.addMenu("&Insert")
         insert_menu = self._insert_menu
+        table_action = QAction("&Table…", self)
+        table_action.triggered.connect(
+            lambda _checked=False: self._menu_command("insertTableDefault")
+        )
+        insert_menu.addAction(table_action)
         import_action = QAction("&Spreadsheet…", self)
         import_action.triggered.connect(
             lambda _checked=False: self._menu_command("importTable")
@@ -379,7 +384,7 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("insertImage")
         )
         insert_menu.addAction(image_action)
-        self._insert_actions = (import_action, text_action, image_action)
+        self._insert_actions = (table_action, import_action, text_action, image_action)
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu

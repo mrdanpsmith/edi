@@ -1,5 +1,6 @@
 import { Schema } from 'prosemirror-model'
 import type { SchemaSpec } from 'prosemirror-model'
+import { domTableToPipes } from './spreadsheet-util'
 
 const nodes: SchemaSpec['nodes'] = {
   doc: {
@@ -126,35 +127,28 @@ const nodes: SchemaSpec['nodes'] = {
 
   table: {
     group: 'block',
-    content: 'table_row+',
-    attrs: { _source: { default: false } },
-    parseDOM: [{ tag: 'table' }],
-    toDOM() {
-      return ['table', 0]
-    },
-  },
-
-  table_row: {
-    content: '(table_cell | table_header)+',
-    parseDOM: [{ tag: 'tr' }],
-    toDOM() {
-      return ['tr', 0]
-    },
-  },
-
-  table_cell: {
-    content: 'block+',
-    parseDOM: [{ tag: 'td' }],
-    toDOM() {
-      return ['td', 0]
-    },
-  },
-
-  table_header: {
-    content: 'block+',
-    parseDOM: [{ tag: 'th' }],
-    toDOM() {
-      return ['th', 0]
+    marks: '',
+    code: true,
+    atom: true,
+    attrs: { value: { default: '' }, _source: { default: false }, _plain: { default: true } },
+    parseDOM: [
+      {
+        tag: 'table',
+        getAttrs(dom: HTMLElement) {
+          return { value: domTableToPipes(dom as HTMLTableElement) }
+        },
+      },
+      {
+        tag: 'div[data-edi-table]',
+        getAttrs(dom: HTMLElement) {
+          // toDOM writes the raw pipe-table text into the element (mermaid
+          // pattern), so a copy/paste round trip preserves the cell markup.
+          return { value: dom.textContent ?? '' }
+        },
+      },
+    ],
+    toDOM(node) {
+      return ['div', { 'data-edi-table': '' }, node.attrs.value as string]
     },
   },
 

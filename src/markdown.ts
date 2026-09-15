@@ -12,6 +12,7 @@ import {
   maskedFieldToMarkdown,
 } from './node/masked'
 import { shebangFromFenceInfo } from './exec'
+import { tableToPipes } from './spreadsheet-util'
 
 export interface BlockOffset {
   id: string
@@ -163,32 +164,15 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       return schema.node('horizontal_rule')
 
     case 'table': {
-      // GFM: the first row is the header (mdast marks every cell `tableCell`).
-      // Emit it as `table_header` so it renders with distinct header styling.
-      const tableChildren: ProseNode[] = []
-      ;(node.children ?? []).forEach((row, rowIndex) => {
-        const cells = (row.children ?? []).map((cell) => {
-          const content = parseTableCellContent(cell.children ?? [], schema)
-          return schema.node(rowIndex === 0 ? 'table_header' : 'table_cell', {}, content)
-        })
-        tableChildren.push(schema.node('table_row', {}, cells))
-      })
-      return schema.node('table', {}, tableChildren)
-    }
-
-    case 'tableRow': {
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
-      return schema.node('table_row', {}, children)
-    }
-
-    case 'tableCell': {
-      const content = parseTableCellContent(node.children ?? [], schema)
-      return schema.node('table_cell', {}, content)
-    }
-
-    case 'tableHeader': {
-      const content = parseTableCellContent(node.children ?? [], schema)
-      return schema.node('table_header', {}, content)
+      // GFM: the first row is the header. The whole grid becomes the atom's
+      // `value` as normalized pipe-table markdown; each cell holds its inline
+      // markdown text (the strong/code/etc. marks survive the round trip).
+      const rows = (node.children ?? []).map((row) =>
+        (row.children ?? []).map((cell) =>
+          serializeCellText(cell.children ?? [], schema),
+        ),
+      )
+      return schema.node('table', { value: tableToPipes(rows) })
     }
 
     case 'html':
@@ -259,27 +243,9 @@ function parseInline(
   return result
 }
 
-function parseBlockContent(children: MdastNode[], schema: Schema): ProseNode[] {
-  return children.map((c) => mdastToProse(c, schema))
-}
-
-const INLINE_TYPES = new Set([
-  'text', 'inlineCode', 'strong', 'em', 'strikethrough', 'link',
-  'image', 'break', 'highlight', 'sub', 'sup', 'masked_field',
-])
-
-function isInlineOnly(children: MdastNode[]): boolean {
-  return children.length > 0 && children.every((c) => INLINE_TYPES.has(c.type))
-}
-
-function parseTableCellContent(children: MdastNode[], schema: Schema): ProseNode[] {
-  if (children.length === 0) {
-    return [schema.node('paragraph')]
-  }
-  if (isInlineOnly(children)) {
-    return [schema.node('paragraph', {}, parseInline(children, schema))]
-  }
-  return parseBlockContent(children, schema)
+function serializeCellText(children: MdastNode[], schema: Schema): string {
+  const para = schema.node('paragraph', {}, parseInline(children, schema))
+  return serializeContent(para)
 }
 
 // --- Serialize: ProseMirror → markdown ---
@@ -350,8 +316,14 @@ function serializeNode(node: ProseNode, indent = ''): string {
       return indent + fence + 'mermaid\n' + val + '\n' + indent + fence
     }
 
-    case 'table':
-      return serializeTable(node, indent)
+    case 'table': {
+      const val = (node.attrs.value as string) ?? ''
+      if (!val) return ''
+      return val
+        .split('\n')
+        .map((line) => indent + line)
+        .join('\n')
+    }
 
     case 'text':
       return serializeInlineAtom(node.text ?? '', node.marks ?? [])
@@ -495,36 +467,6 @@ function serializeListItemContent(node: ProseNode, bullet: string, indent: strin
     }
   })
   return lines.join('\n')
-}
-
-function serializeTable(node: ProseNode, indent: string): string {
-  const rows: string[] = []
-  const colCount = (() => {
-    let max = 0
-    node.content.forEach((row) => {
-      let count = 0
-      row.content.forEach(() => count++)
-      if (count > max) max = count
-    })
-    return max
-  })()
-
-  let isFirstRow = true
-  node.content.forEach((row) => {
-    const cells: string[] = []
-    row.content.forEach((cell) => {
-      cells.push(serializeContent(cell).replace(/\|/g, '\\|'))
-    })
-    while (cells.length < colCount) cells.push('')
-    rows.push('| ' + cells.join(' | ') + ' |')
-
-    if (isFirstRow) {
-      rows.push('| ' + cells.map(() => '---').join(' | ') + ' |')
-      isFirstRow = false
-    }
-  })
-
-  return rows.map((r) => indent + r).join('\n')
 }
 
 // --- Public API ---

@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
 
-import { computeSpreadsheet, formatNumber } from './spreadsheet'
+import {
+  colToLetters,
+  computeSpreadsheet,
+  formatNumber,
+  parseCellRef,
+  solve,
+} from './spreadsheet'
+import {
+  domTableToPipes,
+  inlineMarkdownToHtml,
+  parsePipes,
+  tableToPipes,
+} from './spreadsheet-util'
 
 function renderTable(markdown: string): string {
   const lines = markdown.split('\n')
@@ -40,6 +52,156 @@ function cellText(html: string, index: number): string {
   const cells = html.match(/<td[^>]*>.*?<\/td>/g) ?? []
   return cells[index] ?? ''
 }
+
+describe('solve', () => {
+  function cells(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.display))
+  }
+
+  function kinds(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.kind))
+  }
+
+  it('solves a horizontal sum', () => {
+    const out = cells('| Item | Q1 | Q2 | Total |\n| --- | --- | --- | --- |\n| A | 10 | 20 | =SUM(B2:C2) |')
+    expect(out[1]![3]).toBe('30')
+  })
+
+  it('evaluates arithmetic, references, blanks, and chained formulas', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| | =A2+5 |')
+    expect(out[1]![1]).toBe('5')
+    const chained = cells('| A | B |\n| --- | --- |\n| 2 | =A2*3 |\n| =B2+1 | =A3*2 |')
+    expect(chained[1]![1]).toBe('6')
+    expect(chained[2]![0]).toBe('7')
+    expect(chained[2]![1]).toBe('14')
+  })
+
+  it('aggregates ranges with row 1 = header', () => {
+    const out = cells(
+      '| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| =SUM(A2:C3) | =AVERAGE(A2:B3) | =COUNT(A2:C3) |',
+    )
+    expect(out[3]![0]).toBe('21')
+    expect(out[3]![1]).toBe('3')
+    expect(out[3]![2]).toBe('6')
+  })
+
+  it('marks each error kind', () => {
+    expect(kinds('| A |\n| --- |\n| 0 |\n| =5/A2 |')[2]![0]).toBe('error')
+    expect(kinds('| A |\n| --- |\n| abc |\n| =A2+1 |')[2]![0]).toBe('error')
+    expect(kinds('| A |\n| --- |\n| 1 |\n| =FOO(A2) |')[2]![0]).toBe('error')
+    expect(kinds('| A |\n| --- |\n| =A2 |')[1]![0]).toBe('error')
+  })
+
+  it('displays error text and raw text verbatim', () => {
+    const solution = solve(parsePipes('| A |\n| --- |\n| 0 |\n| =1/A2 |'))
+    expect(solution.cells[2]![0]!.display).toBe('#DIV/0!')
+    expect(solution.cells[2]![0]!.error).toBe('#DIV/0!')
+    expect(solution.cells[1]![0]!.display).toBe('0')
+    expect(solution.cells[1]![0]!.value).toBeUndefined()
+  })
+
+  it('treats a lone `=` as blank and leaves text cells as raw text', () => {
+    const out = cells('| A |\n| --- |\n| = |\n| hello |')
+    expect(out[1]![0]).toBe('')
+    expect(out[2]![0]).toBe('hello')
+    const k = kinds('| A |\n| --- |\n| = |')
+    expect(k[1]![0]).toBe('blank')
+  })
+
+  it('reports rows and cols in the solution', () => {
+    const solution = solve(parsePipes('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |'))
+    expect(solution.rows).toBe(4)
+    expect(solution.cols).toBe(2)
+  })
+})
+
+describe('cell reference helpers', () => {
+  it('converts column numbers to spreadsheet letters', () => {
+    expect(colToLetters(1)).toBe('A')
+    expect(colToLetters(26)).toBe('Z')
+    expect(colToLetters(27)).toBe('AA')
+    expect(colToLetters(52)).toBe('AZ')
+  })
+
+  it('parses uppercase and lowercase cell references', () => {
+    expect(parseCellRef('B2')).toEqual({ col: 2, row: 2 })
+    expect(parseCellRef('aa10')).toEqual({ col: 27, row: 10 })
+    expect(parseCellRef('nope')).toBeNull()
+    expect(parseCellRef('2B')).toBeNull()
+  })
+})
+
+describe('pipe-table utils', () => {
+  it('round-trips escape pipes, ragged rows, and the delimiter', () => {
+    const rows = parsePipes('| a\\|b |\n| --- |\n| c | d |\n| e |')
+    expect(rows).toEqual([
+      ['a|b', ''],
+      ['c', 'd'],
+      ['e', ''],
+    ])
+    const back = parsePipes(tableToPipes(rows))
+    expect(back).toEqual(rows)
+  })
+
+  it('emits a delimiter row only when data rows exist', () => {
+    expect(tableToPipes([['A', 'B']])).toBe('| A | B |')
+    expect(tableToPipes([['A', 'B'], ['1', '2']])).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |')
+  })
+
+  it('skips blank lines and delimiter-shaped data rows', () => {
+    expect(parsePipes('\n| A |\n| --- |\n')).toEqual([['A']])
+    expect(parsePipes('| :---: |\n| x |')).toEqual([['x']])
+  })
+
+  it('converts a DOM table into normalized pipe markdown', () => {
+    const table = document.createElement('table')
+    table.innerHTML =
+      '<thead><tr><th>H1</th><th>H2</th></tr></thead><tbody><tr><td>a</td><td> b </td></tr></tbody>'
+    expect(domTableToPipes(table)).toBe('| H1 | H2 |\n| --- | --- |\n| a | b |')
+  })
+})
+
+describe('inlineMarkdownToHtml', () => {
+  it('renders the supported inline constructs', () => {
+    expect(inlineMarkdownToHtml('**b** and *i*')).toBe('<strong>b</strong> and <em>i</em>')
+    expect(inlineMarkdownToHtml('__b__ _i_')).toBe('<strong>b</strong> <em>i</em>')
+    expect(inlineMarkdownToHtml('`c` and ~~d~~')).toBe('<code>c</code> and <del>d</del>')
+    expect(inlineMarkdownToHtml('[t](http://x.example)')).toBe(
+      '<a href="http://x.example">t</a>',
+    )
+  })
+
+  it('escapes raw HTML and quotes', () => {
+    expect(inlineMarkdownToHtml('<script>alert(1)</script>')).toBe(
+      '&lt;script&gt;alert(1)&lt;/script&gt;',
+    )
+    expect(inlineMarkdownToHtml('a "b" & c')).toBe('a &quot;b&quot; &amp; c')
+  })
+
+  it('leaves unsupported markdown literal', () => {
+    expect(inlineMarkdownToHtml('x~sub~y')).toBe('x~sub~y')
+  })
+
+  it('renders masked-field tokens as static pills', () => {
+    expect(inlineMarkdownToHtml('!masked[c1phers]')).toBe(
+      '<span class="masked-field">••••••••••••</span>',
+    )
+    expect(inlineMarkdownToHtml('!masked[c1phers]{label="PIN"}')).toBe(
+      '<span class="masked-field">•••••••••••• (PIN)</span>',
+    )
+    expect(inlineMarkdownToHtml('**User** !masked[x]{label="pw"}')).toBe(
+      '<strong>User</strong> <span class="masked-field">•••••••••••• (pw)</span>',
+    )
+  })
+
+  it('escapes masked labels before embedding them', () => {
+    expect(inlineMarkdownToHtml('!masked[x]{label="a<b"}')).toBe(
+      '<span class="masked-field">•••••••••••• (a&lt;b)</span>',
+    )
+  })
+})
 
 describe('formatNumber', () => {
   it('rounds to four decimals and drops trailing zeros', () => {

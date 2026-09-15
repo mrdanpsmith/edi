@@ -1,0 +1,675 @@
+import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest'
+import { EditorState } from 'prosemirror-state'
+import { EditorView } from 'prosemirror-view'
+import { Plugin } from 'prosemirror-state'
+import { schema } from './schema'
+import { markdownToProse, proseToMarkdown } from './markdown'
+import { parsePipes } from './spreadsheet-util'
+import { blockPlugin, enterSourceMode, exitSourceMode } from './blockplugin'
+import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
+import { tableNodeViewPlugin, insertTable } from './node/table'
+import { getActiveCellHost } from './inline-format'
+import { encryptField } from './crypto'
+
+function createEditor(md: string): EditorView {
+  const doc = markdownToProse(md, schema)
+  const nodeViewPlugin = new Plugin({
+    props: {
+      nodeViews: Object.fromEntries(
+        [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+      ),
+    },
+  })
+  const view = new EditorView(document.body, {
+    state: EditorState.create({
+      doc,
+      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin],
+    }),
+  })
+  // Tables render in the plain view by default (`_plain` is true); enter
+  // spreadsheet mode for the existing suite so `.ss-grid` etc. are present.
+  const firstNode = view.state.doc.child(0)
+  if (firstNode?.type.name === 'table') {
+    view.dispatch(
+      view.state.tr.setNodeMarkup(0, undefined, { ...firstNode.attrs, _plain: false }),
+    )
+  }
+  return view
+}
+
+/** Build an editor that leaves the table in its default plain view mode. */
+function createPlainTable(md: string): EditorView {
+  const doc = markdownToProse(md, schema)
+  const nodeViewPlugin = new Plugin({
+    props: {
+      nodeViews: Object.fromEntries(
+        [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+      ),
+    },
+  })
+  return new EditorView(document.body, {
+    state: EditorState.create({
+      doc,
+      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin],
+    }),
+  })
+}
+
+function tableGrid(view: EditorView): HTMLElement {
+  const grid = view.dom.querySelector('.ss-grid') as HTMLElement
+  if (!grid) throw new Error('no .ss-grid rendered')
+  return grid
+}
+
+function cell(view: EditorView, row: number, col: number): HTMLElement {
+  const rows = tableGrid(view).querySelectorAll('tbody tr')
+  return rows[row]!.querySelectorAll('td')[col]! as HTMLElement
+}
+
+function colHeader(view: EditorView, col: number): HTMLElement {
+  return tableGrid(view).querySelectorAll('thead th')[col + 1]! as HTMLElement
+}
+
+function rowGutter(view: EditorView, row: number): HTMLElement {
+  const rows = tableGrid(view).querySelectorAll('tbody tr')
+  return rows[row]!.querySelector('th.ss-row')! as HTMLElement
+}
+
+function tool(view: EditorView, label: string): HTMLElement {
+  const buttons = view.dom.querySelectorAll<HTMLElement>('.ss-tool')
+  for (const button of buttons) {
+    if (button.textContent === label) return button
+  }
+  throw new Error(`no tool ${label}`)
+}
+
+function mousedown(el: Element, init: MouseEventInit = {}): void {
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, ...init }))
+}
+
+function docValue(view: EditorView): string {
+  const table = view.state.doc.firstChild
+  return String(table?.attrs.value ?? '')
+}
+
+describe('TableNodeView grid', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('renders column letters, row numbers, and a name box', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |')
+    const headers = tableGrid(view).querySelectorAll('thead th')
+    expect(headers[1]!.textContent).toBe('A')
+    expect(headers[2]!.textContent).toBe('B')
+    expect(headers[3]!.textContent).toBe('C')
+    const gutters = tableGrid(view).querySelectorAll('tbody th.ss-row')
+    expect(Array.from(gutters).map((g) => g.textContent)).toEqual(['1', '2'])
+    const namebox = view.dom.querySelector('.ss-namebox')
+    expect(namebox?.textContent).toBe('A1')
+    view.destroy()
+  })
+
+  it('renders computed formula values and error cells', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| 5 | =A2*3 |\n| =SUM(A2:B2) | 0 |',
+    )
+    expect(cell(view, 1, 1).textContent).toBe('15')
+    expect(cell(view, 1, 1).classList.contains('ss-formula')).toBe(true)
+    expect(cell(view, 2, 0).textContent).toBe('20')
+    expect(cell(view, 2, 1).textContent).toBe('0')
+
+    const errView = createEditor('| A |\n| --- |\n| 0 |\n| =1/A2 |')
+    expect(cell(errView, 2, 0).textContent).toBe('#DIV/0!')
+    expect(cell(errView, 2, 0).classList.contains('ss-error')).toBe(true)
+    expect(cell(errView, 2, 0).title).toBe('=1/A2')
+    errView.destroy()
+    view.destroy()
+  })
+
+  it('makes a cell active on click and labels it in the name box', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 1, 1))
+    expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
+    expect(cell(view, 1, 0).classList.contains('ss-active')).toBe(false)
+    expect(view.dom.querySelector('.ss-namebox')?.textContent).toBe('B2')
+    view.destroy()
+  })
+
+  it('extends a range with drag and Shift+click', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |')
+    mousedown(cell(view, 0, 0))
+    cell(view, 2, 2).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    expect(cell(view, 0, 0).classList.contains('ss-range')).toBe(true)
+    expect(cell(view, 2, 2).classList.contains('ss-range')).toBe(true)
+    expect(cell(view, 2, 2).classList.contains('ss-active')).toBe(true)
+
+    mousedown(cell(view, 1, 1), { shiftKey: true })
+    expect(cell(view, 0, 0).classList.contains('ss-range')).toBe(true)
+    expect(cell(view, 1, 1).classList.contains('ss-range')).toBe(true)
+    view.destroy()
+  })
+
+  it('toggles cells with Mod+click', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 1, 1), { ctrlKey: true })
+    expect(cell(view, 1, 1).classList.contains('ss-selected')).toBe(true)
+    mousedown(cell(view, 1, 1), { ctrlKey: true })
+    expect(cell(view, 1, 1).classList.contains('ss-selected')).toBe(false)
+    view.destroy()
+  })
+
+  it('selects whole columns, rows, and every cell from the corner', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    mousedown(colHeader(view, 1))
+    expect(cell(view, 0, 1).classList.contains('ss-range')).toBe(true)
+    expect(cell(view, 2, 1).classList.contains('ss-range')).toBe(true)
+    expect(cell(view, 0, 0).classList.contains('ss-range')).toBe(false)
+
+    mousedown(rowGutter(view, 0))
+    expect(cell(view, 0, 0).classList.contains('ss-range')).toBe(true)
+    expect(cell(view, 0, 1).classList.contains('ss-range')).toBe(true)
+    expect(cell(view, 1, 0).classList.contains('ss-range')).toBe(false)
+
+    mousedown(tableGrid(view).querySelector('.ss-corner')!)
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 2; c++) {
+        expect(cell(view, r, c).classList.contains('ss-range')).toBe(true)
+      }
+    }
+    view.destroy()
+  })
+
+  it('shows the raw cell in the formula bar and commits edits', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | =A2*3 |')
+    mousedown(cell(view, 1, 1))
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    expect(fx.value).toBe('=A2*3')
+    fx.value = '=A2+2'
+    fx.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    )
+    expect(docValue(view)).toContain('=A2+2')
+    expect(cell(view, 1, 1).textContent).toBe('7')
+    view.destroy()
+  })
+
+  it('recalculates totals when an input cell changes', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| 10 | 5 |\n| =SUM(A2:B2) | x |',
+    )
+    expect(cell(view, 2, 0).textContent).toBe('15')
+    mousedown(cell(view, 1, 0))
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    fx.value = '5'
+    fx.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    )
+    expect(cell(view, 2, 0).textContent).toBe('10')
+    view.destroy()
+  })
+
+  it('adds columns and rows via the tools row', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    tool(view, '+Col').click()
+    expect(tableGrid(view).querySelectorAll('thead th').length).toBe(4)
+    expect(docValue(view)).toContain('| 1 | 2 |  |')
+    tool(view, '+Row').click()
+    expect(tableGrid(view).querySelectorAll('tbody tr').length).toBe(4)
+    view.destroy()
+  })
+
+  it('removes selected columns and rows', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |')
+    mousedown(colHeader(view, 0))
+    tool(view, '−Col').click()
+    expect(tableGrid(view).querySelectorAll('thead th').length).toBe(3)
+    expect(docValue(view)).not.toContain('| 1 ')
+    expect(docValue(view)).toContain('| 2 | 3 |')
+
+    mousedown(rowGutter(view, 1))
+    tool(view, '−Row').click()
+    expect(tableGrid(view).querySelectorAll('tbody tr').length).toBe(1)
+    expect(docValue(view)).not.toContain('| 2 | 3 |')
+    view.destroy()
+  })
+
+  it('clears cells with the Clear tool and the Delete key', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 1, 0), { ctrlKey: true })
+    mousedown(cell(view, 1, 1), { ctrlKey: true })
+    tool(view, 'Clear').click()
+    expect(docValue(view)).toContain('|  |  |')
+
+    mousedown(cell(view, 0, 0))
+    tableGrid(view).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }),
+    )
+    expect(docValue(view)).toContain('|  | B |')
+    view.destroy()
+  })
+
+  it('copies the selection as TSV', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    mousedown(cell(view, 1, 0))
+    cell(view, 2, 1).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    const calls: Array<[string, string]> = []
+    const event = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        setData: (type: string, data: string) => calls.push([type, data]),
+        getData: () => '',
+      },
+    })
+    tableGrid(view).dispatchEvent(event)
+    expect(calls).toEqual([['text/plain', '1\t2\r\n3\t4']])
+    view.destroy()
+  })
+
+  it('pastes TSV over the grid, growing it as needed', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    mousedown(cell(view, 1, 1))
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(event, 'clipboardData', {
+      value: { getData: (type: string) => (type === 'text/plain' ? 'x\ty\nz' : ''), setData: () => {} },
+    })
+    tableGrid(view).dispatchEvent(event)
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B', ''],
+      ['1', 'x', 'y'],
+      ['3', 'z', ''],
+    ])
+    view.destroy()
+  })
+
+  it('round-trips through source mode', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const pos = 0
+    view.dispatch(enterSourceMode(view.state, pos))
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    expect(view.dom.querySelector('.cm-content')).toBeTruthy()
+    view.dispatch(exitSourceMode(view.state))
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    expect(proseToMarkdown(view.state.doc)).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |\n')
+    view.destroy()
+  })
+
+  it('inserts an empty table of the requested size', () => {
+    const view = createEditor('hello')
+    insertTable(view, 3, 4)
+    const table = view.state.doc.child(view.state.doc.childCount - 1)
+    expect(table.type.name).toBe('table')
+    expect(proseToMarkdown(view.state.doc)).toContain(
+      '|  |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |',
+    )
+    view.destroy()
+  })
+
+  it('sizes columns and rows by content with sane fallbacks', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    const cols = grid.querySelectorAll('colgroup col')
+    expect(cols.length).toBe(2)
+    for (const col of Array.from(cols)) {
+      expect((col as HTMLTableColElement).style.width).not.toBe('')
+    }
+    const rows = grid.querySelectorAll('tbody tr')
+    for (const tr of Array.from(rows)) {
+      expect((tr as HTMLTableRowElement).style.height).not.toBe('')
+    }
+    expect(grid.querySelectorAll('.ss-col-resize').length).toBe(2)
+    expect(grid.querySelectorAll('.ss-row-resize').length).toBe(2)
+    view.destroy()
+  })
+
+  it('dragging a column resize handle re-sizes the column and keeps it after a rebuild', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    const handle = grid.querySelector<HTMLElement>('.ss-col-resize[data-col="0"]')!
+    const col = grid.querySelectorAll<HTMLTableColElement>('colgroup col')[0]!
+    const start = Number.parseFloat(col.style.width)
+    mousedown(handle, { clientX: 100 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    const resized = Number.parseFloat(col.style.width)
+    expect(resized).toBe(start + 60)
+    expect(grid.closest('.spreadsheet')?.classList.contains('ss-resizing')).toBe(false)
+
+    // Editing a cell rebuilds the grid; the manual width must survive.
+    mousedown(cell(view, 1, 0))
+    const fx = view.dom.querySelector<HTMLInputElement>('.ss-fx-input')!
+    fx.value = '7'
+    fx.dispatchEvent(new FocusEvent('blur'))
+    const rebuilt = tableGrid(view)
+    const rebuiltCol = rebuilt.querySelectorAll<HTMLTableColElement>('colgroup col')[0]!
+    expect(Number.parseFloat(rebuiltCol.style.width)).toBe(resized)
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['7', '2'],
+    ])
+    view.destroy()
+  })
+
+  it('dragging a row resize handle re-sizes the row and keeps it after a rebuild', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    const handle = grid.querySelector<HTMLElement>('.ss-row-resize[data-row="0"]')!
+    mousedown(handle, { clientY: 100 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientY: 140 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    const tr = tableGrid(view).querySelectorAll<HTMLTableRowElement>('tbody tr')[0]!
+    const resized = Number.parseFloat(tr.style.height)
+    expect(resized).toBe(24 + 40)
+    expect(grid.closest('.spreadsheet')?.classList.contains('ss-resizing')).toBe(false)
+    view.destroy()
+  })
+
+  it('renders masked fields and formatting inside cells', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| **bold** | !masked[c1]{label="PIN"} |',
+    )
+    const a = cell(view, 1, 0)
+    expect(a.querySelector('strong')?.textContent).toBe('bold')
+    expect(a.innerHTML).toContain('<strong>bold</strong>')
+    const b = cell(view, 1, 1)
+    expect(b.querySelector('.masked-field')?.textContent).toBe(
+      '•••••••••••• (PIN)',
+    )
+    view.destroy()
+  })
+
+  it('Tab moves right and wraps to the next row column 0', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 0, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 0, 1).classList.contains('ss-active')).toBe(true)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 1, 0).classList.contains('ss-active')).toBe(true)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 2, 0).classList.contains('ss-active')).toBe(true)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 2, 1).classList.contains('ss-active')).toBe(true)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 0, 0).classList.contains('ss-active')).toBe(true)
+    view.destroy()
+  })
+
+  it('Shift+Tab moves left and wraps to the previous row last col', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 0, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+    expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+    expect(cell(view, 1, 0).classList.contains('ss-active')).toBe(true)
+    view.destroy()
+  })
+
+  it('Tab in the edit overlay commits and moves right', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const editInput = grid.querySelector('.ss-edit-input') as HTMLInputElement
+    expect(editInput.value).toBe('1')
+    editInput.value = 'FOO'
+    editInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
+    expect(docValue(view)).toContain('FOO')
+    view.destroy()
+  })
+
+  it('Tab in the fx bar commits and moves right', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const fxInput = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    fxInput.focus()
+    fxInput.value = 'FOO'
+    fxInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
+    expect(docValue(view)).toContain('FOO')
+    view.destroy()
+  })
+
+  it('applyInline wraps and unwraps bold in the active cell', () => {
+    const view = createEditor('| A |\n| --- |\n| hello |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()
+    expect(host).toBeTruthy()
+    host!.applyInline('bold')
+    expect(docValue(view)).toContain('**hello**')
+    host!.applyInline('bold')
+    expect(docValue(view)).toContain('hello')
+    expect(docValue(view)).not.toContain('**')
+    view.destroy()
+  })
+
+  it('applyInline wraps link with url', () => {
+    const view = createEditor('| A |\n| --- |\n| clickme |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    getActiveCellHost()!.applyInline('link', 'https://example.com')
+    expect(docValue(view)).toContain('[clickme](https://example.com)')
+    view.destroy()
+  })
+
+  it('cell masked pill gets interactive actions', async () => {
+    const envelope = await encryptField('s3cret', 'pw')
+    const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
+    const pill = cell(view, 1, 0).querySelector('.masked-field') as HTMLElement
+    expect(pill).toBeTruthy()
+    expect(pill.classList.contains('masked-field-cell')).toBe(true)
+    expect(pill.querySelector('.masked-field-eye')).toBeTruthy()
+    expect(pill.querySelector('.masked-field-copy')).toBeTruthy()
+    expect(pill.querySelector('.masked-field-edit-btn')).toBeTruthy()
+    ;(pill.querySelector('.masked-field-eye') as HTMLButtonElement).click()
+    const overlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
+    expect(overlay).toBeTruthy()
+    const input = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
+    input.value = 'pw'
+    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
+    }, { timeout: 5000 })
+    expect(pill.querySelector('.masked-field-value')?.textContent).toBe('s3cret')
+    expect(pill.classList.contains('masked-field-revealed')).toBe(true)
+    view.destroy()
+  })
+
+  it('cell masked pill edits inline like a body masked field', async () => {
+    const envelope = await encryptField('s3cret', 'pw')
+    const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
+    const pill = cell(view, 1, 0).querySelector('.masked-field') as HTMLElement
+    ;(pill.querySelector('.masked-field-edit-btn') as HTMLButtonElement).click()
+
+    const overlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
+    expect(overlay).toBeTruthy()
+    const pwInput = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
+    pwInput.value = 'pw'
+    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
+    }, { timeout: 5000 })
+
+    const editInput = pill.querySelector('.masked-field-input') as HTMLInputElement
+    expect(editInput).toBeTruthy()
+    expect(editInput.value).toBe('s3cret')
+    editInput.value = 'updated'
+    editInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+
+    // Saving re-encrypts with the same password: no second prompt.
+    expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
+    await vi.waitFor(() => {
+      expect(docValue(view)).toContain('!masked[')
+    }, { timeout: 5000 })
+    expect(docValue(view)).toContain(']{label="Key"}')
+    view.destroy()
+  })
+
+  it('cell masked pill edit with a wrong password shows the error and never opens the editor', async () => {
+    const envelope = await encryptField('s3cret', 'pw')
+    const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
+    const pill = cell(view, 1, 0).querySelector('.masked-field') as HTMLElement
+    ;(pill.querySelector('.masked-field-edit-btn') as HTMLButtonElement).click()
+
+    const overlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
+    const pwInput = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
+    pwInput.value = 'wrong'
+    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      const err = overlay.querySelector('.edi-dialog-error') as HTMLElement
+      expect(err.hidden).toBe(false)
+    }, { timeout: 15000 })
+    expect(overlay.querySelector('.edi-dialog-error')?.textContent).toBe('Incorrect password')
+    expect(pill.querySelector('.masked-field-input')).toBeNull()
+
+    const cancel = overlay.querySelector('.edi-dialog-actions .fmt-btn:not(.fmt-primary)') as HTMLButtonElement
+    cancel.click()
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
+    }, { timeout: 15000 })
+    expect(pill.querySelector('.masked-field-input')).toBeNull()
+    view.destroy()
+  }, 30000)
+
+  it('format toolbar inserts an encrypted field into the active cell', async () => {
+    const view = createEditor('| A |\n| --- |\n|  |')
+    mousedown(cell(view, 0, 0))
+    expect(getActiveCellHost()).toBeTruthy()
+    expect(getActiveCellHost()!.applyInline('secret')).toBe(true)
+
+    const createOverlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
+    expect(createOverlay).toBeTruthy()
+    const createInputs = createOverlay.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
+    createInputs[0]!.value = 'Api'
+    createInputs[1]!.value = 'hunter2'
+    ;(createOverlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('.edi-dialog-overlay')).toBeTruthy()
+    }, { timeout: 3000 })
+
+    const pwdOverlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
+    expect(pwdOverlay).toBeTruthy()
+    const pwdInput = pwdOverlay.querySelector('.edi-dialog-input') as HTMLInputElement
+    pwdInput.value = 'pw3'
+    ;(pwdOverlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(docValue(view)).toContain('!masked[')
+    }, { timeout: 5000 })
+
+    expect(docValue(view)).toContain(']{label="Api"}')
+    const pill = cell(view, 0, 0).querySelector('.masked-field') as HTMLElement
+    expect(pill.classList.contains('masked-field-cell')).toBe(true)
+    view.destroy()
+  })
+
+  it('renders the default plain table view without spreadsheet chrome', () => {
+    const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    expect(view.dom.querySelector('.ss-grid')).toBeNull()
+    expect(view.dom.querySelector('.ss-tools')).toBeNull()
+    expect(view.dom.querySelector('.ss-fxbar')).toBeNull()
+    expect(view.dom.querySelector('.ss-namebox')).toBeNull()
+
+    const ths = view.dom.querySelectorAll('.ss-plain-table thead th')
+    expect(ths.length).toBe(2)
+    expect(ths[0]!.textContent).toBe('A')
+    expect(ths[1]!.textContent).toBe('B')
+    const tds = view.dom.querySelectorAll('.ss-plain-table tbody td')
+    expect(tds.length).toBe(2)
+    expect(tds[0]!.textContent).toBe('1')
+    expect(tds[1]!.textContent).toBe('2')
+
+    const spreadBtn = view.dom.querySelector('.ss-plain-tools .ss-tool')
+    expect(spreadBtn?.textContent).toBe('Edit')
+    view.destroy()
+  })
+
+  it('toggles from plain view to spreadsheet mode and back', () => {
+    const view = createPlainTable('| A |\n| --- |\n| 1 |')
+    const spreadBtn = view.dom.querySelector('.ss-plain-tools .ss-tool') as HTMLButtonElement
+    spreadBtn.click()
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    expect(view.dom.querySelector('.ss-plain')).toBeNull()
+    expect(view.dom.querySelector('.ss-grid')).toBeTruthy()
+
+    tool(view, 'View').click()
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    expect(proseToMarkdown(view.state.doc)).toBe('| A |\n| --- |\n| 1 |\n')
+    view.destroy()
+  })
+
+  it('renders computed formulas and masked pills in the plain view', async () => {
+    const envelope = await encryptField('s3cret', 'pw')
+    const view = createPlainTable(
+      `| A | B |\n| --- | --- |\n| 5 | =A2*3 |\n| **bold** | !masked[${envelope}]{label="Key"} |`,
+    )
+    const tds = Array.from(view.dom.querySelectorAll('.ss-plain-table tbody td'))
+    expect(tds[1]!.textContent).toBe('15')
+    expect(tds[1]!.classList.contains('ss-formula')).toBe(true)
+    expect(tds[2]!.querySelector('strong')?.textContent).toBe('bold')
+    const pill = tds[3]!.querySelector('.masked-field') as HTMLElement
+    expect(pill).toBeTruthy()
+    expect(pill.classList.contains('masked-field-cell')).toBe(true)
+    ;(pill.querySelector('.masked-field-eye') as HTMLButtonElement).click()
+    const overlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
+    const input = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
+    input.value = 'pw'
+    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
+    }, { timeout: 5000 })
+    expect(pill.querySelector('.masked-field-value')?.textContent).toBe('s3cret')
+    view.destroy()
+  })
+
+  it('applyInline bold applies to the whole selection', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| x | **y** |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    mousedown(cell(view, 1, 1), { shiftKey: true })
+    const host = getActiveCellHost()
+    expect(host).toBeTruthy()
+    host!.applyInline('bold')
+    expect(docValue(view)).toContain('**x**')
+    expect(docValue(view)).toContain('**y**')
+    host!.applyInline('bold')
+    expect(docValue(view)).not.toContain('**x**')
+    expect(docValue(view)).not.toContain('**y**')
+    expect(docValue(view)).toContain('x')
+    expect(docValue(view)).toContain('y')
+    view.destroy()
+  })
+
+  it('applyInline link sets the same URL across the selection', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| a | b |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    mousedown(cell(view, 1, 1), { shiftKey: true })
+    getActiveCellHost()!.applyInline('link', 'https://example.com')
+    expect(docValue(view)).toContain('[a](https://example.com)')
+    expect(docValue(view)).toContain('[b](https://example.com)')
+    view.destroy()
+  })
+})

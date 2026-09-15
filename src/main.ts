@@ -1,5 +1,4 @@
 import 'prosemirror-view/style/prosemirror.css'
-import 'prosemirror-tables/style/tables.css'
 import 'prosemirror-gapcursor/style/gapcursor.css'
 import './styles.css'
 
@@ -39,6 +38,7 @@ import { isMisleadingLink } from './linkSecurity'
 import { FormatToolbar } from './formatToolbar'
 import { bindMenuCommands } from './menus'
 import { createBlockEditor, type BlockEditor } from './editor'
+import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode } from './node/table'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { HomeScreen } from './home'
 import { addRecentFile, getRecentFiles } from './recents'
@@ -209,6 +209,13 @@ function insertMarkdown(markdown: string): void {
 
 function insertTable(markdown: string): void {
   insertMarkdown(`\n${markdown}\n`)
+}
+
+function insertTableDefault(): void {
+  const view = blockEditor?.getView()
+  if (!view) return
+  insertSpreadsheetTable(view, 3, 3)
+  setActiveDirty(true)
 }
 
 function flashStatus(message: string): void {
@@ -740,7 +747,7 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
     return entries
   }
 
-  const visual = target.closest('.mermaid, .block-visual-mode')
+  const visual = target.closest('.mermaid, .block-visual-mode, .spreadsheet, .ss-plain')
   if (visual) {
     const img = visual.querySelector<HTMLImageElement>('.mermaid-img')
     const svg = visual.querySelector<SVGSVGElement>('.mermaid svg[id]')
@@ -765,6 +772,11 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
     const handle = visual.querySelector<HTMLElement>('.block-handle[data-block-pos]')
     const pos = handle ? Number(handle.dataset.blockPos) : NaN
     if (Number.isInteger(pos) && pos >= 0 && pos < view.state.doc.content.size) {
+      if (visual.classList.contains('spreadsheet')) {
+        addItem('Table view', () => enterPlainMode(view, pos))
+      } else if (visual.classList.contains('ss-plain')) {
+        addItem('Spreadsheet mode', () => enterSpreadsheetMode(view, pos))
+      }
       addItem('Edit source', () => {
         view.dispatch(toggleSourceMode(view.state, pos))
       })
@@ -816,6 +828,7 @@ function init(): void {
     importTable: () => void importTable(),
     importText: () => void importTextFile(),
     insertImage: () => void insertImage(),
+    insertTableDefault: () => void insertTableDefault(),
     export: () => void exportHtml(),
     toggleFormatting: () => toggleFormatting(),
     undo: () => editUndo(),

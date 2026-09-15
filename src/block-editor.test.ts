@@ -9,6 +9,7 @@ import { blockPlugin, enterSourceMode, exitSourceMode, toggleSourceMode, getSour
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { codeBlockNodeViewPlugin } from './node/execblock'
+import { tableNodeViewPlugin } from './node/table'
 import { serializeBlock } from './markdown'
 import { Plugin } from 'prosemirror-state'
 
@@ -36,7 +37,7 @@ function createEditor(initialMarkdown: string) {
   const view = new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, codeBlockNodeViewPlugin, nodeViewPlugin, mermaidNodeViewPlugin],
+      plugins: [blockPlugin, codeBlockNodeViewPlugin, nodeViewPlugin, mermaidNodeViewPlugin, tableNodeViewPlugin],
     }),
   })
   return view

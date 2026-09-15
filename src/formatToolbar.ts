@@ -5,6 +5,8 @@ import { wrapInList } from 'prosemirror-schema-list'
 import { TextSelection, Plugin } from 'prosemirror-state'
 import { promptForUrl } from './urlDialog'
 import { insertMaskedFieldCommand } from './node/masked'
+import { insertTable } from './node/table'
+import { getActiveCellHost, type InlineCellKind } from './inline-format'
 
 const FORMATTING_VISIBLE_KEY = 'edi.formattingVisible'
 
@@ -83,6 +85,50 @@ interface ButtonSpec {
   markup?: string
   run(view: EditorView): boolean | Promise<boolean>
   options?: { label: string; run(view: EditorView): boolean | Promise<boolean> }[]
+  kind?: 'menu'
+  /** When set, the button targets the active spreadsheet cell if one exists. */
+  inline?: InlineCellKind
+}
+
+const GRID_PICKER_MAX_COLS = 5
+const GRID_PICKER_MAX_ROWS = 5
+
+function buildGridPicker(
+  host: HTMLElement,
+  label: HTMLElement,
+  onPick: (cols: number, rows: number) => void,
+): void {
+  let hoverRow = 0
+  let hoverCol = 0
+  const paint = (): void => {
+    for (let r = 0; r < GRID_PICKER_MAX_ROWS; r++) {
+      for (let c = 0; c < GRID_PICKER_MAX_COLS; c++) {
+        host
+          .querySelector<HTMLElement>(
+            `.grid-picker-box[data-r="${r}"][data-c="${c}"]`,
+          )
+          ?.classList.toggle('grid-picker-hover', r <= hoverRow && c <= hoverCol)
+      }
+    }
+    label.textContent = `${hoverRow + 1} rows × ${hoverCol + 1} columns`
+  }
+  for (let r = 0; r < GRID_PICKER_MAX_ROWS; r++) {
+    for (let c = 0; c < GRID_PICKER_MAX_COLS; c++) {
+      const box = document.createElement('div')
+      box.className = 'grid-picker-box'
+      box.dataset.r = String(r)
+      box.dataset.c = String(c)
+      box.addEventListener('mouseenter', () => {
+        hoverRow = r
+        hoverCol = c
+        paint()
+      })
+      box.addEventListener('mousedown', (event) => event.preventDefault())
+      box.addEventListener('click', () => onPick(c + 1, r + 1))
+      host.appendChild(box)
+    }
+  }
+  paint()
 }
 
 function toggleMarkCmd(markType: MarkType): (view: EditorView) => boolean {
@@ -310,10 +356,10 @@ export function taskClickPlugin(): Plugin {
 
 export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
   return [
-    { label: 'B', title: 'Bold (Ctrl+B)', className: 'fmt-bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
-    { label: 'I', title: 'Italic (Ctrl+I)', className: 'fmt-italic', run: (view) => toggleMarkCmd(view.state.schema.marks.em)(view) },
-    { label: 'S', title: 'Strikethrough', className: 'fmt-strike', run: (view) => toggleMarkCmd(view.state.schema.marks.strikethrough)(view) },
-    { label: 'Link', title: 'Hyperlink', markup: LINK_ICON, run: hyperlinkRun },
+    { label: 'B', title: 'Bold (Ctrl+B)', className: 'fmt-bold', inline: 'bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
+    { label: 'I', title: 'Italic (Ctrl+I)', className: 'fmt-italic', inline: 'italic', run: (view) => toggleMarkCmd(view.state.schema.marks.em)(view) },
+    { label: 'S', title: 'Strikethrough', className: 'fmt-strike', inline: 'strike', run: (view) => toggleMarkCmd(view.state.schema.marks.strikethrough)(view) },
+    { label: 'Link', title: 'Hyperlink', markup: LINK_ICON, inline: 'link', run: hyperlinkRun },
     {
       label: 'Highlight', title: 'Highlight', markup: icon(
         '<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#fde047" stroke="none"/>' +
@@ -354,6 +400,7 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
     {
       label: 'Code', title: 'Inline code', markup: icon('<path d="M5 4 2 8l3 4"/><path d="M11 4l3 4-3 4"/><path d="M9.5 3l-3 10"/>'),
       run: (view) => toggleMarkCmd(view.state.schema.marks.code)(view),
+      inline: 'code',
     },
     {
       label: 'Code block', title: 'Code block', markup: icon(
@@ -387,7 +434,17 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
         '<path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7"/>' +
         '<circle cx="8" cy="10.2" r="0.7" fill="currentColor" stroke="none"/>',
       ),
+      inline: 'secret',
       run: (view) => insertMaskedFieldCommand(view),
+    },
+    {
+      kind: 'menu',
+      label: 'Table', title: 'Insert table',
+      markup: icon(
+        '<rect x="2" y="2" width="12" height="12" rx="1"/>' +
+        '<path d="M2 6h12M2 10h12M6 2v12M10 2v12"/>',
+      ),
+      run: () => false,
     },
   ]
 }
@@ -425,6 +482,69 @@ export class FormatToolbar {
 
   private build(): void {
     for (const spec of getButtons(this.ctx)) {
+      if (spec.kind === 'menu') {
+        const host = document.createElement('span')
+        host.className = 'fmt-menu-host'
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = spec.className ? `fmt-btn ${spec.className}` : 'fmt-btn'
+        button.title = spec.title
+        button.ariaLabel = spec.title
+        if (spec.markup) button.innerHTML = spec.markup
+        else button.textContent = spec.label
+
+        const popover = document.createElement('div')
+        popover.className = 'fmt-popover'
+        popover.hidden = true
+        const label = document.createElement('div')
+        label.className = 'grid-picker-label'
+        const gridHost = document.createElement('div')
+        gridHost.className = 'grid-picker'
+        popover.append(label, gridHost)
+
+        // The popover is `position: fixed` so the horizontal-scrolling toolbar
+        // (`overflow-x: auto`) can't clip it; anchor it to the button's viewport
+        // rect each time it opens and keep it pinned while it is open.
+        const position = (): void => {
+          const rect = button.getBoundingClientRect()
+          popover.style.left = `${Math.round(rect.left)}px`
+          popover.style.top = `${Math.round(rect.bottom + 4)}px`
+        }
+        const detachReposition = (): void => {
+          this.bar.removeEventListener('scroll', position)
+          window.removeEventListener('resize', position)
+        }
+        const close = (): void => {
+          popover.hidden = true
+          detachReposition()
+        }
+        const closeOnOutside = (event: MouseEvent): void => {
+          if (!host.contains(event.target as Node)) close()
+        }
+        button.addEventListener('click', () => {
+          const view = this.ctx.getView()
+          view.focus()
+          popover.hidden = !popover.hidden
+          if (popover.hidden) {
+            detachReposition()
+            return
+          }
+          position()
+          this.bar.addEventListener('scroll', position, { passive: true })
+          window.addEventListener('resize', position)
+          document.addEventListener('mousedown', closeOnOutside, { once: true })
+        })
+        buildGridPicker(gridHost, label, (cols, rows) => {
+          const view = this.ctx.getView()
+          view.focus()
+          insertTable(view, cols, rows)
+          close()
+        })
+
+        host.append(button, popover)
+        this.bar.append(host)
+        continue
+      }
       if (spec.options) {
         const select = document.createElement('select')
         select.className = spec.className ? `fmt-btn ${spec.className} fmt-select` : 'fmt-btn fmt-select'
@@ -459,6 +579,17 @@ export class FormatToolbar {
       }
       button.addEventListener('click', () => {
         const view = this.ctx.getView()
+        const host = spec.inline ? getActiveCellHost() : null
+        if (host) {
+          if (spec.inline === 'link') {
+            void promptForUrl('').then((entered) => {
+              if (entered !== null) host.applyInline('link', entered)
+            })
+          } else if (spec.inline) {
+            host.applyInline(spec.inline)
+          }
+          return
+        }
         view.focus()
         spec.run(view)
       })

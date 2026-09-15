@@ -5,7 +5,6 @@ import { keymap } from 'prosemirror-keymap'
 import { baseKeymap, toggleMark } from 'prosemirror-commands'
 import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
-import { tableEditing } from 'prosemirror-tables'
 import { gapCursor } from 'prosemirror-gapcursor'
 import { dropCursor } from 'prosemirror-dropcursor'
 import { blockStartKeymap, blockStartRules } from './blockstart'
@@ -16,7 +15,7 @@ import { blockNodeView, BLOCK_NODE_TYPES, commitSourceMode } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { attachBlockHandles } from './blockhandle'
 import { mermaidNodeViewPlugin } from './node/mermaid'
-import { spreadsheetPlugin } from './node/spreadsheet'
+import { tableNodeViewPlugin } from './node/table'
 import { maskedFieldNodeViewPlugin } from './node/masked'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
@@ -219,7 +218,6 @@ export function createBlockEditor(
     formattingKeymap,
     createInputRules(),
     blockToggleKeymap,
-    tableEditing(),
     gapCursor(),
     dropCursor(),
     linkClickPlugin,
@@ -228,7 +226,7 @@ export function createBlockEditor(
     blockPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,
-    spreadsheetPlugin,
+    tableNodeViewPlugin,
     taskClickPlugin(),
     blockTypeSelectPlugin(),
     codeBlockNodeViewPlugin,

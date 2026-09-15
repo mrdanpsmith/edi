@@ -7,9 +7,22 @@ type CellValue =
   | { kind: 'set'; items: CellValue[] }
   | { kind: 'error'; message: string }
 
-interface CellRef {
+export interface CellRef {
   row: number
   col: number
+}
+
+export interface CellSolution {
+  display: string
+  kind: 'formula' | 'text' | 'blank' | 'error'
+  error?: string
+  value?: number
+}
+
+export interface SpreadsheetSolution {
+  rows: number
+  cols: number
+  cells: CellSolution[][]
 }
 
 interface CellRange {
@@ -29,6 +42,56 @@ interface TableCell {
 const CELL_REF = /^([A-Za-z]+)([1-9][0-9]*)$/
 const RANGE_REF = /^([A-Za-z]+)([1-9][0-9]*):([A-Za-z]+)([1-9][0-9]*)$/
 const NUMBER_RE = /^[+-]?(\d+(\.\d+)?|\.\d+)$/
+
+/**
+ * Resolve a raw pipe-table grid into per-cell display values. Formula cells
+ * (`=…`) are evaluated against the whole grid; error cells carry the message
+ * in both `display` and `error`. Non-formula cells display their raw text.
+ */
+export function solve(rows: string[][]): SpreadsheetSolution {
+  const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0)
+  const grid = new SpreadsheetGrid()
+  rows.forEach((row, r) => {
+    for (let c = 0; c < maxCols; c++) {
+      grid.set(r + 1, c + 1, row[c] ?? '')
+    }
+  })
+  const visiting = new Set<string>()
+  const cells: CellSolution[][] = rows.map((row, r) =>
+    Array.from({ length: maxCols }, (_, c) =>
+      solveCell(grid, row[c] ?? '', r + 1, c + 1, visiting),
+    ),
+  )
+  return { rows: rows.length, cols: maxCols, cells }
+}
+
+function solveCell(
+  grid: SpreadsheetGrid,
+  raw: string,
+  _row: number,
+  _col: number,
+  visiting: Set<string>,
+): CellSolution {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return { display: '', kind: 'blank' }
+  }
+  if (trimmed.startsWith(SPREADSHEET_PREFIX)) {
+    const formula = trimmed.slice(1).trim()
+    if (!formula) {
+      return { display: '', kind: 'blank' }
+    }
+    const result = evaluateFormula(formula, grid, visiting)
+    if (result.kind === 'error') {
+      return { display: result.message, kind: 'error', error: result.message }
+    }
+    if (result.kind === 'number') {
+      return { display: formatNumber(result.value), kind: 'formula', value: result.value }
+    }
+    return { display: '', kind: 'formula' }
+  }
+  return { display: raw, kind: 'text' }
+}
 
 export function computeSpreadsheet(container: HTMLElement): void {
   for (const table of Array.from(container.querySelectorAll('table'))) {
@@ -470,7 +533,7 @@ function parseCellValue(raw: string): CellValue {
   return text()
 }
 
-function parseCellRef(raw: string): CellRef | null {
+export function parseCellRef(raw: string): CellRef | null {
   const match = CELL_REF.exec(raw)
   if (!match) {
     return null
@@ -503,7 +566,7 @@ function lettersToCol(letters: string): number {
   return col
 }
 
-function colToLetters(col: number): string {
+export function colToLetters(col: number): string {
   let n = col
   let letters = ''
   while (n > 0) {

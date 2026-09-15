@@ -107,15 +107,19 @@ describe('table round-trip', () => {
     const doc = markdownToProse(markdown, schema)
     const table = doc.firstChild!
     expect(table.type.name).toBe('table')
-    const headerCells = table.child(0)
-    const dataRow = table.child(1)
-    for (let i = 0; i < headerCells.childCount; i++) {
-      expect(headerCells.child(i).type.name).toBe('table_header')
-    }
-    for (let i = 0; i < dataRow.childCount; i++) {
-      expect(dataRow.child(i).type.name).toBe('table_cell')
-    }
+    expect(table.attrs.value).toBe('| Item | Q1 |\n| --- | --- |\n| Widget | 120 |')
+    expect(table.childCount).toBe(0)
     expect(proseToMarkdown(doc)).toBe(markdown + '\n')
+  })
+
+  it('round-trips a table through the delimiter-less, pipe-safe path', () => {
+    const doc = markdownToProse('| a\\|b |\n| --- |\n| c | d |', schema)
+    expect(proseToMarkdown(doc)).toBe('| a\\|b |  |\n| --- | --- |\n| c | d |\n')
+  })
+
+  it('keeps bold inline markdown inside cells', () => {
+    const doc = markdownToProse('| **A** | B |\n| --- | --- |', schema)
+    expect(proseToMarkdown(doc)).toBe('| **A** | B |\n')
   })
 })
 

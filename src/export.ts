@@ -2,6 +2,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import { DOMSerializer } from 'prosemirror-model'
 import { schema } from './schema'
 import { computeSpreadsheet } from './spreadsheet'
+import { inlineMarkdownToHtml, parsePipes } from './spreadsheet-util'
 import { escapeHtml } from './utils'
 
 const EXPORT_CSS = `
@@ -247,6 +248,19 @@ export function serializeDocToHtml(doc: ProseNode): string {
   nodes.source_block = (node) => {
     const markdown = String(node.attrs.markdown ?? '')
     return ['pre', ['code', markdown]]
+  }
+
+  nodes.table = (node) => {
+    const rows = parsePipes(String(node.attrs.value ?? ''))
+    if (rows.length === 0) {
+      return ['table', 0]
+    }
+    const head = ['thead', ['tr', ...rows[0].map((cell) => ['th', inlineMarkdownToHtml(cell)])]]
+    const body = [
+      'tbody',
+      ...rows.slice(1).map((row) => ['tr', ...row.map((cell) => ['td', inlineMarkdownToHtml(cell)])]),
+    ]
+    return ['table', head, body]
   }
 
   nodes.list_item = (node) => {

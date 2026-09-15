@@ -99,10 +99,6 @@ function createSemanticWrapper(node: ProseNode): HTMLElement | null {
       pre.appendChild(code)
       return pre
     }
-    case 'table': {
-      const el = document.createElement('table')
-      return el
-    }
     case 'horizontal_rule': {
       return document.createElement('hr')
     }
@@ -231,7 +227,7 @@ class BlockVisualNodeView implements NodeView {
 
 export const BLOCK_NODE_TYPES = new Set([
   'paragraph', 'heading', 'blockquote', 'bullet_list', 'ordered_list',
-  'code_block', 'horizontal_rule', 'table',
+  'code_block', 'horizontal_rule',
 ])
 
 export function blockNodeView(
