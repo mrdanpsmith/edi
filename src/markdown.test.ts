@@ -309,15 +309,13 @@ describe('nested inline mark round-trip (bold wrapping code spans)', () => {
   // (``**`x`**``), never outermost (`` `**x**` ``).
 
   it('keeps bold wrapping a code span', () => {
-    expect(serialize('**`netbiosName`**')).toBe('**`netbiosName`**\n')
+    expect(serialize('**`fieldName`**')).toBe('**`fieldName`**\n')
   })
 
   it('keeps bold code spans in a list item', () => {
     const md =
-      '- **`netbiosName`** is deliberately populated from **`osProfile.computerName`**'
-    expect(serialize(md)).toBe(
-      '- **`netbiosName`** is deliberately populated from **`osProfile.computerName`**\n',
-    )
+      '- **`fieldName`** is deliberately populated from **`sourceName`**'
+    expect(serialize(md)).toBe('- **`fieldName`** is deliberately populated from **`sourceName`**\n')
   })
 
   it('keeps bold code minimal repro stable', () => {
