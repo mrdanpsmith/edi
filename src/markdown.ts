@@ -354,10 +354,10 @@ function serializeNode(node: ProseNode, indent = ''): string {
       return serializeTable(node, indent)
 
     case 'text':
-      return applyMarks(node.text ?? '', node.marks ?? [])
+      return serializeInlineAtom(node.text ?? '', node.marks ?? [])
 
     case 'inline':
-      return applyMarks(node.text ?? '', node.marks ?? [])
+      return serializeInlineAtom(node.text ?? '', node.marks ?? [])
 
     default:
       return node.textContent
@@ -365,63 +365,95 @@ function serializeNode(node: ProseNode, indent = ''): string {
 }
 
 function serializeContent(node: ProseNode): string {
-  const parts: string[] = []
+  // Inline content is a run of ProseMirror text nodes whose marks can overlap
+  // (e.g. `**`code` words**` = [strong, code] then [strong]). Wrapping each
+  // text node independently would emit a fresh `**` per node (`**`code`****
+  // words**`). Instead stream the run: keep the marks shared by adjacent nodes
+  // open across the boundary and only open/close the delimiters that differ.
+  const out: string[] = []
+  const stack: Mark[] = []
+
+  const syncTo = (target: readonly Mark[]) => {
+    // Close open marks (innermost first) that the target atom doesn't carry.
+    while (stack.length && !target.some((m) => m.eq(stack[stack.length - 1]))) {
+      out.push(markCloseDelimiter(stack.pop()!))
+    }
+    // Open marks the target carries that aren't open yet, in canonical
+    // outer→inner order.
+    for (const m of orderedMarks(target)) {
+      if (!stack.some((s) => s.eq(m))) {
+        out.push(markOpenDelimiter(m))
+        stack.push(m)
+      }
+    }
+  }
+
   node.content.forEach((child) => {
     if (child.isText) {
-      parts.push(applyMarks(child.text ?? '', child.marks ?? []))
+      syncTo(child.marks ?? [])
+      out.push(child.text ?? '')
     } else {
-      parts.push(serializeNode(child))
+      // Inline non-text nodes (image, hard break, masked field) are serialized
+      // standalone; don't wrap them in the surrounding marks.
+      syncTo([])
+      out.push(serializeNode(child))
     }
   })
-  return parts.join('')
+  syncTo([])
+  return out.join('')
 }
 
-function applyMarks(text: string, marks: readonly Mark[]): string {
-  // ProseMirror sorts marks by type rank, and the view renders array order as
-  // outer→inner. For *most* mark types the wrap order doesn't matter (bold,
-  // italic, link, strike all render the same either way), but a Markdown code
-  // span is literal: `` `**x**` `` would swallow the asterisks as plain text
-  // instead of rendering **x** as bold. So a nested code mark must always be
-  // emitted innermost: `` **`x`** ``, `` *`x`* ``, `` [**`x`**](url) `` — never
-  // `` `**x**` ``. Hoist the code wrap to the front of the application order.
-  if (marks.some((m) => m.type.name === 'code')) {
-    const code = marks.find((m) => m.type.name === 'code')!
-    const rest = marks.filter((m) => m.type.name !== 'code')
-    marks = [code, ...rest]
+// Code is always emitted innermost: a Markdown code span is literal, so
+// `` `**x**` `` would swallow the asterisks as plain text. The given marks are
+// already rank-sorted (outer→inner) by ProseMirror; links nest fine around
+// other emphasis because their `[..](href)` delimiters wrap the whole run.
+function orderedMarks(marks: readonly Mark[]): readonly Mark[] {
+  const code = marks.find((m) => m.type.name === 'code')
+  if (!code) return [...marks]
+  return [...marks.filter((m) => m.type.name !== 'code'), code]
+}
+
+function markOpenDelimiter(mark: Mark): string {
+  switch (mark.type.name) {
+    case 'strong':
+      return '**'
+    case 'em':
+      return '*'
+    case 'code':
+      return '`'
+    case 'strikethrough':
+      return '~~'
+    case 'link':
+      return '['
+    case 'highlight':
+      return '=='
+    case 'sub':
+      return '~'
+    case 'sup':
+      return '^'
+    default:
+      return ''
   }
-  for (const mark of marks) {
-    switch (mark.type.name) {
-      case 'strong':
-        text = '**' + text + '**'
-        break
-      case 'em':
-        text = '*' + text + '*'
-        break
-      case 'code':
-        text = '`' + text + '`'
-        break
-      case 'strikethrough':
-        text = '~~' + text + '~~'
-        break
-      case 'link': {
-        const title = mark.attrs.title != null && mark.attrs.title !== ''
-          ? ` "${mark.attrs.title}"`
-          : ''
-        text = '[' + text + '](' + (mark.attrs.href as string) + title + ')'
-        break
-      }
-      case 'highlight':
-        text = '==' + text + '=='
-        break
-      case 'sub':
-        text = '~' + text + '~'
-        break
-      case 'sup':
-        text = '^' + text + '^'
-        break
-    }
+}
+
+function markCloseDelimiter(mark: Mark): string {
+  if (mark.type.name === 'link') {
+    const title =
+      mark.attrs.title != null && mark.attrs.title !== ''
+        ? ` "${mark.attrs.title}"`
+        : ''
+    return '](' + (mark.attrs.href as string) + title + ')'
   }
-  return text
+  return markOpenDelimiter(mark)
+}
+
+function serializeInlineAtom(text: string, marks: readonly Mark[]): string {
+  const ordered = orderedMarks(marks)
+  let out = ''
+  for (const mark of ordered) out += markOpenDelimiter(mark)
+  out += text
+  for (let i = ordered.length - 1; i >= 0; i--) out += markCloseDelimiter(ordered[i])
+  return out
 }
 
 function serializeList(node: ProseNode, ordered: boolean, indent: string): string {

@@ -344,3 +344,38 @@ describe('nested inline mark round-trip (bold wrapping code spans)', () => {
     expect(serialize('`**was literal**`')).toBe('`**was literal**`\n')
   })
 })
+
+describe('inline mark runs across multiple text nodes', () => {
+  // A mark that wraps several inline parts (e.g. bold around plain text *and* a
+  // nested code span) spans multiple ProseMirror text nodes; the serializer
+  // must keep the shared outer mark open across the run instead of emitting a
+  // fresh delimiter pair per node (`**`code`**** words**`).
+
+  it('keeps bold spanning a leading code span and text', () => {
+    expect(serialize('**`fieldName` some text**')).toBe('**`fieldName` some text**\n')
+  })
+
+  it('keeps bold spanning text, a code span, and trailing text', () => {
+    expect(serialize('**prefix `code` suffix**')).toBe('**prefix `code` suffix**\n')
+  })
+
+  it('keeps a link spanning text and a code span', () => {
+    expect(serialize('[foo `bar` baz](https://example.com/a)')).toBe(
+      '[foo `bar` baz](https://example.com/a)\n',
+    )
+  })
+
+  it('keeps bold wrapping a link and surrounding text', () => {
+    expect(serialize('**foo [bar](https://example.com/a) baz**')).toBe(
+      '**foo [bar](https://example.com/a) baz**\n',
+    )
+  })
+
+  it('keeps italic wrapping a bold span and surrounding text', () => {
+    expect(serialize('*a **b** c*')).toBe('*a **b** c*\n')
+  })
+
+  it('keeps bold-italic wrapping a code span and text', () => {
+    expect(serialize('***`x` y***')).toBe('***`x` y***\n')
+  })
+})
