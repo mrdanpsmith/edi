@@ -4,6 +4,13 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   clearScreen: false,
   base: './',
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: false,
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
