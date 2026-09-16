@@ -143,6 +143,38 @@ describe('serializeDocToHtml', () => {
     expect(html).toContain('<td>2</td>')
   })
 
+  it('renders inline formatting inside table cells instead of escaping it', () => {
+    const doc = schema.node('doc', {}, [
+      schema.node('table', {
+        value:
+          '| Name | Notes |\n| --- | --- |\n' +
+          '| **bold** | *italic* |\n' +
+          '| ~~strike~~ | `code` |\n' +
+          '| [link](https://example.com) | !masked[c1]{label="PIN"} |',
+      }),
+    ])
+    const html = serializeDocToHtml(doc)
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).toContain('<em>italic</em>')
+    expect(html).toContain('<del>strike</del>')
+    expect(html).toContain('<code>code</code>')
+    expect(html).toContain('<a href="https://example.com">link</a>')
+    expect(html).toContain('class="masked-field"')
+    expect(html).not.toContain('&lt;strong&gt;')
+    expect(html).not.toContain('&lt;em&gt;')
+    const links = (html.match(/<a/g) ?? []).length
+    expect(links).toBeGreaterThanOrEqual(1)
+  })
+
+  it('renders inline formatting in table header cells', () => {
+    const doc = schema.node('doc', {}, [
+      schema.node('table', { value: '| **Q1** | ~~2026~~ |\n| --- | --- |\n| 1 | 2 |' }),
+    ])
+    const html = serializeDocToHtml(doc)
+    expect(html).toContain('<th><strong>Q1</strong></th>')
+    expect(html).toContain('<th><del>2026</del></th>')
+  })
+
   it('renders mermaid blocks as div.mermaid, not pre/code', () => {
     const html = serializeDocToHtml(docFrom('```mermaid\ngraph TD\n  A-->B\n```'))
     expect(html).toContain('<div class="mermaid">')

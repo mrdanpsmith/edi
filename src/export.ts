@@ -255,10 +255,17 @@ export function serializeDocToHtml(doc: ProseNode): string {
     if (rows.length === 0) {
       return ['table', 0]
     }
-    const head = ['thead', ['tr', ...rows[0].map((cell) => ['th', inlineMarkdownToHtml(cell)])]]
+    // `inlineMarkdownToHtml` returns an HTML string; DOMSerializer escapes
+    // strings as text, so build each cell as a real element instead.
+    const cell = (text: string, tag: 'th' | 'td'): { dom: HTMLElement } => {
+      const el = document.createElement(tag)
+      el.innerHTML = inlineMarkdownToHtml(text)
+      return { dom: el }
+    }
+    const head = ['thead', ['tr', {}, ...rows[0].map((c) => cell(c, 'th'))]]
     const body = [
       'tbody',
-      ...rows.slice(1).map((row) => ['tr', ...row.map((cell) => ['td', inlineMarkdownToHtml(cell)])]),
+      ...rows.slice(1).map((row) => ['tr', {}, ...row.map((c) => cell(c, 'td'))]),
     ]
     return ['table', head, body]
   }
