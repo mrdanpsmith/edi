@@ -1,5 +1,16 @@
 export const SPREADSHEET_PREFIX = '='
 
+/** A cell whose trimmed text starts with `=` is a formula — except a leading
+ * `==`, which is a markdown highlight delimiter (`==text==`), not a formula
+ * (no spreadsheet syntax is `= = …`). Distinguishing them keeps cells that are
+ * entirely highlighted from erroring out as `#ERROR!` formulas. */
+function isFormula(trimmed: string): boolean {
+  return (
+    trimmed.startsWith(SPREADSHEET_PREFIX) &&
+    !trimmed.startsWith(SPREADSHEET_PREFIX + SPREADSHEET_PREFIX)
+  )
+}
+
 type CellValue =
   | { kind: 'number'; value: number }
   | { kind: 'blank' }
@@ -76,7 +87,7 @@ function solveCell(
   if (!trimmed) {
     return { display: '', kind: 'blank' }
   }
-  if (trimmed.startsWith(SPREADSHEET_PREFIX)) {
+  if (isFormula(trimmed)) {
     const formula = trimmed.slice(1).trim()
     if (!formula) {
       return { display: '', kind: 'blank' }
@@ -147,7 +158,7 @@ class SpreadsheetGrid {
   set(row: number, col: number, raw: string): void {
     const trimmed = raw.trim()
     const cell: TableCell = { row, col, raw, formula: '' }
-    if (trimmed.startsWith(SPREADSHEET_PREFIX)) {
+    if (isFormula(trimmed)) {
       cell.formula = trimmed.slice(1).trim()
       this.formulas.push(cell)
     }

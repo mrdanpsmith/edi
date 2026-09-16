@@ -1,18 +1,22 @@
 // Inline markdown model for spreadsheet cells. Cells are inline-only content,
-// so every cell is parsed with micromark (the same engine as the document
-// parser); the resulting marked runs drive cell formatting toggles
-// (bold/italic/strike/code), cell display (grid + plain view), and HTML export
-// from one source of truth. This means combined marks (`***bold***`,
-// `` **bold `code`** ``) parse, toggle, display and export identically to how
-// the regular editor treats overlapping marks.
+// so every cell is parsed with micromark (the same engine — and plugins —
+// as the document parser); the resulting marked runs drive cell formatting
+// toggles (bold/italic/strike/code/highlight/sub/sup), cell display (grid +
+// plain view), and HTML export from one source of truth. This means combined
+// marks (`***bold***`, `` **bold `code`** ``, `==highlight ~~strike~~==`)
+// parse, toggle, display and export identically to how the regular editor
+// treats overlapping marks.
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkStringify from 'remark-stringify'
 import type { Content, Root } from 'mdast'
+import { highlight } from './remark/highlight'
+import { subscript } from './remark/sub'
+import { superscript } from './remark/sup'
 import { remarkPlugin as maskedFieldRemarkPlugin, maskedFieldToMarkdown } from './node/masked'
 
-export type CellMark = 'strong' | 'em' | 'del' | 'code'
+export type CellMark = 'strong' | 'em' | 'del' | 'code' | 'highlight' | 'sub' | 'sup'
 
 /**
  * A cell's content split into runs that share the same inline marks. A run is
@@ -27,13 +31,14 @@ export interface CellSegment {
   masked: { content: string; label: string } | null
 }
 
-/** The mdast node the masked-field plugin injects (`!masked[…]`). Not part of
- * the @types/mdast union, so it is added here. */
-interface MaskedFieldNode {
-  type: 'masked_field'
-  content?: string
-  label?: string
-}
+/** The mdast nodes the custom remark plugins inject (masked fields, plus the
+ * highlight/subscript/superscript paired delimiters). Not part of the
+ * @types/mdast union, so they are added here. */
+type CustomInlineNode =
+  | { type: 'masked_field'; content?: string; label?: string }
+  | { type: 'highlight'; children: Content[] }
+  | { type: 'sub'; children: Content[] }
+  | { type: 'sup'; children: Content[] }
 
 const MASKED_BULLETS = '••••••••••••'
 
@@ -50,7 +55,10 @@ function processor(): ReturnType<typeof buildProcessor> {
 function buildProcessor() {
   return unified()
     .use(remarkParse)
-    .use(remarkGfm, { singleTilde: false })
+    .use(remarkGfm)
+    .use(highlight.remarkPlugin)
+    .use(subscript.remarkPlugin)
+    .use(superscript.remarkPlugin)
     .use(maskedFieldRemarkPlugin)
     .use(remarkStringify)
 }
@@ -72,7 +80,7 @@ export function parseCellSegments(raw: string): CellSegment[] {
 }
 
 function walkInline(
-  children: readonly (Content | MaskedFieldNode)[],
+  children: readonly (Content | CustomInlineNode)[],
   marks: CellMark[] = [],
   href: string | null = null,
   hrefTitle: string | null = null,
@@ -113,6 +121,15 @@ function walkInline(
         out.push(...walkInline(link.children, marks, link.url ?? null, link.title ?? null))
         break
       }
+      case 'highlight':
+        out.push(...walkInline(child.children, [...marks, 'highlight'], href, hrefTitle))
+        break
+      case 'sub':
+        out.push(...walkInline(child.children, [...marks, 'sub'], href, hrefTitle))
+        break
+      case 'sup':
+        out.push(...walkInline(child.children, [...marks, 'sup'], href, hrefTitle))
+        break
       case 'masked_field':
         out.push({ text: '', marks: [...marks], href, hrefTitle, masked: { content: child.content ?? '', label: child.label ?? '' } })
         break
@@ -128,13 +145,22 @@ function walkInline(
 
 // --- Serialization (runs → markdown) ---------------------------------------
 
-const MARK_OPEN: Record<CellMark, string> = { strong: '**', em: '*', del: '~~', code: '`' }
-const MARK_CLOSE: Record<CellMark, string> = { strong: '**', em: '*', del: '~~', code: '`' }
+const MARK_OPEN: Record<CellMark, string> = {
+  strong: '**',
+  em: '*',
+  del: '~~',
+  code: '`',
+  highlight: '==',
+  sub: '~',
+  sup: '^',
+}
+const MARK_CLOSE: Record<CellMark, string> = MARK_OPEN
 
-/** Canonical outer→inner ordering; code stays innermost, like the document
- * serializer, so `` **`code`** `` survives a round trip. */
+/** Canonical outer→inner ordering (mirrors the document serializer's rank
+ * order for strong/em/strike/highlight/sub/sup); code stays innermost, like the
+ * document serializer, so `` **`code`** `` survives a round trip. */
 function orderedMarks(marks: readonly CellMark[]): CellMark[] {
-  const order: CellMark[] = ['strong', 'em', 'del']
+  const order: CellMark[] = ['strong', 'em', 'del', 'highlight', 'sub', 'sup']
   const list = order.filter((m) => marks.includes(m))
   if (marks.includes('code')) list.push('code')
   return list
@@ -214,7 +240,15 @@ function escapeCellHtml(value: string): string {
   })
 }
 
-const MARK_TAG: Record<CellMark, string> = { strong: 'strong', em: 'em', del: 'del', code: 'code' }
+const MARK_TAG: Record<CellMark, string> = {
+  strong: 'strong',
+  em: 'em',
+  del: 'del',
+  code: 'code',
+  highlight: 'mark',
+  sub: 'sub',
+  sup: 'sup',
+}
 
 /** Coalesce adjacent runs with identical mark/link context and plain text so
  * the rendered HTML carries no redundant `</strong><strong>` boundaries.
@@ -272,13 +306,16 @@ export function renderCellHtml(raw: string, indexedMasked = false): string {
 
 // --- Formatting toggles (raw → raw) ---------------------------------------
 
-export type CellToggleKind = 'bold' | 'italic' | 'strike' | 'code'
+export type CellToggleKind = 'bold' | 'italic' | 'strike' | 'code' | 'highlight' | 'sub' | 'sup'
 
 const MARK_BY_TOGGLE: Record<CellToggleKind, CellMark> = {
   bold: 'strong',
   italic: 'em',
   strike: 'del',
   code: 'code',
+  highlight: 'highlight',
+  sub: 'sub',
+  sup: 'sup',
 }
 
 /** True when every text run of the cell already carries the toggle's mark. */

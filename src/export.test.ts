@@ -183,6 +183,23 @@ describe('serializeDocToHtml', () => {
     expect(html).not.toContain('<em>bold <strong>') // no mangled delimiter leaks
   })
 
+  it('renders highlight, subscript, and superscript inside table cells', () => {
+    const doc = schema.node('doc', {}, [
+      schema.node('table', {
+        value:
+          '| A |\n| --- |\n' +
+          '| ==mark== |\n' +
+          '| H~2~O |\n' +
+          '| x^2^ |',
+      }),
+    ])
+    const html = serializeDocToHtml(doc)
+    expect(html).toContain('<mark>mark</mark>')
+    expect(html).toContain('H<sub>2</sub>O')
+    expect(html).toContain('x<sup>2</sup>')
+    expect(html).not.toContain('&lt;mark&gt;')
+  })
+
   it('renders inline formatting in table header cells', () => {
     const doc = schema.node('doc', {}, [
       schema.node('table', { value: '| **Q1** | ~~2026~~ |\n| --- | --- |\n| 1 | 2 |' }),

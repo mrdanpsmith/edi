@@ -693,6 +693,42 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('applyInline toggles highlight, sub, and sup in the active cell', () => {
+    const view = createEditor('| A |\n| --- |\n| hello |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()!
+    host.applyInline('highlight')
+    host.applyInline('sub')
+    host.applyInline('sup')
+    expect(docValue(view)).toContain('==~^hello^~==')
+    expect(cell(view, 1, 0).querySelector('.ss-cell-content')!.innerHTML).toContain(
+      '<mark><sub><sup>hello</sup></sub></mark>',
+    )
+    // All marks still toggle off together.
+    host.applyInline('highlight')
+    host.applyInline('sub')
+    host.applyInline('sup')
+    expect(docValue(view)).toContain('hello')
+    expect(docValue(view)).not.toContain('==')
+    expect(docValue(view)).not.toContain('~')
+    expect(docValue(view)).not.toContain('^')
+    view.destroy()
+  })
+
+  it('applyInline renders pre-existing sub/sup/highlight cells', () => {
+    const view = createEditor('| A |\n| --- |\n| H~2~O and x^2^ and ==y== |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const content = cell(view, 1, 0).querySelector('.ss-cell-content')!.innerHTML
+    expect(content).toContain('H<sub>2</sub>O')
+    expect(content).toContain('x<sup>2</sup>')
+    expect(content).toContain('<mark>y</mark>')
+    view.destroy()
+  })
+
   it('applyInline bold round-trips a mixed-marks cell through the streaming serializer', () => {
     const view = createEditor('| A |\n| --- |\n| ***start** middle* |')
     const grid = tableGrid(view)

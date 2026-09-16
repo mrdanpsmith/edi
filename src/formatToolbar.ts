@@ -365,10 +365,11 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
         '<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#fde047" stroke="none"/>' +
         '<text x="8" y="12" text-anchor="middle" font-size="11" font-family="var(--font-sans)" stroke="none" fill="currentColor">a</text>',
       ),
+      inline: 'highlight',
       run: (view) => toggleMarkCmd(view.state.schema.marks.highlight)(view),
     },
-    { label: 'Sub', title: 'Subscript', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view) },
-    { label: 'Sup', title: 'Superscript', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view) },
+    { label: 'Sub', title: 'Subscript', inline: 'sub', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view) },
+    { label: 'Sup', title: 'Superscript', inline: 'sup', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view) },
     {
       label: 'Normal', title: 'Heading', className: 'fmt-heading',
       run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch),

@@ -78,6 +78,14 @@ describe('solve', () => {
     expect(chained[2]![1]).toBe('14')
   })
 
+  it('treats a leading == as highlight markdown, not a formula', () => {
+    const out = cells('| A |\n| --- |\n| ==hey== |\n| ==nope |\n| =2+2 |')
+    expect(out[1]![0]).toBe('==hey==')
+    expect(out[1]![0]).not.toBe('#ERROR!')
+    expect(out[2]![0]).toBe('==nope') // unbalanced `==` is literal text
+    expect(out[3]![0]).toBe('4') // plain `=` still evaluates as a formula
+  })
+
   it('aggregates ranges with row 1 = header', () => {
     const out = cells(
       '| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| =SUM(A2:C3) | =AVERAGE(A2:B3) | =COUNT(A2:C3) |',
@@ -180,8 +188,19 @@ describe('inlineMarkdownToHtml', () => {
     expect(inlineMarkdownToHtml('a "b" & c')).toBe('a &quot;b&quot; &amp; c')
   })
 
-  it('leaves unsupported markdown literal', () => {
-    expect(inlineMarkdownToHtml('x~sub~y')).toBe('x~sub~y')
+  it('renders highlight, subscript, and superscript', () => {
+    expect(inlineMarkdownToHtml('==mark==')).toBe('<mark>mark</mark>')
+    expect(inlineMarkdownToHtml('H~2~O')).toBe('H<sub>2</sub>O')
+    expect(inlineMarkdownToHtml('x^2^')).toBe('x<sup>2</sup>')
+    expect(inlineMarkdownToHtml('~a~ ~~del~~')).toBe('<sub>a</sub> <del>del</del>')
+    expect(inlineMarkdownToHtml('==**b** and *i*==')).toBe(
+      '<strong><mark>b</mark></strong><mark> and </mark><em><mark>i</mark></em>',
+    )
+  })
+
+  it('escapes HTML inside highlight/sub/sup marks', () => {
+    expect(inlineMarkdownToHtml('==<&>==')).toBe('<mark>&lt;&amp;&gt;</mark>')
+    expect(inlineMarkdownToHtml('~<x>~')).toBe('<sub>&lt;x&gt;</sub>')
   })
 
   it('composes overlapping inline marks', () => {
