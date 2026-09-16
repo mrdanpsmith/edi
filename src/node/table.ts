@@ -367,7 +367,7 @@ class TableNodeView implements NodeView, InlineCellHost {
       const rowCells: HTMLElement[] = []
       for (let c = 0; c < cols; c++) {
         const td = document.createElement('td')
-        td.className = 'ss-cell'
+        td.className = r === 0 ? 'ss-cell ss-header' : 'ss-cell'
         td.dataset.row = String(r)
         td.dataset.col = String(c)
         td.dataset.align = this.align[c] ?? 'none'

@@ -148,6 +148,14 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('renders the GFM header row as a header, not a plain data row', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    expect(cell(view, 0, 0).classList.contains('ss-header')).toBe(true)
+    expect(cell(view, 0, 1).classList.contains('ss-header')).toBe(true)
+    expect(cell(view, 1, 0).classList.contains('ss-header')).toBe(false)
+    view.destroy()
+  })
+
   it('renders computed formula values and error cells', () => {
     const view = createEditor(
       '| A | B |\n| --- | --- |\n| 5 | =A2*3 |\n| =SUM(A2:B2) | 0 |',
