@@ -273,6 +273,95 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('cut copies the selection as TSV and marquees the source cells', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    mousedown(cell(view, 1, 0))
+    cell(view, 2, 1).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    const calls: Array<[string, string]> = []
+    const event = new Event('cut', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(event, 'clipboardData', {
+      value: { setData: (type: string, data: string) => calls.push([type, data]), getData: () => '' },
+    })
+    tableGrid(view).dispatchEvent(event)
+    expect(calls).toEqual([['text/plain', '1\t2\r\n3\t4']])
+    expect(cell(view, 1, 0).classList.contains('ss-cut')).toBe(true)
+    expect(cell(view, 2, 1).classList.contains('ss-cut')).toBe(true)
+    expect(cell(view, 0, 0).classList.contains('ss-cut')).toBe(false)
+    view.destroy()
+  })
+
+  it('cut then paste moves the cells and leaves the source blank', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    mousedown(cell(view, 1, 0))
+    cell(view, 2, 1).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    const cutEvent = new Event('cut', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(cutEvent, 'clipboardData', {
+      value: { setData: () => {}, getData: () => '' },
+    })
+    tableGrid(view).dispatchEvent(cutEvent)
+    mousedown(cell(view, 0, 0))
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: { getData: (t: string) => (t === 'text/plain' ? '1\t2\r\n3\t4' : ''), setData: () => {} },
+    })
+    tableGrid(view).dispatchEvent(pasteEvent)
+    expect(parsePipes(docValue(view))).toEqual([
+      ['1', '2'],
+      ['3', '4'],
+      ['', ''],
+    ])
+    expect(tableGrid(view).querySelector('td.ss-cut')).toBeNull()
+    view.destroy()
+  })
+
+  it('pastes tile the pattern across a selection larger than the data', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |')
+    mousedown(cell(view, 1, 0))
+    cell(view, 2, 1).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(event, 'clipboardData', {
+      value: { getData: (t: string) => (t === 'text/plain' ? 'x\ty\nz' : ''), setData: () => {} },
+    })
+    tableGrid(view).dispatchEvent(event)
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['x', 'y'],
+      ['z', ''],
+      ['5', '6'],
+    ])
+    view.destroy()
+  })
+
+  it('does not hijack copy or paste while editing a cell', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const editInput = grid.querySelector('.ss-edit-input') as HTMLInputElement
+    editInput.focus()
+    editInput.value = 'FOO'
+    let calls = 0
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      value: { setData: () => { calls += 1 }, getData: () => '' },
+    })
+    editInput.dispatchEvent(copyEvent)
+    expect(copyEvent.defaultPrevented).toBe(false)
+    expect(calls).toBe(0)
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: { getData: () => 'CLIP', setData: () => {} },
+    })
+    editInput.dispatchEvent(pasteEvent)
+    expect(pasteEvent.defaultPrevented).toBe(false)
+    expect(docValue(view)).not.toContain('CLIP')
+    view.destroy()
+  })
+
   it('pastes TSV over the grid, growing it as needed', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
     mousedown(cell(view, 1, 1))

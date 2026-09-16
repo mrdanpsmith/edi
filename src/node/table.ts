@@ -61,6 +61,10 @@ class TableNodeView implements NodeView, InlineCellHost {
   private nameBox: HTMLElement | null = null
   private statusEl: HTMLElement | null = null
   private dragging = false
+  private cutSource: { r1: number; c1: number; r2: number; c2: number } | null = null
+  private readonly onDocCopy = (event: Event): void => this.onClipboardCopy(event as ClipboardEvent)
+  private readonly onDocCut = (event: Event): void => this.onClipboardCut(event as ClipboardEvent)
+  private readonly onDocPaste = (event: Event): void => this.onClipboardPaste(event as ClipboardEvent)
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -94,6 +98,10 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.active = { row: 0, col: 0 }
     this.renderSelection()
     ensureInlineFocusListeners()
+
+    document.addEventListener('copy', this.onDocCopy)
+    document.addEventListener('cut', this.onDocCut)
+    document.addEventListener('paste', this.onDocPaste)
   }
 
   /**
@@ -337,8 +345,6 @@ class TableNodeView implements NodeView, InlineCellHost {
     grid.addEventListener('mousedown', (event) => this.onGridMouseDown(event))
     grid.addEventListener('focus', () => setActiveCellHost(this))
     grid.addEventListener('keydown', (event) => this.onGridKeydown(event))
-    grid.addEventListener('copy', (event) => this.onCopy(event as ClipboardEvent))
-    grid.addEventListener('paste', (event) => this.onPaste(event as ClipboardEvent))
     grid.addEventListener('dblclick', (event) => this.onDblClick(event))
   }
 
@@ -481,6 +487,11 @@ class TableNodeView implements NodeView, InlineCellHost {
         td.classList.toggle(
           'ss-active',
           this.active !== null && this.active.row === r && this.active.col === c,
+        )
+        const cut = this.cutSource
+        td.classList.toggle(
+          'ss-cut',
+          cut !== null && r >= cut.r1 && r <= cut.r2 && c >= cut.c1 && c <= cut.c2,
         )
       }
     }
@@ -732,6 +743,10 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
+      if (this.cutSource) {
+        this.cancelCut()
+        return
+      }
       this.view.focus()
       return
     }
@@ -1030,16 +1045,129 @@ class TableNodeView implements NodeView, InlineCellHost {
 
   // --- Clipboard ---
 
-  private onCopy(event: ClipboardEvent): void {
+  /** True when the clipboard event belongs to this spreadsheet: the target is
+   * the grid/chrome (not an editable host like the fx bar or the edit overlay;
+   * the grid itself lives inside ProseMirror's contenteditable, which is NOT a
+   * host) or the grid currently has keyboard focus and Chromium dispatched the
+   * event to the document. Editing hosts keep their native copy/cut/paste. */
+  private isSpreadsheetClipboardTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) {
+      const a = document.activeElement
+      return this.grid !== null && (a === this.grid || this.grid.contains(a as Node))
+    }
+    if (target.closest('input, textarea, .cm-editor') !== null) return false
+    if (this.dom.contains(target)) return true
+    const a = document.activeElement
+    return this.grid !== null && (a === this.grid || this.grid.contains(a as Node))
+  }
+
+  private writeClipboardText(event: ClipboardEvent, text: string): void {
+    if (event.clipboardData) {
+      event.clipboardData.setData('text/plain', text)
+    } else {
+      void copyText(text)
+    }
+  }
+
+  private selectionBounds(): { r1: number; c1: number; r2: number; c2: number } {
+    const cells = this.collectSelected()
+    const r1 = Math.min(...cells.map((c) => c.row))
+    const c1 = Math.min(...cells.map((c) => c.col))
+    const r2 = Math.max(...cells.map((c) => c.row))
+    const c2 = Math.max(...cells.map((c) => c.col))
+    return { r1, c1, r2, c2 }
+  }
+
+  private cancelCut(): void {
+    this.cutSource = null
+    this.renderSelection()
+  }
+
+  private onClipboardCopy(event: ClipboardEvent): void {
+    if (!this.isSpreadsheetClipboardTarget(event.target)) return
     const tsv = this.selectionTsv()
     if (!tsv) return
     event.preventDefault()
-    event.stopPropagation()
+    this.cancelCut()
+    this.writeClipboardText(event, tsv)
+  }
+
+  private onClipboardCut(event: ClipboardEvent): void {
+    if (!this.isSpreadsheetClipboardTarget(event.target)) return
+    const tsv = this.selectionTsv()
+    if (!tsv) return
+    event.preventDefault()
+    const { r1, c1, r2, c2 } = this.selectionBounds()
+    this.cutSource = { r1, c1, r2, c2 }
+    this.writeClipboardText(event, tsv)
+    this.renderSelection()
+  }
+
+  private onClipboardPaste(event: ClipboardEvent): void {
+    if (!this.isSpreadsheetClipboardTarget(event.target)) return
+    event.preventDefault()
+    let text = ''
     if (event.clipboardData) {
-      event.clipboardData.setData('text/plain', tsv)
-    } else {
-      void copyText(tsv)
+      text = event.clipboardData.getData('text/plain')
     }
+    if (text) {
+      this.pasteTsv(text)
+      return
+    }
+    // Some embedders don't attach clipboardData to the event; fall back to the
+    // async clipboard API.
+    void navigator.clipboard?.readText().then((t) => {
+      if (t) this.pasteTsv(t)
+    })
+  }
+
+  /**
+   * Spreadsheet-style paste: writes the tab-separated grid starting at the
+   * top-left cell of the current selection, tiling the pattern to fill the
+   * whole selection when it is larger than the pasted data, and growing the
+   * grid when the data overflows. A pending cut (from Ctrl+X) also clears the
+   * source cells once the cut content has been delivered.
+   */
+  private pasteTsv(text: string): void {
+    if (!this.anchor || !this.active) return
+    const lines = text.replace(/\r\n/g, '\n').split('\n')
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+    if (lines.length === 0) return
+    const pasted = lines.map((line) => line.split('\t'))
+    const dataH = pasted.length
+    const dataW = Math.max(...pasted.map((r) => r.length))
+    const r1 = Math.min(this.anchor.row, this.active.row)
+    const c1 = Math.min(this.anchor.col, this.active.col)
+    const selH = Math.abs(this.active.row - this.anchor.row) + 1
+    const selW = Math.abs(this.active.col - this.anchor.col) + 1
+    const height = Math.max(selH, dataH)
+    const width = Math.max(selW, dataW)
+    const maxRows = Math.max(this.rows.length, r1 + height)
+    const maxCols = Math.max(this.rows[0]?.length ?? 0, c1 + width)
+    const next: string[][] = []
+    for (let r = 0; r < maxRows; r++) {
+      next.push(Array.from({ length: maxCols }, (_, c) => this.rows[r]?.[c] ?? ''))
+    }
+    for (let r = 0; r < height; r++) {
+      for (let c = 0; c < width; c++) {
+        next[r1 + r]![c1 + c] = pasted[r % dataH]?.[c % dataW] ?? ''
+      }
+    }
+    const cut = this.cutSource
+    if (cut) {
+      for (let r = cut.r1; r <= cut.r2; r++) {
+        for (let c = cut.c1; c <= cut.c2; c++) {
+          const overwritten = r >= r1 && r < r1 + height && c >= c1 && c < c1 + width
+          if (!overwritten) next[r]![c] = ''
+        }
+      }
+      this.cutSource = null
+    }
+    this.commitRows(
+      next,
+      { row: r1, col: c1 },
+      { row: Math.min(r1 + height - 1, maxRows - 1), col: Math.min(c1 + width - 1, maxCols - 1) },
+    )
   }
 
   private selectionTsv(): string {
@@ -1061,42 +1189,6 @@ class TableNodeView implements NodeView, InlineCellHost {
     return lines.join('\r\n')
   }
 
-  private onPaste(event: ClipboardEvent): void {
-    event.preventDefault()
-    event.stopPropagation()
-    let text = ''
-    if (event.clipboardData) {
-      text = event.clipboardData.getData('text/plain')
-    }
-    if (!text || !this.active) return
-    const lines = text.replace(/\r\n/g, '\n').split('\n')
-    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
-    if (lines.length === 0) return
-    const pasted = lines.map((line) => line.split('\t'))
-    const startRow = this.active.row
-    const startCol = this.active.col
-    const pastedCols = Math.max(...pasted.map((r) => r.length))
-    const maxRows = Math.max(this.rows.length, startRow + pasted.length)
-    const maxCols = Math.max(this.rows[0]?.length ?? 0, startCol + pastedCols)
-    const next: string[][] = []
-    for (let r = 0; r < maxRows; r++) {
-      next.push(Array.from({ length: maxCols }, (_, c) => this.rows[r]?.[c] ?? ''))
-    }
-    pasted.forEach((prow, pr) => {
-      prow.forEach((cell, pc) => {
-        next[startRow + pr]![startCol + pc] = cell
-      })
-    })
-    this.commitRows(
-      next,
-      { row: startRow, col: startCol },
-      {
-        row: Math.min(startRow + pasted.length - 1, maxRows - 1),
-        col: Math.min(startCol + pastedCols - 1, maxCols - 1),
-      },
-    )
-  }
-
   // --- Plugin contract ---
 
   stopEvent(): boolean {
@@ -1109,6 +1201,9 @@ class TableNodeView implements NodeView, InlineCellHost {
 
   destroy(): void {
     this.dragging = false
+    document.removeEventListener('copy', this.onDocCopy)
+    document.removeEventListener('cut', this.onDocCut)
+    document.removeEventListener('paste', this.onDocPaste)
   }
 }
 
