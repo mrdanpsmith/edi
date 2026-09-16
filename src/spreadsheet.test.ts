@@ -9,6 +9,7 @@ import {
 } from './spreadsheet'
 import {
   domTableToPipes,
+  parsePipesAlign,
   inlineMarkdownToHtml,
   parsePipes,
   tableToPipes,
@@ -168,6 +169,30 @@ describe('pipe-table utils', () => {
     table.innerHTML =
       '<thead><tr><th>H1</th><th>H2</th></tr></thead><tbody><tr><td>a</td><td> b </td></tr></tbody>'
     expect(domTableToPipes(table)).toBe('| H1 | H2 |\n| --- | --- |\n| a | b |')
+  })
+
+  it('reads column alignment from the delimiter row', () => {
+    expect(parsePipesAlign('| A | B | C |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |')).toEqual([
+      'left',
+      'center',
+      'right',
+    ])
+    expect(parsePipesAlign('| A |\n| --- |')).toEqual(['none'])
+    expect(parsePipesAlign('| A |\n| 1 |')).toEqual([])
+  })
+
+  it('writes column alignments into the delimiter row', () => {
+    expect(tableToPipes([['A', 'B', 'C'], ['1', '2', '3']], ['left', 'center', 'right'])).toBe(
+      '| A | B | C |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |',
+    )
+    expect(tableToPipes([['A', 'B'], ['1', '2']])).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |')
+  })
+
+  it('carries HTML cell alignment into the delimiter row', () => {
+    const table = document.createElement('table')
+    table.innerHTML =
+      '<tr><th style="text-align: center">H1</th><th align="right">H2</th></tr><tr><td>a</td><td>b</td></tr>'
+    expect(domTableToPipes(table)).toBe('| H1 | H2 |\n| :---: | ---: |\n| a | b |')
   })
 })
 

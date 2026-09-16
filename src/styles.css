@@ -658,6 +658,13 @@ body {
   outline-offset: -1px;
 }
 
+/* Align button reflecting the selected column's current alignment. */
+.spreadsheet .ss-tool-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
 .spreadsheet .ss-status {
   margin-left: auto;
   font-size: 11px;
@@ -883,6 +890,26 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Column alignment from the GFM delimiter row (`| :---: | ---: |`). The cell
+   content is a max-content block, so it is placed with auto margins rather
+   than `text-align` (which would not move a block child). */
+.spreadsheet .ss-grid td[data-align='center'] .ss-cell-content {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.spreadsheet .ss-grid td[data-align='right'] .ss-cell-content {
+  margin-left: auto;
+}
+
+.spreadsheet .ss-grid td[data-align='center'] .ss-edit-input {
+  text-align: center;
+}
+
+.spreadsheet .ss-grid td[data-align='right'] .ss-edit-input {
+  text-align: right;
+}
+
 .spreadsheet .ss-grid td.ss-formula {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
@@ -973,6 +1000,16 @@ body {
 .ss-plain .ss-plain-table thead th {
   background: var(--table-header-bg);
   font-weight: 600;
+}
+
+.ss-plain .ss-plain-table th[data-align='center'],
+.ss-plain .ss-plain-table td[data-align='center'] {
+  text-align: center;
+}
+
+.ss-plain .ss-plain-table th[data-align='right'],
+.ss-plain .ss-plain-table td[data-align='right'] {
+  text-align: right;
 }
 
 .ss-plain .ss-plain-table td.ss-formula,

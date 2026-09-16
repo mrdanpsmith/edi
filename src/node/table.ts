@@ -1,7 +1,7 @@
 import { Plugin, PluginKey, TextSelection, type EditorState, type NodeSelection, type Transaction } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
-import { parsePipes, tableToPipes, inlineMarkdownToHtml, listMaskedTokens } from '../spreadsheet-util'
+import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, type TableAlign } from '../spreadsheet-util'
 import { cellCarriesMark, setCellMark } from '../inline-md'
 import { solve, colToLetters, isFormula, type CellSolution } from '../spreadsheet'
 import { fillTextValues, shiftFormulaRefs } from '../series'
@@ -55,6 +55,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   private getPos: () => number | undefined
 
   private rows: string[][] = []
+  private align: TableAlign[] = []
   private grid: HTMLElement | null = null
   private gridWrap: HTMLElement | null = null
   private colEls: HTMLTableColElement[] = []
@@ -78,6 +79,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   private fillDrag: FillRect | null = null
   private fillHandleEl: HTMLElement | null = null
   private fillTooltipEl: HTMLElement | null = null
+  private alignButtons: Array<{ align: TableAlign; el: HTMLElement }> = []
   private readonly onFillMove = (event: MouseEvent): void => this.handleFillMove(event)
   private readonly onFillUp = (event: MouseEvent): void => this.handleFillUp(event)
   private readonly onDocCopy = (event: Event): void => this.onClipboardCopy(event as ClipboardEvent)
@@ -89,6 +91,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.view = view
     this.getPos = getPos
     this.rows = parsePipes(String(node.attrs.value ?? ''))
+    this.align = parsePipesAlign(String(node.attrs.value ?? ''))
     this.dom = document.createElement('div')
     this.dom.className = 'spreadsheet'
 
@@ -188,9 +191,15 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (node.attrs._source !== this.node.attrs._source) return false
     if (node.attrs._plain !== this.node.attrs._plain) return false
     this.node = node
-    const rows = parsePipes(String(node.attrs.value ?? ''))
-    if (JSON.stringify(rows) !== JSON.stringify(this.rows)) {
+    const value = String(node.attrs.value ?? '')
+    const rows = parsePipes(value)
+    const align = parsePipesAlign(value)
+    if (
+      JSON.stringify(rows) !== JSON.stringify(this.rows) ||
+      JSON.stringify(align) !== JSON.stringify(this.align)
+    ) {
       this.rows = rows
+      this.align = align
       this.anchor = { row: 0, col: 0 }
       this.active = { row: 0, col: 0 }
       this.extra.clear()
@@ -230,6 +239,23 @@ class TableNodeView implements NodeView, InlineCellHost {
         action.run()
       })
       tools.appendChild(button)
+    }
+    for (const [label, align, title] of [
+      ['L', 'left', 'Align selected column left'],
+      ['C', 'center', 'Align selected column center'],
+      ['R', 'right', 'Align selected column right'],
+    ] as const) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'ss-tool'
+      button.textContent = label
+      button.title = title
+      button.addEventListener('click', () => {
+        this.commitFxEdit()
+        this.alignColumns(align)
+      })
+      tools.appendChild(button)
+      this.alignButtons.push({ align, el: button })
     }
     const status = document.createElement('span')
     status.className = 'ss-status'
@@ -344,6 +370,7 @@ class TableNodeView implements NodeView, InlineCellHost {
         td.className = 'ss-cell'
         td.dataset.row = String(r)
         td.dataset.col = String(c)
+        td.dataset.align = this.align[c] ?? 'none'
         tr.appendChild(td)
         rowCells.push(td)
       }
@@ -520,6 +547,49 @@ class TableNodeView implements NodeView, InlineCellHost {
     }
     this.cornerEl?.classList.toggle('ss-selected', selRows.size === rows && selCols.size === cols)
     this.renderFillHandle()
+    this.updateAlignButtons()
+  }
+
+  /** Columns the align buttons act on: the selected columns, or the active
+   * cell's column when nothing is explicitly selected. */
+  private alignTargetCols(): Set<number> {
+    const cols = this.selectedCols()
+    if (cols.size === 0 && this.active) cols.add(this.active.col)
+    return cols
+  }
+
+  /** Apply a column alignment to the selected columns (active column when
+   * nothing is selected), re-emitting the delimiter row with its colons. */
+  private alignColumns(align: TableAlign): void {
+    const cols = this.alignTargetCols()
+    if (cols.size === 0) return
+    let changed = false
+    for (const c of cols) {
+      while (this.align.length <= c) this.align.push('none')
+      if (this.align[c] !== align) {
+        this.align[c] = align
+        changed = true
+      }
+    }
+    if (!changed) {
+      this.updateAlignButtons()
+      this.grid?.focus()
+      return
+    }
+    const anchor = this.anchor ?? { row: 0, col: Math.min(...cols) }
+    const active = this.active ?? anchor
+    this.commitRows(this.rows.map((row) => [...row]), anchor, active)
+    this.grid?.focus()
+  }
+
+  private updateAlignButtons(): void {
+    if (this.alignButtons.length === 0) return
+    const cols = this.alignTargetCols()
+    const alignments = new Set([...cols].map((c) => this.align[c] ?? 'none'))
+    const current = alignments.size === 1 ? [...alignments][0]! : null
+    for (const { align, el } of this.alignButtons) {
+      el.classList.toggle('ss-tool-active', current === align)
+    }
   }
 
   /** Draw (or clear) the Excel-style fill handle at the bottom-right corner of
@@ -1326,15 +1396,17 @@ class TableNodeView implements NodeView, InlineCellHost {
   private commitRows(nextRows: string[][], anchor: CellRef, active: CellRef): void {
     const pos = this.getPos()
     if (pos === undefined) return
-    const value = tableToPipes(nextRows)
+    const value = tableToPipes(nextRows, this.align)
     if (value === this.node.attrs.value) {
       this.rows = parsePipes(value)
+      this.align = parsePipesAlign(value)
       this.rebuildForCommit(this.rows.length, this.rows[0]?.length ?? 0, anchor, active)
       return
     }
     const tr = this.view.state.tr.setNodeMarkup(pos, undefined, { ...this.node.attrs, value })
     this.view.dispatch(tr)
     this.rows = parsePipes(value)
+    this.align = parsePipesAlign(value)
     this.rebuildForCommit(this.rows.length, this.rows[0]?.length ?? 0, anchor, active)
   }
 
@@ -1367,6 +1439,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (remove.size === 0 || remove.size === cols) return
     const keep = Array.from({ length: cols }, (_, c) => c).filter((c) => !remove.has(c))
     const next = this.rows.map((row) => keep.map((c) => row[c] ?? ''))
+    this.align = keep.map((c) => this.align[c] ?? 'none')
     const col = Math.min(this.active?.col ?? 0, keep.length - 1)
     const row = this.active?.row ?? 0
     this.commitRows(next, { row, col }, { row, col })
@@ -1652,6 +1725,7 @@ class TablePlainView implements NodeView {
   private view: EditorView
   private getPos: () => number | undefined
   private rows: string[][] = []
+  private align: TableAlign[] = []
   private body: HTMLElement | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
@@ -1659,6 +1733,7 @@ class TablePlainView implements NodeView {
     this.view = view
     this.getPos = getPos
     this.rows = parsePipes(String(node.attrs.value ?? ''))
+    this.align = parsePipesAlign(String(node.attrs.value ?? ''))
 
     this.dom = document.createElement('div')
     this.dom.className = 'ss-plain'
@@ -1721,6 +1796,7 @@ class TablePlainView implements NodeView {
     const headRow = document.createElement('tr')
     for (let c = 0; c < cols; c++) {
       const th = document.createElement('th')
+      th.dataset.align = this.align[c] ?? 'none'
       this.fillCell(th, 0, c, solution.cells[0]?.[c])
       headRow.appendChild(th)
     }
@@ -1732,6 +1808,7 @@ class TablePlainView implements NodeView {
       const tr = document.createElement('tr')
       for (let c = 0; c < cols; c++) {
         const td = document.createElement('td')
+        td.dataset.align = this.align[c] ?? 'none'
         this.fillCell(td, r, c, solution.cells[r]?.[c])
         tr.appendChild(td)
       }
@@ -1761,7 +1838,7 @@ class TablePlainView implements NodeView {
   private commitTable(nextRows: string[][]): void {
     const pos = this.getPos()
     if (pos === undefined) return
-    const value = tableToPipes(nextRows)
+    const value = tableToPipes(nextRows, this.align)
     if (value === this.node.attrs.value) return
     const tr = this.view.state.tr.setNodeMarkup(pos, undefined, { ...this.node.attrs, value })
     this.view.dispatch(tr)
@@ -1772,9 +1849,15 @@ class TablePlainView implements NodeView {
     if (node.attrs._source !== this.node.attrs._source) return false
     if (node.attrs._plain !== this.node.attrs._plain) return false
     this.node = node
-    const rows = parsePipes(String(node.attrs.value ?? ''))
-    if (JSON.stringify(rows) !== JSON.stringify(this.rows)) {
+    const value = String(node.attrs.value ?? '')
+    const rows = parsePipes(value)
+    const align = parsePipesAlign(value)
+    if (
+      JSON.stringify(rows) !== JSON.stringify(this.rows) ||
+      JSON.stringify(align) !== JSON.stringify(this.align)
+    ) {
       this.rows = rows
+      this.align = align
       this.renderBody()
     }
     return true

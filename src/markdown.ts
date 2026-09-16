@@ -172,7 +172,10 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
           serializeCellText(cell.children ?? [], schema),
         ),
       )
-      return schema.node('table', { value: tableToPipes(rows) })
+      const align = (node.align ?? []).map((value) =>
+        value === 'left' || value === 'center' || value === 'right' ? value : 'none',
+      )
+      return schema.node('table', { value: tableToPipes(rows, align) })
     }
 
     case 'html':

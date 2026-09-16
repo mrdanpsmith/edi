@@ -1135,3 +1135,60 @@ describe('TableNodeView fill handle', () => {
     view.destroy()
   })
 })
+
+describe('TableNodeView column alignment', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('renders alignment parsed from the delimiter row', () => {
+    const view = createEditor('| A | B | C |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |')
+    expect(cell(view, 0, 0).dataset.align).toBe('left')
+    expect(cell(view, 0, 1).dataset.align).toBe('center')
+    expect(cell(view, 0, 2).dataset.align).toBe('right')
+    view.destroy()
+  })
+
+  it('aligns the active column and writes the colons into the delimiter row', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 0, 1))
+    tool(view, 'C').click()
+    expect(docValue(view)).toContain('| --- | :---: |')
+    expect(cell(view, 0, 1).dataset.align).toBe('center')
+    expect(cell(view, 0, 0).dataset.align).toBe('none')
+    view.destroy()
+  })
+
+  it('aligns every selected column and highlights the active button', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    selectRegion(view, 0, 0, 1, 1)
+    tool(view, 'R').click()
+    expect(docValue(view)).toContain('| ---: | ---: |')
+    expect(tool(view, 'R').classList.contains('ss-tool-active')).toBe(true)
+    view.destroy()
+  })
+
+  it('preserves alignment when adding a row', () => {
+    const view = createEditor('| A | B |\n| :---: | ---: |\n| 1 | 2 |')
+    tool(view, '+Row').click()
+    expect(parsePipes(docValue(view))).toHaveLength(3)
+    expect(docValue(view)).toContain('| :---: | ---: |')
+    view.destroy()
+  })
+
+  it('remaps alignment when a column is removed', () => {
+    const view = createEditor('| A | B | C |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |')
+    mousedown(colHeader(view, 1))
+    tool(view, '−Col').click()
+    expect(docValue(view)).toContain('| :--- | ---: |')
+    view.destroy()
+  })
+
+  it('renders alignment in the plain table view', () => {
+    const view = createPlainTable('| A | B |\n| :---: | ---: |\n| 1 | 2 |')
+    const tds = view.dom.querySelectorAll('.ss-plain-table tbody td')
+    expect(tds[0]!.getAttribute('data-align')).toBe('center')
+    expect(tds[1]!.getAttribute('data-align')).toBe('right')
+    view.destroy()
+  })
+})

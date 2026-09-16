@@ -6,6 +6,26 @@ import { renderCellHtml } from './inline-md'
 
 const DELIMITER_CELL = /^:?-+:?$/
 
+/** Column alignment as expressed by the GFM delimiter row's colons. `none`
+ * (plain `---`) means the default, left-aligned content. */
+export type TableAlign = 'left' | 'center' | 'right' | 'none'
+
+const ALIGN_TOKEN: Record<TableAlign, string> = {
+  none: '---',
+  left: ':---',
+  center: ':---:',
+  right: '---:',
+}
+
+function delimiterAlign(cell: string): TableAlign {
+  const left = cell.startsWith(':')
+  const right = cell.endsWith(':')
+  if (left && right) return 'center'
+  if (left) return 'left'
+  if (right) return 'right'
+  return 'none'
+}
+
 function splitRow(line: string): string[] {
   // Split on `|` unless it is escaped (`\|`). Backslashes are kept verbatim so
   // a round-trip preserves them.
@@ -60,10 +80,29 @@ export function parsePipes(value: string): string[][] {
 }
 
 /**
+ * Column alignments declared by the delimiter row (`| :--- | ---: | :---: |`).
+ * Returns an empty array when the table has no delimiter row.
+ */
+export function parsePipesAlign(value: string): TableAlign[] {
+  for (const line of value.split('\n')) {
+    if (line.trim() === '') continue
+    const cells = splitRow(trimOuterPipes(line)).map(unescapeCell)
+    if (cells.length > 0 && cells.every((cell) => DELIMITER_CELL.test(cell))) {
+      return cells.map(delimiterAlign)
+    }
+  }
+  return []
+}
+
+/**
  * Re-emit a 2-D grid as normalized pipe-table markdown: a delimiter row after
  * the header (row 0), pipes escaped (`|` → `\|`), ragged rows padded with `''`.
+ * When `align` is given, each delimiter cell carries that column's colons.
  */
-export function tableToPipes(rows: string[][]): string {
+export function tableToPipes(
+  rows: string[][],
+  align?: readonly (TableAlign | null | undefined)[] | null,
+): string {
   if (rows.length === 0) return ''
   const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0)
   const formatRow = (cells: readonly string[]): string => {
@@ -73,27 +112,42 @@ export function tableToPipes(rows: string[][]): string {
   }
   const lines = [formatRow(rows[0]!)]
   if (rows.length > 1) {
-    lines.push(`| ${Array.from({ length: maxCols }, () => '---').join(' | ')} |`)
+    const tokens = Array.from(
+      { length: maxCols },
+      (_, c) => ALIGN_TOKEN[align?.[c] ?? 'none'],
+    )
+    lines.push(`| ${tokens.join(' | ')} |`)
   }
   for (const row of rows.slice(1)) lines.push(formatRow(row))
   return lines.join('\n')
 }
 
+function htmlCellAlign(cell: HTMLTableCellElement): TableAlign {
+  const attr = (cell.getAttribute('align') ?? '').toLowerCase()
+  if (attr === 'center' || attr === 'left' || attr === 'right') return attr
+  const style = (cell.style?.textAlign ?? '').toLowerCase()
+  if (style === 'center' || style === 'left' || style === 'right') return style
+  return 'none'
+}
+
 /**
  * Read an HTML `<table>` (as pasted from a real page/app) into pipe-table
- * markdown. Cell text is trimmed like every other parse path.
+ * markdown. Cell text is trimmed like every other parse path; the header
+ * row's `align`/`text-align` is carried into the delimiter row.
  */
 export function domTableToPipes(dom: HTMLTableElement): string {
   const rows: string[][] = []
+  let align: TableAlign[] = []
   for (const tr of Array.from(dom.querySelectorAll('tr'))) {
     const cells = Array.from(tr.children).filter(
       (child): child is HTMLTableCellElement =>
         child.tagName === 'TD' || child.tagName === 'TH',
     )
     if (cells.length === 0) continue
+    if (rows.length === 0) align = cells.map(htmlCellAlign)
     rows.push(cells.map((cell) => (cell.textContent ?? '').trim()))
   }
-  return tableToPipes(rows)
+  return tableToPipes(rows, align)
 }
 
 const MASKED_TOKEN = /!masked\[([^\]\n]*)\](?:\{label="((?:[^"\\]|\\.)*)"\})?/g

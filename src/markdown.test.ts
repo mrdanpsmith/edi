@@ -121,6 +121,13 @@ describe('table round-trip', () => {
     const doc = markdownToProse('| **A** | B |\n| --- | --- |', schema)
     expect(proseToMarkdown(doc)).toBe('| **A** | B |\n')
   })
+
+  it('preserves column alignment from the delimiter row through a round-trip', () => {
+    const markdown = '| A | B | C |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |'
+    const doc = markdownToProse(markdown, schema)
+    expect(doc.firstChild!.attrs.value).toBe(markdown)
+    expect(proseToMarkdown(doc)).toBe(markdown + '\n')
+  })
 })
 
 describe('further parse paths', () => {
