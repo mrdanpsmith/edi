@@ -497,6 +497,40 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('a blur arriving during edit teardown does not swallow the Tab move', () => {
+    // Chromium fires `blur` synchronously when the focused edit input is
+    // removed mid-commit (teardownEdit). The blur handler re-enters
+    // commitCellEdit, which must be a safe no-op (edit/overlay already
+    // nulled in teardownEdit) so the Tab handler's move still runs. The
+    // previous remove-after-null ordering let that reentrant commit swallow
+    // the outer handler, leaving the active cell stuck on the first Tab.
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const editInput = grid.querySelector('.ss-edit-input') as HTMLInputElement
+    editInput.value = 'FOO'
+    const realRemove = editInput.remove.bind(editInput)
+    let commitsDuringTeardown = 0
+    const blurHandler = () => {
+      commitsDuringTeardown += 1
+    }
+    editInput.addEventListener('blur', blurHandler)
+    ;(editInput as unknown as { remove: () => void }).remove = () => {
+      // Model Chromium: removal of the focused element fires blur on the
+      // input before the input is actually detached.
+      editInput.dispatchEvent(new Event('blur'))
+      realRemove()
+    }
+    editInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(commitsDuringTeardown).toBe(1)
+    expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
+    expect(docValue(view)).toContain('FOO')
+    editInput.removeEventListener('blur', blurHandler)
+    view.destroy()
+  })
+
   it('Tab in the fx bar commits and moves right', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     const grid = tableGrid(view)

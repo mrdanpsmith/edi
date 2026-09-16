@@ -904,9 +904,10 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private teardownEdit(): void {
-    this.editOverlay?.remove()
+    const overlay = this.editOverlay
     this.editOverlay = null
     this.editing = null
+    overlay?.remove()
   }
 
   private onFxInputKeydown(event: KeyboardEvent): void {
