@@ -4,7 +4,7 @@ export const SPREADSHEET_PREFIX = '='
  * `==`, which is a markdown highlight delimiter (`==text==`), not a formula
  * (no spreadsheet syntax is `= = …`). Distinguishing them keeps cells that are
  * entirely highlighted from erroring out as `#ERROR!` formulas. */
-function isFormula(trimmed: string): boolean {
+export function isFormula(trimmed: string): boolean {
   return (
     trimmed.startsWith(SPREADSHEET_PREFIX) &&
     !trimmed.startsWith(SPREADSHEET_PREFIX + SPREADSHEET_PREFIX)

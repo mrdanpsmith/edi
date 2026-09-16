@@ -88,6 +88,39 @@ function mousedown(el: Element, init: MouseEventInit = {}): void {
   el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, ...init }))
 }
 
+function fillHandle(view: EditorView): HTMLElement {
+  const handle = view.dom.querySelector('.ss-fill-handle') as HTMLElement | null
+  if (!handle) throw new Error('no .ss-fill-handle rendered')
+  return handle
+}
+
+/** Press the fill handle of the current selection and drag it out to
+ * (row, col), releasing there. */
+function dragFill(view: EditorView, row: number, col: number): void {
+  mousedown(fillHandle(view))
+  cell(view, row, col).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+}
+
+/** Select a rectangular region by drag, then release. */
+function selectRegion(view: EditorView, r1: number, c1: number, r2: number, c2: number): void {
+  mousedown(cell(view, r1, c1))
+  cell(view, r2, c2).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+}
+
+function gridkey(view: EditorView, key: string, mod = false): void {
+  tableGrid(view).dispatchEvent(
+    new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: mod,
+      metaKey: mod,
+    }),
+  )
+}
+
 function docValue(view: EditorView): string {
   const table = view.state.doc.firstChild
   return String(table?.attrs.value ?? '')
@@ -976,6 +1009,129 @@ describe('TableNodeView grid', () => {
     getActiveCellHost()!.applyInline('link', 'https://example.com')
     expect(docValue(view)).toContain('[a](https://example.com)')
     expect(docValue(view)).toContain('[b](https://example.com)')
+    view.destroy()
+  })
+})
+
+describe('TableNodeView fill handle', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('draws the handle on the selected corner and hides it while editing', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 0, 0))
+    expect(fillHandle(view).parentElement).toBe(cell(view, 0, 0))
+    mousedown(cell(view, 1, 1))
+    expect(fillHandle(view).parentElement).toBe(cell(view, 1, 1))
+
+    gridkey(view, 'Enter')
+    expect(view.dom.querySelector('.ss-fill-handle')).toBeNull()
+    view.destroy()
+  })
+
+  it('fills a numeric series down the column', () => {
+    const view = createEditor('| A |\n| --- |\n| 1 |\n| 2 |\n|  |')
+    selectRegion(view, 1, 0, 2, 0)
+    dragFill(view, 3, 0)
+    expect(parsePipes(docValue(view))).toEqual([['A'], ['1'], ['2'], ['3']])
+    view.destroy()
+  })
+
+  it('duplicates a single text value down the column', () => {
+    const view = createEditor('| A |\n| --- |\n| hi |\n|  |\n|  |')
+    mousedown(cell(view, 1, 0))
+    dragFill(view, 3, 0)
+    expect(parsePipes(docValue(view))).toEqual([['A'], ['hi'], ['hi'], ['hi']])
+    view.destroy()
+  })
+
+  it('extends embedded-number patterns', () => {
+    const view = createEditor('| A |\n| --- |\n| Q1 |\n| Q2 |\n|  |')
+    selectRegion(view, 1, 0, 2, 0)
+    dragFill(view, 3, 0)
+    expect(parsePipes(docValue(view))).toEqual([['A'], ['Q1'], ['Q2'], ['Q3']])
+    view.destroy()
+  })
+
+  it('repeats a text cycle across rows', () => {
+    const view = createEditor('| A |\n| --- |\n| Red |\n| Green |\n|  |')
+    selectRegion(view, 1, 0, 2, 0)
+    dragFill(view, 3, 0)
+    expect(parsePipes(docValue(view))).toEqual([['A'], ['Red'], ['Green'], ['Red']])
+    view.destroy()
+  })
+
+  it('shifts formula references as it fills down', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| =A2*2 | 0 |\n| 4 | 0 |\n|  |  |\n|  |  |')
+    mousedown(cell(view, 1, 0))
+    dragFill(view, 4, 0)
+    const rows = parsePipes(docValue(view))
+    expect(rows[2]?.[0]).toBe('=A3*2')
+    expect(rows[3]?.[0]).toBe('=A4*2')
+    expect(rows[4]?.[0]).toBe('=A5*2')
+    view.destroy()
+  })
+
+  it('fills horizontally across a row', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 5 | 6 |  |')
+    selectRegion(view, 1, 0, 1, 1)
+    dragFill(view, 1, 2)
+    expect(parsePipes(docValue(view))).toEqual([['A', 'B', 'C'], ['5', '6', '7']])
+    view.destroy()
+  })
+
+  it('tints cells in the drag target region and previews the series', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n|  |  |')
+    selectRegion(view, 1, 0, 2, 1)
+    mousedown(fillHandle(view))
+    cell(view, 3, 1).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    expect(cell(view, 3, 1).classList.contains('ss-fill-target')).toBe(true)
+    expect(view.dom.querySelector('.ss-fill-tooltip')?.textContent).toBe('5 \u2192 7 \u2192 9')
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['1', '2'],
+      ['3', '4'],
+      ['5', '6'],
+    ])
+    view.destroy()
+  })
+
+  it('double-clicking the handle autofills down to the adjacent data extent', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| 1 | 2 |\n|  | 3 |\n|  | 4 |\n|  |  |',
+    )
+    mousedown(cell(view, 1, 0))
+    fillHandle(view).dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    const rows = parsePipes(docValue(view))
+    expect(rows[2]).toEqual(['1', '3'])
+    expect(rows[3]).toEqual(['1', '4'])
+    expect(rows[4]).toEqual(['', ''])
+    view.destroy()
+  })
+
+  it('Ctrl+D fills the selection down from its top row', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | 6 |\n|  |  |')
+    selectRegion(view, 1, 0, 2, 1)
+    gridkey(view, 'd', true)
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['5', '6'],
+      ['5', '6'],
+    ])
+    view.destroy()
+  })
+
+  it('Ctrl+R fills the selection right from its left column', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 5 |  |  |\n| 7 |  |  |')
+    selectRegion(view, 1, 0, 2, 2)
+    gridkey(view, 'r', true)
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B', 'C'],
+      ['5', '5', '5'],
+      ['7', '7', '7'],
+    ])
     view.destroy()
   })
 })
