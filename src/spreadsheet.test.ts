@@ -184,6 +184,22 @@ describe('inlineMarkdownToHtml', () => {
     expect(inlineMarkdownToHtml('x~sub~y')).toBe('x~sub~y')
   })
 
+  it('composes overlapping inline marks', () => {
+    expect(inlineMarkdownToHtml('***b***')).toBe('<strong><em>b</em></strong>')
+    expect(inlineMarkdownToHtml('**b *i***')).toBe('<strong>b </strong><strong><em>i</em></strong>')
+    expect(inlineMarkdownToHtml('***b** i*')).toBe('<strong><em>b</em></strong><em> i</em>')
+    expect(inlineMarkdownToHtml('**b `c`**')).toBe('<strong>b </strong><strong><code>c</code></strong>')
+    expect(inlineMarkdownToHtml('~~s **b**~~')).toBe('<del>s </del><strong><del>b</del></strong>')
+    expect(inlineMarkdownToHtml('*i [l](http://x.example)*')).toBe(
+      '<em>i </em><a href="http://x.example"><em>l</em></a>',
+    )
+    expect(inlineMarkdownToHtml('***`c`***')).toBe('<strong><em><code>c</code></em></strong>')
+  })
+
+  it('escapes HTML inside composed marks', () => {
+    expect(inlineMarkdownToHtml('***<&>***')).toBe('<strong><em>&lt;&amp;&gt;</em></strong>')
+  })
+
   it('renders masked-field tokens as static pills', () => {
     expect(inlineMarkdownToHtml('!masked[c1phers]')).toBe(
       '<span class="masked-field">••••••••••••</span>',

@@ -659,6 +659,60 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('applyInline combines bold with italic as nested marks', () => {
+    const view = createEditor('| A |\n| --- |\n| hello |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()!
+    host.applyInline('bold')
+    host.applyInline('italic')
+    expect(docValue(view)).toContain('***hello***')
+    const pill = cell(view, 1, 0).querySelector('.ss-cell-content')!
+    expect(pill.innerHTML).toContain('<strong><em>hello</em></strong>')
+    // Redundant apply keeps the composition instead of mangling it.
+    host.applyInline('bold')
+    host.applyInline('italic')
+    expect(docValue(view)).toContain('hello')
+    expect(docValue(view)).not.toContain('*')
+    view.destroy()
+  })
+
+  it('applyInline combines code inside bold', () => {
+    const view = createEditor('| A |\n| --- |\n| hello |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()!
+    host.applyInline('code')
+    host.applyInline('bold')
+    expect(docValue(view)).toContain('**`hello`**')
+    expect(cell(view, 1, 0).querySelector('.ss-cell-content')!.innerHTML).toContain(
+      '<strong><code>hello</code></strong>',
+    )
+    view.destroy()
+  })
+
+  it('applyInline bold round-trips a mixed-marks cell through the streaming serializer', () => {
+    const view = createEditor('| A |\n| --- |\n| ***start** middle* |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()!
+    // The importer normalizes the slightly-off form into a uniform strong+em
+    // run, so the bold toggle flips it to italic-only…
+    expect(docValue(view)).toContain('***start middle***')
+    host.applyInline('bold')
+    expect(docValue(view)).toContain('*start middle*')
+    expect(cell(view, 1, 0).querySelector('.ss-cell-content')!.innerHTML).toContain(
+      '<em>start middle</em>',
+    )
+    // …and back on again, keeping the marks composed.
+    host.applyInline('bold')
+    expect(docValue(view)).toContain('***start middle***')
+    view.destroy()
+  })
+
   it('cell masked pill gets interactive actions', async () => {
     const envelope = await encryptField('s3cret', 'pw')
     const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)

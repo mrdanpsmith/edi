@@ -2,6 +2,7 @@ import { Plugin, PluginKey, TextSelection, type EditorState, type NodeSelection,
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, inlineMarkdownToHtml, listMaskedTokens } from '../spreadsheet-util'
+import { cellCarriesMark, setCellMark } from '../inline-md'
 import { solve, colToLetters, type CellSolution } from '../spreadsheet'
 import { copyText } from '../clipboard'
 import { blockNodeView } from '../blockview'
@@ -145,12 +146,14 @@ class TableNodeView implements NodeView, InlineCellHost {
         next[row]![col] = result
       }
     } else {
-      // Marker kinds apply uniformly to the whole selection: wrap unless every
-      // selected cell is already wrapped (then unwrap them all).
-      const wrap = !cells.every(({ row, col }) => isMarked(rawOf(row, col), kind))
+      // Marker kinds apply uniformly to the whole selection: add unless every
+      // selected cell already carries the mark fully (then remove them all).
+      // Marks are tracked on the parsed inline runs so effects compose
+      // (`**hello**` + italic → `***hello***`, not a mangles literal).
+      const on = !cells.every(({ row, col }) => cellCarriesMark(rawOf(row, col), kind))
       for (const { row, col } of cells) {
         const raw = rawOf(row, col)
-        const result = wrap ? wrapMark(raw, kind) : stripMark(raw, kind)
+        const result = setCellMark(raw, kind, on)
         if (result !== raw) changed = true
         next[row]![col] = result
       }
@@ -1219,28 +1222,6 @@ function setLink(text: string, url?: string): string {
     return link ? `[${link[1]}](${url})` : `[${text}](${url})`
   }
   return text.replace(/^\[(.+)\]\([^)]*\)$/, '$1')
-}
-
-function markerFor(kind: InlineCellKind): string {
-  return kind === 'bold' ? '**' : kind === 'italic' ? '*' : kind === 'strike' ? '~~' : '`'
-}
-
-/** True when the cell is fully wrapped in the marker for ``kind``. */
-function isMarked(text: string, kind: InlineCellKind): boolean {
-  const marker = markerFor(kind)
-  return text.startsWith(marker) && text.endsWith(marker) && text.length >= marker.length * 2
-}
-
-function wrapMark(text: string, kind: InlineCellKind): string {
-  if (isMarked(text, kind)) return text
-  const marker = markerFor(kind)
-  return `${marker}${text}${marker}`
-}
-
-function stripMark(text: string, kind: InlineCellKind): string {
-  if (!isMarked(text, kind)) return text
-  const marker = markerFor(kind)
-  return text.slice(marker.length, text.length - marker.length)
 }
 
 let inlineFocusListenersAttached = false

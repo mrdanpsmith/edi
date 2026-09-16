@@ -2,6 +2,7 @@
 // stores its whole grid as the attribute `value` (pipe-table markdown, mermaid
 // style); this module converts between that text and the 2-D string grid the
 // solver and the visual grid node-view work on.
+import { renderCellHtml } from './inline-md'
 
 const DELIMITER_CELL = /^:?-+:?$/
 
@@ -95,27 +96,7 @@ export function domTableToPipes(dom: HTMLTableElement): string {
   return tableToPipes(rows)
 }
 
-function escapeCellHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case '&':
-        return '&amp;'
-      case '<':
-        return '&lt;'
-      case '>':
-        return '&gt;'
-      case '"':
-        return '&quot;'
-      default:
-        return '&#39;'
-    }
-  })
-}
-
-type InlineKind = 'strong' | 'em' | 'code' | 'del' | 'link'
-
 const MASKED_TOKEN = /!masked\[([^\]\n]*)\](?:\{label="((?:[^"\\]|\\.)*)"\})?/g
-const MASKED_BULLETS = '••••••••••••'
 
 export interface MaskedToken {
   content: string
@@ -138,85 +119,16 @@ export function listMaskedTokens(text: string): MaskedToken[] {
 }
 
 /**
- * Replace ``!masked[cipher]{label="…"}`` tokens with a static masked pill so
- * cells can display encrypted fields. Returns fully HTML-escaped text (safe to
- * feed to `renderInline`): literal text is escaped, the pill markup is ours.
- * When ``indexed`` is set, each pill carries a `data-edi-masked` index matching
- * `listMaskedTokens(text)` so the grid can wire per-token interactions.
- */
-function renderMaskedSpans(raw: string, indexed: boolean): string {
-  let out = ''
-  let last = 0
-  let index = 0
-  for (const match of raw.matchAll(new RegExp(MASKED_TOKEN.source, 'g'))) {
-    out += escapeCellHtml(raw.slice(last, match.index))
-    const label = (match[2] ?? '').replace(/\\(.)/g, '$1').replace(/[\\`*_{}[\]]~/g, '')
-    const suffix = label ? ` (${escapeCellHtml(label)})` : ''
-    const attr = indexed ? ` data-edi-masked="${index}"` : ''
-    out += `<span class="masked-field"${attr}>${MASKED_BULLETS}${suffix}</span>`
-    last = match.index + match[0].length
-    index++
-  }
-  out += escapeCellHtml(raw.slice(last))
-  return out
-}
-
-/**
- * Tiny, safe renderer for the inline markdown a spreadsheet cell can hold:
- * `**b**`/`__b__` → strong, `*i*`/`_i_` → em, `` `c` `` → code, `~~d~~` → del,
- * `[t](u)` → link, `!masked[…]` → a masked pill. Everything else (including
- * sub/sup/highlight markers) is HTML-escaped text. Input is never trusted as
- * HTML. When ``opts.indexedMasked`` is set, mask pills get a `data-edi-masked`
+ * Tiny, safe renderer for the inline markdown a spreadsheet cell can hold.
+ * Cells are parsed with the same micromark pipeline as the document editor, so
+ * every CommonMark construct (including combined marks like `***bold***` or
+ * `` **bold `code`** ``) renders correctly; everything else is HTML-escaped
+ * text. When ``opts.indexedMasked`` is set, mask pills get a `data-edi-masked`
  * index so the grid can attach interactivity.
  */
 export function inlineMarkdownToHtml(
   text: string,
   opts?: { indexedMasked?: boolean },
 ): string {
-  return renderInline(renderMaskedSpans(text, opts?.indexedMasked ?? false))
-}
-
-function renderInline(escaped: string): string {
-  interface Candidate {
-    index: number
-    match: RegExpExecArray
-    kind: InlineKind
-  }
-  const patterns: Array<{ re: RegExp; kind: InlineKind }> = [
-    { re: /\*\*([^*]+?)\*\*/, kind: 'strong' },
-    { re: /__([^_]+?)__/, kind: 'strong' },
-    { re: /(?<!\*)\*([^*]+)\*(?!\*)/, kind: 'em' },
-    { re: /(?<!_)_([^_]+)_(?!_)/, kind: 'em' },
-    { re: /~~([^~]+?)~~/, kind: 'del' },
-    { re: /`([^`]+)`/, kind: 'code' },
-    { re: /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*"?)?\)/, kind: 'link' },
-  ]
-  let out = ''
-  let rest = escaped
-  while (rest.length > 0) {
-    let best: Candidate | null = null
-    for (const { re, kind } of patterns) {
-      const match = re.exec(rest)
-      if (match && (!best || match.index < best.index)) {
-        best = { index: match.index, match, kind }
-      }
-    }
-    if (!best) {
-      out += rest
-      break
-    }
-    out += rest.slice(0, best.index)
-    const { match, kind } = best
-    if (kind === 'link') {
-      const label = renderInline(match[1]!)
-      out += `<a href="${match[2]!}">${label}</a>`
-    } else {
-      // Code spans are literal — never recurse into their content.
-      const inner = kind === 'code' ? match[1]! : renderInline(match[1]!)
-      const tag = kind === 'strong' ? 'strong' : kind === 'em' ? 'em' : kind === 'del' ? 'del' : 'code'
-      out += `<${tag}>${inner}</${tag}>`
-    }
-    rest = rest.slice(best.index + match[0].length)
-  }
-  return out
+  return renderCellHtml(text, opts?.indexedMasked ?? false)
 }

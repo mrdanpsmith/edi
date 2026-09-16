@@ -166,6 +166,23 @@ describe('serializeDocToHtml', () => {
     expect(links).toBeGreaterThanOrEqual(1)
   })
 
+  it('renders combined inline marks inside table cells', () => {
+    const doc = schema.node('doc', {}, [
+      schema.node('table', {
+        value:
+          '| A |\n| --- |\n' +
+          '| ***bold italic*** |\n' +
+          '| **bold `code`** |\n' +
+          '| ~~strike **bold**~~ |',
+      }),
+    ])
+    const html = serializeDocToHtml(doc)
+    expect(html).toContain('<strong><em>bold italic</em></strong>')
+    expect(html).toContain('<strong><code>code</code></strong>')
+    expect(html).toContain('<del>strike </del><strong><del>bold</del></strong>')
+    expect(html).not.toContain('<em>bold <strong>') // no mangled delimiter leaks
+  })
+
   it('renders inline formatting in table header cells', () => {
     const doc = schema.node('doc', {}, [
       schema.node('table', { value: '| **Q1** | ~~2026~~ |\n| --- | --- |\n| 1 | 2 |' }),
