@@ -1,4 +1,4 @@
-import { Plugin, PluginKey } from 'prosemirror-state'
+import { Plugin, PluginKey, TextSelection, type EditorState, type NodeSelection, type Transaction } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, inlineMarkdownToHtml, listMaskedTokens } from '../spreadsheet-util'
@@ -78,6 +78,15 @@ class TableNodeView implements NodeView, InlineCellHost {
       }
     }
 
+    this.dom.addEventListener('mousedown', (event) => {
+      const target = event.target as HTMLElement
+      if (target.closest('.ss-edit-input') || target.closest('.ss-fx-input')) {
+        event.stopPropagation()
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+    })
     this.buildTools()
     this.buildFxBar()
     this.buildGrid()
@@ -1342,8 +1351,106 @@ class TablePlainView implements NodeView {
   }
 }
 
-export const tableNodeViewPlugin = new Plugin({
-  key: new PluginKey('EDI_TABLE_NODEVIEW'),
+export interface TableModeState {
+  spreadPos: number | null
+}
+
+const TABLE_MODE_KEY = new PluginKey<TableModeState>('EDI_TABLE_NODEVIEW')
+
+function currentSpreadPos(state: EditorState): number | null {
+  return TABLE_MODE_KEY.getState(state)?.spreadPos ?? null
+}
+
+function setTableModeAttr(tr: Transaction, pos: number, plain: boolean): void {
+  const node = tr.doc.nodeAt(pos)
+  if (!node || node.type.name !== TABLE_TYPE) return
+  if (node.attrs._plain === plain) return
+  tr.setNodeMarkup(pos, undefined, { ...node.attrs, _plain: plain })
+}
+
+/**
+ * Switch a table into spreadsheet mode. Like block source mode, only one
+ * spreadsheet is open per document: the previously open one (if any) drops
+ * back to the plain view. The table node is also deselected so that typing
+ * can never replace the whole table while it is being edited.
+ */
+function buildEnterSpreadsheetTr(tr: Transaction, state: EditorState, pos: number): void {
+  const current = currentSpreadPos(state)
+  if (current !== null && current !== pos) {
+    setTableModeAttr(tr, tr.mapping.map(current), true)
+  }
+  setTableModeAttr(tr, pos, false)
+  const sel = tr.selection as NodeSelection | null
+  if (sel && sel.node && sel.node.type.name === TABLE_TYPE) {
+    tr.setSelection(TextSelection.create(tr.doc, pos))
+  }
+  tr.setMeta(TABLE_MODE_KEY, { spreadPos: pos })
+}
+
+function focusSpreadsheetGrid(view: EditorView): void {
+  requestAnimationFrame(() => {
+    const grid = view.dom.querySelector<HTMLElement>('.ss-grid')
+    grid?.focus()
+  })
+}
+
+export function enterSpreadsheetMode(view: EditorView, pos: number | undefined): void {
+  if (pos === undefined) return
+  const node = view.state.doc.nodeAt(pos)
+  if (!node || node.type.name !== TABLE_TYPE) return
+  const tr = view.state.tr
+  buildEnterSpreadsheetTr(tr, view.state, pos)
+  view.dispatch(tr)
+  focusSpreadsheetGrid(view)
+}
+
+export function enterPlainMode(view: EditorView, pos: number | undefined): void {
+  if (pos === undefined) return
+  const node = view.state.doc.nodeAt(pos)
+  if (!node || node.type.name !== TABLE_TYPE) return
+  const tr = view.state.tr
+  setTableModeAttr(tr, pos, true)
+  tr.setSelection(TextSelection.create(tr.doc, pos + node.nodeSize))
+  const current = currentSpreadPos(view.state)
+  tr.setMeta(TABLE_MODE_KEY, { spreadPos: current === pos ? null : current })
+  view.dispatch(tr)
+}
+
+export const tableNodeViewPlugin = new Plugin<TableModeState>({
+  key: TABLE_MODE_KEY,
+  state: {
+    init: () => ({ spreadPos: null }),
+    apply(tr: Transaction, prev: TableModeState): TableModeState {
+      const meta = tr.getMeta(TABLE_MODE_KEY)
+      if (meta !== undefined) return meta
+      if (prev.spreadPos !== null && tr.docChanged) {
+        if (prev.spreadPos >= tr.doc.content.size) return { spreadPos: null }
+        const node = tr.doc.nodeAt(prev.spreadPos)
+        if (!node || node.type.name !== TABLE_TYPE) return { spreadPos: null }
+        if (node.attrs._plain !== false) return { spreadPos: null }
+      }
+      return prev
+    },
+  },
+  view(view: EditorView) {
+    const onDblClick = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null
+      if (!target || !view.dom.isConnected) return
+      if (target.closest?.('.spreadsheet')) return
+      const spreadPos = currentSpreadPos(view.state)
+      if (spreadPos === null) return
+      const tr = view.state.tr
+      const node = tr.doc.nodeAt(spreadPos)
+      setTableModeAttr(tr, spreadPos, true)
+      if (node && node.type.name === TABLE_TYPE) {
+        tr.setSelection(TextSelection.create(tr.doc, spreadPos + node.nodeSize))
+      }
+      tr.setMeta(TABLE_MODE_KEY, { spreadPos: null })
+      view.dispatch(tr)
+    }
+    document.addEventListener('dblclick', onDblClick)
+    return { destroy: () => document.removeEventListener('dblclick', onDblClick) }
+  },
   props: {
     nodeViews: {
       [TABLE_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
@@ -1357,41 +1464,24 @@ export const tableNodeViewPlugin = new Plugin({
   },
 })
 
-/**
- * Switch a table into (or out of) spreadsheet mode. The mode is a transient
- * view attribute like ``_source``: it is not persisted to markdown, so a
- * reload renders every table in the plain view again.
- */
-function setTableMode(view: EditorView, pos: number | undefined, plain: boolean): void {
-  if (pos === undefined) return
-  const node = view.state.doc.nodeAt(pos)
-  if (!node || node.type.name !== TABLE_TYPE) return
-  const tr = view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, _plain: plain })
-  view.dispatch(tr)
-}
-
-export function enterSpreadsheetMode(view: EditorView, pos: number | undefined): void {
-  setTableMode(view, pos, false)
-}
-
-export function enterPlainMode(view: EditorView, pos: number | undefined): void {
-  setTableMode(view, pos, true)
-}
-
 export function insertTable(view: EditorView, cols: number, rows: number): boolean {
   const grid: string[][] = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ''))
   const node = view.state.schema.nodes.table.create({ value: tableToPipes(grid) })
   const { $from } = view.state.selection
+  const tr = view.state.tr
+  let tablePos: number
   if ($from.parent.isTextblock && $from.parent.content.size === 0) {
-    view.dispatch(
-      view.state.tr.replaceWith($from.before($from.depth), $from.after($from.depth), node),
-    )
-    return true
-  }
-  if ($from.depth > 0) {
-    view.dispatch(view.state.tr.insert($from.after(1), node))
+    tablePos = $from.before($from.depth)
+    tr.replaceWith($from.before($from.depth), $from.after($from.depth), node)
+  } else if ($from.depth > 0) {
+    tablePos = $from.after(1)
+    tr.insert($from.after(1), node)
   } else {
-    view.dispatch(view.state.tr.insert($from.pos, node))
+    tablePos = $from.pos
+    tr.insert($from.pos, node)
   }
+  buildEnterSpreadsheetTr(tr, view.state, tablePos)
+  view.dispatch(tr)
+  focusSpreadsheetGrid(view)
   return true
 }

@@ -812,6 +812,22 @@ body {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
+.spreadsheet .ss-tools,
+.spreadsheet .ss-fxbar,
+.spreadsheet .ss-namebox,
+.spreadsheet .ss-status,
+.spreadsheet .ss-grid thead,
+.spreadsheet .ss-grid tbody th,
+.spreadsheet .ss-plain-tools,
+.block-handle {
+  user-select: none;
+}
+
+.spreadsheet .ss-fx-input,
+.spreadsheet .ss-edit-input {
+  user-select: text;
+}
+
 /* Cell content is wrapped so column auto-sizes measure the real content
    width (max-content) instead of the column's own fixed width. */
 .spreadsheet .ss-grid .ss-cell-content {

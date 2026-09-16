@@ -2,12 +2,13 @@ import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Plugin } from 'prosemirror-state'
+import { NodeSelection } from 'prosemirror-state'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { parsePipes } from './spreadsheet-util'
 import { blockPlugin, enterSourceMode, exitSourceMode } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
-import { tableNodeViewPlugin, insertTable } from './node/table'
+import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode } from './node/table'
 import { getActiveCellHost } from './inline-format'
 import { encryptField } from './crypto'
 
@@ -308,6 +309,63 @@ describe('TableNodeView grid', () => {
     expect(proseToMarkdown(view.state.doc)).toContain(
       '|  |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |',
     )
+    view.destroy()
+  })
+
+  it('opens a newly inserted table directly in spreadsheet mode', () => {
+    const view = createEditor('')
+    insertTable(view, 3, 2)
+    expect(view.state.doc.firstChild?.attrs._plain).toBe(false)
+    expect(view.state.selection).not.toBeInstanceOf(NodeSelection)
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    expect(view.dom.querySelector('.ss-grid')).toBeTruthy()
+    view.destroy()
+  })
+
+  it('keeps a single spreadsheet open at a time, like block source mode', () => {
+    const view = createPlainTable('| A |\n| --- |\n| 1 |\n\n| B |\n| --- |\n| 2 |')
+    const handles = Array.from(view.dom.querySelectorAll('.block-handle'))
+    expect(handles.length).toBe(2)
+    enterSpreadsheetMode(view, Number(handles[0]!.getAttribute('data-block-pos')))
+    expect(view.dom.querySelectorAll('.spreadsheet').length).toBe(1)
+    enterSpreadsheetMode(view, Number(handles[1]!.getAttribute('data-block-pos')))
+    expect(view.dom.querySelectorAll('.spreadsheet').length).toBe(1)
+    expect(view.state.doc.child(0).attrs._plain).toBe(true)
+    expect(view.state.doc.child(1).attrs._plain).toBe(false)
+    view.destroy()
+  })
+
+  it('double-clicking outside the spreadsheet closes edit mode', () => {
+    const view = createPlainTable('| A |\n| --- |\n| 1 |')
+    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
+    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    view.dom.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    view.destroy()
+  })
+
+  it('double-clicking outside the editor closes edit mode when the table is the only node', () => {
+    const view = createPlainTable('| A |\n| --- |\n| 1 |')
+    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
+    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    document.body.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    view.destroy()
+  })
+
+  it('spreadsheet mode deselects the table so typing cannot replace it', () => {
+    const view = createPlainTable('| A |\n| --- |\n| 1 |')
+    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
+    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.state.selection).not.toBeInstanceOf(NodeSelection)
+    const grid = view.dom.querySelector('.ss-grid') as HTMLElement
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }))
+    expect(view.state.doc.childCount).toBe(1)
+    expect(view.state.doc.firstChild?.type.name).toBe('table')
     view.destroy()
   })
 
