@@ -3,7 +3,7 @@ import type { EditorView, NodeView } from 'prosemirror-view'
 import type { Transaction } from 'prosemirror-state'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
-import { BLOCK_PLUGIN_KEY, getSourceBlockState } from './blockplugin'
+import { BLOCK_PLUGIN_KEY, getSourceBlockState, placeCaretInText } from './blockplugin'
 import { markdownToProse, serializeBlock } from './markdown'
 
 function createHandleDOM(pos: number): HTMLElement {
@@ -45,8 +45,11 @@ function buildSourceCommitTransaction(
   newDoc.forEach((child) => nodes.push(child))
   if (nodes.length > 0) {
     tr.replaceWith(pos, pos + nodeSize, nodes)
+    const insertedSize = nodes.reduce((sum, n) => sum + n.nodeSize, 0)
+    placeCaretInText(tr, pos + insertedSize - 1, pos + 1, pos + insertedSize)
   } else {
     tr.delete(pos, pos + nodeSize)
+    placeCaretInText(tr, pos, 0, tr.doc.content.size)
   }
   tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
   return tr

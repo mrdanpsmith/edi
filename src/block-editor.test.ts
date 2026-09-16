@@ -271,6 +271,59 @@ describe('source mode round-trip', () => {
     view.destroy()
   })
 
+  it('entering source mode on a block above a table does not select the table', () => {
+    const view = createEditor('Alpha\n\n| A | B |\n| --- | --- |\n| 1 | 2 |')
+    view.dispatch(enterSourceMode(view.state, 0))
+
+    // The caret was inside the block being toggled; the remap of the block's
+    // replaceWith must not snap forward onto the adjacent table (which turned
+    // the selection into a bogus NodeSelection with a blue outline).
+    expect(view.state.selection).toBeInstanceOf(TextSelection)
+    expect(view.state.selection.from).toBeGreaterThan(0)
+
+    let tablePos = -1
+    view.state.doc.forEach((n, offset) => {
+      if (n.type.name === 'table') tablePos = offset
+    })
+    expect(view.state.selection.from).toBeLessThan(tablePos)
+    expect((view.nodeDOM(tablePos) as Element | null)?.classList.contains('ProseMirror-selectednode')).toBe(false)
+    view.destroy()
+  })
+
+  it('exiting source mode on a block above a table does not select the table', () => {
+    const view = createEditor('Alpha\n\n| A | B |\n| --- | --- |\n| 1 | 2 |')
+    view.dispatch(enterSourceMode(view.state, 0))
+    view.dispatch(exitSourceMode(view.state))
+
+    expect(view.state.selection).toBeInstanceOf(TextSelection)
+
+    let tablePos = -1
+    view.state.doc.forEach((n, offset) => {
+      if (n.type.name === 'table') tablePos = offset
+    })
+    expect((view.nodeDOM(tablePos) as Element | null)?.classList.contains('ProseMirror-selectednode')).toBe(false)
+    view.destroy()
+  })
+
+  it('switching source mode between blocks above a table does not select the table', () => {
+    const view = createEditor('Alpha\n\nBeta\n\n| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const positions = allBlockPositions(view)
+    expect(positions[1]).toBeGreaterThan(0)
+
+    view.dispatch(enterSourceMode(view.state, positions[0]))
+    view.dispatch(toggleSourceMode(view.state, positions[1]))
+
+    expect(view.state.selection).toBeInstanceOf(TextSelection)
+    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(positions[1])
+
+    let tablePos = -1
+    view.state.doc.forEach((n, offset) => {
+      if (n.type.name === 'table') tablePos = offset
+    })
+    expect((view.nodeDOM(tablePos) as Element | null)?.classList.contains('ProseMirror-selectednode')).toBe(false)
+    view.destroy()
+  })
+
   it('edited source content is applied on exit', () => {
     const view = createEditor('Original text')
     const pos = firstBlockPos(view)
