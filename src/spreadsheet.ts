@@ -1,3 +1,5 @@
+import { parseCellSegments } from './inline-md'
+
 export const SPREADSHEET_PREFIX = '='
 
 /** A cell whose trimmed text starts with `=` is a formula — except a leading
@@ -546,6 +548,22 @@ function toNumber(value: CellValue): number | null {
   return null
 }
 
+/**
+ * Recover the plain text of a cell when its whole content is one inline run
+ * wrapped in minor formatting marks (`**100**`, `*100*`, `` `100` ``, `==x==`,
+ * `~5~`, `^6^`, and nested combos like `***7***`). The text is returned without
+ * its marks, so a styled number still reads as a number for formula math. Mixed
+ * content, links, masked pills, and escaped markers fail the single-run check
+ * and return the raw string, staying literal.
+ */
+function unwrapInlineMarks(raw: string): string {
+  const segments = parseCellSegments(raw)
+  if (segments.length === 1 && !segments[0]!.masked && segments[0]!.href === null) {
+    return segments[0]!.text
+  }
+  return raw
+}
+
 function parseCellValue(raw: string): CellValue {
   const cleaned = raw.replace(/,/g, '').trim()
   if (!cleaned) {
@@ -553,6 +571,10 @@ function parseCellValue(raw: string): CellValue {
   }
   if (NUMBER_RE.test(cleaned)) {
     return num(Number(cleaned))
+  }
+  const unwrapped = unwrapInlineMarks(raw).replace(/,/g, '').trim()
+  if (unwrapped !== cleaned && NUMBER_RE.test(unwrapped)) {
+    return num(Number(unwrapped))
   }
   return text()
 }

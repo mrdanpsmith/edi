@@ -143,6 +143,38 @@ describe('solve', () => {
     expect(solution.rows).toBe(4)
     expect(solution.cols).toBe(2)
   })
+
+  it('math works on bold, italic, and strike-wrapped numbers', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| **10** | *20* |\n| ~~5~~ | 6 |\n| =SUM(A2:B3) | |',
+    )
+    expect(out[3]![0]).toBe('41')
+  })
+
+  it('aggregates code, highlight, sub, and sup-wrapped numbers', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| `10` | ==20== |\n| ~5~ | ^6^ |\n| =SUM(A2:B3) |',
+    )
+    expect(out[3]![0]).toBe('41')
+  })
+
+  it('collapses nested bold+italic wraps to a number', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| ***10*** | =A2*2 |')
+    expect(out[1]![1]).toBe('20')
+  })
+
+  it('uses a formatted number in a direct arithmetic reference', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| **10** | =A2*3 |')
+    expect(out[1]![1]).toBe('30')
+  })
+
+  it('does not treat mixed, linked, or escaped content as numbers', () => {
+    const textOut = cells('| A | B |\n| --- | --- |\n| **1** and 2 | \\*3\\* |\n| =SUM(A2:B2) |')
+    expect(textOut[2]![0]).toBe('0')
+    expect(
+      kinds('| A | B |\n| --- | --- |\n| [10](http://x.example) | =A2+1 |')[1]![1],
+    ).toBe('error')
+  })
 })
 
 describe('cell reference helpers', () => {

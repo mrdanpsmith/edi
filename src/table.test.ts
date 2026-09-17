@@ -870,6 +870,64 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('Mod+b / Mod+i keyboard shortcuts toggle bold and italic in the grid', () => {
+    const view = createEditor('| A |\n| --- |\n| hello |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    gridkey(view, 'b', true)
+    expect(docValue(view)).toContain('**hello**')
+    gridkey(view, 'i', true)
+    expect(docValue(view)).toContain('***hello***')
+    gridkey(view, 'b', true)
+    gridkey(view, 'i', true)
+    expect(docValue(view)).toContain('hello')
+    expect(docValue(view)).not.toContain('*')
+    view.destroy()
+  })
+
+  it('Mod+b / Mod+i keyboard shortcuts work across a grid selection', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    selectRegion(view, 1, 0, 2, 1)
+    gridkey(view, 'b', true)
+    expect(docValue(view)).toContain('**1**')
+    expect(docValue(view)).toContain('**2**')
+    expect(docValue(view)).toContain('**3**')
+    expect(docValue(view)).toContain('**4**')
+    view.destroy()
+  })
+
+  it('Mod+b while editing a cell toggles bold on the edited value', () => {
+    const view = createEditor('| A |\n| --- |\n| hello |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const editInput = view.dom.querySelector('.ss-edit-input') as HTMLInputElement
+    expect(editInput).toBeTruthy()
+    editInput.value = 'world'
+    editInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }),
+    )
+    expect(docValue(view)).toContain('**world**')
+    view.destroy()
+  })
+
+  it('Mod+b in the fx bar wraps the active cell in bold', () => {
+    const view = createEditor('| A |\n| --- |\n| hello |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    fx.focus()
+    fx.value = 'world'
+    fx.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))
+    expect(docValue(view)).toContain('**world**')
+    view.destroy()
+  })
+
   it('cell masked pill gets interactive actions', async () => {
     const envelope = await encryptField('s3cret', 'pw')
     const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)

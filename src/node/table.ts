@@ -208,6 +208,12 @@ class TableNodeView implements NodeView, InlineCellHost {
       }
     }
     if (!changed) return false
+    // If the fx bar is the live edit source, sync it to the new raw so the
+    // blur commit triggered by the `grid.focus()` below is a no-op — otherwise
+    // it would write the stale unformatted value back over the cell.
+    if (this.active && this.fxInput && document.activeElement === this.fxInput) {
+      this.fxInput.value = next[this.active.row]?.[this.active.col] ?? ''
+    }
     if (this.editing) this.teardownEdit()
     const anchor = this.anchor ?? cells[0]!
     const active = this.active ?? cells[cells.length - 1]!
@@ -1339,6 +1345,18 @@ class TableNodeView implements NodeView, InlineCellHost {
       return
     }
 
+    // ProseMirror never sees keydowns from inside this node view (`stopEvent`),
+    // so its Mod-b/Mod-i formatting keymap can't fire here. Route bold/italic
+    // through the same whole-cell toggle the toolbar buttons use. This runs
+    // before the editing guard so it also applies to the in-cell edit overlay
+    // (its keydown bubbles up to the grid), matching toolbar behavior there.
+    if (mod && (key.toLowerCase() === 'b' || key.toLowerCase() === 'i')) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.applyInline(key.toLowerCase() === 'b' ? 'bold' : 'italic')
+      return
+    }
+
     if (this.editing) return
 
     // ProseMirror ignores events from inside a node view (`stopEvent` returns
@@ -1691,6 +1709,13 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private onFxInputKeydown(event: KeyboardEvent): void {
+    const mod = event.metaKey || event.ctrlKey
+    if (mod && (event.key === 'b' || event.key === 'i')) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.applyInline(event.key === 'b' ? 'bold' : 'italic')
+      return
+    }
     if (event.key === 'Enter') {
       event.preventDefault()
       event.stopPropagation()
