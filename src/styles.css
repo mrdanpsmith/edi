@@ -853,6 +853,14 @@ body {
   cursor: pointer;
 }
 
+/* The row/column + lands in the same corner as the block handle when the
+   hovered boundary crosses the block's vertical middle; yield the handle for
+   that moment so it cannot steal the insert click. */
+.spreadsheet.ss-guide-near-handle > .block-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .spreadsheet .ss-grid td {
   position: relative;
   overflow: hidden;

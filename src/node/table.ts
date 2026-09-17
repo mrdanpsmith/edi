@@ -592,13 +592,30 @@ class TableNodeView implements NodeView, InlineCellHost {
         : atEnd
           ? 'Append row at the end'
           : `Insert row above ${index + 1}`
+    // The button can land over the block handle (both sit in the block's left
+    // gutter near its vertical middle). Yield the handle then so it cannot
+    // steal the insert click; measuring the positioned button forces layout.
+    const handle = this.dom.querySelector('.block-handle')
+    if (handle) {
+      const hr = handle.getBoundingClientRect()
+      const pr = plus.getBoundingClientRect()
+      const overlaps =
+        hr.width > 0 &&
+        pr.left < hr.right &&
+        pr.right > hr.left &&
+        pr.top < hr.bottom &&
+        pr.bottom > hr.top
+      this.dom.classList.toggle('ss-guide-near-handle', overlaps)
+    } else {
+      this.dom.classList.remove('ss-guide-near-handle')
+    }
   }
 
   private hideInsertGuide(): void {
     if (!this.insertGuide) return
     this.insertGuide.hidden = true
     this.insertGuideTarget = null
-    this.dom.classList.remove('ss-inserting-col', 'ss-inserting-row')
+    this.dom.classList.remove('ss-inserting-col', 'ss-inserting-row', 'ss-guide-near-handle')
   }
 
   /** Fit each column to its content. Widths are never persisted to markdown,

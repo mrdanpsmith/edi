@@ -1456,6 +1456,20 @@ describe('TableNodeView insert row/column', () => {
     return view.dom.querySelector('.spreadsheet') as HTMLElement
   }
 
+  it('yields the block handle only while the insert button overlaps it', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const spreadsheet = spreadsheetDom(view)
+    const handle = spreadsheet.querySelector('.block-handle') as HTMLElement
+    expect(handle).not.toBeNull()
+    stubRect(handle, -24, -4, 40, 64)
+    stubRect(insertPlus(view), -16, 0, 44, 60)
+    hoverInsert(colHeader(view, 1))
+    expect(spreadsheet.classList.contains('ss-guide-near-handle')).toBe(true)
+    hoverInsert(cell(view, 1, 0), 1000, 1000)
+    expect(spreadsheet.classList.contains('ss-guide-near-handle')).toBe(false)
+    view.destroy()
+  })
+
   it('shows the guide on a column boundary and inserts on click', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     expect(guide(view).hidden).toBe(true)
