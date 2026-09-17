@@ -130,6 +130,97 @@ describe('table round-trip', () => {
   })
 })
 
+describe('resolved tables', () => {
+  // Mark every top-level table `_resolved` and serialize, mirroring what a user
+  // toggling "Resolve formulas?" on a document would save.
+  function resolveTables(markdown: string): string {
+    const doc = markdownToProse(markdown, schema)
+    const children: import('prosemirror-model').Node[] = []
+    doc.forEach((c) => children.push(c))
+    const resolved = children.map((c) =>
+      c.type.name === 'table'
+        ? schema.node('table', { value: c.attrs.value, _resolved: true })
+        : c,
+    )
+    return proseToMarkdown(schema.node('doc', {}, resolved))
+  }
+
+  it('serializes a resolved table with a carrier comment', () => {
+    const out = resolveTables('| A | B |\n| --- | --- |\n| 10 | =A2*2 |')
+    expect(out).toBe(
+      '| A | B |\n| --- | --- |\n| 10 | 20 |\n\n<!-- edi-fml {"B2":"=A2*2"} -->\n',
+    )
+  })
+
+  it('round-trips a resolved table back into editable formulas', () => {
+    const baked = resolveTables('| A | B |\n| --- | --- |\n| 10 | =A2*2 |')
+    const doc = markdownToProse(baked, schema)
+    const table = doc.firstChild!
+    expect(table.type.name).toBe('table')
+    expect(table.attrs._resolved).toBe(true)
+    expect(table.attrs.value).toBe('| A | B |\n| --- | --- |\n| 10 | =A2*2 |')
+    expect(proseToMarkdown(doc)).toBe(baked)
+  })
+
+  it('leaves a dynamic table byte-identical (no carrier comment)', () => {
+    const markdown = '| A | B |\n| --- | --- |\n| 10 | =A2*2 |'
+    expect(serialize(markdown)).toBe(markdown + '\n')
+  })
+
+  it('resolves two tables independently without crossing comments', () => {
+    const out = resolveTables('first\n\n| A |\n| --- |\n| =1+1 |\n\nsecond\n\n| B |\n| --- |\n| =2*3 |')
+    const doc = markdownToProse(out, schema)
+    expect(doc.childCount).toBe(4)
+    const tables: import('prosemirror-model').Node[] = []
+    doc.forEach((n) => {
+      if (n.type.name === 'table') tables.push(n)
+    })
+    expect(tables.length).toBe(2)
+    for (const t of tables) expect(t.attrs._resolved).toBe(true)
+    expect(tables[0]!.attrs.value).toBe('| A |\n| --- |\n| =1+1 |')
+    expect(tables[1]!.attrs.value).toBe('| B |\n| --- |\n| =2*3 |')
+  })
+
+  it('keeps alignment on the resolved round trip', () => {
+    const out = resolveTables('| A | B |\n| :--- | ---: |\n| 1 | =A2*2 |')
+    expect(out).toBe(
+      '| A | B |\n| :--- | ---: |\n| 1 | 2 |\n\n<!-- edi-fml {"B2":"=A2*2"} -->\n',
+    )
+    const doc = markdownToProse(out, schema)
+    expect(doc.firstChild!.attrs.value).toBe('| A | B |\n| :--- | ---: |\n| 1 | =A2*2 |')
+  })
+
+  it('resolves a table nested inside a blockquote', () => {
+    const table = schema.node('table', {
+      value: '| A |\n| --- |\n| =1+1 |',
+      _resolved: true,
+    })
+    const md = proseToMarkdown(schema.node('doc', {}, [
+      schema.node('blockquote', {}, [table]),
+    ]))
+    expect(md).toBe(
+      '> | A |\n> | --- |\n> | 2 |\n>\n> <!-- edi-fml {"A2":"=1+1"} -->\n',
+    )
+    const doc = markdownToProse(md, schema)
+    const quote = doc.firstChild!
+    expect(quote.type.name).toBe('blockquote')
+    const roundTripped = quote.firstChild!
+    expect(roundTripped.type.name).toBe('table')
+    expect(roundTripped.attrs._resolved).toBe(true)
+    expect(roundTripped.attrs.value).toBe('| A |\n| --- |\n| =1+1 |')
+    expect(proseToMarkdown(doc)).toBe(md)
+  })
+
+  it('leaves a foreign comment after a table as a literal paragraph', () => {
+    const doc = markdownToProse('| A |\n| --- |\n| 1 |\n\n<!-- hello -->', schema)
+    expect(doc.firstChild!.type.name).toBe('table')
+    expect(doc.firstChild!.attrs._resolved).toBe(false)
+    const last = doc.content.child(doc.childCount - 1)
+    expect(last.type.name).toBe('paragraph')
+    expect(last.textContent).toBe('<!-- hello -->')
+  })
+})
+
 describe('further parse paths', () => {
   it('records a non-default list start value', () => {
     const doc = markdownToProse('2. b\n3. c', schema)

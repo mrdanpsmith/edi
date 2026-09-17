@@ -1705,4 +1705,41 @@ describe('TableNodeView formula point mode', () => {
     expect(input.value).toBe('=B3:C3')
     view.destroy()
   })
+
+  it('resolves formulas through the toolbar checkbox', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 10 | =A2*2 |')
+    const input = view.dom.querySelector('.ss-tool-check input') as HTMLInputElement
+    expect(input).toBeTruthy()
+    expect(input.checked).toBe(false)
+
+    input.checked = true
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+
+    const node = view.state.doc.child(0)
+    expect(node.attrs._resolved).toBe(true)
+    const serialized = proseToMarkdown(view.state.doc)
+    expect(serialized).toBe(
+      '| A | B |\n| --- | --- |\n| 10 | 20 |\n\n<!-- edi-fml {"B2":"=A2*2"} -->\n',
+    )
+
+    const refreshed = view.dom.querySelector('.ss-tool-check input') as HTMLInputElement
+    expect(refreshed.checked).toBe(true)
+    view.destroy()
+  })
+
+  it('untoggles resolution back to formulas', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 10 | =A2*2 |')
+    const input = view.dom.querySelector('.ss-tool-check input') as HTMLInputElement
+    input.checked = true
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    const refreshed = view.dom.querySelector('.ss-tool-check input') as HTMLInputElement
+    refreshed.checked = false
+    refreshed.dispatchEvent(new Event('change', { bubbles: true }))
+    const node = view.state.doc.child(0)
+    expect(node.attrs._resolved).toBe(false)
+    expect(proseToMarkdown(view.state.doc)).toBe(
+      '| A | B |\n| --- | --- |\n| 10 | =A2*2 |\n',
+    )
+    view.destroy()
+  })
 })

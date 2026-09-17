@@ -225,6 +225,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   update(node: ProseNode): boolean {
     if (node.attrs._source !== this.node.attrs._source) return false
     if (node.attrs._plain !== this.node.attrs._plain) return false
+    if (node.attrs._resolved !== this.node.attrs._resolved) return false
     this.node = node
     const value = String(node.attrs.value ?? '')
     const rows = parsePipes(value)
@@ -311,6 +312,22 @@ class TableNodeView implements NodeView, InlineCellHost {
       this.commitFxEdit()
       enterPlainMode(this.view, this.getPos())
     })
+    const resolveLabel = document.createElement('label')
+    resolveLabel.className = 'ss-tool ss-tool-check'
+    resolveLabel.title =
+      'Save this table’s computed values to markdown instead of its formulas (the formulas stay in a comment and are restored when the file is opened)'
+    const resolveInput = document.createElement('input')
+    resolveInput.type = 'checkbox'
+    resolveInput.checked = Boolean(this.node.attrs._resolved)
+    resolveInput.addEventListener('change', () => {
+      this.commitFxEdit()
+      this.setResolved(resolveInput.checked)
+    })
+    const resolveText = document.createElement('span')
+    resolveText.textContent = 'Resolve formulas?'
+    resolveLabel.appendChild(resolveInput)
+    resolveLabel.appendChild(resolveText)
+    tools.appendChild(resolveLabel)
     tools.appendChild(viewBtn)
     this.dom.appendChild(tools)
   }
@@ -1755,6 +1772,20 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   // --- Structural ops ---
+
+  private setResolved(resolved: boolean): void {
+    const pos = this.getPos()
+    if (pos === undefined) return
+    const node = this.view.state.doc.nodeAt(pos)
+    if (!node || node.type.name !== TABLE_TYPE || node.attrs._resolved === resolved) {
+      return
+    }
+    const tr = this.view.state.tr.setNodeMarkup(pos, undefined, {
+      ...node.attrs,
+      _resolved: resolved,
+    })
+    this.view.dispatch(tr)
+  }
 
   private commitRows(nextRows: string[][], anchor: CellRef, active: CellRef): void {
     const pos = this.getPos()

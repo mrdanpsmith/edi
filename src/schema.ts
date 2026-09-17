@@ -130,7 +130,7 @@ const nodes: SchemaSpec['nodes'] = {
     marks: '',
     code: true,
     atom: true,
-    attrs: { value: { default: '' }, _source: { default: false }, _plain: { default: true } },
+    attrs: { value: { default: '' }, _source: { default: false }, _plain: { default: true }, _resolved: { default: false } },
     parseDOM: [
       {
         tag: 'table',

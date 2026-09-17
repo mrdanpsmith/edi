@@ -13,6 +13,10 @@ import {
   inlineMarkdownToHtml,
   parsePipes,
   tableToPipes,
+  resolveTableValue,
+  hydrateResolvedTable,
+  formatTableCarrier,
+  parseTableCarrier,
 } from './spreadsheet-util'
 
 function renderTable(markdown: string): string {
@@ -422,5 +426,76 @@ describe('computeSpreadsheet', () => {
     const html = compute('| A | B |\n| --- | --- |\n| 1 | 2 |')
     expect(html).toContain('<td>1</td>')
     expect(html).toContain('<td>2</td>')
+  })
+})
+
+describe('resolved table markdown helpers', () => {
+  it('resolves formula cells to displays and keeps plain cells verbatim', () => {
+    const { pipes, formulas } = resolveTableValue(
+      '| Item | Q1 | Q2 | Total |\n| --- | --- | --- | --- |\n| A | 10 | 20 | =SUM(B2:C2) |',
+    )
+    expect(pipes).toBe(
+      '| Item | Q1 | Q2 | Total |\n| --- | --- | --- | --- |\n| A | 10 | 20 | 30 |',
+    )
+    expect(formulas).toEqual({ D2: '=SUM(B2:C2)' })
+  })
+
+  it('keeps styled numbers verbatim (they are not formulas)', () => {
+    const { pipes, formulas } = resolveTableValue(
+      '| A | B |\n| --- | --- |\n| **10** | *20* |\n| =SUM(A2:B2) | |',
+    )
+    expect(pipes).toBe(
+      '| A | B |\n| --- | --- |\n| **10** | *20* |\n| 30 |  |',
+    )
+    expect(formulas).toEqual({ A3: '=SUM(A2:B2)' })
+  })
+
+  it('carries an error display and formula through the round trip', () => {
+    const { pipes, formulas } = resolveTableValue('| A |\n| --- |\n| =1/0 |')
+    expect(pipes).toBe('| A |\n| --- |\n| #DIV/0! |')
+    expect(formulas).toEqual({ A2: '=1/0' })
+    expect(hydrateResolvedTable(parsePipes(pipes), parsePipesAlign(pipes), formulas)).toBe(
+      '| A |\n| --- |\n| =1/0 |',
+    )
+  })
+
+  it('keeps the delimiter-row alignment on resolution', () => {
+    const { pipes } = resolveTableValue('| A | B |\n| :--- | ---: |\n| 1 | =A2*2 |')
+    expect(pipes).toBe('| A | B |\n| :--- | ---: |\n| 1 | 2 |')
+  })
+
+  it('formats the carrier comment as a single HTML comment line', () => {
+    expect(formatTableCarrier({ C2: '=B2*1.5', D2: '=SUM(B2:C2)' })).toBe(
+      '<!-- edi-fml {"C2":"=B2*1.5","D2":"=SUM(B2:C2)"} -->',
+    )
+  })
+
+  it('hydrates formulas back into their cells and rebuilds normalized pipes', () => {
+    const original = '| Item | Qty | Price | Total |\n| --- | --- | --- | --- |\n| A | 3 | =B2*1.5 | =SUM(B2:C2) |'
+    const { pipes, formulas } = resolveTableValue(original)
+    expect(
+      hydrateResolvedTable(parsePipes(pipes), parsePipesAlign(pipes), formulas),
+    ).toBe(original)
+  })
+
+  it('hydrate skips refs outside the grid', () => {
+    const out = hydrateResolvedTable(
+      [['A', 'B'], ['1', '2']],
+      null,
+      { C9: '=B2*3', A2: '=A1+B1' },
+    )
+    expect(out).toBe('| A | B |\n| --- | --- |\n| =A1+B1 | 2 |')
+  })
+
+  it('parses only well-formed carrier comments', () => {
+    expect(parseTableCarrier('<!-- edi-fml {"C2":"=SUM(B2:C2)"} -->')).toEqual({
+      C2: '=SUM(B2:C2)',
+    })
+    expect(parseTableCarrier('  <!-- edi-fml {"A2":"=1"} -->  ')).toEqual({ A2: '=1' })
+    expect(parseTableCarrier('<!-- edi-fml {"nope":1} -->')).toBeNull()
+    expect(parseTableCarrier('<!-- edi-fml {"C2":"=1","bad":"x"} -->')).toBeNull()
+    expect(parseTableCarrier('<!-- edi-fml not-json -->')).toBeNull()
+    expect(parseTableCarrier('<!-- a normal comment -->')).toBeNull()
+    expect(parseTableCarrier('<!-- edi-other {"x":1} -->')).toBeNull()
   })
 })

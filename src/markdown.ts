@@ -12,7 +12,14 @@ import {
   maskedFieldToMarkdown,
 } from './node/masked'
 import { shebangFromFenceInfo } from './exec'
-import { tableToPipes } from './spreadsheet-util'
+import {
+  formatTableCarrier,
+  hydrateResolvedTable,
+  parseTableCarrier,
+  resolveTableValue,
+  tableToPipes,
+  type TableAlign,
+} from './spreadsheet-util'
 
 export interface BlockOffset {
   id: string
@@ -63,6 +70,50 @@ function isMarkType(type: string): boolean {
   return MARK_TYPES.has(type)
 }
 
+/** Extract the cell grid and delimiter-row alignment from a mdast table. */
+function tableRowsAndAlign(
+  node: MdastNode,
+  schema: Schema,
+): { rows: string[][]; align: TableAlign[] } {
+  const rows = (node.children ?? []).map((row) =>
+    (row.children ?? []).map((cell) =>
+      serializeCellText(cell.children ?? [], schema),
+    ),
+  )
+  const align = (node.align ?? []).map((value) =>
+    value === 'left' || value === 'center' || value === 'right' ? value : 'none',
+  )
+  return { rows, align }
+}
+
+/** Map mdast children to prose nodes, folding any table's immediately
+ * following carrier comment back into that table's formulas. */
+function mapChildrenWithCarriers(children: MdastNode[], schema: Schema): ProseNode[] {
+  const out: ProseNode[] = []
+  let i = 0
+  while (i < children.length) {
+    const child = children[i]!
+    if (child.type === 'table') {
+      const next = children[i + 1]
+      const carrier = next?.type === 'html' ? parseTableCarrier(next.value ?? '') : null
+      if (carrier !== null) {
+        const { rows, align } = tableRowsAndAlign(child, schema)
+        out.push(
+          schema.node('table', {
+            value: hydrateResolvedTable(rows, align, carrier),
+            _resolved: true,
+          }),
+        )
+        i += 2
+        continue
+      }
+    }
+    out.push(mdastToProse(child, schema))
+    i++
+  }
+  return out
+}
+
 // --- Parse: MDAST → ProseMirror ---
 
 // A closing fence must have at least as many backticks as the opener, and a
@@ -106,7 +157,7 @@ interface MdastNode {
 function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
   switch (node.type) {
     case 'root': {
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
+      const children = mapChildrenWithCarriers(node.children ?? [], schema)
       if (children.length === 0) children.push(schema.node('paragraph'))
       return schema.node('doc', {}, children)
     }
@@ -118,7 +169,7 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       return schema.node('heading', { level: node.depth ?? 1 }, parseInline(node.children ?? [], schema))
 
     case 'blockquote': {
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
+      const children = mapChildrenWithCarriers(node.children ?? [], schema)
       return schema.node('blockquote', {}, children)
     }
 
@@ -133,7 +184,7 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
     }
 
     case 'listItem': {
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
+      const children = mapChildrenWithCarriers(node.children ?? [], schema)
       const attrs: Record<string, unknown> = {}
       if (node.checked != null) attrs.checked = node.checked
       return schema.node('list_item', attrs, children)
@@ -167,14 +218,9 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       // GFM: the first row is the header. The whole grid becomes the atom's
       // `value` as normalized pipe-table markdown; each cell holds its inline
       // markdown text (the strong/code/etc. marks survive the round trip).
-      const rows = (node.children ?? []).map((row) =>
-        (row.children ?? []).map((cell) =>
-          serializeCellText(cell.children ?? [], schema),
-        ),
-      )
-      const align = (node.align ?? []).map((value) =>
-        value === 'left' || value === 'center' || value === 'right' ? value : 'none',
-      )
+      // When the table carries a resolving comment, that comment restores any
+      // formulas the cells were resolved from.
+      const { rows, align } = tableRowsAndAlign(node, schema)
       return schema.node('table', { value: tableToPipes(rows, align) })
     }
 
@@ -322,7 +368,15 @@ function serializeNode(node: ProseNode, indent = ''): string {
     case 'table': {
       const val = (node.attrs.value as string) ?? ''
       if (!val) return ''
-      return val
+      let text = val
+      if (node.attrs._resolved) {
+        const { pipes, formulas } = resolveTableValue(val)
+        text =
+          Object.keys(formulas).length === 0
+            ? pipes
+            : `${pipes}\n\n${formatTableCarrier(formulas)}`
+      }
+      return text
         .split('\n')
         .map((line) => indent + line)
         .join('\n')

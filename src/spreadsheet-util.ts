@@ -3,6 +3,7 @@
 // style); this module converts between that text and the 2-D string grid the
 // solver and the visual grid node-view work on.
 import { renderCellHtml } from './inline-md'
+import { colToLetters, isFormula, parseCellRef, solve } from './spreadsheet'
 
 const DELIMITER_CELL = /^:?-+:?$/
 
@@ -185,4 +186,109 @@ export function inlineMarkdownToHtml(
   opts?: { indexedMasked?: boolean },
 ): string {
   return renderCellHtml(text, opts?.indexedMasked ?? false)
+}
+
+// --- Resolved tables (markdown without live formulas) ---
+
+const TABLE_CARRIER_OPEN = '<!-- edi-fml '
+const TABLE_CARRIER_CLOSE = ' -->'
+
+function cellRef(row: number, col: number): string {
+  return `${colToLetters(col + 1)}${row + 1}`
+}
+
+/**
+ * Resolve a formula-form pipe-table `value` into its computed markdown plus the
+ * per-cell formula map needed to restore it. Formula cells (`=…`) become the
+ * solved display they would show in the grid; every other cell stays verbatim
+ * (marks included). The returned `pipes` keep the same shape, dimensions, and
+ * alignment as the input.
+ */
+export function resolveTableValue(
+  value: string,
+): { pipes: string; formulas: Record<string, string> } {
+  const rows = parsePipes(value)
+  const align = parsePipesAlign(value)
+  const solution = solve(rows)
+  const formulas: Record<string, string> = {}
+  const resolved = rows.map((row, r) =>
+    row.map((raw, c) => {
+      const trimmed = raw.trim()
+      if (isFormula(trimmed)) {
+        formulas[cellRef(r, c)] = trimmed
+        return solution.cells[r]?.[c]?.display ?? ''
+      }
+      return raw
+    }),
+  )
+  return { pipes: tableToPipes(resolved, align), formulas }
+}
+
+/** The carrier comment line that carries a table's formulas. */
+export function formatTableCarrier(formulas: Record<string, string>): string {
+  return TABLE_CARRIER_OPEN + JSON.stringify(formulas) + TABLE_CARRIER_CLOSE
+}
+
+/**
+ * Restore the formula-form pipe-table `value` of a table parsed from a
+ * resolved (baked) table plus its carrier formulas. Each known formula is laid
+ * back into its cell; out-of-bounds refs are skipped so a resolved table that
+ * was hand-edited elsewhere still loads.
+ */
+export function hydrateResolvedTable(
+  rows: string[][],
+  align: readonly (TableAlign | null | undefined)[] | null,
+  formulas: Record<string, string>,
+): string {
+  const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0)
+  const grid = rows.map((row) => {
+    const copy = [...row]
+    while (copy.length < maxCols) copy.push('')
+    return copy
+  })
+  for (const [ref, formula] of Object.entries(formulas)) {
+    const parsed = parseCellRef(ref)
+    if (
+      parsed !== null &&
+      parsed.row >= 1 &&
+      parsed.col >= 1 &&
+      parsed.row <= grid.length &&
+      parsed.col <= maxCols
+    ) {
+      grid[parsed.row - 1]![parsed.col - 1] = formula
+    }
+  }
+  return tableToPipes(grid, align)
+}
+
+/**
+ * Read the formula map out of a carrier comment (the `html` mdast node that
+ * follows a resolved table). Returns `null` when the comment is not one of
+ * ours or its payload is malformed, so an ordinary HTML comment still imports
+ * as a literal paragraph.
+ */
+export function parseTableCarrier(html: string): Record<string, string> | null {
+  const trimmed = html.trim()
+  if (
+    !trimmed.startsWith(TABLE_CARRIER_OPEN) ||
+    !trimmed.endsWith(TABLE_CARRIER_CLOSE)
+  ) {
+    return null
+  }
+  const payload = trimmed.slice(TABLE_CARRIER_OPEN.length, -TABLE_CARRIER_CLOSE.length)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null
+  }
+  const formulas: Record<string, string> = {}
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value !== 'string' || parseCellRef(key) === null) return null
+    formulas[key] = value
+  }
+  return formulas
 }
