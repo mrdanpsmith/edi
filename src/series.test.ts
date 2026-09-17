@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fillValues, shiftFormulaRefs } from './series'
+import { fillValues, remapFormulaRefs, shiftFormulaRefs } from './series'
 
 describe('fillValues numeric', () => {
   it('duplicates a single value', () => {
@@ -73,5 +73,23 @@ describe('shiftFormulaRefs', () => {
   it('never treats function names as references', () => {
     expect(shiftFormulaRefs('=ROUND(A1,2)', 1, 0)).toBe('=ROUND(A2,2)')
     expect(shiftFormulaRefs('=SUM(A1:A2)', 0, 1)).toBe('=SUM(B1:B2)')
+  })
+})
+
+describe('remapFormulaRefs', () => {
+  it('moves only references that point inside the cut range', () => {
+    const src = { r1: 1, c1: 1, r2: 2, c2: 1 }
+    expect(remapFormulaRefs('=A1+B1', src, 0, 2)).toBe('=C1+B1')
+    expect(remapFormulaRefs('=SUM(A1:A2)', src, 3, 0)).toBe('=SUM(A4:A5)')
+  })
+
+  it('preserves $ markers because the referenced cell itself moved', () => {
+    const src = { r1: 1, c1: 1, r2: 1, c2: 1 }
+    expect(remapFormulaRefs('=$A$1+B2', src, 1, 1)).toBe('=$B$2+B2')
+  })
+
+  it('leaves references outside the range and function names alone', () => {
+    const src = { r1: 5, c1: 5, r2: 6, c2: 5 }
+    expect(remapFormulaRefs('=SUM(A1:A2)+ROUND(E5,2)', src, 1, 1)).toBe('=SUM(A1:A2)+ROUND(F6,2)')
   })
 })

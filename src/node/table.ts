@@ -4,7 +4,8 @@ import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, type TableAlign } from '../spreadsheet-util'
 import { cellCarriesMark, setCellMark } from '../inline-md'
 import { solve, colToLetters, isFormula, type CellSolution } from '../spreadsheet'
-import { fillTextValues, shiftFormulaRefs } from '../series'
+import { undo, redo } from 'prosemirror-history'
+import { fillTextValues, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText } from '../clipboard'
 import { blockNodeView } from '../blockview'
 import { setActiveCellHost, type InlineCellHost, type InlineCellKind } from '../inline-format'
@@ -221,12 +222,14 @@ class TableNodeView implements NodeView, InlineCellHost {
     ) {
       this.rows = rows
       this.align = align
-      this.anchor = { row: 0, col: 0 }
-      this.active = { row: 0, col: 0 }
-      this.extra.clear()
-      this.teardownEdit()
-      this.buildGrid()
-      this.renderSelection()
+      // Keep the active cell put (clamped to the new bounds) so an undo/redo or
+      // any other external change doesn't jump the selection back to A1.
+      this.rebuildForCommit(
+        rows.length,
+        rows[0]?.length ?? 0,
+        this.anchor ?? { row: 0, col: 0 },
+        this.active ?? { row: 0, col: 0 },
+      )
     }
     return true
   }
@@ -1234,6 +1237,17 @@ class TableNodeView implements NodeView, InlineCellHost {
 
     if (this.editing) return
 
+    // ProseMirror ignores events from inside a node view (`stopEvent` returns
+    // true), so its own Mod-z/Mod-y keymap never fires while the grid has focus.
+    // Drive the editor history from here so undo/redo works in spreadsheet mode.
+    if (mod && (key.toLowerCase() === 'z' || key.toLowerCase() === 'y')) {
+      event.preventDefault()
+      event.stopPropagation()
+      const fn = key.toLowerCase() === 'y' || event.shiftKey ? redo : undo
+      fn(this.view.state, this.view.dispatch, this.view)
+      return
+    }
+
     if (key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
@@ -1816,6 +1830,21 @@ class TableNodeView implements NodeView, InlineCellHost {
           if (!overwritten) next[r]![c] = ''
         }
       }
+      // Repoint formulas at the moved cells, skipping the pasted block itself:
+      // its formulas travelled with the data and keep their own references.
+      const dr = r1 - cut.r1
+      const dc = c1 - cut.c1
+      if (dr !== 0 || dc !== 0) {
+        const src = { r1: cut.r1 + 1, c1: cut.c1 + 1, r2: cut.r2 + 1, c2: cut.c2 + 1 }
+        for (let r = 0; r < maxRows; r++) {
+          for (let c = 0; c < maxCols; c++) {
+            const inDest = r >= r1 && r < r1 + height && c >= c1 && c < c1 + width
+            if (inDest) continue
+            const value = next[r]![c]!
+            if (isFormula(value)) next[r]![c] = remapFormulaRefs(value, src, dr, dc)
+          }
+        }
+      }
       this.cutSource = null
     }
     this.commitRows(
@@ -2111,6 +2140,9 @@ function setTableModeAttr(tr: Transaction, pos: number, plain: boolean): void {
   if (!node || node.type.name !== TABLE_TYPE) return
   if (node.attrs._plain === plain) return
   tr.setNodeMarkup(pos, undefined, { ...node.attrs, _plain: plain })
+  // View mode is not content: keep it out of undo so Ctrl+Z in the grid never
+  // rewinds (or, by history grouping, collapses with) the switch into the mode.
+  tr.setMeta('addToHistory', false)
 }
 
 /**

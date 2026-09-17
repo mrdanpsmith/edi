@@ -11,6 +11,7 @@ import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode } from './node/table'
 import { getActiveCellHost } from './inline-format'
 import { encryptField } from './crypto'
+import { createBlockEditor } from './editor'
 
 function createEditor(md: string): EditorView {
   const doc = markdownToProse(md, schema)
@@ -367,6 +368,42 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('updates references when the referenced cell is cut and pasted', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 5 | =A2 |  |')
+    mousedown(cell(view, 1, 0))
+    const cutEvent = new Event('cut', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(cutEvent, 'clipboardData', {
+      value: { setData: () => {}, getData: () => '' },
+    })
+    tableGrid(view).dispatchEvent(cutEvent)
+    mousedown(cell(view, 1, 2))
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: { getData: (t: string) => (t === 'text/plain' ? '5' : ''), setData: () => {} },
+    })
+    tableGrid(view).dispatchEvent(pasteEvent)
+    expect(parsePipes(docValue(view))[1]).toEqual(['', '=C2', '5'])
+    view.destroy()
+  })
+
+  it('leaves references unchanged when the cell is copied and pasted', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 5 | =A2 |  |')
+    mousedown(cell(view, 1, 0))
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      value: { setData: () => {}, getData: () => '' },
+    })
+    tableGrid(view).dispatchEvent(copyEvent)
+    mousedown(cell(view, 1, 2))
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: { getData: (t: string) => (t === 'text/plain' ? '5' : ''), setData: () => {} },
+    })
+    tableGrid(view).dispatchEvent(pasteEvent)
+    expect(parsePipes(docValue(view))[1]).toEqual(['5', '=A2', '5'])
+    view.destroy()
+  })
+
   it('pastes tile the pattern across a selection larger than the data', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |')
     mousedown(cell(view, 1, 0))
@@ -635,6 +672,31 @@ describe('TableNodeView grid', () => {
     expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
     expect(docValue(view)).toContain('FOO')
     view.destroy()
+  })
+
+  it('undoes and redoes cell edits with Ctrl+Z / Ctrl+Shift+Z', () => {
+    const ed = createBlockEditor(document.body, '| A |\n| --- |\n| 1 |')
+    const view = ed.getView()
+    enterSpreadsheetMode(view, 0)
+    let grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const editInput = grid.querySelector('.ss-edit-input') as HTMLInputElement
+    editInput.value = '2'
+    editInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(parsePipes(docValue(view))[1]).toEqual(['2'])
+
+    grid = tableGrid(view)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
+    expect(parsePipes(docValue(view))[1]).toEqual(['1'])
+    expect(cell(view, 1, 0).classList.contains('ss-active')).toBe(true)
+
+    grid = tableGrid(view)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))
+    expect(parsePipes(docValue(view))[1]).toEqual(['2'])
+    expect(cell(view, 1, 0).classList.contains('ss-active')).toBe(true)
+    ed.destroy()
   })
 
   it('a blur arriving during edit teardown does not swallow the Tab move', () => {

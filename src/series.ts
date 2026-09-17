@@ -180,3 +180,28 @@ export function fillTextValues(seeds: readonly string[], count: number): string[
   if (isBlankLike(seeds)) return Array(count).fill('')
   return fillValues(seeds, count)
 }
+
+export interface SourceRect {
+  r1: number
+  c1: number
+  r2: number
+  c2: number
+}
+
+/**
+ * Rewrite references that point inside a cut range by (dr, dc), so formulas
+ * elsewhere keep referring to the moved cells after a cut-and-paste. Unlike
+ * {@link shiftFormulaRefs}, only references that actually target `src` move —
+ * a formula is not shifted as a whole — and absolute `$` markers are preserved
+ * because the referenced cell itself moved.
+ */
+export function remapFormulaRefs(formula: string, src: SourceRect, dr: number, dc: number): string {
+  return formula.replace(REF_TOKEN, (match, colAbs: string, letters: string, rowAbs: string, digits: string, offset: number) => {
+    if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
+    if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+    const col = lettersToCol(letters)
+    const row = Number(digits)
+    if (row < src.r1 || row > src.r2 || col < src.c1 || col > src.c2) return match
+    return `${colAbs}${colToLetters(Math.max(1, col + dc))}${rowAbs}${Math.max(1, row + dr)}`
+  })
+}
