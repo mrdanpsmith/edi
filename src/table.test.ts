@@ -296,6 +296,16 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('keeps grid focus across a rebuild so typing still starts an edit', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, 'Delete')
+    expect(document.activeElement).toBe(tableGrid(view))
+    gridkey(view, 'x')
+    expect((view.dom.querySelector('.ss-edit-input') as HTMLInputElement).value).toBe('x')
+    view.destroy()
+  })
+
   it('copies the selection as TSV', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
     mousedown(cell(view, 1, 0))
@@ -1197,6 +1207,164 @@ describe('TableNodeView column alignment', () => {
     const tds = view.dom.querySelectorAll('.ss-plain-table tbody td')
     expect(tds[0]!.getAttribute('data-align')).toBe('center')
     expect(tds[1]!.getAttribute('data-align')).toBe('right')
+    view.destroy()
+  })
+})
+
+describe('TableNodeView formula point mode', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function editInput(view: EditorView): HTMLInputElement {
+    const input = tableGrid(view).querySelector('.ss-edit-input') as HTMLInputElement | null
+    if (!input) throw new Error('no .ss-edit-input rendered')
+    return input
+  }
+
+  it('inserts a cell reference when clicking while entering a formula', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | 6 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, '=')
+    const input = editInput(view)
+    expect(input.value).toBe('=')
+    mousedown(cell(view, 1, 1))
+    expect(input.value).toBe('=B2')
+    expect(editInput(view)).toBe(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(parsePipes(docValue(view))[1]).toEqual(['=B2', '6'])
+    view.destroy()
+  })
+
+  it('inserts a range reference when dragging while entering a formula', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, 'Enter')
+    const input = editInput(view)
+    input.value = '=SUM('
+    input.setSelectionRange(5, 5)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    mousedown(cell(view, 1, 0))
+    cell(view, 2, 1).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    expect(input.value).toBe('=SUM(A2:B3')
+    expect(cell(view, 1, 0).classList.contains('ss-point')).toBe(true)
+    expect(cell(view, 2, 1).classList.contains('ss-point')).toBe(true)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(parsePipes(docValue(view))[1]?.[0]).toBe('=SUM(A2:B3')
+    expect(tableGrid(view).querySelectorAll('.ss-point')).toHaveLength(0)
+    view.destroy()
+  })
+
+  it('keeps editing when clicking the edit input itself', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | 6 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, 'Enter')
+    const input = editInput(view)
+    input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    expect(editInput(view)).toBe(input)
+    view.destroy()
+  })
+
+  it('still commits and moves when the cell is not a formula', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | 6 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, 'Enter')
+    const input = editInput(view)
+    input.value = 'X'
+    mousedown(cell(view, 1, 1))
+    expect(tableGrid(view).querySelector('.ss-edit-input')).toBeNull()
+    expect(parsePipes(docValue(view))[1]).toEqual(['X', '6'])
+    view.destroy()
+  })
+
+  it('inserts a reference into the fx bar formula', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | 6 |')
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    fx.focus()
+    fx.value = '='
+    fx.dispatchEvent(new Event('input', { bubbles: true }))
+    mousedown(cell(view, 1, 1))
+    expect(fx.value).toBe('=B2')
+    expect(document.activeElement).toBe(fx)
+    view.destroy()
+  })
+
+  it('does not treat a highlighted cell as a formula', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| ==x== | 6 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, 'Enter')
+    expect(editInput(view).value).toBe('==x==')
+    mousedown(cell(view, 1, 1))
+    expect(tableGrid(view).querySelector('.ss-edit-input')).toBeNull()
+    view.destroy()
+  })
+
+  it('replaces the picked reference instead of concatenating', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, '=')
+    const input = editInput(view)
+    mousedown(cell(view, 1, 1))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    mousedown(cell(view, 1, 2))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    expect(input.value).toBe('=C2')
+    view.destroy()
+  })
+
+  it('double-clicking a cell finishes the formula and selects that cell', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, '=')
+    mousedown(cell(view, 1, 1))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    cell(view, 2, 2).dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(parsePipes(docValue(view))[1]?.[0]).toBe('=C3')
+    expect(view.dom.querySelector('.ss-namebox')?.textContent).toBe('C3')
+    view.destroy()
+  })
+
+  it('uses the pointer cursor only while picking references', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    mousedown(cell(view, 1, 0))
+    gridkey(view, '9')
+    expect(editInput(view).value).toBe('9')
+    expect(grid.classList.contains('ss-pointing')).toBe(false)
+    editInput(view).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    mousedown(cell(view, 1, 0))
+    gridkey(view, '=')
+    expect(grid.classList.contains('ss-pointing')).toBe(true)
+    view.destroy()
+  })
+
+  it('mirrors the in-cell editor into the fx bar', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | 6 |')
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    mousedown(cell(view, 1, 0))
+    gridkey(view, '=')
+    const input = editInput(view)
+    expect(input.value).toBe('=')
+    expect(fx.value).toBe('=')
+    mousedown(cell(view, 1, 1))
+    expect(input.value).toBe('=B2')
+    expect(fx.value).toBe('=B2')
+    view.destroy()
+  })
+
+  it('replaces a picked reference when extending it to a dragged range', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |')
+    mousedown(cell(view, 1, 0))
+    gridkey(view, '=')
+    const input = editInput(view)
+    mousedown(cell(view, 1, 1))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    expect(input.value).toBe('=B2')
+    mousedown(cell(view, 2, 1))
+    cell(view, 2, 2).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    expect(input.value).toBe('=B3:C3')
     view.destroy()
   })
 })

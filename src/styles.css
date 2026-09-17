@@ -823,6 +823,21 @@ body {
   background: var(--selection-strong);
 }
 
+/* Cells referenced by an in-progress formula pick (Excel-style point mode). */
+.spreadsheet .ss-grid td.ss-point {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* While a formula is being edited, every cell is a pick target. */
+.spreadsheet .ss-grid.ss-pointing td {
+  cursor: pointer;
+}
+
+.spreadsheet .ss-grid.ss-pointing .ss-edit-input {
+  cursor: text;
+}
+
 .spreadsheet .ss-grid td.ss-active {
   box-shadow: inset 0 0 0 2px var(--accent);
 }

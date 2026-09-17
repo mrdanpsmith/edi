@@ -26,6 +26,24 @@ interface FillRect {
   c2: number
 }
 
+interface PointDrag {
+  input: HTMLInputElement
+  start: CellRef
+  replaceStart: number
+  replaceEnd: number
+  move: (event: MouseEvent) => void
+  up: () => void
+}
+
+/** The reference token most recently inserted by a point-mode pick, so a
+ * follow-up pick replaces it instead of appending (`=A1` → `=B1`). */
+interface PointInsert {
+  input: HTMLInputElement
+  start: number
+  end: number
+  snapshot: string
+}
+
 const cellKey = (row: number, col: number): string => `${row}:${col}`
 
 const MIN_COL_WIDTH = 48
@@ -80,6 +98,9 @@ class TableNodeView implements NodeView, InlineCellHost {
   private fillHandleEl: HTMLElement | null = null
   private fillTooltipEl: HTMLElement | null = null
   private alignButtons: Array<{ align: TableAlign; el: HTMLElement }> = []
+  private pointDrag: PointDrag | null = null
+  private pointInsert: PointInsert | null = null
+  private pointRange: { r1: number; c1: number; r2: number; c2: number } | null = null
   private readonly onFillMove = (event: MouseEvent): void => this.handleFillMove(event)
   private readonly onFillUp = (event: MouseEvent): void => this.handleFillUp(event)
   private readonly onDocCopy = (event: Event): void => this.onClipboardCopy(event as ClipboardEvent)
@@ -288,15 +309,25 @@ class TableNodeView implements NodeView, InlineCellHost {
     fxInput.placeholder = 'fx'
     fxInput.addEventListener('keydown', (event) => this.onFxInputKeydown(event))
     fxInput.addEventListener('blur', () => this.commitFxEdit())
-    fxInput.addEventListener('focus', () => setActiveCellHost(this))
+    fxInput.addEventListener('focus', () => {
+      setActiveCellHost(this)
+      this.updatePointCursor()
+    })
+    fxInput.addEventListener('input', () => this.updatePointCursor())
     fxbar.appendChild(fxInput)
     this.fxInput = fxInput
+
     this.dom.appendChild(fxbar)
   }
 
   // --- Grid ---
 
   private buildGrid(): void {
+    // Rebuilding replaces the grid element; keep keyboard focus on it so typing
+    // still starts an edit after a structural change (e.g. Delete clearing a cell).
+    const refocus =
+      this.grid !== null &&
+      (document.activeElement === this.grid || this.grid.contains(document.activeElement))
     const oldWrap = this.gridWrap
     const wrap = document.createElement('div')
     wrap.className = 'ss-table-scroll'
@@ -393,6 +424,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     grid.addEventListener('focus', () => setActiveCellHost(this))
     grid.addEventListener('keydown', (event) => this.onGridKeydown(event))
     grid.addEventListener('dblclick', (event) => this.onDblClick(event))
+    if (refocus) grid.focus()
   }
 
   /**
@@ -517,6 +549,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.updateNameBox()
     this.updateStatus()
     this.updateFxSync()
+    this.updatePointCursor()
     if (!this.grid) return
     const has = this.selectedHas()
     const rows = this.rows.length
@@ -539,6 +572,11 @@ class TableNodeView implements NodeView, InlineCellHost {
         td.classList.toggle(
           'ss-cut',
           cut !== null && r >= cut.r1 && r <= cut.r2 && c >= cut.c1 && c <= cut.c2,
+        )
+        const point = this.pointRange
+        td.classList.toggle(
+          'ss-point',
+          point !== null && r >= point.r1 && r <= point.r2 && c >= point.c1 && c <= point.c2,
         )
       }
     }
@@ -1042,8 +1080,23 @@ class TableNodeView implements NodeView, InlineCellHost {
   private onGridMouseDown(event: MouseEvent): void {
     const grid = this.grid
     if (!grid) return
+    // Clicking the edit overlay only moves the caret; it must not commit.
+    if (event.target instanceof Element && event.target.closest('.ss-edit-input')) return
     const target = this.resolveTarget(event.target)
     if (!target) return
+
+    // Excel-style point mode: while a formula is being entered, clicking a
+    // cell inserts its reference instead of switching cells.
+    if (target.kind === 'cell') {
+      const point = this.formulaPointInput()
+      if (point) {
+        event.preventDefault()
+        event.stopPropagation()
+        this.startPointInsert(point.input, target.row, target.col)
+        return
+      }
+    }
+
     event.preventDefault()
     event.stopPropagation()
     grid.focus()
@@ -1133,10 +1186,20 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private onDblClick(event: MouseEvent): void {
+    if (event.target instanceof Element && event.target.closest('.ss-edit-input')) return
     const target = this.resolveTarget(event.target)
     if (!target || target.kind !== 'cell') return
     event.preventDefault()
     event.stopPropagation()
+    // In point mode, double-clicking a cell references it and finishes the
+    // formula, then selects that cell (one gesture to pick a value and move on).
+    const point = this.formulaPointInput()
+    if (point) {
+      this.startPointInsert(point.input, target.row, target.col, false)
+      this.commitPointEdit()
+      this.moveInGrid(target.row, target.col, false)
+      return
+    }
     this.startCellEdit(target.row, target.col)
   }
 
@@ -1229,6 +1292,130 @@ class TableNodeView implements NodeView, InlineCellHost {
     }
   }
 
+  // --- Point mode (Excel-style reference picking) ---
+
+  /** The input currently holding a formula being edited, if any: the inline
+   * edit overlay, or the fx bar input while it is focused. */
+  private formulaEditor(): { input: HTMLInputElement } | null {
+    if (this.editing && this.editOverlay && isFormula(this.editOverlay.value.trim())) {
+      return { input: this.editOverlay }
+    }
+    if (
+      this.fxInput &&
+      document.activeElement === this.fxInput &&
+      isFormula(this.fxInput.value.trim())
+    ) {
+      return { input: this.fxInput }
+    }
+    return null
+  }
+
+  /** The formula editor a click should drop a reference into. */
+  private formulaPointInput(): { input: HTMLInputElement } | null {
+    return this.formulaEditor()
+  }
+
+  /** While a formula editor is live, grid cells act as pick targets. */
+  private updatePointCursor(): void {
+    this.grid?.classList.toggle('ss-pointing', this.formulaPointInput() !== null)
+  }
+
+  /** A1-style reference for a 0-based grid cell (grid row 0 is the GFM header,
+   * so both row and column are 1-based in the reference). */
+  private cellRefAt(row: number, col: number): string {
+    return `${colToLetters(col + 1)}${row + 1}`
+  }
+
+  private refRange(r1: number, c1: number, r2: number, c2: number): string {
+    const start = this.cellRefAt(Math.min(r1, r2), Math.min(c1, c2))
+    const end = this.cellRefAt(Math.max(r1, r2), Math.max(c1, c2))
+    return start === end ? start : `${start}:${end}`
+  }
+
+  /** Insert a clicked cell's reference at the editor caret and, if the pointer
+   * is dragged, turn it into a range (`A1:B3`) live. A pick that immediately
+   * follows another pick replaces it, so clicking A1 then B1 yields `=B1`. */
+  private startPointInsert(input: HTMLInputElement, row: number, col: number, withDrag = true): void {
+    const prev = this.pointInsert
+    const replace = prev && prev.input === input && prev.snapshot === input.value
+    let start: number
+    let end: number
+    if (replace) {
+      start = prev.start
+      end = prev.end
+    } else {
+      const selStart = input.selectionStart ?? input.value.length
+      const selEnd = input.selectionEnd ?? selStart
+      start = Math.min(selStart, selEnd)
+      end = Math.max(selStart, selEnd)
+    }
+    const ref = this.cellRefAt(row, col)
+    input.value = input.value.slice(0, start) + ref + input.value.slice(end)
+    const caret = start + ref.length
+    input.setSelectionRange(caret, caret)
+    if (input === this.editOverlay) this.fitEditColumn(input)
+    this.pointInsert = { input, start, end: caret, snapshot: input.value }
+    this.mirrorToFx(input)
+    if (!withDrag) {
+      this.pointRange = { r1: row, c1: col, r2: row, c2: col }
+      this.renderSelection()
+      return
+    }
+
+    const drag: PointDrag = {
+      input,
+      start: { row, col },
+      replaceStart: start,
+      replaceEnd: caret,
+      move: (moveEvent) => this.updatePointRange(drag, moveEvent),
+      up: () => this.endPointDrag(drag),
+    }
+    this.pointDrag = drag
+    this.pointRange = { r1: row, c1: col, r2: row, c2: col }
+    this.renderSelection()
+    document.addEventListener('mousemove', drag.move)
+    document.addEventListener('mouseup', drag.up)
+  }
+
+  private updatePointRange(drag: PointDrag, moveEvent: MouseEvent): void {
+    if (this.pointDrag !== drag) return
+    const hover = this.resolveTarget(moveEvent.target)
+    if (!hover || hover.kind !== 'cell') return
+    const r1 = Math.min(drag.start.row, hover.row)
+    const c1 = Math.min(drag.start.col, hover.col)
+    const r2 = Math.max(drag.start.row, hover.row)
+    const c2 = Math.max(drag.start.col, hover.col)
+    const ref = this.refRange(r1, c1, r2, c2)
+    const value = drag.input.value
+    drag.input.value = value.slice(0, drag.replaceStart) + ref + value.slice(drag.replaceEnd)
+    drag.replaceEnd = drag.replaceStart + ref.length
+    drag.input.setSelectionRange(drag.replaceEnd, drag.replaceEnd)
+    if (drag.input === this.editOverlay) this.fitEditColumn(drag.input)
+    this.pointInsert = {
+      input: drag.input,
+      start: drag.replaceStart,
+      end: drag.replaceEnd,
+      snapshot: drag.input.value,
+    }
+    this.mirrorToFx(drag.input)
+    this.pointRange = { r1, c1, r2, c2 }
+    this.renderSelection()
+  }
+
+  private endPointDrag(drag: PointDrag): void {
+    if (this.pointDrag !== drag) return
+    document.removeEventListener('mousemove', drag.move)
+    document.removeEventListener('mouseup', drag.up)
+    this.pointDrag = null
+    drag.input.focus()
+  }
+
+  /** Commit whichever editor is open (inline overlay or fx bar). */
+  private commitPointEdit(): void {
+    if (this.editing) this.commitCellEdit()
+    else this.commitFxEdit()
+  }
+
   // --- Cell editing ---
 
   private startCellEdit(row: number, col: number, replaceText?: string): void {
@@ -1246,12 +1433,24 @@ class TableNodeView implements NodeView, InlineCellHost {
     input.addEventListener('blur', () => {
       if (this.editOverlay === input) this.commitCellEdit()
     })
-    input.addEventListener('input', () => this.fitEditColumn(input))
+    input.addEventListener('input', () => {
+      this.fitEditColumn(input)
+      this.mirrorToFx(input)
+      this.updatePointCursor()
+    })
     cell.appendChild(input)
     this.editOverlay = input
+    this.pointInsert = null
+    this.mirrorToFx(input)
+    this.updatePointCursor()
     input.focus()
     input.setSelectionRange(input.value.length, input.value.length)
     this.renderFillHandle()
+  }
+
+  /** Mirror the in-cell edit into the fx bar, like Excel's formula bar. */
+  private mirrorToFx(input: HTMLInputElement): void {
+    if (this.fxInput && input === this.editOverlay) this.fxInput.value = input.value
   }
 
   private cellEl(row: number, col: number): HTMLElement | null {
@@ -1341,12 +1540,15 @@ class TableNodeView implements NodeView, InlineCellHost {
       const next = this.rows.map((r) => [...r])
       next[row]![col] = raw
       this.commitRows(next, { row, col }, { row, col })
+    } else {
+      this.renderSelection()
     }
     this.grid?.focus()
   }
 
   private cancelCellEdit(): void {
     this.teardownEdit()
+    this.renderSelection()
     this.grid?.focus()
   }
 
@@ -1355,6 +1557,19 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.editOverlay = null
     this.editing = null
     overlay?.remove()
+    this.clearPointRange()
+  }
+
+  /** Drop any in-flight reference pick and its `ss-point` highlight. */
+  private clearPointRange(): void {
+    const drag = this.pointDrag
+    if (drag) {
+      document.removeEventListener('mousemove', drag.move)
+      document.removeEventListener('mouseup', drag.up)
+      this.pointDrag = null
+    }
+    this.pointInsert = null
+    this.pointRange = null
   }
 
   private onFxInputKeydown(event: KeyboardEvent): void {
@@ -1375,6 +1590,8 @@ class TableNodeView implements NodeView, InlineCellHost {
       if (this.active && this.fxInput) {
         this.fxInput.value = this.rows[this.active.row]?.[this.active.col] ?? ''
       }
+      this.clearPointRange()
+      this.renderSelection()
       this.grid?.focus()
     }
   }
@@ -1384,10 +1601,13 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (!input || !this.active) return
     const { row, col } = this.active
     const raw = input.value
+    this.clearPointRange()
     if (raw !== (this.rows[row]?.[col] ?? '')) {
       const next = this.rows.map((r) => [...r])
       next[row]![col] = raw
       this.commitRows(next, { row, col }, { row, col })
+    } else {
+      this.renderSelection()
     }
   }
 
