@@ -85,6 +85,12 @@ function tool(view: EditorView, label: string): HTMLElement {
   throw new Error(`no tool ${label}`)
 }
 
+function alignTool(view: EditorView, align: 'left' | 'center' | 'right'): HTMLElement {
+  const button = view.dom.querySelector<HTMLElement>(`.ss-tool[data-align='${align}']`)
+  if (!button) throw new Error(`no align tool ${align}`)
+  return button
+}
+
 function mousedown(el: Element, init: MouseEventInit = {}): void {
   el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, ...init }))
 }
@@ -1232,19 +1238,31 @@ describe('TableNodeView column alignment', () => {
   it('aligns the active column and writes the colons into the delimiter row', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     mousedown(cell(view, 0, 1))
-    tool(view, 'C').click()
+    alignTool(view, 'center').click()
     expect(docValue(view)).toContain('| --- | :---: |')
     expect(cell(view, 0, 1).dataset.align).toBe('center')
     expect(cell(view, 0, 0).dataset.align).toBe('none')
     view.destroy()
   })
 
+  it('clears the alignment when the active alignment is clicked again', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 0, 1))
+    alignTool(view, 'center').click()
+    expect(docValue(view)).toContain('| --- | :---: |')
+    alignTool(view, 'center').click()
+    expect(docValue(view)).toContain('| --- | --- |')
+    expect(cell(view, 0, 1).dataset.align).toBe('none')
+    expect(alignTool(view, 'center').classList.contains('ss-tool-active')).toBe(false)
+    view.destroy()
+  })
+
   it('aligns every selected column and highlights the active button', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     selectRegion(view, 0, 0, 1, 1)
-    tool(view, 'R').click()
+    alignTool(view, 'right').click()
     expect(docValue(view)).toContain('| ---: | ---: |')
-    expect(tool(view, 'R').classList.contains('ss-tool-active')).toBe(true)
+    expect(alignTool(view, 'right').classList.contains('ss-tool-active')).toBe(true)
     view.destroy()
   })
 

@@ -658,6 +658,19 @@ body {
   outline-offset: -1px;
 }
 
+.spreadsheet .ss-tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 5px;
+}
+
+.spreadsheet .ss-tool-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
 /* Align button reflecting the selected column's current alignment. */
 .spreadsheet .ss-tool-active {
   background: var(--accent);

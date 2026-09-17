@@ -264,16 +264,20 @@ class TableNodeView implements NodeView, InlineCellHost {
       })
       tools.appendChild(button)
     }
-    for (const [label, align, title] of [
-      ['L', 'left', 'Align selected column left'],
-      ['C', 'center', 'Align selected column center'],
-      ['R', 'right', 'Align selected column right'],
+    for (const [align, title, markup] of [
+      ['left', 'Align selected column left (click again to clear)', '<path d="M2 4h12M2 8h8M2 12h12"/>'],
+      ['center', 'Align selected column center (click again to clear)', '<path d="M2 4h12M4 8h8M2 12h12"/>'],
+      ['right', 'Align selected column right (click again to clear)', '<path d="M2 4h12M6 8h8M2 12h12"/>'],
     ] as const) {
       const button = document.createElement('button')
       button.type = 'button'
-      button.className = 'ss-tool'
-      button.textContent = label
+      button.className = 'ss-tool ss-tool-icon'
+      button.dataset.align = align
       button.title = title
+      button.setAttribute('aria-label', title)
+      button.innerHTML =
+        '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+        `stroke-linecap="round" aria-hidden="true">${markup}</svg>`
       button.addEventListener('click', () => {
         this.commitFxEdit()
         this.alignColumns(align)
@@ -600,15 +604,19 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   /** Apply a column alignment to the selected columns (active column when
-   * nothing is selected), re-emitting the delimiter row with its colons. */
+   * nothing is selected), re-emitting the delimiter row with its colons.
+   * Clicking the alignment the selection already has clears it back to none. */
   private alignColumns(align: TableAlign): void {
     const cols = this.alignTargetCols()
     if (cols.size === 0) return
+    const next: TableAlign = [...cols].every((c) => (this.align[c] ?? 'none') === align)
+      ? 'none'
+      : align
     let changed = false
     for (const c of cols) {
       while (this.align.length <= c) this.align.push('none')
-      if (this.align[c] !== align) {
-        this.align[c] = align
+      if (this.align[c] !== next) {
+        this.align[c] = next
         changed = true
       }
     }
