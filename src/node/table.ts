@@ -5,7 +5,7 @@ import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMa
 import { cellCarriesMark, setCellMark } from '../inline-md'
 import { solve, colToLetters, isFormula, type CellSolution } from '../spreadsheet'
 import { undo, redo } from 'prosemirror-history'
-import { fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
+import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText } from '../clipboard'
 import { blockNodeView } from '../blockview'
 import { setActiveCellHost, type InlineCellHost, type InlineCellKind } from '../inline-format'
@@ -1822,7 +1822,12 @@ class TableNodeView implements NodeView, InlineCellHost {
     const remove = this.selectedCols()
     if (remove.size === 0 || remove.size === cols) return
     const keep = Array.from({ length: cols }, (_, c) => c).filter((c) => !remove.has(c))
-    const next = this.rows.map((row) => keep.map((c) => row[c] ?? ''))
+    const next = this.rows.map((row) =>
+      keep.map((c) => {
+        const raw = row[c] ?? ''
+        return isFormula(raw) ? deleteFormulaRefs(raw, 'col', remove) : raw
+      }),
+    )
     this.align = keep.map((c) => this.align[c] ?? 'none')
     const col = Math.min(this.active?.col ?? 0, keep.length - 1)
     const row = this.active?.row ?? 0
@@ -1834,7 +1839,9 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (rows === 0) return
     const remove = this.selectedRows()
     if (remove.size === 0 || remove.size === rows) return
-    const next = this.rows.filter((_, r) => !remove.has(r))
+    const next = this.rows
+      .filter((_, r) => !remove.has(r))
+      .map((row) => row.map((raw) => (isFormula(raw) ? deleteFormulaRefs(raw, 'row', remove) : raw)))
     const row = Math.min(this.active?.row ?? 0, next.length - 1)
     const col = this.active?.col ?? 0
     this.commitRows(next, { row, col }, { row, col })

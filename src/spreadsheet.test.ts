@@ -111,6 +111,25 @@ describe('solve', () => {
     expect(solution.cells[1]![0]!.value).toBeUndefined()
   })
 
+  it('evaluates a literal #REF! as a reference error, not #ERROR!', () => {
+    const out = cells('| A |\n| --- |\n| =#REF! |')
+    expect(out[1]![0]).toBe('#REF!')
+    expect(kinds('| A |\n| --- |\n| =#REF!+1 |')[1]![0]).toBe('error')
+    expect(cells('| A |\n| --- |\n| =#REF!+1 |')[1]![0]).toBe('#REF!')
+  })
+
+  it('errors on a reference outside the table instead of treating it as empty', () => {
+    expect(cells('| A | B |\n| --- | --- |\n| 1 | =F2+C2 |')[1]![1]).toBe('#REF!')
+    expect(kinds('| A | B |\n| --- | --- |\n| 1 | =F2+C2 |')[1]![1]).toBe('error')
+    expect(cells('| A | B |\n| --- | --- |\n| 1 | =A5 |')[1]![1]).toBe('#REF!')
+    expect(cells('| A | B |\n| --- | --- |\n| 1 | =SUM(C2:C9) |')[1]![1]).toBe('#REF!')
+  })
+
+  it('still treats an in-bounds empty cell as blank', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| 1 | 2 |\n| =A2+B3 | |')
+    expect(out[2]![0]).toBe('1')
+  })
+
   it('treats a lone `=` as blank and leaves text cells as raw text', () => {
     const out = cells('| A |\n| --- |\n| = |\n| hello |')
     expect(out[1]![0]).toBe('')

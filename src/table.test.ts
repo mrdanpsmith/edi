@@ -180,6 +180,13 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('flags a reference to a column that does not exist', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | =F2+C2 |')
+    expect(cell(view, 1, 1).textContent).toBe('#REF!')
+    expect(cell(view, 1, 1).classList.contains('ss-error')).toBe(true)
+    view.destroy()
+  })
+
   it('makes a cell active on click and labels it in the name box', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     mousedown(cell(view, 1, 1))
@@ -285,6 +292,49 @@ describe('TableNodeView grid', () => {
     tool(view, '−Row').click()
     expect(tableGrid(view).querySelectorAll('tbody tr').length).toBe(1)
     expect(docValue(view)).not.toContain('| 2 | 3 |')
+    view.destroy()
+  })
+
+  it('adjusts a sum range when a row inside it is removed', () => {
+    const view = createEditor(
+      '| Item | Qty |\n| --- | --- |\n| A | 1 |\n| B | 2 |\n| C | 3 |\n| Total | =SUM(B2:B4) |',
+    )
+    expect(cell(view, 4, 1).textContent).toBe('6')
+    mousedown(rowGutter(view, 3))
+    tool(view, '−Row').click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['Item', 'Qty'],
+      ['A', '1'],
+      ['B', '2'],
+      ['Total', '=SUM(B2:B3)'],
+    ])
+    expect(cell(view, 3, 1).textContent).toBe('3')
+    expect(cell(view, 3, 1).classList.contains('ss-error')).toBe(false)
+    view.destroy()
+  })
+
+  it('adjusts a sum range when a column inside it is removed', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | =SUM(A2:B2) |')
+    expect(cell(view, 1, 2).textContent).toBe('3')
+    mousedown(colHeader(view, 1))
+    tool(view, '−Col').click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'C'],
+      ['1', '=SUM(A2:A2)'],
+    ])
+    expect(cell(view, 1, 1).textContent).toBe('1')
+    view.destroy()
+  })
+
+  it('collapses a reference to a removed row into #REF!', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | =A2 |')
+    mousedown(rowGutter(view, 1))
+    tool(view, '−Row').click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['3', '=#REF!'],
+    ])
+    expect(cell(view, 1, 1).textContent).toBe('#REF!')
     view.destroy()
   })
 
@@ -1371,6 +1421,31 @@ describe('TableNodeView insert row/column', () => {
     hoverInsert(colHeader(view, 1))
     insertPlus(view).click()
     expect(docValue(view)).toContain('| :---: | --- | ---: |')
+    view.destroy()
+  })
+
+  it('grows a sum range when a row is inserted above the total', () => {
+    const view = createEditor(
+      '| Item | Qty |\n| --- | --- |\n| A | 1 |\n| B | 2 |\n| Total | =SUM(B2:B3) |',
+    )
+    expect(cell(view, 3, 1).textContent).toBe('3')
+    hoverInsert(rowGutter(view, 3))
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['Item', 'Qty'],
+      ['A', '1'],
+      ['B', '2'],
+      ['', ''],
+      ['Total', '=SUM(B2:B4)'],
+    ])
+    expect(cell(view, 4, 1).textContent).toBe('3')
+
+    // A value typed into the freshly inserted row flows into the total.
+    mousedown(cell(view, 3, 1))
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    fx.value = '5'
+    fx.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(cell(view, 4, 1).textContent).toBe('8')
     view.destroy()
   })
 

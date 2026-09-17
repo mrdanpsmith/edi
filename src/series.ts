@@ -206,22 +206,150 @@ export function remapFormulaRefs(formula: string, src: SourceRect, dr: number, d
   })
 }
 
+/** A single A1 reference with an optional `:A1` range partner. */
+const REF_RANGE_TOKEN =
+  /(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)(?::(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*))?/g
+
 /**
  * Rewrite the references in a formula when a row or column is inserted at
- * `at` (a 1-based spreadsheet coordinate). Every reference at or after the
+ * `at` (a 1-based spreadsheet coordinate). A lone reference at or after the
  * insertion point moves one cell along that axis — including `$`-absolute
- * ones, because the cell itself moved — so a formula keeps pointing at the
- * same data no matter which side of the insertion it lives on.
+ * ones, because the cell itself moved. A range behaves like the block of
+ * cells it covers: an insertion within it, or immediately before/after it,
+ * grows the range to take the new row/column in, so a `SUM(C2:C9)` above a
+ * total keeps covering the data as rows are added to the block.
  */
 export function insertFormulaRefs(formula: string, axis: 'row' | 'col', at: number): string {
-  return formula.replace(REF_TOKEN, (match, colAbs: string, letters: string, rowAbs: string, digits: string, offset: number) => {
-    if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
-    if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
-    const col = lettersToCol(letters)
-    const row = Number(digits)
-    const newCol = axis === 'col' && col >= at ? col + 1 : col
-    const newRow = axis === 'row' && row >= at ? row + 1 : row
-    if (newCol === col && newRow === row) return match
-    return `${colAbs}${colToLetters(newCol)}${rowAbs}${newRow}`
-  })
+  return formula.replace(
+    REF_RANGE_TOKEN,
+    (
+      match,
+      colAbs: string,
+      letters: string,
+      rowAbs: string,
+      digits: string,
+      colAbs2: string | undefined,
+      letters2: string | undefined,
+      rowAbs2: string | undefined,
+      digits2: string | undefined,
+      offset: number,
+    ) => {
+      if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
+      if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+      const single = digits2 === undefined
+      const r1 = Number(digits)
+      const c1 = lettersToCol(letters)
+      if (single) {
+        const newCol = axis === 'col' && c1 >= at ? c1 + 1 : c1
+        const newRow = axis === 'row' && r1 >= at ? r1 + 1 : r1
+        if (newCol === c1 && newRow === r1) return match
+        return `${colAbs}${colToLetters(newCol)}${rowAbs}${newRow}`
+      }
+      const r2 = Number(digits2)
+      const c2 = lettersToCol(letters2!)
+      // Inserting before the range shifts it; inserting within it or directly
+      // against an end grows it instead.
+      const grow = (low: number, high: number): [number, number] => {
+        if (at < low) return [low + 1, high + 1]
+        if (at <= high + 1) return [low, high + 1]
+        return [low, high]
+      }
+      if (axis === 'row') {
+        const [low, high] = grow(Math.min(r1, r2), Math.max(r1, r2))
+        return rebuildRef(colAbs, c1, rowAbs, r1 <= r2 ? low : high, colAbs2, c2, rowAbs2, r1 <= r2 ? high : low)
+      }
+      const [low, high] = grow(Math.min(c1, c2), Math.max(c1, c2))
+      return rebuildRef(colAbs, c1 <= c2 ? low : high, rowAbs, r1, colAbs2, c1 <= c2 ? high : low, rowAbs2, r2)
+    },
+  )
+}
+
+/**
+ * Rewrite the references in a formula when rows or columns are removed.
+ *
+ * `removed` holds the 0-based **grid** indices of the deleted rows/columns
+ * (the same indices the table view selects). Surviving references after the
+ * deletion shift back by however many removed coordinates sat before them. A
+ * range that straddles the deletion shrinks rather than swallowing the gap:
+ * `SUM(C2:C9)` with row 9 removed becomes `SUM(C2:C8)`, so a total row no
+ * longer ends up inside the range it is summing (which would be a cycle).
+ * A reference whose cell is gone entirely becomes `#REF!`.
+ */
+export function deleteFormulaRefs(
+  formula: string,
+  axis: 'row' | 'col',
+  removed: ReadonlySet<number>,
+): string {
+  if (removed.size === 0) return formula
+  const sorted = [...removed].sort((a, b) => a - b)
+  const removedBelow = (gridIndex: number): number => {
+    let count = 0
+    for (const index of sorted) {
+      if (index >= gridIndex) break
+      count++
+    }
+    return count
+  }
+  // Map a 1-based coordinate to its new position. A deleted range endpoint
+  // collapses onto the neighbouring survivor (`start` keeps the cell that
+  // shifted into the gap; `end` stops just above it) so the range tightens.
+  const map = (coord: number, role: 'start' | 'end' | 'single'): number | null => {
+    const grid = coord - 1
+    const shifted = coord - removedBelow(grid)
+    if (!removed.has(grid)) return shifted
+    if (role === 'single') return null
+    return role === 'start' ? shifted : shifted - 1
+  }
+  return formula.replace(
+    REF_RANGE_TOKEN,
+    (
+      match,
+      colAbs: string,
+      letters: string,
+      rowAbs: string,
+      digits: string,
+      colAbs2: string | undefined,
+      letters2: string | undefined,
+      rowAbs2: string | undefined,
+      digits2: string | undefined,
+      offset: number,
+    ) => {
+      if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
+      if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+      const single = digits2 === undefined
+      const r1 = Number(digits)
+      const c1 = lettersToCol(letters)
+      const r2 = single ? r1 : Number(digits2)
+      const c2 = single ? c1 : lettersToCol(letters2!)
+      if (axis === 'row') {
+        const low = Math.min(r1, r2)
+        const high = Math.max(r1, r2)
+        const lowNew = map(low, single ? 'single' : 'start')
+        const highNew = single ? lowNew : map(high, 'end')
+        if (lowNew === null || highNew === null || lowNew > highNew) return '#REF!'
+        return rebuildRef(colAbs, c1, rowAbs, r1 <= r2 ? lowNew : highNew, colAbs2, c2, rowAbs2, single ? undefined : r1 <= r2 ? highNew : lowNew)
+      }
+      const low = Math.min(c1, c2)
+      const high = Math.max(c1, c2)
+      const lowNew = map(low, single ? 'single' : 'start')
+      const highNew = single ? lowNew : map(high, 'end')
+      if (lowNew === null || highNew === null || lowNew > highNew) return '#REF!'
+      return rebuildRef(colAbs, c1 <= c2 ? lowNew : highNew, rowAbs, r1, colAbs2, c1 <= c2 ? highNew : lowNew, rowAbs2, single ? undefined : r2)
+    },
+  )
+}
+
+function rebuildRef(
+  colAbs: string,
+  col: number,
+  rowAbs: string,
+  row: number,
+  colAbs2: string | undefined,
+  col2: number,
+  rowAbs2: string | undefined,
+  row2: number | undefined,
+): string {
+  const first = `${colAbs}${colToLetters(col)}${rowAbs}${row}`
+  if (row2 === undefined) return first
+  return `${first}:${colAbs2}${colToLetters(col2)}${rowAbs2}${row2}`
 }

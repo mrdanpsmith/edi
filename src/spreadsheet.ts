@@ -154,6 +154,8 @@ export function formatNumber(value: number): string {
 class SpreadsheetGrid {
   private readonly cells = new Map<string, TableCell>()
   private readonly formulas: TableCell[] = []
+  private maxRow = 0
+  private maxCol = 0
 
   set(row: number, col: number, raw: string): void {
     const trimmed = raw.trim()
@@ -163,10 +165,18 @@ class SpreadsheetGrid {
       this.formulas.push(cell)
     }
     this.cells.set(cellKey(row, col), cell)
+    this.maxRow = Math.max(this.maxRow, row)
+    this.maxCol = Math.max(this.maxCol, col)
   }
 
   get(row: number, col: number): TableCell | undefined {
     return this.cells.get(cellKey(row, col))
+  }
+
+  /** False for a coordinate outside the table, so a formula can report a
+   * dangling reference instead of silently treating it as an empty cell. */
+  inBounds(row: number, col: number): boolean {
+    return row >= 1 && col >= 1 && row <= this.maxRow && col <= this.maxCol
   }
 
   formulaCells(): readonly TableCell[] {
@@ -250,6 +260,9 @@ class FormulaParser {
 
   private atom(): CellValue {
     this.skipWs()
+    if (this.match('#REF!')) {
+      return err('#REF!')
+    }
     if (this.match('(')) {
       const inner = this.additive()
       this.skipWs()
@@ -317,7 +330,7 @@ class FormulaParser {
   private cellValue(row: number, col: number): CellValue {
     const cell = this.grid.get(row, col)
     if (!cell) {
-      return blank()
+      return this.grid.inBounds(row, col) ? blank() : err('#REF!')
     }
     if (cell.formula) {
       const key = cellKey(row, col)
