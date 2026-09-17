@@ -634,6 +634,25 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('double-clicking the empty area beside the table closes edit mode', () => {
+    const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
+    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    const grid = view.dom.querySelector('.ss-grid') as HTMLElement
+    grid.getBoundingClientRect = () =>
+      ({ left: 0, right: 200, top: 0, bottom: 40, width: 200, height: 40, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    const wrap = view.dom.querySelector('.ss-table-scroll') as HTMLElement
+    // Within the margin beside the table edge: stay in spreadsheet mode.
+    wrap.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 210, clientY: 20 }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    // Past the margin: behave like a double-click outside the block.
+    wrap.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 260, clientY: 20 }))
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    view.destroy()
+  })
+
   it('double-clicking outside the editor closes edit mode when the table is the only node', () => {
     const view = createPlainTable('| A |\n| --- |\n| 1 |')
     const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement

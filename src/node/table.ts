@@ -59,6 +59,10 @@ const INSERT_EDGE = 6
 /** Half-width (px) of the forgiving corridor that keeps a shown guide alive
  * while the pointer travels from the chrome to its floating button. */
 const INSERT_CORRIDOR = 14
+/** How far (px) past the table's right edge a double-click must land before the
+ * empty area beside the table counts as "outside the block" (leaving room to
+ * hit the column insert guide, which sits at the grid's trailing edge). */
+const EXIT_MARGIN = 32
 
 function createHandleDOM(pos: number): HTMLElement {
   const handle = document.createElement('div')
@@ -2419,6 +2423,19 @@ export function enterPlainMode(view: EditorView, pos: number | undefined): void 
   view.dispatch(tr)
 }
 
+/** True when a double-click lands in the empty space beside a table's grid —
+ * inside the scroll wrapper but past the grid's right edge by a small margin —
+ * which should leave spreadsheet mode exactly like a double-click outside the
+ * block. The grid only spans its content width, so this is the white area to
+ * the right of the table. */
+function isSpreadsheetEmptyArea(event: MouseEvent): boolean {
+  const target = event.target
+  if (!(target instanceof Element)) return false
+  const grid = target.closest('.ss-table-scroll')?.querySelector<HTMLElement>('.ss-grid')
+  if (!grid || grid.contains(target)) return false
+  return event.clientX > grid.getBoundingClientRect().right + EXIT_MARGIN
+}
+
 export const tableNodeViewPlugin = new Plugin<TableModeState>({
   key: TABLE_MODE_KEY,
   state: {
@@ -2439,7 +2456,9 @@ export const tableNodeViewPlugin = new Plugin<TableModeState>({
     const onDblClick = (event: MouseEvent): void => {
       const target = event.target as HTMLElement | null
       if (!target || !view.dom.isConnected) return
-      if (target.closest?.('.spreadsheet')) return
+      // A double-click inside the spreadsheet normally stays put, but the empty
+      // area beside the grid should behave like the area outside the block.
+      if (target.closest?.('.spreadsheet') && !isSpreadsheetEmptyArea(event)) return
       const spreadPos = currentSpreadPos(view.state)
       if (spreadPos === null) return
       const tr = view.state.tr
