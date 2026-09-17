@@ -205,3 +205,23 @@ export function remapFormulaRefs(formula: string, src: SourceRect, dr: number, d
     return `${colAbs}${colToLetters(Math.max(1, col + dc))}${rowAbs}${Math.max(1, row + dr)}`
   })
 }
+
+/**
+ * Rewrite the references in a formula when a row or column is inserted at
+ * `at` (a 1-based spreadsheet coordinate). Every reference at or after the
+ * insertion point moves one cell along that axis — including `$`-absolute
+ * ones, because the cell itself moved — so a formula keeps pointing at the
+ * same data no matter which side of the insertion it lives on.
+ */
+export function insertFormulaRefs(formula: string, axis: 'row' | 'col', at: number): string {
+  return formula.replace(REF_TOKEN, (match, colAbs: string, letters: string, rowAbs: string, digits: string, offset: number) => {
+    if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
+    if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+    const col = lettersToCol(letters)
+    const row = Number(digits)
+    const newCol = axis === 'col' && col >= at ? col + 1 : col
+    const newRow = axis === 'row' && row >= at ? row + 1 : row
+    if (newCol === col && newRow === row) return match
+    return `${colAbs}${colToLetters(newCol)}${rowAbs}${newRow}`
+  })
+}

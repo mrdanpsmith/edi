@@ -145,11 +145,11 @@ describe('TableNodeView grid', () => {
   it('renders column letters, row numbers, and a name box', () => {
     const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |')
     const headers = tableGrid(view).querySelectorAll('thead th')
-    expect(headers[1]!.textContent).toBe('A')
-    expect(headers[2]!.textContent).toBe('B')
-    expect(headers[3]!.textContent).toBe('C')
+    expect(headers[1]!.querySelector('.ss-cell-content')!.textContent).toBe('A')
+    expect(headers[2]!.querySelector('.ss-cell-content')!.textContent).toBe('B')
+    expect(headers[3]!.querySelector('.ss-cell-content')!.textContent).toBe('C')
     const gutters = tableGrid(view).querySelectorAll('tbody th.ss-row')
-    expect(Array.from(gutters).map((g) => g.textContent)).toEqual(['1', '2'])
+    expect(Array.from(gutters).map((g) => g.querySelector('.ss-gutter-label')?.textContent)).toEqual(['1', '2'])
     const namebox = view.dom.querySelector('.ss-namebox')
     expect(namebox?.textContent).toBe('A1')
     view.destroy()
@@ -560,7 +560,7 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
-  it('sizes columns and rows by content with sane fallbacks', () => {
+  it('sizes columns to their content', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     const grid = tableGrid(view)
     const cols = grid.querySelectorAll('colgroup col')
@@ -568,54 +568,6 @@ describe('TableNodeView grid', () => {
     for (const col of Array.from(cols)) {
       expect((col as HTMLTableColElement).style.width).not.toBe('')
     }
-    const rows = grid.querySelectorAll('tbody tr')
-    for (const tr of Array.from(rows)) {
-      expect((tr as HTMLTableRowElement).style.height).not.toBe('')
-    }
-    expect(grid.querySelectorAll('.ss-col-resize').length).toBe(2)
-    expect(grid.querySelectorAll('.ss-row-resize').length).toBe(2)
-    view.destroy()
-  })
-
-  it('dragging a column resize handle re-sizes the column and keeps it after a rebuild', () => {
-    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
-    const grid = tableGrid(view)
-    const handle = grid.querySelector<HTMLElement>('.ss-col-resize[data-col="0"]')!
-    const col = grid.querySelectorAll<HTMLTableColElement>('colgroup col:not(.ss-gutter)')[0]!
-    const start = Number.parseFloat(col.style.width)
-    mousedown(handle, { clientX: 100 })
-    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160 }))
-    document.dispatchEvent(new MouseEvent('mouseup'))
-    const resized = Number.parseFloat(col.style.width)
-    expect(resized).toBe(start + 60)
-    expect(grid.closest('.spreadsheet')?.classList.contains('ss-resizing')).toBe(false)
-
-    // Editing a cell rebuilds the grid; the manual width must survive.
-    mousedown(cell(view, 1, 0))
-    const fx = view.dom.querySelector<HTMLInputElement>('.ss-fx-input')!
-    fx.value = '7'
-    fx.dispatchEvent(new FocusEvent('blur'))
-    const rebuilt = tableGrid(view)
-    const rebuiltCol = rebuilt.querySelectorAll<HTMLTableColElement>('colgroup col:not(.ss-gutter)')[0]!
-    expect(Number.parseFloat(rebuiltCol.style.width)).toBe(resized)
-    expect(parsePipes(docValue(view))).toEqual([
-      ['A', 'B'],
-      ['7', '2'],
-    ])
-    view.destroy()
-  })
-
-  it('dragging a row resize handle re-sizes the row and keeps it after a rebuild', () => {
-    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
-    const grid = tableGrid(view)
-    const handle = grid.querySelector<HTMLElement>('.ss-row-resize[data-row="0"]')!
-    mousedown(handle, { clientY: 100 })
-    document.dispatchEvent(new MouseEvent('mousemove', { clientY: 140 }))
-    document.dispatchEvent(new MouseEvent('mouseup'))
-    const tr = tableGrid(view).querySelectorAll<HTMLTableRowElement>('tbody tr')[0]!
-    const resized = Number.parseFloat(tr.style.height)
-    expect(resized).toBe(24 + 40)
-    expect(grid.closest('.spreadsheet')?.classList.contains('ss-resizing')).toBe(false)
     view.destroy()
   })
 
@@ -1287,6 +1239,179 @@ describe('TableNodeView column alignment', () => {
     const tds = view.dom.querySelectorAll('.ss-plain-table tbody td')
     expect(tds[0]!.getAttribute('data-align')).toBe('center')
     expect(tds[1]!.getAttribute('data-align')).toBe('right')
+    view.destroy()
+  })
+})
+
+describe('TableNodeView insert row/column', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function hoverInsert(el: Element, clientX = 0, clientY = 0): void {
+    el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX, clientY }))
+  }
+
+  function stubRect(el: Element, left: number, right: number, top = 0, bottom = 20): void {
+    el.getBoundingClientRect = () =>
+      ({ left, right, top, bottom, width: right - left, height: bottom - top, x: left, y: top, toJSON: () => ({}) }) as DOMRect
+  }
+
+  function insertPlus(view: EditorView): HTMLElement {
+    const plus = view.dom.querySelector('.ss-insert-plus') as HTMLElement | null
+    if (!plus) throw new Error('no insert plus rendered')
+    return plus
+  }
+
+  function guide(view: EditorView): HTMLElement {
+    return view.dom.querySelector('.ss-insert-guide') as HTMLElement
+  }
+
+  function spreadsheetDom(view: EditorView): HTMLElement {
+    return view.dom.querySelector('.spreadsheet') as HTMLElement
+  }
+
+  it('shows the guide on a column boundary and inserts on click', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    expect(guide(view).hidden).toBe(true)
+    hoverInsert(colHeader(view, 1))
+    expect(guide(view).hidden).toBe(false)
+    expect(spreadsheetDom(view).classList.contains('ss-inserting-col')).toBe(true)
+    insertPlus(view).click()
+    expect(guide(view).hidden).toBe(true)
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', '', 'B'],
+      ['1', '', '2'],
+    ])
+    view.destroy()
+  })
+
+  it('only shows the guide near a header boundary, not over its middle', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const header = colHeader(view, 1)
+    stubRect(header, 100, 150)
+    hoverInsert(header, 125, 5)
+    expect(guide(view).hidden).toBe(true)
+    hoverInsert(header, 102, 5)
+    expect(guide(view).hidden).toBe(false)
+    expect(spreadsheetDom(view).classList.contains('ss-inserting-col')).toBe(true)
+    view.destroy()
+  })
+
+  it('appends a column when hovering the last column trailing boundary', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const header = colHeader(view, 1)
+    stubRect(header, 100, 150)
+    hoverInsert(header, 148, 5)
+    expect(guide(view).hidden).toBe(false)
+    expect((view.dom.querySelector('.ss-insert-line') as HTMLElement).style.left).toBe('149px')
+    expect(insertPlus(view).title).toBe('Append column at the end')
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B', ''],
+      ['1', '2', ''],
+    ])
+    view.destroy()
+  })
+
+  it('appends a row when hovering the last row bottom boundary', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    const gutter = rowGutter(view, 2)
+    stubRect(gutter, 0, 30, 100, 124)
+    hoverInsert(gutter, 5, 122)
+    expect(guide(view).hidden).toBe(false)
+    expect(spreadsheetDom(view).classList.contains('ss-inserting-row')).toBe(true)
+    expect(insertPlus(view).title).toBe('Append row at the end')
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['1', '2'],
+      ['3', '4'],
+      ['', ''],
+    ])
+    view.destroy()
+  })
+
+  it('hides the guide when hovering the middle of a cell', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    hoverInsert(colHeader(view, 1))
+    expect(guide(view).hidden).toBe(false)
+    hoverInsert(cell(view, 1, 0), 1000, 1000)
+    expect(guide(view).hidden).toBe(true)
+    view.destroy()
+  })
+
+  it('keeps the guide while the pointer travels to the floating button', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    hoverInsert(colHeader(view, 1))
+    const fxbar = view.dom.querySelector('.ss-fxbar') as Element
+    hoverInsert(fxbar, 0, 0)
+    expect(guide(view).hidden).toBe(false)
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', '', 'B'],
+      ['1', '', '2'],
+    ])
+    view.destroy()
+  })
+
+  it('shifts references past an inserted column', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | =B2 |')
+    hoverInsert(colHeader(view, 0))
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['', 'A', 'B', 'C'],
+      ['', '1', '2', '=C2'],
+    ])
+    view.destroy()
+  })
+
+  it('carries column alignment across an insertion', () => {
+    const view = createEditor('| A | B |\n| :---: | ---: |\n| 1 | 2 |')
+    hoverInsert(colHeader(view, 1))
+    insertPlus(view).click()
+    expect(docValue(view)).toContain('| :---: | --- | ---: |')
+    view.destroy()
+  })
+
+  it('shows the guide over a row gutter and inserts above it', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    hoverInsert(rowGutter(view, 2))
+    expect(guide(view).hidden).toBe(false)
+    expect(spreadsheetDom(view).classList.contains('ss-inserting-row')).toBe(true)
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['1', '2'],
+      ['', ''],
+      ['3', '4'],
+    ])
+    view.destroy()
+  })
+
+  it('shifts references at or below an inserted row', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | =A3 |\n| 3 | 4 |')
+    hoverInsert(rowGutter(view, 2))
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['1', '=A4'],
+      ['', ''],
+      ['3', '4'],
+    ])
+    view.destroy()
+  })
+
+  it('leaves references above the insertion point untouched', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | =A2 |\n| 3 | 4 |')
+    hoverInsert(rowGutter(view, 2))
+    insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['1', '=A2'],
+      ['', ''],
+      ['3', '4'],
+    ])
     view.destroy()
   })
 })

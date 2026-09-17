@@ -776,41 +776,55 @@ body {
   color: var(--accent-contrast);
 }
 
-/* Column / row resize drag handles on the header edges */
-
-.spreadsheet .ss-grid .ss-col-resize {
+/* Floating insert guide: a blue rule drawn between the hovered rows/columns
+   with a `+` button at its end, sitting over the row/column chrome. */
+.spreadsheet .ss-insert-guide {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  right: -3px;
-  width: 7px;
-  cursor: col-resize;
-  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
 }
 
-.spreadsheet .ss-grid .ss-row-resize {
+.spreadsheet .ss-insert-line {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -3px;
-  height: 7px;
-  cursor: row-resize;
-  z-index: 1;
+  background: var(--accent);
+  border-radius: 1px;
 }
 
-.spreadsheet.ss-resizing,
-.spreadsheet.ss-resizing * {
-  user-select: none;
+.spreadsheet .ss-insert-plus {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
-.spreadsheet.ss-resizing-col,
-.spreadsheet.ss-resizing-col * {
-  cursor: col-resize !important;
+.spreadsheet .ss-insert-plus:hover {
+  filter: brightness(1.1);
 }
 
-.spreadsheet.ss-resizing-row,
-.spreadsheet.ss-resizing-row * {
-  cursor: row-resize !important;
+/* Expand the button's hit area beyond its visual circle so it is easy to hit. */
+.spreadsheet .ss-insert-plus::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+}
+
+.spreadsheet.ss-inserting-col .ss-grid thead th.ss-col,
+.spreadsheet.ss-inserting-row .ss-grid tbody th.ss-row {
+  cursor: pointer;
 }
 
 .spreadsheet .ss-grid td {

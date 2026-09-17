@@ -5,7 +5,7 @@ import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMa
 import { cellCarriesMark, setCellMark } from '../inline-md'
 import { solve, colToLetters, isFormula, type CellSolution } from '../spreadsheet'
 import { undo, redo } from 'prosemirror-history'
-import { fillTextValues, remapFormulaRefs, shiftFormulaRefs } from '../series'
+import { fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText } from '../clipboard'
 import { blockNodeView } from '../blockview'
 import { setActiveCellHost, type InlineCellHost, type InlineCellKind } from '../inline-format'
@@ -50,10 +50,14 @@ const cellKey = (row: number, col: number): string => `${row}:${col}`
 const MIN_COL_WIDTH = 48
 const MAX_COL_WIDTH = 480
 const COL_PAD = 22
-const MIN_ROW_HEIGHT = 24
 const ROW_GUTTER_WIDTH = 30
-const MAX_ROW_HEIGHT = 480
 const EDIT_INPUT_PAD = 20
+/** How far (px) from a row/column boundary in the spreadsheet chrome the
+ * pointer must be for the insert guide to appear. */
+const INSERT_EDGE = 6
+/** Half-width (px) of the forgiving corridor that keeps a shown guide alive
+ * while the pointer travels from the chrome to its floating button. */
+const INSERT_CORRIDOR = 14
 
 function createHandleDOM(pos: number): HTMLElement {
   const handle = document.createElement('div')
@@ -82,8 +86,6 @@ class TableNodeView implements NodeView, InlineCellHost {
   private headCells: HTMLElement[] = []
   private rowGutters: HTMLElement[] = []
   private cells: HTMLElement[][] = []
-  private colWidths: (number | undefined)[] = []
-  private rowHeights: (number | undefined)[] = []
 
   private anchor: CellRef | null = null
   private active: CellRef | null = null
@@ -102,6 +104,10 @@ class TableNodeView implements NodeView, InlineCellHost {
   private pointDrag: PointDrag | null = null
   private pointInsert: PointInsert | null = null
   private pointRange: { r1: number; c1: number; r2: number; c2: number } | null = null
+  private insertGuide: HTMLElement | null = null
+  private insertGuideLine: HTMLElement | null = null
+  private insertGuidePlus: HTMLElement | null = null
+  private insertGuideTarget: { axis: 'col' | 'row'; index: number; x: number; y: number } | null = null
   private readonly onFillMove = (event: MouseEvent): void => this.handleFillMove(event)
   private readonly onFillUp = (event: MouseEvent): void => this.handleFillUp(event)
   private readonly onDocCopy = (event: Event): void => this.onClipboardCopy(event as ClipboardEvent)
@@ -137,6 +143,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.buildTools()
     this.buildFxBar()
     this.buildGrid()
+    this.buildInsertGuide()
     this.anchor = { row: 0, col: 0 }
     this.active = { row: 0, col: 0 }
     this.renderSelection()
@@ -374,12 +381,6 @@ class TableNodeView implements NodeView, InlineCellHost {
       label.className = 'ss-cell-content'
       label.textContent = colToLetters(c + 1)
       th.appendChild(label)
-      const resize = document.createElement('div')
-      resize.className = 'ss-col-resize'
-      resize.dataset.col = String(c)
-      resize.title = 'Drag to resize'
-      resize.addEventListener('mousedown', (event) => this.startColResize(event, c))
-      th.appendChild(resize)
       headRow.appendChild(th)
       this.headCells.push(th)
     }
@@ -393,13 +394,10 @@ class TableNodeView implements NodeView, InlineCellHost {
       const gutter = document.createElement('th')
       gutter.className = 'ss-row'
       gutter.dataset.row = String(r)
-      gutter.textContent = String(r + 1)
-      const resize = document.createElement('div')
-      resize.className = 'ss-row-resize'
-      resize.dataset.row = String(r)
-      resize.title = 'Drag to resize'
-      resize.addEventListener('mousedown', (event) => this.startRowResize(event, r))
-      gutter.appendChild(resize)
+      const gutterLabel = document.createElement('span')
+      gutterLabel.className = 'ss-gutter-label'
+      gutterLabel.textContent = String(r + 1)
+      gutter.appendChild(gutterLabel)
       tr.appendChild(gutter)
       this.rowGutters.push(gutter)
       const rowCells: HTMLElement[] = []
@@ -431,27 +429,175 @@ class TableNodeView implements NodeView, InlineCellHost {
     grid.addEventListener('focus', () => setActiveCellHost(this))
     grid.addEventListener('keydown', (event) => this.onGridKeydown(event))
     grid.addEventListener('dblclick', (event) => this.onDblClick(event))
+    wrap.addEventListener('scroll', () => this.hideInsertGuide())
     if (refocus) grid.focus()
   }
 
-  /**
-   * Size columns to `col <col>` elements. User-resized columns/rows keep their
-   * size across rebuilds; anything else re-fits to the current content.
-   */
+  /** A floating overlay showing where a hover insert would land: a blue rule
+   * between the target rows/columns with a `+` button at its end. */
+  private buildInsertGuide(): void {
+    const guide = document.createElement('div')
+    guide.className = 'ss-insert-guide'
+    guide.hidden = true
+    const line = document.createElement('div')
+    line.className = 'ss-insert-line'
+    guide.appendChild(line)
+    const plus = document.createElement('button')
+    plus.type = 'button'
+    plus.className = 'ss-insert-plus'
+    plus.textContent = '+'
+    plus.setAttribute('aria-label', 'Insert here')
+    plus.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    plus.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const target = this.insertGuideTarget
+      this.hideInsertGuide()
+      if (!target) return
+      if (target.axis === 'col') this.insertColumnAt(target.index)
+      else this.insertRowAt(target.index)
+    })
+    guide.appendChild(plus)
+    this.insertGuide = guide
+    this.insertGuideLine = line
+    this.insertGuidePlus = plus
+    this.dom.appendChild(guide)
+    this.dom.addEventListener('mousemove', (event) => this.onInsertHover(event))
+    this.dom.addEventListener('mouseleave', () => this.hideInsertGuide())
+  }
+
+  private onInsertHover(event: MouseEvent): void {
+    if (!this.grid || !this.insertGuide) return
+    const target = event.target
+    // Moving onto the floating button keeps the guide put so it stays clickable.
+    if (target instanceof Element && target.closest('.ss-insert-plus')) return
+    // Forgive slight excursions: keep a shown guide while the pointer stays in
+    // the corridor around its boundary (e.g. the short trip up to the button).
+    if (this.insertGuideTarget && this.pointInInsertCorridor(event.clientX, event.clientY)) return
+    if (!(target instanceof Element)) {
+      this.hideInsertGuide()
+      return
+    }
+    // The guide lives on the boundary between two chrome cells, so only the
+    // lead/trail edge of a header/gutter — not its middle — triggers it.
+    const col = target.closest('th.ss-col')
+    if (col) {
+      const index = Number((col as HTMLElement).dataset.col)
+      const rect = col.getBoundingClientRect()
+      if (event.clientX - rect.left <= INSERT_EDGE) {
+        this.showInsertGuide('col', index, rect.left, rect.top)
+        return
+      }
+      if (rect.right - event.clientX <= INSERT_EDGE) {
+        this.showInsertGuide('col', index + 1, rect.right, rect.top)
+        return
+      }
+      this.hideInsertGuide()
+      return
+    }
+    const row = target.closest('th.ss-row')
+    if (row) {
+      const index = Number((row as HTMLElement).dataset.row)
+      const rect = row.getBoundingClientRect()
+      if (event.clientY - rect.top <= INSERT_EDGE && index > 0) {
+        this.showInsertGuide('row', index, rect.left, rect.top)
+        return
+      }
+      if (rect.bottom - event.clientY <= INSERT_EDGE) {
+        this.showInsertGuide('row', index + 1, rect.left, rect.bottom)
+        return
+      }
+      this.hideInsertGuide()
+      return
+    }
+    this.hideInsertGuide()
+  }
+
+  /** True while the pointer sits within the forgiving band around the shown
+   * guide's boundary, including the space its floating button occupies. */
+  private pointInInsertCorridor(clientX: number, clientY: number): boolean {
+    const grid = this.grid
+    const target = this.insertGuideTarget
+    if (!grid || !target) return false
+    const base = this.dom.getBoundingClientRect()
+    const gridRect = grid.getBoundingClientRect()
+    const px = clientX - base.left
+    const py = clientY - base.top
+    const size = this.insertGuidePlus?.offsetWidth || 16
+    if (target.axis === 'col') {
+      const top = gridRect.top - base.top - size - INSERT_CORRIDOR
+      const bottom = gridRect.bottom - base.top
+      return Math.abs(px - target.x) <= INSERT_CORRIDOR && py >= top && py <= bottom
+    }
+    const left = gridRect.left - base.left - size - INSERT_CORRIDOR
+    const right = gridRect.right - base.left
+    return Math.abs(py - target.y) <= INSERT_CORRIDOR && px >= left && px <= right
+  }
+
+  private showInsertGuide(axis: 'col' | 'row', index: number, clientX: number, clientY: number): void {
+    const grid = this.grid
+    const guide = this.insertGuide
+    const line = this.insertGuideLine
+    const plus = this.insertGuidePlus
+    const cols = this.rows[0]?.length ?? 0
+    const max = axis === 'col' ? cols : this.rows.length
+    if (!grid || !guide || !line || !plus || !Number.isFinite(index) || index < 0 || index > max) return
+    const base = this.dom.getBoundingClientRect()
+    const gridRect = grid.getBoundingClientRect()
+    const tableTop = gridRect.top - base.top
+    const tableBottom = gridRect.bottom - base.top
+    const tableLeft = gridRect.left - base.left
+    const tableRight = gridRect.right - base.left
+    const x = clientX - base.left
+    const y = clientY - base.top
+    const size = plus.offsetWidth || 16
+    const atEnd = axis === 'col' ? index >= cols : index >= this.rows.length
+    this.insertGuideTarget = { axis, index, x, y }
+    this.dom.classList.toggle('ss-inserting-col', axis === 'col')
+    this.dom.classList.toggle('ss-inserting-row', axis === 'row')
+    guide.hidden = false
+    if (axis === 'col') {
+      plus.style.left = `${x - size / 2}px`
+      plus.style.top = `${tableTop - size}px`
+      line.style.left = `${x - 1}px`
+      line.style.top = `${tableTop}px`
+      line.style.width = '2px'
+      line.style.height = `${tableBottom - tableTop}px`
+    } else {
+      plus.style.left = `${tableLeft - size}px`
+      plus.style.top = `${y - size / 2}px`
+      line.style.left = `${tableLeft}px`
+      line.style.top = `${y - 1}px`
+      line.style.width = `${tableRight - tableLeft}px`
+      line.style.height = '2px'
+    }
+    plus.title =
+      axis === 'col'
+        ? atEnd
+          ? 'Append column at the end'
+          : `Insert column before ${colToLetters(index + 1)}`
+        : atEnd
+          ? 'Append row at the end'
+          : `Insert row above ${index + 1}`
+  }
+
+  private hideInsertGuide(): void {
+    if (!this.insertGuide) return
+    this.insertGuide.hidden = true
+    this.insertGuideTarget = null
+    this.dom.classList.remove('ss-inserting-col', 'ss-inserting-row')
+  }
+
+  /** Fit each column to its content. Widths are never persisted to markdown,
+   * so they are recomputed from the cells on every rebuild. */
   private applySizing(cols: number): void {
     for (let c = 0; c < cols; c++) {
       const colEl = this.colEls[c]
       if (!colEl) continue
-      const stored = this.colWidths[c]
-      const width = stored === undefined ? this.measureColDefault(c) : stored
-      colEl.style.width = `${width}px`
-    }
-    for (let r = 0; r < this.rows.length; r++) {
-      const tr = this.rowGutters[r]?.parentElement
-      if (!tr) continue
-      const stored = this.rowHeights[r]
-      const height = stored === undefined ? this.measureRowDefault(r) : stored
-      tr.style.height = `${height}px`
+      colEl.style.width = `${this.measureColDefault(c)}px`
     }
   }
 
@@ -464,56 +610,6 @@ class TableNodeView implements NodeView, InlineCellHost {
     const head = this.headCells[col]?.querySelector<HTMLElement>('.ss-cell-content')
     if (head) max = Math.max(max, head.offsetWidth)
     return Math.max(MIN_COL_WIDTH, Math.ceil(max) + COL_PAD)
-  }
-
-  private measureRowDefault(row: number): number {
-    const tr = this.rowGutters[row]?.parentElement
-    if (!tr) return MIN_ROW_HEIGHT
-    return Math.max(MIN_ROW_HEIGHT, Math.ceil(tr.getBoundingClientRect().height))
-  }
-
-  private startColResize(event: MouseEvent, col: number): void {
-    const colEl = this.colEls[col]
-    if (!colEl) return
-    event.preventDefault()
-    event.stopPropagation()
-    const startX = event.clientX
-    const startWidth = Number.parseInt(colEl.style.width, 10) || MIN_COL_WIDTH
-    this.dom.classList.add('ss-resizing', 'ss-resizing-col')
-    const move = (e: MouseEvent): void => {
-      const width = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, startWidth + (e.clientX - startX)))
-      colEl.style.width = `${Math.round(width)}px`
-      this.colWidths[col] = Math.round(width)
-    }
-    const up = (): void => {
-      this.dom.classList.remove('ss-resizing', 'ss-resizing-col')
-      document.removeEventListener('mousemove', move)
-      document.removeEventListener('mouseup', up)
-    }
-    document.addEventListener('mousemove', move)
-    document.addEventListener('mouseup', up)
-  }
-
-  private startRowResize(event: MouseEvent, row: number): void {
-    const tr = this.rowGutters[row]?.parentElement
-    if (!tr) return
-    event.preventDefault()
-    event.stopPropagation()
-    const startY = event.clientY
-    const startHeight = tr.getBoundingClientRect().height || MIN_ROW_HEIGHT
-    this.dom.classList.add('ss-resizing', 'ss-resizing-row')
-    const move = (e: MouseEvent): void => {
-      const height = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, startHeight + (e.clientY - startY)))
-      tr.style.height = `${Math.round(height)}px`
-      this.rowHeights[row] = Math.round(height)
-    }
-    const up = (): void => {
-      this.dom.classList.remove('ss-resizing', 'ss-resizing-row')
-      document.removeEventListener('mousemove', move)
-      document.removeEventListener('mouseup', up)
-    }
-    document.addEventListener('mousemove', move)
-    document.addEventListener('mouseup', up)
   }
 
   private fillCellContents(): void {
@@ -1672,6 +1768,52 @@ class TableNodeView implements NodeView, InlineCellHost {
     const cols = this.rows[0]?.length ?? 0
     const next = [...this.rows, Array.from({ length: cols }, () => '')]
     this.commitRows(next, { row: rows, col: 0 }, { row: rows, col: 0 })
+  }
+
+  /** Insert an empty column left of grid column `at`, shifting the columns to
+   * its right (and every reference that pointed at them) one place over. */
+  private insertColumnAt(at: number): void {
+    const cols = this.rows[0]?.length ?? 0
+    if (at < 0 || at > cols) return
+    this.commitFxEdit()
+    if (this.editing) this.teardownEdit()
+    const next = this.rows.map((row) => {
+      const copy = [...row]
+      copy.splice(at, 0, '')
+      return copy
+    })
+    const spreadAt = at + 1
+    for (const row of next) {
+      for (let c = 0; c < row.length; c++) {
+        const raw = row[c] ?? ''
+        if (isFormula(raw)) row[c] = insertFormulaRefs(raw, 'col', spreadAt)
+      }
+    }
+    while (this.align.length < cols) this.align.push('none')
+    this.align.splice(at, 0, 'none')
+    const row = this.active?.row ?? 0
+    this.commitRows(next, { row, col: at }, { row, col: at })
+  }
+
+  /** Insert an empty row above grid row `at` (data rows only), shifting the
+   * rows below it (and every reference that pointed at them) one place down. */
+  private insertRowAt(at: number): void {
+    const rows = this.rows.length
+    if (at < 1 || at > rows) return
+    this.commitFxEdit()
+    if (this.editing) this.teardownEdit()
+    const cols = this.rows[0]?.length ?? 0
+    const next = this.rows.map((row) => [...row])
+    next.splice(at, 0, Array.from({ length: cols }, () => ''))
+    const spreadAt = at + 1
+    for (const row of next) {
+      for (let c = 0; c < row.length; c++) {
+        const raw = row[c] ?? ''
+        if (isFormula(raw)) row[c] = insertFormulaRefs(raw, 'row', spreadAt)
+      }
+    }
+    const col = this.active?.col ?? 0
+    this.commitRows(next, { row: at, col }, { row: at, col })
   }
 
   private removeColumns(): void {
