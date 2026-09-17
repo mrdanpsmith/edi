@@ -10,6 +10,7 @@ import { copyText } from '../clipboard'
 import { blockNodeView } from '../blockview'
 import { setActiveCellHost, type InlineCellHost, type InlineCellKind } from '../inline-format'
 import { bindCellMaskedField, maskedFieldToMarkdown, promptForNewSecret } from './masked'
+import { ContextMenu, type ContextMenuEntry } from '../contextmenu'
 
 interface CellRef {
   row: number
@@ -95,7 +96,9 @@ class TableNodeView implements NodeView, InlineCellHost {
   private fxInput: HTMLInputElement | null = null
   private nameBox: HTMLElement | null = null
   private statusEl: HTMLElement | null = null
+  private resolveInput: HTMLInputElement | null = null
   private dragging = false
+  private menu: ContextMenu | null = null
   private cutSource: { r1: number; c1: number; r2: number; c2: number } | null = null
   private fillDrag: FillRect | null = null
   private fillHandleEl: HTMLElement | null = null
@@ -140,6 +143,7 @@ class TableNodeView implements NodeView, InlineCellHost {
       event.preventDefault()
       event.stopPropagation()
     })
+    this.dom.addEventListener('contextmenu', (event) => this.onGridContextMenu(event))
     this.buildTools()
     this.buildFxBar()
     this.buildGrid()
@@ -225,8 +229,11 @@ class TableNodeView implements NodeView, InlineCellHost {
   update(node: ProseNode): boolean {
     if (node.attrs._source !== this.node.attrs._source) return false
     if (node.attrs._plain !== this.node.attrs._plain) return false
-    if (node.attrs._resolved !== this.node.attrs._resolved) return false
     this.node = node
+    // `_resolved` only changes how the table serializes, so sync the checkbox
+    // in place instead of rebuilding — a rebuild would reset the active cell
+    // to A1 and drop the in-progress edit.
+    if (this.resolveInput) this.resolveInput.checked = Boolean(node.attrs._resolved)
     const value = String(node.attrs.value ?? '')
     const rows = parsePipes(value)
     const align = parsePipesAlign(value)
@@ -253,31 +260,6 @@ class TableNodeView implements NodeView, InlineCellHost {
   private buildTools(): void {
     const tools = document.createElement('div')
     tools.className = 'ss-tools'
-    const actions: Array<{ label: string; run: () => void }> = [
-      { label: '+Col', run: () => this.addColumn() },
-      { label: '+Row', run: () => this.addRow() },
-      { label: '−Col', run: () => this.removeColumns() },
-      { label: '−Row', run: () => this.removeRows() },
-      { label: 'Clear', run: () => this.clearSelected() },
-    ]
-    for (const action of actions) {
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = 'ss-tool'
-      button.textContent = action.label
-      button.title = {
-        '+Col': 'Insert column to the right',
-        '+Row': 'Insert row below',
-        '−Col': 'Delete selected columns',
-        '−Row': 'Delete selected rows',
-        Clear: 'Clear selected cells',
-      }[action.label] ?? action.label
-      button.addEventListener('click', () => {
-        this.commitFxEdit()
-        action.run()
-      })
-      tools.appendChild(button)
-    }
     for (const [align, title, markup] of [
       ['left', 'Align selected column left (click again to clear)', '<path d="M2 4h12M2 8h8M2 12h12"/>'],
       ['center', 'Align selected column center (click again to clear)', '<path d="M2 4h12M4 8h8M2 12h12"/>'],
@@ -323,6 +305,7 @@ class TableNodeView implements NodeView, InlineCellHost {
       this.commitFxEdit()
       this.setResolved(resolveInput.checked)
     })
+    this.resolveInput = resolveInput
     const resolveText = document.createElement('span')
     resolveText.textContent = 'Resolve formulas?'
     resolveLabel.appendChild(resolveInput)
@@ -1207,6 +1190,49 @@ class TableNodeView implements NodeView, InlineCellHost {
     return null
   }
 
+  private onGridContextMenu(event: MouseEvent): void {
+    const target = event.target instanceof Element ? event.target : null
+    if (!target) return
+    const col = target.closest<HTMLElement>('.ss-col')
+    const gutter = col ? null : target.closest<HTMLElement>('.ss-row')
+    if (!col && !gutter) return
+    event.preventDefault()
+    event.stopPropagation()
+    const rows = this.rows.length
+    const cols = this.rows[0]?.length ?? 0
+    const entries: ContextMenuEntry[] = []
+    if (col) {
+      const c = Math.max(0, Math.min(Number(col.dataset.col), cols - 1))
+      // Make the clicked chrome the selection first so the delete acts on
+      // exactly that column (Excel's habit of selecting the whole row/column
+      // you right-click).
+      this.anchor = { row: 0, col: c }
+      this.active = { row: rows - 1, col: c }
+      this.extra.clear()
+      this.renderSelection()
+      entries.push({
+        type: 'item',
+        label: 'Delete column',
+        disabled: cols <= 1,
+        onSelect: () => this.removeColumns(),
+      })
+    } else if (gutter) {
+      const r = Math.max(0, Math.min(Number(gutter.dataset.row), rows - 1))
+      this.anchor = { row: r, col: 0 }
+      this.active = { row: r, col: cols - 1 }
+      this.extra.clear()
+      this.renderSelection()
+      entries.push({
+        type: 'item',
+        label: 'Delete row',
+        disabled: rows <= 1,
+        onSelect: () => this.removeRows(),
+      })
+    }
+    this.menu ??= new ContextMenu()
+    this.menu.show(entries, event.clientX, event.clientY)
+  }
+
   private onGridMouseDown(event: MouseEvent): void {
     const grid = this.grid
     if (!grid) return
@@ -1811,19 +1837,6 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.teardownEdit()
     this.buildGrid()
     this.renderSelection()
-  }
-
-  private addColumn(): void {
-    const cols = this.rows[0]?.length ?? 0
-    const next = this.rows.map((row) => [...row, ''])
-    this.commitRows(next, { row: 0, col: cols }, { row: 0, col: cols })
-  }
-
-  private addRow(): void {
-    const rows = this.rows.length
-    const cols = this.rows[0]?.length ?? 0
-    const next = [...this.rows, Array.from({ length: cols }, () => '')]
-    this.commitRows(next, { row: rows, col: 0 }, { row: rows, col: 0 })
   }
 
   /** Insert an empty column left of grid column `at`, shifting the columns to

@@ -91,6 +91,21 @@ function alignTool(view: EditorView, align: 'left' | 'center' | 'right'): HTMLEl
   return button
 }
 
+/** Right-click `el` and pick the context-menu item with `label`. */
+function deleteViaMenu(el: Element, label: string): void {
+  el.dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
+  )
+  const items = document.querySelectorAll<HTMLButtonElement>('.edi-menu-item')
+  for (const item of items) {
+    if (item.textContent === label) {
+      item.click()
+      return
+    }
+  }
+  throw new Error(`no context-menu item ${label}`)
+}
+
 function mousedown(el: Element, init: MouseEventInit = {}): void {
   el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, ...init }))
 }
@@ -270,28 +285,69 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
-  it('adds columns and rows via the tools row', () => {
-    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
-    tool(view, '+Col').click()
-    expect(tableGrid(view).querySelectorAll('thead th').length).toBe(4)
-    expect(docValue(view)).toContain('| 1 | 2 |  |')
-    tool(view, '+Row').click()
-    expect(tableGrid(view).querySelectorAll('tbody tr').length).toBe(4)
-    view.destroy()
-  })
-
-  it('removes selected columns and rows', () => {
+  it('removes columns and rows from the chrome context menu', () => {
     const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |')
-    mousedown(colHeader(view, 0))
-    tool(view, '−Col').click()
+    deleteViaMenu(colHeader(view, 0), 'Delete column')
     expect(tableGrid(view).querySelectorAll('thead th').length).toBe(3)
     expect(docValue(view)).not.toContain('| 1 ')
     expect(docValue(view)).toContain('| 2 | 3 |')
 
-    mousedown(rowGutter(view, 1))
-    tool(view, '−Row').click()
+    deleteViaMenu(rowGutter(view, 1), 'Delete row')
     expect(tableGrid(view).querySelectorAll('tbody tr').length).toBe(1)
     expect(docValue(view)).not.toContain('| 2 | 3 |')
+    view.destroy()
+  })
+
+  it('deletes the clicked column from its header context menu', () => {
+    const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |')
+    colHeader(view, 1).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
+    )
+    const menu = document.querySelector('.edi-context-menu')
+    expect(menu).not.toBeNull()
+    const items = menu!.querySelectorAll<HTMLButtonElement>('.edi-menu-item')
+    expect(items).toHaveLength(1)
+    expect(items[0]!.textContent).toBe('Delete column')
+    items[0]!.click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'C'],
+      ['1', '3'],
+    ])
+    expect(document.querySelector('.edi-context-menu')).toBeNull()
+    view.destroy()
+  })
+
+  it('deletes the clicked row from its gutter context menu', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    rowGutter(view, 1).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
+    )
+    const item = document.querySelector<HTMLButtonElement>('.edi-menu-item')
+    expect(item?.textContent).toBe('Delete row')
+    item!.click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['3', '4'],
+    ])
+    view.destroy()
+  })
+
+  it('disables deleting the last remaining column', () => {
+    const view = createEditor('| A |\n| --- |\n| 1 |')
+    colHeader(view, 0).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
+    )
+    const colItem = document.querySelector<HTMLButtonElement>('.edi-menu-item')
+    expect(colItem?.textContent).toBe('Delete column')
+    expect(colItem?.disabled).toBe(true)
+    rowGutter(view, 0).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
+    )
+    const rowItem = document.querySelector<HTMLButtonElement>('.edi-menu-item')
+    expect(rowItem?.textContent).toBe('Delete row')
+    expect(rowItem?.disabled).toBe(false)
+    rowItem!.click()
+    expect(parsePipes(docValue(view))).toEqual([['1']])
     view.destroy()
   })
 
@@ -300,8 +356,7 @@ describe('TableNodeView grid', () => {
       '| Item | Qty |\n| --- | --- |\n| A | 1 |\n| B | 2 |\n| C | 3 |\n| Total | =SUM(B2:B4) |',
     )
     expect(cell(view, 4, 1).textContent).toBe('6')
-    mousedown(rowGutter(view, 3))
-    tool(view, '−Row').click()
+    deleteViaMenu(rowGutter(view, 3), 'Delete row')
     expect(parsePipes(docValue(view))).toEqual([
       ['Item', 'Qty'],
       ['A', '1'],
@@ -316,8 +371,7 @@ describe('TableNodeView grid', () => {
   it('adjusts a sum range when a column inside it is removed', () => {
     const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | =SUM(A2:B2) |')
     expect(cell(view, 1, 2).textContent).toBe('3')
-    mousedown(colHeader(view, 1))
-    tool(view, '−Col').click()
+    deleteViaMenu(colHeader(view, 1), 'Delete column')
     expect(parsePipes(docValue(view))).toEqual([
       ['A', 'C'],
       ['1', '=SUM(A2:A2)'],
@@ -328,8 +382,7 @@ describe('TableNodeView grid', () => {
 
   it('collapses a reference to a removed row into #REF!', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | =A2 |')
-    mousedown(rowGutter(view, 1))
-    tool(view, '−Row').click()
+    deleteViaMenu(rowGutter(view, 1), 'Delete row')
     expect(parsePipes(docValue(view))).toEqual([
       ['A', 'B'],
       ['3', '=#REF!'],
@@ -338,11 +391,13 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
-  it('clears cells with the Clear tool and the Delete key', () => {
+  it('clears a selection with the Delete key', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     mousedown(cell(view, 1, 0), { ctrlKey: true })
     mousedown(cell(view, 1, 1), { ctrlKey: true })
-    tool(view, 'Clear').click()
+    tableGrid(view).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }),
+    )
     expect(docValue(view)).toContain('|  |  |')
 
     mousedown(cell(view, 0, 0))
@@ -1328,7 +1383,11 @@ describe('TableNodeView column alignment', () => {
 
   it('preserves alignment when adding a row', () => {
     const view = createEditor('| A | B |\n| :---: | ---: |\n| 1 | 2 |')
-    tool(view, '+Row').click()
+    const gutter = rowGutter(view, 1)
+    gutter.getBoundingClientRect = () =>
+      ({ left: 0, right: 30, top: 100, bottom: 124, width: 30, height: 24, x: 0, y: 100, toJSON: () => ({}) }) as DOMRect
+    gutter.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 5, clientY: 122 }))
+    ;(view.dom.querySelector('.ss-insert-plus') as HTMLElement).click()
     expect(parsePipes(docValue(view))).toHaveLength(3)
     expect(docValue(view)).toContain('| :---: | ---: |')
     view.destroy()
@@ -1336,8 +1395,7 @@ describe('TableNodeView column alignment', () => {
 
   it('remaps alignment when a column is removed', () => {
     const view = createEditor('| A | B | C |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |')
-    mousedown(colHeader(view, 1))
-    tool(view, '−Col').click()
+    deleteViaMenu(colHeader(view, 1), 'Delete column')
     expect(docValue(view)).toContain('| :--- | ---: |')
     view.destroy()
   })
@@ -1740,6 +1798,20 @@ describe('TableNodeView formula point mode', () => {
     expect(proseToMarkdown(view.state.doc)).toBe(
       '| A | B |\n| --- | --- |\n| 10 | =A2*2 |\n',
     )
+    view.destroy()
+  })
+
+  it('keeps the active cell when toggling resolve', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 10 | =A2*2 |')
+    mousedown(cell(view, 1, 1))
+    expect(view.dom.querySelector('.ss-namebox')?.textContent).toBe('B2')
+    const input = view.dom.querySelector('.ss-tool-check input') as HTMLInputElement
+    input.checked = true
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(view.state.doc.child(0).attrs._resolved).toBe(true)
+    expect(view.dom.querySelector('.ss-tool-check input')).toBe(input)
+    expect(view.dom.querySelector('.ss-namebox')?.textContent).toBe('B2')
+    expect(cell(view, 1, 1).classList.contains('ss-active')).toBe(true)
     view.destroy()
   })
 })
