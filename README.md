@@ -25,7 +25,7 @@ Tables render as a visual spreadsheet grid in the preview — a live formula bar
 | **Total** | =SUM(B2:B3) | =SUM(C2:C3) | =SUM(D2:D3) |
 ```
 
-Supported: arithmetic (`+ - * / ^`), cell references (`B2`), ranges (`B2:C4`), and the functions `SUM`, `AVERAGE`/`AVG`, `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`. Errors surface in the cell as `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#CYCLE!`, or `#ERROR!`, and a tooltip explains the cause. The `fx` bar and cell editor autocomplete function names, and `Help → Formula Reference…` opens a generated reference of every function.
+Supported: arithmetic (`+ - * / ^`), cell references (`B2`), ranges (`B2:C4`), and the functions `SUM`, `AVERAGE`/`AVG`, `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`. Errors surface in the cell as `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#CYCLE!`, or `#ERROR!`, and a tooltip explains the cause. The `fx` bar and cell editor autocomplete function names, and `Help → Formula Reference…` opens a generated reference of every function. A formula cell can be formatted like any other cell — wrapping the formula in inline marks (`**=SUM(B2:B3)**`, `*…*`, `` `…` ``, `~~…~~`, `==…==` `~…~`, `^…^`) styles the computed result instead of breaking the calculation.
 
 You can also define your own functions for the whole document in a fenced code block tagged `edi-formula`:
 

@@ -4,6 +4,7 @@ import {
   colToLetters,
   computeSpreadsheet,
   formatNumber,
+  isFormula,
   parseCellRef,
   solve,
 } from './spreadsheet'
@@ -89,6 +90,50 @@ describe('solve', () => {
     expect(out[1]![0]).not.toBe('#ERROR!')
     expect(out[2]![0]).toBe('==nope') // unbalanced `==` is literal text
     expect(out[3]![0]).toBe('4') // plain `=` still evaluates as a formula
+  })
+
+  it('recognizes mark-wrapped formulas so a bolded cell keeps computing', () => {
+    expect(isFormula('=SUM(A2:A3)')).toBe(true)
+    expect(isFormula('**=SUM(A2:A3)**')).toBe(true)
+    expect(isFormula('*##')).toBe(false)
+    expect(isFormula('**bold text**')).toBe(false)
+    const out = cells('| A | B |\n| --- | --- |\n| **10** | 20 |\n| **=SUM(A2:B2)** | =SUM(A2:B2) |')
+    expect(out[2]![0]).toBe('**30**')
+    expect(out[2]![1]).toBe('30')
+    const styled = solve(parsePipes('| A | B |\n| --- | --- |\n| 2 | 3 |\n| **=A2+B2** | |'))!
+    expect(styled.cells[2]![0]!.styled).toBe(true)
+    expect(kinds('| A | B |\n| --- | --- |\n| 2 | 3 |\n| **=A2+B2** | |')[2]![0]).toBe('formula')
+  })
+
+  it('keeps the formula result live but styled for nested and code marks', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| 2 | 3 |\n| ***=A2+B2*** | `=A2*B2` |')
+    expect(out[2]![0]).toBe('***5***')
+    expect(out[2]![1]).toBe('`6`')
+  })
+
+  it('requires the marks to wrap the whole formula to count as a marked formula', () => {
+    // The trailing ` extra` is outside the strong run, so marks are not
+    // uniform across segments and the cell stays literal text.
+    expect(isFormula('**=SUM(A2:A3)** extra')).toBe(false)
+    expect(kinds('| A |\n| --- |\n| 1 |\n| 2 |\n| **=SUM(A2:A3)** extra |')[3]![0]).toBe('text')
+    expect(cells('| A |\n| --- |\n| 1 |\n| 2 |\n| **=SUM(A2:A3)** extra |')[3]![0]).toBe(
+      '**=SUM(A2:A3)** extra',
+    )
+    expect(isFormula('=2+2')).toBe(true)
+  })
+
+  it('marks an error in a bold formula and keeps the marks on its display', () => {
+    const solution = solve(parsePipes('| A |\n| --- |\n| 0 |\n| **=3/A2** |'))
+    expect(solution.cells[2]![0]!.display).toBe('**#DIV/0!**')
+    expect(solution.cells[2]![0]!.error).toBe('#DIV/0!')
+    expect(solution.cells[2]![0]!.styled).toBe(true)
+    expect(solution.cells[2]![0]!.kind).toBe('error')
+  })
+
+  it('unbalanced or mismatched marks around = stay literal text', () => {
+    expect(isFormula('**=SUM(1)')).toBe(false) // dangling open mark
+    expect(cells('| A |\n| --- |\n| **=SUM(A2:A3) |\n| 5 |')[1]![0]).toBe('**=SUM(A2:A3)')
+    expect(kinds('| A |\n| --- |\n| **=SUM(A2:A3) |')[1]![0]).toBe('text')
   })
 
   it('aggregates ranges with row 1 = header', () => {
@@ -510,6 +555,28 @@ describe('resolved table markdown helpers', () => {
   it('keeps the delimiter-row alignment on resolution', () => {
     const { pipes } = resolveTableValue('| A | B |\n| :--- | ---: |\n| 1 | =A2*2 |')
     expect(pipes).toBe('| A | B |\n| :--- | ---: |\n| 1 | 2 |')
+  })
+
+  it('carries a styled formula through bake + hydrate without losing marks', () => {
+    const original = '| A | B |\n| --- | --- |\n| 2 | 3 |\n| **=A2+B2** | =A2*B2 |\n| `=SUM(A2:B3)` |  |'
+    const { pipes, formulas } = resolveTableValue(original)
+    // SUM(A2:B3) sees 2, 3, 5 (=A2+B2), 6 (=A2*B2) → 16.
+    expect(pipes).toBe(
+      '| A | B |\n| --- | --- |\n| 2 | 3 |\n| **5** | 6 |\n| `16` |  |',
+    )
+    expect(formulas).toEqual({
+      A3: '**=A2+B2**',
+      B3: '=A2*B2',
+      A4: '`=SUM(A2:B3)`',
+    })
+    expect(
+      hydrateResolvedTable(parsePipes(pipes), parsePipesAlign(pipes), formulas),
+    ).toBe(original)
+    // Re-solving the hydrated grid restores live, styled formula cells.
+    const solution = solve(parsePipes(original))
+    expect(solution.cells[2]![0]!.display).toBe('**5**')
+    expect(solution.cells[2]![1]!.display).toBe('6')
+    expect(solution.cells[3]![0]!.display).toBe('`16`')
   })
 
   it('formats the carrier comment as a single HTML comment line', () => {

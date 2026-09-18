@@ -3,7 +3,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, type TableAlign } from '../spreadsheet-util'
 import { cellCarriesMark, setCellMark } from '../inline-md'
-import { solve, colToLetters, isFormula, type CellSolution } from '../spreadsheet'
+import { solve, colToLetters, formulaParts, isFormula, SPREADSHEET_PREFIX, type CellSolution } from '../spreadsheet'
 import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
 import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
 import { FormulaAutocomplete } from '../formulaAutocomplete'
@@ -73,10 +73,14 @@ const INSERT_CORRIDOR = 14
 const EXIT_MARGIN = 32
 
 /** Tooltip for a table cell: the raw content, with a formula error's hint
- * appended so hovering an error explains it without leaving the table. */
+ * appended so hovering an error explains it without leaving the table. A
+ * formula's outer format marks (`**=SUM(A1:A3)**`) are dropped from the
+ * tooltip — the formula text is what matters. */
 function cellTitle(raw: string, cellSol: CellSolution | undefined): string {
   if (!raw) return ''
-  return cellSol?.hint ? `${raw} — ${cellSol.hint}` : raw
+  const parts = formulaParts(raw)
+  const base = parts ? `${SPREADSHEET_PREFIX}${parts.body}` : raw
+  return cellSol?.hint ? `${base} — ${cellSol.hint}` : base
 }
 
 function createHandleDOM(pos: number): HTMLElement {
@@ -770,7 +774,11 @@ class TableNodeView implements NodeView, InlineCellHost {
         const inner = document.createElement('span')
         inner.className = 'ss-cell-content'
         if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
-          inner.textContent = cellSol.display
+          if (cellSol.styled) {
+            inner.innerHTML = inlineMarkdownToHtml(cellSol.display, { indexedMasked: true, markMisleading: true })
+          } else {
+            inner.textContent = cellSol.display
+          }
           td.classList.add(cellSol.kind === 'error' ? 'ss-error' : 'ss-formula')
         } else {
           const display = cellSol?.display ?? ''
@@ -2519,7 +2527,11 @@ class TablePlainView implements NodeView {
     td.classList.remove('ss-formula', 'ss-error')
     td.removeAttribute('title')
     if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
-      td.textContent = cellSol.display
+      if (cellSol.styled) {
+        td.innerHTML = inlineMarkdownToHtml(cellSol.display, { indexedMasked: true, markMisleading: true })
+      } else {
+        td.textContent = cellSol.display
+      }
       td.classList.add(cellSol.kind === 'error' ? 'ss-error' : 'ss-formula')
     } else {
       const display = cellSol?.display ?? ''

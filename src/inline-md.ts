@@ -364,6 +364,16 @@ export function cellCarriesMark(raw: string, toggle: CellToggleKind): boolean {
   return relevant.every((s) => s.marks.includes(mark))
 }
 
+/** Wrap a plain display string in marks, producing the cell markdown that
+ * renders exactly those marks (`styleCellDisplay("5", ["strong"])` →
+ * `**5**`). Used to apply a formula cell's outer marks to its computed
+ * result. */
+export function styleCellDisplay(display: string, marks: readonly CellMark[]): string {
+  return serializeCellSegments([
+    { text: display, marks: [...marks], href: null, hrefTitle: null, masked: null },
+  ])
+}
+
 /** Add or remove the toggle's mark on every run of the cell. */
 export function setCellMark(raw: string, toggle: CellToggleKind, on: boolean): string {
   const mark = MARK_BY_TOGGLE[toggle]

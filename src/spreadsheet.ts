@@ -1,4 +1,4 @@
-import { parseCellSegments } from './inline-md'
+import { parseCellSegments, renderCellHtml, styleCellDisplay, type CellMark } from './inline-md'
 import {
   BUILTIN_ENV,
   add,
@@ -19,15 +19,66 @@ import {
 
 export const SPREADSHEET_PREFIX = '='
 
+/** Outer inline marks that could wrap a formula cell. A fast gate for the
+ * marked-formula scan below: anything that doesn't start with one of these can
+ * never be a formula, so plain cells stay cheap instead of running the
+ * markdown parser on every cell of a table. */
+const MARKED_START_RE = /^(?:\*\*|\*|~~|\^|~|==|`)/
+
+/**
+ * The runnable body of a formula cell and the inline marks that style its
+ * result, or `null` when the cell is not a formula at all.
+ *
+ * A plain `…=…` cell yields `{ body, marks: [] }`. A *marked formula* — a
+ * cell whose whole content is one uniformly-marked run whose text starts with
+ * `=` (e.g. `**=SUM(A1:A3)**`) — is also a formula; its marks style the
+ * computed result, so the format toolbar's bold/italic/etc. buttons work on
+ * formula cells. Cells whose marks differ between runs (a formula that embeds
+ * `` ** `` inside a string literal), and cells containing links or masked
+ * pills, never match and stay literal. A leading `==` is markdown highlight
+ * (`==text==`), never a formula.
+ */
+export function formulaParts(
+  raw: string,
+): { body: string; marks: readonly CellMark[] } | null {
+  const trimmed = raw.trim()
+  if (trimmed.startsWith(SPREADSHEET_PREFIX)) {
+    if (trimmed.startsWith(SPREADSHEET_PREFIX + SPREADSHEET_PREFIX)) {
+      return null
+    }
+    return { body: trimmed.slice(1).trim(), marks: [] }
+  }
+  if (!MARKED_START_RE.test(trimmed)) {
+    return null
+  }
+  const segments = parseCellSegments(raw)
+  if (segments.length === 0) return null
+  const marks = segments[0]!.marks
+  let text = ''
+  for (const seg of segments) {
+    if (seg.href !== null || seg.masked !== null) return null
+    if (seg.marks.length !== marks.length || seg.marks.some((m, i) => m !== marks[i])) {
+      return null
+    }
+    text += seg.text
+  }
+  const unwrapped = text.trim()
+  if (
+    !unwrapped.startsWith(SPREADSHEET_PREFIX) ||
+    unwrapped.startsWith(SPREADSHEET_PREFIX + SPREADSHEET_PREFIX)
+  ) {
+    return null
+  }
+  return { body: unwrapped.slice(1).trim(), marks }
+}
+
 /** A cell whose trimmed text starts with `=` is a formula — except a leading
  * `==`, which is a markdown highlight delimiter (`==text==`), not a formula
  * (no spreadsheet syntax is `= = …`). Distinguishing them keeps cells that are
- * entirely highlighted from erroring out as `#ERROR!` formulas. */
-export function isFormula(trimmed: string): boolean {
-  return (
-    trimmed.startsWith(SPREADSHEET_PREFIX) &&
-    !trimmed.startsWith(SPREADSHEET_PREFIX + SPREADSHEET_PREFIX)
-  )
+ * entirely highlighted from erroring out as `#ERROR!` formulas. Cells wrapped
+ * in uniform inline marks (`**=SUM(A1:A3)**`) are formulas too. */
+export function isFormula(raw: string): boolean {
+  return formulaParts(raw) !== null
 }
 
 export interface CellRef {
@@ -42,6 +93,9 @@ export interface CellSolution {
   /** Human-readable explanation shown as a tooltip beside the error code. */
   hint?: string
   value?: number
+  /** True when `display` is cell markdown (a formula styled by outer inline
+   * marks), so renderers HTML-render it instead of showing it verbatim. */
+  styled?: boolean
 }
 
 export interface SpreadsheetSolution {
@@ -107,22 +161,31 @@ function solveCell(
   if (!trimmed) {
     return { display: '', kind: 'blank' }
   }
-  if (isFormula(trimmed)) {
-    const formula = trimmed.slice(1).trim()
-    if (!formula) {
+  const parts = formulaParts(raw)
+  if (parts) {
+    const { body, marks } = parts
+    if (!body) {
       return { display: '', kind: 'blank' }
     }
-    const result = evaluateFormula(formula, grid, visiting, env)
+    const result = evaluateFormula(body, grid, visiting, env)
     if (result.kind === 'error') {
+      const message = result.message
       return {
-        display: result.message,
+        display: marks.length ? styleCellDisplay(message, marks) : message,
         kind: 'error',
-        error: result.message,
-        hint: result.hint ?? ERROR_HINTS[result.message],
+        error: message,
+        hint: result.hint ?? ERROR_HINTS[message],
+        styled: marks.length > 0,
       }
     }
     if (result.kind === 'number') {
-      return { display: formatNumber(result.value), kind: 'formula', value: result.value }
+      const display = formatNumber(result.value)
+      return {
+        display: marks.length ? styleCellDisplay(display, marks) : display,
+        kind: 'formula',
+        value: result.value,
+        styled: marks.length > 0,
+      }
     }
     return { display: '', kind: 'formula' }
   }
@@ -159,13 +222,15 @@ function applyToTable(table: HTMLTableElement, env: FormulaEnv): void {
       continue
     }
     domCell.classList.add('spreadsheet-formula')
+    const marks = formulaParts(formulaCell.raw)?.marks ?? []
     let hint: string | undefined
     if (result.kind === 'error') {
       domCell.textContent = result.message
       domCell.classList.add('spreadsheet-error')
       hint = result.hint ?? ERROR_HINTS[result.message]
     } else if (result.kind === 'number') {
-      domCell.textContent = formatNumber(result.value)
+      const display = formatNumber(result.value)
+      domCell.innerHTML = marks.length ? renderCellHtml(styleCellDisplay(display, marks)) : display
     }
     const raw = formulaCell.raw.trim()
     domCell.title = hint ? `${raw} — ${hint}` : raw
@@ -186,10 +251,10 @@ class SpreadsheetGrid {
   private maxCol = 0
 
   set(row: number, col: number, raw: string): void {
-    const trimmed = raw.trim()
     const cell: TableCell = { row, col, raw, formula: '' }
-    if (isFormula(trimmed)) {
-      cell.formula = trimmed.slice(1).trim()
+    const parts = formulaParts(raw.trim())
+    if (parts) {
+      cell.formula = parts.body
       this.formulas.push(cell)
     }
     this.cells.set(cellKey(row, col), cell)

@@ -926,6 +926,49 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('bold on a formula cell keeps the formula live and styles its result', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 2 | 3 |\n| =A2*2 | 9 |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 2, 0))
+    const host = getActiveCellHost()
+    expect(host).toBeTruthy()
+    host!.applyInline('bold')
+    expect(docValue(view)).toContain('**=A2*2**')
+    const bold = cell(view, 2, 0).querySelector('strong')
+    expect(bold?.textContent).toBe('4')
+    expect(cell(view, 2, 0).classList.contains('ss-formula')).toBe(true)
+    host!.applyInline('bold')
+    expect(docValue(view)).toContain('=A2*2')
+    expect(docValue(view)).not.toContain('**')
+    expect(cell(view, 2, 0).querySelector('strong')).toBeNull()
+    view.destroy()
+  })
+
+  it('renders a pre-existing marked formula as a live styled result', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| 2 | 3 |\n| **=A2+B2** | `=A2*B2` |',
+    )
+    expect(cell(view, 2, 0).querySelector('strong')?.textContent).toBe('5')
+    expect(cell(view, 2, 1).querySelector('code')?.textContent).toBe('6')
+    expect(cell(view, 2, 0).classList.contains('ss-formula')).toBe(true)
+    view.destroy()
+  })
+
+  it('shifts references inside a marked formula when a row is inserted', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| 2 | 3 |\n| 4 | **=SUM(A2:A3)** |',
+    )
+    expect(cell(view, 2, 1).querySelector('strong')?.textContent).toBe('6')
+    rowGutter(view, 2).dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: 0, clientY: 0 }),
+    )
+    view.dom.querySelector('.ss-insert-plus')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(parsePipes(docValue(view))[3]).toEqual(['4', '**=SUM(A2:A4)**'])
+    expect(cell(view, 3, 1).querySelector('strong')?.textContent).toBe('6')
+    view.destroy()
+  })
+
   it('applyInline wraps link with url', () => {
     const view = createEditor('| A |\n| --- |\n| clickme |')
     const grid = tableGrid(view)
