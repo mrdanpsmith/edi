@@ -727,6 +727,45 @@ describe('date formula cells', () => {
   })
 })
 
+describe('lookup formula cells', () => {
+  function cells(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.display))
+  }
+
+  it('VLOOKUP, INDEX, and MATCH read values out of a table', () => {
+    const out = cells(
+      '| Item | Price | Qty |\n| --- | --- | --- |\n| Apples | 10 | 3 |\n| Pears | 20 | 5 |\n| Oranges | 30 | 2 |\n| =VLOOKUP("Pears", A2:C4, 3, FALSE) | =INDEX(A2:C4, 3, 2) | =MATCH("Oranges", A2:A4, 0) |',
+    )
+    expect(out[4]![0]).toBe('5')
+    expect(out[4]![1]).toBe('30')
+    expect(out[4]![2]).toBe('3')
+  })
+
+  it('VLOOKUP and MATCH approximate-match on sorted data', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| 1 | x |\n| 3 | y |\n| 5 | z |\n| =VLOOKUP(4, A2:B4, 2) | =MATCH(4, A2:A4, 1) |',
+    )
+    expect(out[4]![0]).toBe('y')
+    expect(out[4]![1]).toBe('2')
+  })
+
+  it('HLOOKUP matches along the first row', () => {
+    const out = cells(
+      '| A | B | C |\n| --- | --- | --- |\n| 10 | 20 | 30 |\n| a | b | c |\n| =HLOOKUP(20, A2:C3, 2, FALSE) | | |',
+    )
+    expect(out[3]![0]).toBe('b')
+  })
+
+  it('surfaces a #N/A! when the lookup finds nothing', () => {
+    const out = cells(
+      '| A |\n| --- |\n| Apples |\n| =VLOOKUP("Pears", A2:A2, 1, FALSE) |\n| =MATCH("Pears", A2:A2, 0) |',
+    )
+    expect(out[2]![0]).toBe('#N/A!')
+    expect(out[3]![0]).toBe('#N/A!')
+  })
+})
+
 describe('resolved table markdown helpers', () => {
   it('resolves formula cells to displays and keeps plain cells verbatim', () => {
     const { pipes, formulas } = resolveTableValue(

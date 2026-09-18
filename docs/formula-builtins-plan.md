@@ -2,7 +2,7 @@
 
 Goal: grow the spreadsheet engine past its original 9 builtin functions so document-local `edi-formula` definitions can build real business rules (tax tiers, labels, aging, conditions, text assembly).
 
-Current builtins (Phases 0–4 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `SUMIF`, `COUNTIF`, `AVERAGEIF`, the math `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`, and the date/time `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH`.
+Current builtins (Phases 0–5 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `SUMIF`, `COUNTIF`, `AVERAGEIF`, the math `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`, the date/time `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH`, and the lookup `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP`.
 
 ## What the engine is missing
 
@@ -126,9 +126,19 @@ Delivered:
 - Dates coerce to serials for arithmetic (`=NOW()-B2`).
 - Local timezone semantics.
 
-## Phase 5 — lookup (future, out of scope)
+## Phase 5 — lookup
 
-`VLOOKUP`, `HLOOKUP`, `INDEX`, `MATCH` — needs 2D range semantics first.
+**Status: complete** — implemented and verified (`npm run check`,
+`npm run build`, `.venv/bin/pytest tests/` green). Handoff:
+`docs/formula-builtins-phase5-handoff.md`.
+
+`INDEX(array, [row_num], [col_num])`, `MATCH(lookup_value, lookup_array, [match_type])`, `VLOOKUP(lookup_value, table_array, col_index_num, [range_lookup])`, `HLOOKUP(`…)`.
+- Ranges are now a 2D shape (`rows` × `cols` in row-major order), so lookup functions can index a table; this is the "2D range semantics" the phase was originally deferred on.
+- Lookups match case-insensitively and order numbers before text (`criterionKey`).
+- `INDEX` defaults omitted coordinates to 1; a single index into a one-row range runs along the row; `< 1` is `#VALUE!`, out of bounds is `#REF!`.
+- `MATCH` type 0 = exact, 1 (default) = largest ≤, −1 = smallest ≥ (linear scans); type outside `{-1, 0, 1}` or a 2D array → `#N/A!`.
+- `VLOOKUP`/`HLOOKUP` require a valid index in range (`#VALUE!`/`#REF!`); `range_lookup` FALSE forces exact match, TRUE/omitted approximates (largest value ≤).
+- Added the `lookup` category to the Help → Formula Reference.
 
 ## Suggested function list (recap)
 
@@ -139,8 +149,9 @@ Delivered:
 | Math | `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `ROUNDUP`, `ROUNDDOWN`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN` |
 | Aggregate | `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `SUMIF`, `COUNTIF`, `AVERAGEIF` |
 | Date | `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH` |
+| Lookup | `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP` |
 
-Priority: logic + text are the must-haves (they make `edi-formula` derivatives genuinely powerful); math/aggregate fill gaps; dates round it out.
+Priority: logic + text are the must-haves (they make `edi-formula` derivatives genuinely powerful); math/aggregate fill gaps; dates round it out; lookups build on them all.
 
 ## Verification per phase
 

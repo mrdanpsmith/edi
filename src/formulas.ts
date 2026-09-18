@@ -22,7 +22,7 @@ export type CellValue =
   | { kind: 'boolean'; value: boolean }
   | { kind: 'date'; value: number }
   | { kind: 'blank' }
-  | { kind: 'set'; items: CellValue[] }
+  | { kind: 'set'; items: CellValue[]; rows: number; cols: number }
   | { kind: 'error'; message: string; hint?: string }
 
 export type ErrorCell = Extract<CellValue, { kind: 'error' }>
@@ -32,7 +32,7 @@ export type ErrorCell = Extract<CellValue, { kind: 'error' }>
  * functions get the already-forced values instead. */
 export type CellValueThunk = () => CellValue
 
-export type FormulaCategory = 'aggregate' | 'math' | 'logical' | 'text' | 'date' | 'custom'
+export type FormulaCategory = 'aggregate' | 'math' | 'logical' | 'text' | 'date' | 'lookup' | 'custom'
 
 /** The set of callable functions available to one evaluation. Builtins are
  * always present; document definitions add to (but never override) them. */
@@ -92,9 +92,14 @@ export function bool(value: boolean): CellValue {
   return { kind: 'boolean', value }
 }
 
-/** A range's flattened cells, passed to aggregate functions. */
-export function setValue(items: CellValue[]): CellValue {
-  return { kind: 'set', items }
+/** A range's flattened cells, passed to aggregate functions. `rows` × `cols`
+ * is the range's shape in row-major order, so lookup functions (`INDEX`,
+ * `VLOOKUP`, …) can recover the 2D layout; a bare list without a shape is
+ * treated as a single column. */
+export function setValue(items: CellValue[], rows?: number, cols?: number): CellValue {
+  if (rows === undefined) rows = items.length
+  if (cols === undefined) cols = 1
+  return { kind: 'set', items, rows, cols }
 }
 
 export function err(message: string, hint?: string): ErrorCell {
@@ -1237,6 +1242,182 @@ function eomonthCall(args: readonly CellValue[]): CellValue {
   return monthAddCall(args, true)
 }
 
+// --- Lookups ---------------------------------------------------------------
+
+/** Normalize any value to a lookup table: a set keeps its geometry; any other
+ * value (scalar, blank) is a one-cell table. Errors propagate. */
+function tableCells(
+  arg: CellValue | undefined,
+): { cells: CellValue[]; rows: number; cols: number } | ErrorCell {
+  if (arg?.kind === 'set') return { cells: arg.items, rows: arg.rows, cols: arg.cols }
+  if (arg === undefined || arg.kind === 'blank') return { cells: [], rows: 0, cols: 0 }
+  if (arg.kind === 'error') return arg
+  return { cells: [arg], rows: 1, cols: 1 }
+}
+
+/** The app's sort key ordering (numbers before text, case-insensitive text):
+ * true when `a` sorts strictly before `b`. */
+function keyLess(a: CriterionKey, b: CriterionKey): boolean {
+  return a.kind !== b.kind ? a.kind === 'num' : a.value < b.value
+}
+
+/** Read an optional truncatable index argument, defaulting to `fallback`. */
+function optionalIntAt(
+  args: readonly CellValue[],
+  index: number,
+  fallback: number,
+): number | ErrorCell {
+  const arg = args[index]
+  if (arg === undefined || arg.kind === 'blank') return fallback
+  const n = numberAt([arg], 0)
+  return typeof n !== 'number' ? n : Math.trunc(n)
+}
+
+/** `INDEX(array, [row_num], [col_num])` — the value at a 1-based position.
+ * Omitted coordinates default to 1, so `INDEX(A2:A4, 2)` and `INDEX(A2:C2, 2)`
+ * both read the second cell (a single index into a one-row range runs along
+ * the row); a multi-column array with only `row_num` reads the first column
+ * (Excel's spill behavior is out of scope). */
+function indexCall(args: readonly CellValue[]): CellValue {
+  const table = tableCells(args[0])
+  if (!('cells' in table)) return table
+  if (table.rows === 0 || table.cols === 0) return err('#REF!', 'INDEX needs a range')
+  let rowNum = optionalIntAt(args, 1, 1)
+  if (typeof rowNum !== 'number') return rowNum
+  let colNum = optionalIntAt(args, 2, 1)
+  if (typeof colNum !== 'number') return colNum
+  const singleIndex =
+    args[1] !== undefined && args[1].kind !== 'blank' && (args[2] === undefined || args[2].kind === 'blank')
+  if (singleIndex && table.rows === 1 && table.cols > 1) {
+    colNum = rowNum
+    rowNum = 1
+  }
+  if (rowNum < 1 || colNum < 1) return err('#VALUE!', 'INDEX row and column must be 1 or greater')
+  if (rowNum > table.rows || colNum > table.cols) {
+    return err('#REF!', 'INDEX is outside the range')
+  }
+  return table.cells[(rowNum - 1) * table.cols + (colNum - 1)] ?? blank()
+}
+
+/** `MATCH(lookup_value, lookup_array, [match_type])` — the 1-based position of
+ * a value in a single row or column. Type 0 is an exact match
+ * (case-insensitive text), 1 default approximates "largest ≤" on ascending
+ * data, −1 "smallest ≥" on descending; the scans are linear so unsorted data
+ * still returns the best value deterministically. */
+function matchCall(args: readonly CellValue[]): CellValue {
+  const lookupValue = args[0]
+  if (lookupValue?.kind === 'error') return lookupValue
+  const table = tableCells(args[1])
+  if (!('cells' in table)) return table
+  if (table.rows > 1 && table.cols > 1) {
+    return err('#N/A!', 'MATCH needs a single row or column')
+  }
+  if (table.rows === 0 || table.cols === 0) return err('#N/A!', 'MATCH needs a range')
+  const matchType = optionalIntAt(args, 2, 1)
+  if (typeof matchType !== 'number') return matchType
+  if (matchType !== -1 && matchType !== 0 && matchType !== 1) {
+    return err('#N/A!', 'MATCH type must be -1, 0, or 1')
+  }
+  const lookupKey = criterionKey(lookupValue ?? blank())
+  const vector = table.cells
+  if (matchType === 0) {
+    for (let i = 0; i < vector.length; i++) {
+      const key = criterionKey(vector[i]!)
+      if (key.kind === lookupKey.kind && key.value === lookupKey.value) {
+        return num(i + 1)
+      }
+    }
+    return err('#N/A!', 'MATCH found no exact match')
+  }
+  let bestIndex = -1
+  let bestKey: CriterionKey | null = null
+  for (let i = 0; i < vector.length; i++) {
+    const key = criterionKey(vector[i]!)
+    const eligible =
+      matchType === 1 ? !keyLess(lookupKey, key) : !keyLess(key, lookupKey)
+    if (!eligible) continue
+    const replaces = bestIndex === -1 ? true : matchType === 1 ? !keyLess(key, bestKey!) : keyLess(key, bestKey!)
+    if (replaces) {
+      bestIndex = i
+      bestKey = key
+    }
+  }
+  if (bestIndex === -1) return err('#N/A!', 'MATCH found no value in range')
+  return num(bestIndex + 1)
+}
+
+/** Shared `VLOOKUP`/`HLOOKUP` machinery: match `lookup_value` against the
+ * first column (or first row, when `horizontal`) and return the cell `indexNum`
+ * places further in. `range_lookup` TRUE/omitted approximate-matches assuming
+ * ascending order; FALSE requires an exact (case-insensitive) match. */
+function lookupLikeCall(args: readonly CellValue[], horizontal: boolean): CellValue {
+  const lookupValue = args[0]
+  if (lookupValue?.kind === 'error') return lookupValue
+  const table = tableCells(args[1])
+  if (!('cells' in table)) return table
+  if (table.rows === 0 || table.cols === 0) {
+    return err('#REF!', 'VLOOKUP/HLOOKUP needs a range with at least one cell')
+  }
+  const indexNum = numberAt(args, 2)
+  if (typeof indexNum !== 'number') return indexNum
+  const column = Math.trunc(indexNum)
+  if (column < 1) return err('#VALUE!', 'VLOOKUP/HLOOKUP index must be 1 or greater')
+  const maxIndex = horizontal ? table.rows : table.cols
+  if (column > maxIndex) return err('#REF!', 'VLOOKUP/HLOOKUP index is outside the range')
+  const rangeArg = args[3]
+  let approximate = true
+  if (rangeArg !== undefined && rangeArg.kind !== 'blank') {
+    if (rangeArg.kind === 'boolean') approximate = rangeArg.value
+    else if (rangeArg.kind === 'number' || rangeArg.kind === 'date') approximate = rangeArg.value !== 0
+    else if (rangeArg.kind === 'text') {
+      const n = toNumber(rangeArg)
+      if (n === null) return err('#VALUE!', 'range_lookup must be TRUE or FALSE')
+      approximate = n !== 0
+    } else {
+      return err('#VALUE!', 'range_lookup must be TRUE or FALSE')
+    }
+  }
+  const edgeLength = horizontal ? table.cols : table.rows
+  const edge: CellValue[] = Array.from(
+    { length: edgeLength },
+    (_, i) => table.cells[horizontal ? i : i * table.cols]!,
+  )
+  const lookupKey = criterionKey(lookupValue ?? blank())
+  const pick = (edgeIndex: number): CellValue => {
+    const flat = horizontal ? (column - 1) * table.cols + edgeIndex : edgeIndex * table.cols + (column - 1)
+    return table.cells[flat] ?? blank()
+  }
+  if (!approximate) {
+    for (let i = 0; i < edgeLength; i++) {
+      const key = criterionKey(edge[i]!)
+      if (key.kind === lookupKey.kind && key.value === lookupKey.value) {
+        return pick(i)
+      }
+    }
+    return err('#N/A!', 'No exact match found in the first column')
+  }
+  let bestIndex = -1
+  let bestKey: CriterionKey | null = null
+  for (let i = 0; i < edgeLength; i++) {
+    const key = criterionKey(edge[i]!)
+    if (keyLess(lookupKey, key)) continue // only values ≤ lookup eligible
+    if (bestIndex === -1 || !keyLess(key, bestKey!)) {
+      bestIndex = i
+      bestKey = key
+    }
+  }
+  if (bestIndex === -1) return err('#N/A!', 'No value fits the range lookup')
+  return pick(bestIndex)
+}
+
+function vlookupCall(args: readonly CellValue[]): CellValue {
+  return lookupLikeCall(args, false)
+}
+
+function hlookupCall(args: readonly CellValue[]): CellValue {
+  return lookupLikeCall(args, true)
+}
+
 // --- Builtin registry -----------------------------------------------------
 
 export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
@@ -1945,6 +2126,46 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     minArgs: 2,
     maxArgs: 2,
     call: eomonthCall,
+  },
+  {
+    name: 'INDEX',
+    category: 'lookup',
+    signature: 'INDEX(array, [row_num], [col_num])',
+    summary: 'The value at a 1-based row and column of a range (omitted coordinates default to 1).',
+    example: '=INDEX(A2:C4, 3, 2)',
+    minArgs: 1,
+    maxArgs: 3,
+    call: indexCall,
+  },
+  {
+    name: 'MATCH',
+    category: 'lookup',
+    signature: 'MATCH(lookup_value, lookup_array, [match_type])',
+    summary: 'The position of a value in a single row or column: 0 exact, 1 (default) largest ≤, -1 smallest ≥.',
+    example: '=MATCH("Oranges", A2:A4, 0)',
+    minArgs: 2,
+    maxArgs: 3,
+    call: matchCall,
+  },
+  {
+    name: 'VLOOKUP',
+    category: 'lookup',
+    signature: 'VLOOKUP(lookup_value, table_array, col_index_num, [range_lookup])',
+    summary: 'Finds a value in the first column of a range and returns the cell that many columns over (exact when range_lookup is FALSE, otherwise the largest matching value ≤ the lookup).',
+    example: '=VLOOKUP("Pears", A2:C4, 3, FALSE)',
+    minArgs: 3,
+    maxArgs: 4,
+    call: vlookupCall,
+  },
+  {
+    name: 'HLOOKUP',
+    category: 'lookup',
+    signature: 'HLOOKUP(lookup_value, table_array, row_index_num, [range_lookup])',
+    summary: 'Finds a value in the first row of a range and returns the cell that many rows down (exact when range_lookup is FALSE, otherwise the largest matching value ≤ the lookup).',
+    example: '=HLOOKUP(20, A1:C2, 2, FALSE)',
+    minArgs: 3,
+    maxArgs: 4,
+    call: hlookupCall,
   },
 ]
 

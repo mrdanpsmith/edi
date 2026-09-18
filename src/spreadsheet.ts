@@ -530,7 +530,7 @@ class FormulaParser {
         items.push(value)
       }
     }
-    return setValue(items)
+    return setValue(items, range.row2 - range.row1 + 1, range.col2 - range.col1 + 1)
   }
 
   private readNumber(): number {

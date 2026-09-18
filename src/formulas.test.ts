@@ -657,3 +657,91 @@ describe('date/time builtins', () => {
     expect(applyFunction('EDATE', [text('abc'), num(1)], env)).toMatchObject({ message: '#VALUE!' })
   })
 })
+
+describe('lookup builtins', () => {
+  const env = BUILTIN_ENV
+
+  const grid = setValue(
+    [text('Apples'), num(10), text('Pears'), num(20), text('Oranges'), num(30)],
+    3,
+    2,
+  )
+  const numbers = setValue([num(1), text('x'), num(3), text('y'), num(5), text('z')], 3, 2)
+
+  it('INDEX reads a 1-based row and column, defaulting omitted ones to 1', () => {
+    expect(applyFunction('INDEX', [grid, num(2), num(2)], env)).toEqual(num(20))
+    expect(applyFunction('INDEX', [grid, num(3), num(1)], env)).toEqual(text('Oranges'))
+    expect(applyFunction('INDEX', [grid, num(2)], env)).toEqual(text('Pears'))
+    expect(applyFunction('INDEX', [setValue([num(1), num(2), num(3)], 3, 1), num(3)], env)).toEqual(
+      num(3),
+    )
+    expect(
+      applyFunction('INDEX', [setValue([num(10), num(20), num(30)], 1, 3), num(2)], env),
+    ).toEqual(num(20))
+    expect(applyFunction('INDEX', [num(5), num(1), num(1)], env)).toEqual(num(5))
+  })
+
+  it('INDEX errors on positions outside the range', () => {
+    expect(applyFunction('INDEX', [grid, num(4), num(2)], env)).toMatchObject({ message: '#REF!' })
+    expect(applyFunction('INDEX', [grid, num(2), num(3)], env)).toMatchObject({ message: '#REF!' })
+    expect(applyFunction('INDEX', [grid, num(0), num(1)], env)).toMatchObject({ message: '#VALUE!' })
+    expect(applyFunction('INDEX', [grid, num(-1), num(1)], env)).toMatchObject({ message: '#VALUE!' })
+  })
+
+  it('MATCH finds an exact position, case-insensitively', () => {
+    expect(applyFunction('MATCH', [text('Pears'), setValue([text('Apples'), text('Pears')], 2, 1), num(0)], env)).toEqual(num(2))
+    expect(applyFunction('MATCH', [text('apples'), setValue([text('Apples'), text('Pears')], 2, 1), num(0)], env)).toEqual(num(1))
+    expect(applyFunction('MATCH', [num(4), setValue([num(3), num(9), num(4)], 3, 1), num(0)], env)).toEqual(num(3))
+    expect(applyFunction('MATCH', [num(20), setValue([num(10), num(20), num(30)], 1, 3), num(0)], env)).toEqual(num(2))
+  })
+
+  it('MATCH approximates largest ≤ by default and smallest ≥ with -1', () => {
+    expect(applyFunction('MATCH', [num(4), setValue([num(1), num(3), num(5)], 3, 1)], env)).toEqual(num(2))
+    expect(applyFunction('MATCH', [num(2), setValue([num(5), num(3), num(1)], 3, 1), num(-1)], env)).toEqual(num(2))
+    expect(
+      applyFunction('MATCH', [num(4), setValue([num(2), num(4), num(4), num(6)], 4, 1), num(1)], env),
+    ).toEqual(num(3))
+  })
+
+  it('MATCH errors when nothing matches or the array is not a vector', () => {
+    expect(applyFunction('MATCH', [text('x'), setValue([text('a'), text('b')], 2, 1), num(0)], env)).toMatchObject({ message: '#N/A!' })
+    expect(applyFunction('MATCH', [num(0), setValue([num(1), num(2)], 2, 1)], env)).toMatchObject({ message: '#N/A!' })
+    expect(applyFunction('MATCH', [num(1), setValue([num(1), num(2), num(3), num(4)], 2, 2)], env)).toMatchObject({ message: '#N/A!' })
+    expect(applyFunction('MATCH', [num(1), setValue([num(1), num(2)], 2, 1), num(2)], env)).toMatchObject({ message: '#N/A!' })
+  })
+
+  it('VLOOKUP exact-matches the first column and returns the indexed column', () => {
+    expect(applyFunction('VLOOKUP', [text('Pears'), grid, num(2), bool(false)], env)).toEqual(num(20))
+    expect(applyFunction('VLOOKUP', [text('pears'), grid, num(2), bool(false)], env)).toEqual(num(20))
+    expect(
+      applyFunction('VLOOKUP', [text('Orapes'), grid, num(2), bool(true)], env),
+    ).toEqual(num(30))
+  })
+
+  it('VLOOKUP approximate-matches the largest value ≤ the lookup', () => {
+    expect(applyFunction('VLOOKUP', [num(4), numbers, num(2)], env)).toEqual(text('y'))
+    expect(applyFunction('VLOOKUP', [num(1), numbers, num(2)], env)).toEqual(text('x'))
+    expect(applyFunction('VLOOKUP', [num(0), numbers, num(2)], env)).toMatchObject({ message: '#N/A!' })
+    expect(applyFunction('VLOOKUP', [num(4), numbers, num(2), num(0)], env)).toMatchObject({ message: '#N/A!' })
+  })
+
+  it('VLOOKUP guards the index and the range_lookup argument', () => {
+    expect(applyFunction('VLOOKUP', [text('Apples'), grid, num(3), bool(false)], env)).toMatchObject({ message: '#REF!' })
+    expect(applyFunction('VLOOKUP', [text('Apples'), grid, num(0), bool(false)], env)).toMatchObject({ message: '#VALUE!' })
+    expect(
+      applyFunction('VLOOKUP', [num(4), numbers, num(2), text('0')], env),
+    ).toMatchObject({ message: '#N/A!' })
+    expect(applyFunction('VLOOKUP', [num(4), numbers, num(2), text('bogus')], env)).toMatchObject({
+      message: '#VALUE!',
+    })
+  })
+
+  it('HLOOKUP matches the first row and drops down the indexed row', () => {
+    const table = setValue([num(10), num(20), num(30), text('a'), text('b'), text('c')], 2, 3)
+    expect(applyFunction('HLOOKUP', [num(20), table, num(2), bool(false)], env)).toEqual(text('b'))
+    expect(applyFunction('HLOOKUP', [num(25), table, num(2)], env)).toEqual(text('b'))
+    expect(applyFunction('HLOOKUP', [num(25), table, num(3), bool(false)], env)).toMatchObject({
+      message: '#REF!',
+    })
+  })
+})

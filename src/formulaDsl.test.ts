@@ -249,4 +249,19 @@ describe('buildDocumentFunctions', () => {
     expect(applyFunction('QUARTER', [anniversary], env)).toEqual(num(1))
     expect(applyFunction('WEEKNUM', [anniversary], env)).toEqual(num(3))
   })
+
+  it('calls the lookup builtins from a definition body (ranges keep their shape)', () => {
+    const { functions } = buildDocumentFunctions([
+      'COL2(xs, rownum) = INDEX(xs, rownum, 2)',
+      'POS(xs, x) = MATCH(x, xs, 0)',
+    ])
+    const env = envFor(functions)
+    const table = setValue(
+      [text('Apples'), num(10), text('Pears'), num(20), text('Oranges'), num(30)],
+      3,
+      2,
+    )
+    expect(applyFunction('COL2', [table, num(2)], env)).toEqual(num(20))
+    expect(applyFunction('POS', [setValue([text('Apples'), text('Pears')], 2, 1), text('Pears')], env)).toEqual(num(2))
+  })
 })

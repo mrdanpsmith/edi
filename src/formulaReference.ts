@@ -10,11 +10,19 @@ const CATEGORY_LABELS: Record<FormulaFunction['category'], string> = {
   math: 'Math',
   logical: 'Logical',
   text: 'Text',
+  lookup: 'Lookup',
   date: 'Date',
   custom: 'Custom',
 }
 
-const CATEGORY_ORDER: FormulaFunction['category'][] = ['aggregate', 'math', 'logical', 'text', 'date']
+const CATEGORY_ORDER: FormulaFunction['category'][] = [
+  'aggregate',
+  'math',
+  'logical',
+  'text',
+  'lookup',
+  'date',
+]
 
 function functionEntry(fn: FormulaFunction): string {
   const lines = [`- **\`${fn.signature}\`** — ${fn.summary}`]
