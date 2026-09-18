@@ -565,6 +565,56 @@ describe('criteria builtins (SUMIF/COUNTIF/AVERAGEIF)', () => {
       message: '#VALUE!',
     })
   })
+
+  it('criteria wildcards match text patterns case-insensitively', () => {
+    const range = setValue([text('Apple'), text('Banana'), text('Avocado'), num(12), blank()])
+    expect(applyFunction('COUNTIF', [range, text('A*')], env)).toEqual(num(2))
+    expect(applyFunction('COUNTIF', [range, text('ban*')], env)).toEqual(num(1))
+    expect(applyFunction('COUNTIF', [range, text('?pple')], env)).toEqual(num(1))
+    expect(applyFunction('COUNTIF', [range, text('???')], env)).toEqual(num(0))
+    expect(applyFunction('COUNTIF', [range, text('~*')], env)).toEqual(num(0))
+    expect(
+      applyFunction('COUNTIF', [setValue([text('a*b'), text('axb')]), text('a~*b')], env),
+    ).toEqual(num(1))
+    expect(applyFunction('COUNTIF', [range, text('<>*')], env)).toEqual(num(2))
+  })
+
+  it('wildcards match text cells only, and work inside SUMIF/AVERAGEIF', () => {
+    const names = setValue([text('Apple'), text('Avocado'), num(7)])
+    const amounts = setValue([num(10), num(20), num(30)])
+    expect(applyFunction('SUMIF', [names, text('A*'), amounts], env)).toEqual(num(30))
+    expect(applyFunction('SUMIF', [names, text('*7*'), amounts], env)).toEqual(num(0))
+  })
+
+  it('SUMIF pairs same-shape, same-origin ranges exactly as before', () => {
+    const crit = setValue([num(1), num(5), num(9)], 3, 1, 2, 1)
+    const sums = setValue([num(10), num(20), num(30)], 3, 1, 2, 1)
+    expect(applyFunction('SUMIF', [crit, text('>4'), sums], env)).toEqual(num(50))
+  })
+
+  it('SUMIF aligns a differently-anchored sum range by grid position', () => {
+    const crit = setValue([num(5), num(6), num(7), num(8)], 2, 2, 2, 1)
+    const sums = setValue([num(10), num(11), num(12), num(13), num(14), num(15), num(16), num(17)], 2, 4, 2, 1)
+    expect(applyFunction('SUMIF', [crit, text('>6'), sums], env)).toEqual(num(29))
+  })
+
+  it('SUMIF reads blank when a matched position falls outside the sum set', () => {
+    const crit = setValue([num(5), num(6), num(7)], 3, 1, 2, 1)
+    const sums = setValue([num(10), num(20)], 2, 1, 2, 1)
+    expect(applyFunction('SUMIF', [crit, text('>5'), sums], env)).toEqual(num(20))
+  })
+
+  it('originless ranges keep the flat-index pairing', () => {
+    const crit = setValue([num(1), num(5), num(9)])
+    const sums = setValue([num(10), num(20), num(30)])
+    expect(applyFunction('SUMIF', [crit, text('>4'), sums], env)).toEqual(num(50))
+  })
+
+  it('AVERAGEIF averages a positionally-aligned sum range', () => {
+    const crit = setValue([num(5), num(6), num(7)], 3, 1, 2, 1)
+    const avgs = setValue([num(10), num(20), num(30), num(40), num(50), num(60)], 3, 2, 2, 1)
+    expect(applyFunction('AVERAGEIF', [crit, text('>5'), avgs], env)).toEqual(num(40))
+  })
 })
 
 describe('date/time builtins', () => {
@@ -742,6 +792,109 @@ describe('lookup builtins', () => {
     expect(applyFunction('HLOOKUP', [num(25), table, num(2)], env)).toEqual(text('b'))
     expect(applyFunction('HLOOKUP', [num(25), table, num(3), bool(false)], env)).toMatchObject({
       message: '#REF!',
+    })
+  })
+})
+
+describe('capstone builtins (CHOOSE/STDEV/VAR/XLOOKUP)', () => {
+  const env = BUILTIN_ENV
+
+  it('CHOOSE returns the value at the 1-based position, truncating fractions', () => {
+    expect(applyFunction('CHOOSE', [num(2), text('Low'), text('Med'), text('High')], env)).toEqual(
+      text('Med'),
+    )
+    expect(applyFunction('CHOOSE', [num(1.9), text('a'), text('b'), text('c')], env)).toEqual(
+      text('a'),
+    )
+    expect(applyFunction('CHOOSE', [num(1), num(10)], env)).toEqual(num(10))
+  })
+
+  it('CHOOSE is lazy: only the selected value is evaluated', () => {
+    expect(
+      applyFunction('CHOOSE', [num(1), num(1), err('#DIV/0!', 'never forced')], env),
+    ).toEqual(num(1))
+    expect(applyFunction('CHOOSE', [num(3), err('#DIV/0!', 'x'), num(2), num(3)], env)).toEqual(
+      num(3),
+    )
+  })
+
+  it('CHOOSE rejects a non-numeric or out-of-range index', () => {
+    expect(applyFunction('CHOOSE', [text('abc'), num(1)], env)).toMatchObject({ message: '#VALUE!' })
+    expect(applyFunction('CHOOSE', [num(0), num(1)], env)).toMatchObject({ message: '#VALUE!' })
+    expect(applyFunction('CHOOSE', [num(4), num(1), num(2)], env)).toMatchObject({
+      message: '#VALUE!',
+    })
+  })
+
+  it('STDEV and VAR compute sample statistics over the numeric values', () => {
+    const range = setValue([num(2), num(4), num(4), num(4), num(5), num(5), num(7), num(9)])
+    const sd = applyFunction('STDEV', [range], env)
+    const variance = applyFunction('VAR', [range], env)
+    expect(sd.kind === 'number' ? sd.value : NaN).toBeCloseTo(2.1380899353, 10)
+    expect(variance.kind === 'number' ? variance.value : NaN).toBeCloseTo(4.5714285714, 10)
+  })
+
+  it('STDEV/VAR skip booleans and blanks and need at least two values', () => {
+    expect(
+      applyFunction('STDEV', [setValue([num(2), bool(true), blank(), num(4)])], env),
+    ).toEqual(num(Math.SQRT2))
+    expect(applyFunction('VAR', [setValue([num(1)])], env)).toMatchObject({ message: '#DIV/0!' })
+    expect(applyFunction('STDEV', [setValue([])], env)).toMatchObject({ message: '#DIV/0!' })
+  })
+
+  it('XLOOKUP exact-matches and returns the parallel cell, case-insensitively', () => {
+    const keys = setValue([text('Apples'), text('Pears'), text('Oranges')], 3, 1)
+    const vals = setValue([num(10), num(20), num(30)], 3, 1)
+    expect(applyFunction('XLOOKUP', [text('Pears'), keys, vals], env)).toEqual(num(20))
+    expect(applyFunction('XLOOKUP', [text('pears'), keys, vals], env)).toEqual(num(20))
+    expect(applyFunction('XLOOKUP', [text('Grapes'), keys, vals, text('missing')], env)).toEqual(
+      text('missing'),
+    )
+    expect(applyFunction('XLOOKUP', [text('Grapes'), keys, vals], env)).toMatchObject({
+      message: '#N/A!',
+    })
+  })
+
+  it('XLOOKUP match modes -1/1 pick the next-smaller/larger value', () => {
+    const keys = setValue([num(1), num(3), num(5)], 3, 1)
+    const vals = setValue([num(10), num(20), num(30)], 3, 1)
+    expect(applyFunction('XLOOKUP', [num(4), keys, vals, blank(), num(-1)], env)).toEqual(num(20))
+    const desc = setValue([num(5), num(3), num(1)], 3, 1)
+    expect(applyFunction('XLOOKUP', [num(4), desc, vals, blank(), num(1)], env)).toEqual(num(10))
+  })
+
+  it('XLOOKUP wildcard mode matches text patterns', () => {
+    const keys = setValue([text('Apple'), text('Pears'), text('Apricot')], 3, 1)
+    const vals = setValue([num(1), num(2), num(3)], 3, 1)
+    expect(applyFunction('XLOOKUP', [text('Ap*'), keys, vals, blank(), num(2)], env)).toEqual(
+      num(1),
+    )
+    expect(applyFunction('XLOOKUP', [text('P?ars'), keys, vals, blank(), num(2)], env)).toEqual(
+      num(2),
+    )
+  })
+
+  it('XLOOKUP search_mode -1 finds the last occurrence', () => {
+    const keys = setValue([text('Apples'), text('Pears'), text('Apples')], 3, 1)
+    const vals = setValue([num(1), num(2), num(3)], 3, 1)
+    expect(applyFunction('XLOOKUP', [text('Apples'), keys, vals, blank(), num(0), num(-1)], env)).toEqual(
+      num(3),
+    )
+  })
+
+  it('XLOOKUP guards its arguments', () => {
+    const keys = setValue([num(1), num(2), num(3), num(4)], 2, 2)
+    const vals = setValue([num(1), num(2)], 2, 1)
+    expect(applyFunction('XLOOKUP', [num(1), keys, vals], env)).toMatchObject({ message: '#VALUE!' })
+    expect(applyFunction('XLOOKUP', [num(1), setValue([num(1), num(2), num(3)], 3, 1), vals], env)).toMatchObject({
+      message: '#VALUE!',
+    })
+    const vec = setValue([num(1), num(2)], 2, 1)
+    expect(applyFunction('XLOOKUP', [num(1), vec, vec, blank(), num(5)], env)).toMatchObject({
+      message: '#VALUE!',
+    })
+    expect(applyFunction('XLOOKUP', [num(1), vec, vec, blank(), num(0), num(2)], env)).toMatchObject({
+      message: '#VALUE!',
     })
   })
 })

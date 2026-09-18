@@ -264,4 +264,27 @@ describe('buildDocumentFunctions', () => {
     expect(applyFunction('COL2', [table, num(2)], env)).toEqual(num(20))
     expect(applyFunction('POS', [setValue([text('Apples'), text('Pears')], 2, 1), text('Pears')], env)).toEqual(num(2))
   })
+
+  it('calls the capstone builtins from a definition body', () => {
+    const { functions } = buildDocumentFunctions([
+      'LABEL(n) = CHOOSE(n, "low", "mid", "high")',
+      'PRICE(xs, ys, x) = XLOOKUP(x, xs, ys, "n/a")',
+    ])
+    const env = envFor(functions)
+    expect(applyFunction('LABEL', [num(3)], env)).toEqual(text('high'))
+    const keys = setValue([text('a'), text('b'), text('c')], 3, 1)
+    const vals = setValue([num(10), num(20), num(30)], 3, 1)
+    expect(applyFunction('PRICE', [keys, vals, text('b')], env)).toEqual(num(20))
+    expect(applyFunction('PRICE', [keys, vals, text('z')], env)).toEqual(text('n/a'))
+  })
+
+  it('lazy definitions pass memoized parameters to CHOOSE', () => {
+    const { functions } = buildDocumentFunctions([
+      'PICK(n, a, b) = CHOOSE(n, a, b)',
+    ])
+    const env = envFor(functions)
+    expect(applyFunction('PICK', [num(1), text('first'), err('#DIV/0!')], env)).toEqual(
+      text('first'),
+    )
+  })
 })

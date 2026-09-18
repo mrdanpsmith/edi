@@ -22,7 +22,17 @@ export type CellValue =
   | { kind: 'boolean'; value: boolean }
   | { kind: 'date'; value: number }
   | { kind: 'blank' }
-  | { kind: 'set'; items: CellValue[]; rows: number; cols: number }
+  | {
+      kind: 'set'
+      items: CellValue[]
+      rows: number
+      cols: number
+      /** The range's top-left grid cell, e.g. 1-based `row1`/`col1` of `B2:C4`
+       * is `row1: 2, col1: 2`. Only real grid ranges carry an origin; bare
+       * lists (`setValue` without one) are originless single columns. */
+      row1?: number
+      col1?: number
+    }
   | { kind: 'error'; message: string; hint?: string }
 
 export type ErrorCell = Extract<CellValue, { kind: 'error' }>
@@ -94,12 +104,19 @@ export function bool(value: boolean): CellValue {
 
 /** A range's flattened cells, passed to aggregate functions. `rows` × `cols`
  * is the range's shape in row-major order, so lookup functions (`INDEX`,
- * `VLOOKUP`, …) can recover the 2D layout; a bare list without a shape is
- * treated as a single column. */
-export function setValue(items: CellValue[], rows?: number, cols?: number): CellValue {
+ * `VLOOKUP`, …) can recover the 2D layout; `row1`/`col1` (optional) record the
+ * range's top-left grid cell so the criteria family can pair sum cells by
+ * position. A bare list without a shape is treated as a single column. */
+export function setValue(
+  items: CellValue[],
+  rows?: number,
+  cols?: number,
+  row1?: number,
+  col1?: number,
+): CellValue {
   if (rows === undefined) rows = items.length
   if (cols === undefined) cols = 1
-  return { kind: 'set', items, rows, cols }
+  return { kind: 'set', items, rows, cols, row1, col1 }
 }
 
 export function err(message: string, hint?: string): ErrorCell {
@@ -989,13 +1006,39 @@ function smallCall(args: readonly CellValue[]): CellValue {
   return kthCall(args, (a, b) => a - b)
 }
 
-/** A `SUMIF`/`COUNTIF`/`AVERAGEIF` range argument, normalized to cells: a set
- * (range) is exposed item by item, any other single value is treated as a
- * one-cell range (blank for a missing argument, so nothing matches). */
-function rangeCells(arg: CellValue | undefined): CellValue[] {
-  if (arg?.kind === 'set') return arg.items
-  if (arg === undefined) return []
-  return [arg]
+/** A `SUMIF`/`COUNTIF`/`AVERAGEIF` range argument as a rectangle: the set's
+ * cells, shape, and — when it came from a real grid range — its 1-based
+ * top-left origin. Any other single value is a 1×1 rectangle at no origin
+ * (blank for a missing argument, so nothing matches). */
+type PairTable = { items: CellValue[]; rows: number; cols: number; row1?: number; col1?: number }
+
+function pairTable(arg: CellValue | undefined): PairTable {
+  if (arg?.kind === 'set') return arg
+  if (arg === undefined) return { items: [], rows: 0, cols: 0 }
+  return { items: [arg], rows: 1, cols: 1 }
+}
+
+/** The sum/avg cell paired with criterion `i` of `pred`. When both rectangles
+ * carry origins, Excel-style positional pairing applies: the sum range is
+ * anchored at its top-left and extended to the criteria rectangle, so cells
+ * outside the sum range read as blank (0 for a numeric sum). Originless sets
+ * (hand-built tables, document-function ranges) fall back to flat-index
+ * pairing. */
+function pairedCell(pred: PairTable, sum: PairTable, i: number): CellValue {
+  if (
+    pred.row1 !== undefined &&
+    pred.col1 !== undefined &&
+    sum.row1 !== undefined &&
+    sum.col1 !== undefined
+  ) {
+    const row = Math.floor(i / pred.cols)
+    const col = i % pred.cols
+    const dr = sum.row1 + row - sum.row1
+    const dc = sum.col1 + col - sum.col1
+    if (dr < 0 || dr >= sum.rows || dc < 0 || dc >= sum.cols) return blank()
+    return sum.items[dr * sum.cols + dc] ?? blank()
+  }
+  return sum.items[i] ?? blank()
 }
 
 /** A sortable key for criteria comparisons, matching Excel's ordering: numbers
@@ -1024,10 +1067,14 @@ function matchCriterion(cell: CellValue, op: CompareOp, operand: string): boolea
   return !less
 }
 
-/** Split a criteria string like `">5"`, `"Apples"`, or `"<>done"` into an
- * operator and a bare operand; `*` wildcards are deferred. A dangling operator
- * (`">"`) is the one malformed criteria and surfaces as `#VALUE!`. */
-function parseCriteria(criteria: string): ((cell: CellValue) => boolean) | ErrorCell {
+/** Split a criteria string like `">5"`, `"Apples"`, `"<>done"`, or `"A*"` into
+ * an operator and an operand. The equality family (`=`/`<>`/bare) supports
+ * `*`/`?` wildcards with a `~` escape, matched against text cells only. A
+ * dangling operator (`">"`) is the one malformed criteria and surfaces as
+ * `#VALUE!`. */
+function parseCriteria(
+  criteria: string,
+): ((cell: CellValue) => boolean) | ErrorCell {
   let op: CompareOp = '='
   let operand = criteria
   for (const opText of ['<>', '<=', '>=', '=', '<', '>'] as const) {
@@ -1040,7 +1087,49 @@ function parseCriteria(criteria: string): ((cell: CellValue) => boolean) | Error
   if (op !== '=' && operand === '') {
     return err('#VALUE!', 'Criteria needs a value after the operator')
   }
+  if (hasWildcard(operand) && (op === '=' || op === '<>')) {
+    const re = wildcardRegex(operand)
+    const exact = op === '='
+    return (cell) => {
+      if (cell.kind === 'error' || cell.kind === 'set') return false
+      const matches = cell.kind === 'text' && re.test(cell.value)
+      return exact ? matches : !matches
+    }
+  }
   return (cell) => matchCriterion(cell, op, operand)
+}
+
+/** True when a criteria operand uses wildcard syntax (`*`, `?`, or a `~`
+ * escape), so the equality family matches text patterns instead of literals. */
+function hasWildcard(pattern: string): boolean {
+  return pattern.includes('*') || pattern.includes('?') || pattern.includes('~')
+}
+
+/** An anchored, case-insensitive regex for a criteria pattern: `*` matches any
+ * run of characters, `?` any single character, `~` escapes the next character
+ * (`"~*"` matches a literal `*`). */
+function wildcardRegex(pattern: string): RegExp {
+  const escape = (ch: string): string => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  let out = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]!
+    if (ch === '~') {
+      const next = pattern[i + 1]
+      if (next !== undefined) {
+        out += escape(next)
+        i++
+      } else {
+        out += '\\~'
+      }
+    } else if (ch === '*') {
+      out += '.*'
+    } else if (ch === '?') {
+      out += '.'
+    } else {
+      out += escape(ch)
+    }
+  }
+  return new RegExp(`^${out}$`, 'i')
 }
 
 function sumIfCall(args: readonly CellValue[]): CellValue {
@@ -1048,12 +1137,12 @@ function sumIfCall(args: readonly CellValue[]): CellValue {
   if (typeof predicate !== 'function') return predicate
   if (args[0]?.kind === 'error') return args[0]
   if (args[2]?.kind === 'error') return args[2]
-  const range = rangeCells(args[0])
-  const sums = args[2] === undefined ? range : rangeCells(args[2])
+  const pred = pairTable(args[0])
+  const sum = args[2] === undefined ? pred : pairTable(args[2])
   let total = 0
-  for (let i = 0; i < range.length; i++) {
-    if (!predicate(range[i]!)) continue
-    const n = toNumber(sums[i] ?? blank())
+  for (let i = 0; i < pred.items.length; i++) {
+    if (!predicate(pred.items[i]!)) continue
+    const n = toNumber(pairedCell(pred, sum, i))
     if (n !== null) total += n // non-numeric sum cells are ignored, as in Excel
   }
   return num(total)
@@ -1063,9 +1152,9 @@ function countIfCall(args: readonly CellValue[]): CellValue {
   const predicate = parseCriteriaFromArgs(args)
   if (typeof predicate !== 'function') return predicate
   if (args[0]?.kind === 'error') return args[0]
-  const range = rangeCells(args[0])
+  const pred = pairTable(args[0])
   let count = 0
-  for (const cell of range) {
+  for (const cell of pred.items) {
     if (predicate(cell)) count++
   }
   return num(count)
@@ -1076,13 +1165,13 @@ function averageIfCall(args: readonly CellValue[]): CellValue {
   if (typeof predicate !== 'function') return predicate
   if (args[0]?.kind === 'error') return args[0]
   if (args[2]?.kind === 'error') return args[2]
-  const range = rangeCells(args[0])
-  const averages = args[2] === undefined ? range : rangeCells(args[2])
+  const pred = pairTable(args[0])
+  const avg = args[2] === undefined ? pred : pairTable(args[2])
   let total = 0
   let count = 0
-  for (let i = 0; i < range.length; i++) {
-    if (!predicate(range[i]!)) continue
-    const n = toNumber(averages[i] ?? blank())
+  for (let i = 0; i < pred.items.length; i++) {
+    if (!predicate(pred.items[i]!)) continue
+    const n = toNumber(pairedCell(pred, avg, i))
     if (n !== null) {
       total += n
       count++
@@ -1416,6 +1505,128 @@ function vlookupCall(args: readonly CellValue[]): CellValue {
 
 function hlookupCall(args: readonly CellValue[]): CellValue {
   return lookupLikeCall(args, true)
+}
+
+// --- Capstone builtins -----------------------------------------------------
+
+/** `CHOOSE(index, value, [value2], …)` — the value at a 1-based position.
+ * Lazy like `IF`: everything except the selected argument stays unevaluated.
+ * The index is truncated toward zero; values outside the argument list →
+ * `#VALUE!`. */
+function chooseCall(args: readonly CellValueThunk[]): CellValue {
+  if (args.length < 2) {
+    return err('#VALUE!', 'CHOOSE needs an index and at least one value')
+  }
+  const indexVal = args[0]!()
+  if (indexVal.kind === 'error') return indexVal
+  const index = toNumber(indexVal)
+  if (index === null) return err('#VALUE!', 'CHOOSE index must be a number')
+  const position = Math.trunc(index)
+  if (position < 1 || position > args.length - 1) {
+    return err('#VALUE!', 'CHOOSE index is outside the range')
+  }
+  return args[position]!()
+}
+
+/** Sample standard deviation/variance over the numeric values of the range —
+ * booleans and blanks are skipped exactly as `SUM`'s `collectNumbers` does,
+ * and fewer than two values → `#DIV/0!` (Excel divides by n−1). */
+function deviationCall(args: readonly CellValue[], sqrt: boolean): CellValue {
+  const values = collectNumbers(args)
+  if (!Array.isArray(values)) return values
+  if (values.length < 2) return err('#DIV/0!', 'STDEV/VAR needs at least two numbers')
+  const mean = values.reduce((a, b) => a + b, 0) / values.length
+  const variance = values.reduce((acc, v) => acc + (v - mean) ** 2, 0) / (values.length - 1)
+  return num(sqrt ? Math.sqrt(variance) : variance)
+}
+
+function stdevCall(args: readonly CellValue[]): CellValue {
+  return deviationCall(args, true)
+}
+
+function varCall(args: readonly CellValue[]): CellValue {
+  return deviationCall(args, false)
+}
+
+/** `XLOOKUP(lookup_value, lookup_array, return_array, [if_not_found],
+ * [match_mode], [search_mode])` — vector lookup along a single row or column.
+ * Exact match by default, case-insensitive like the rest of the engine;
+ * `match_mode` 0 exact, −1 exact-or-next-smaller, 1 exact-or-next-larger,
+ * 2 wildcard (`*`/`?`, `~` escape, text cells only). `search_mode` 1 (default)
+ * scans first-to-last, −1 last-to-first; the scans are linear, so there are no
+ * binary modes. Nothing matches → `if_not_found` or `#N/A!`. */
+function xlookupCall(args: readonly CellValue[]): CellValue {
+  const lookupValue = args[0]
+  if (lookupValue?.kind === 'error') return lookupValue
+  const lookup = tableCells(args[1])
+  if (!('cells' in lookup)) return lookup
+  const ret = tableCells(args[2])
+  if (!('cells' in ret)) return ret
+  if (lookup.rows > 1 && lookup.cols > 1) {
+    return err('#VALUE!', 'XLOOKUP needs a single row or column to search')
+  }
+  if (ret.rows > 1 && ret.cols > 1) {
+    return err('#VALUE!', 'XLOOKUP needs a single row or column to return')
+  }
+  if (lookup.cells.length !== ret.cells.length) {
+    return err('#VALUE!', 'XLOOKUP arrays must be the same size')
+  }
+  const matchMode = optionalIntAt(args, 4, 0)
+  if (typeof matchMode !== 'number') return matchMode
+  if (matchMode !== -1 && matchMode !== 0 && matchMode !== 1 && matchMode !== 2) {
+    return err('#VALUE!', 'XLOOKUP match_mode must be -1, 0, 1, or 2')
+  }
+  const searchMode = optionalIntAt(args, 5, 1)
+  if (typeof searchMode !== 'number') return searchMode
+  if (searchMode !== -1 && searchMode !== 1) {
+    return err('#VALUE!', 'XLOOKUP search_mode must be 1 or -1')
+  }
+  const notFound = args[3] === undefined || args[3].kind === 'blank' ? null : args[3]
+  const indices = Array.from({ length: lookup.cells.length }, (_, i) =>
+    searchMode === 1 ? i : lookup.cells.length - 1 - i,
+  )
+  const lookupKey = criterionKey(lookupValue ?? blank())
+  const keyMatches = (key: CriterionKey): boolean =>
+    key.kind === lookupKey.kind && key.value === lookupKey.value
+  if (matchMode === 0) {
+    for (const i of indices) {
+      if (keyMatches(criterionKey(lookup.cells[i]!))) return ret.cells[i]!
+    }
+    return notFound ?? err('#N/A!', 'XLOOKUP found no exact match')
+  }
+  if (matchMode === 2) {
+    if (lookupValue?.kind === 'text') {
+      const re = wildcardRegex(lookupValue.value)
+      for (const i of indices) {
+        const cell = lookup.cells[i]!
+        if (cell.kind === 'text' && re.test(cell.value)) return ret.cells[i]!
+      }
+    }
+    return notFound ?? err('#N/A!', 'XLOOKUP wildcard matched nothing')
+  }
+  // Next-smaller (−1, expect ascending) / next-larger (1, expect descending):
+  // an exact hit wins; otherwise the largest ≤ or the smallest ≥ key.
+  for (const i of indices) {
+    if (keyMatches(criterionKey(lookup.cells[i]!))) return ret.cells[i]!
+  }
+  let bestIndex: number | null = null
+  let bestKey: CriterionKey | null = null
+  for (const i of indices) {
+    const key = criterionKey(lookup.cells[i]!)
+    const eligible = matchMode === -1 ? !keyLess(lookupKey, key) : !keyLess(key, lookupKey)
+    if (!eligible) continue
+    const replaces =
+      bestIndex === null ||
+      (matchMode === -1 ? keyLess(bestKey!, key) : keyLess(key, bestKey!))
+    if (replaces) {
+      bestIndex = i
+      bestKey = key
+    }
+  }
+  if (bestIndex === null) {
+    return notFound ?? err('#N/A!', 'XLOOKUP found no value in range')
+  }
+  return ret.cells[bestIndex]!
 }
 
 // --- Builtin registry -----------------------------------------------------
@@ -2166,6 +2377,47 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     minArgs: 3,
     maxArgs: 4,
     call: hlookupCall,
+  },
+  {
+    name: 'CHOOSE',
+    category: 'logical',
+    signature: 'CHOOSE(index, value, [value2], …)',
+    summary: 'The value at a 1-based position in the argument list; only the chosen value is evaluated.',
+    example: '=CHOOSE(2, "Low", "Medium", "High")',
+    minArgs: 2,
+    maxArgs: 254,
+    lazy: true,
+    call: chooseCall,
+  },
+  {
+    name: 'STDEV',
+    category: 'aggregate',
+    signature: 'STDEV(number1, [number2], …)',
+    summary: 'Sample standard deviation of the numeric values (booleans and blanks skipped).',
+    example: '=STDEV(B2:B10)',
+    minArgs: 1,
+    maxArgs: 255,
+    call: stdevCall,
+  },
+  {
+    name: 'VAR',
+    category: 'aggregate',
+    signature: 'VAR(number1, [number2], …)',
+    summary: 'Sample variance of the numeric values (booleans and blanks skipped).',
+    example: '=VAR(B2:B10)',
+    minArgs: 1,
+    maxArgs: 255,
+    call: varCall,
+  },
+  {
+    name: 'XLOOKUP',
+    category: 'lookup',
+    signature: 'XLOOKUP(lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode])',
+    summary: 'Finds a value in a single row or column and returns the matching cell of the return array (exact by default; match_mode -1 next-smaller, 1 next-larger, 2 wildcard; search_mode -1 scans last-to-first).',
+    example: '=XLOOKUP("Pears", A2:A4, B2:B4, "missing")',
+    minArgs: 3,
+    maxArgs: 6,
+    call: xlookupCall,
   },
 ]
 

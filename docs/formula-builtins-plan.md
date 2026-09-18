@@ -2,7 +2,7 @@
 
 Goal: grow the spreadsheet engine past its original 9 builtin functions so document-local `edi-formula` definitions can build real business rules (tax tiers, labels, aging, conditions, text assembly).
 
-Current builtins (Phases 0–5 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `SUMIF`, `COUNTIF`, `AVERAGEIF`, the math `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`, the date/time `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH`, and the lookup `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP`.
+Current builtins (Phases 0–6 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `STDEV`, `VAR`, `SUMIF`, `COUNTIF`, `AVERAGEIF` (criteria support `*`/`?` wildcards with `~` escape), the math `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH`, `CHOOSE` (all lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`, the date/time `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH`, and the lookup `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP`, `XLOOKUP`.
 
 ## What the engine is missing
 
@@ -140,18 +140,59 @@ Delivered:
 - `VLOOKUP`/`HLOOKUP` require a valid index in range (`#VALUE!`/`#REF!`); `range_lookup` FALSE forces exact match, TRUE/omitted approximates (largest value ≤).
 - Added the `lookup` category to the Help → Formula Reference.
 
+## Phase 6 — criteria debt payoff + capstone
+
+**Status: complete** — implemented and verified (`npm run check` → 1072 vitest,
+`npm run build` → OK, `.venv/bin/pytest tests/` → 199 passed). Handoff:
+`docs/formula-builtins-phase6-handoff.md`. Pays down the two Phase-3 deferrals
+now that Phase 5's range geometry exists, then adds a final builtin batch:
+
+1. **Range origin**: the `set` value gains `row1`/`col1` (the range's top-left
+   grid cell), stamped by `rangeValue` in `spreadsheet.ts`; hand-built sets and
+   document-function ranges stay originless.
+2. **Positional `SUMIF`/`AVERAGEIF`**: with origin + shape, the sum/avg range
+   pairs by grid position — the sum range's top-left anchors the rectangle, and
+   matched cells land at `(sum_row1 + dr, sum_col1 + dc)` for the criteria
+   offset `(dr, dc)`. Cells the sum range's own rectangle doesn't cover read
+   blank (0). This is exact for the common same-shape, same-origin case (still
+   covered); originless sets fall back to the flat-index pairing. Note: the
+   engine has no grid access inside the formula layer, so Excel's extension of
+   the sum range *beyond the rectangle the user referenced* is not reproduced —
+   a narrower sum range reads blank past its right edge/bottom, where Excel
+   would read the live grid.
+3. **Criteria wildcards**: `*` (any run), `?` (one character), `~` escape in the
+   equality family (`=`, `<>`, bare); wildcards match text cells only, like
+   Excel (`COUNTIF(A2:A9,"A*")` counts cells starting with `A`, `"~*"` matches a
+   literal `*`).
+4. **Capstone batch**:
+   - `CHOOSE(index, value, [value2], …)` — lazy like `IF`: only the selected
+     value is evaluated; index is truncated toward zero and must be within range
+     (`#VALUE!` otherwise).
+   - `STDEV`/`VAR` — sample standard deviation / variance over the numeric
+     values of a range (booleans and blanks skipped, as Excel sums do);
+     fewer than two values → `#DIV/0!`.
+   - `XLOOKUP(lookup, lookup_array, return_array, [if_not_found], [match_mode],
+     [search_mode])` — vector lookup reusing the lookup key machinery; default
+     exact first-to-last match, `match_mode` 0 exact / −1 next smaller /
+     1 next larger / 2 wildcard, `search_mode` 1 first-to-last / −1 last-to-
+     first (anything else → `#VALUE!`; no binary modes, the scans are linear);
+     custom `if_not_found` replaces the default `#N/A!`.
+
+`CHOOSE` joins the `logical` category, `STDEV`/`VAR` the `aggregate`, `XLOOKUP`
+the `lookup` — no reference-category changes needed.
+
 ## Suggested function list (recap)
 
 | Category | Functions |
 | --- | --- |
-| Logic | `IF`, `IFERROR`, `AND`, `OR`, `NOT`, `IFS`, `SWITCH`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK` |
+| Logic | `IF`, `IFERROR`, `AND`, `OR`, `NOT`, `IFS`, `SWITCH`, `CHOOSE`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK` |
 | Text | `CONCAT`/`CONCATENATE`, `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE` |
 | Math | `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `ROUNDUP`, `ROUNDDOWN`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN` |
-| Aggregate | `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `SUMIF`, `COUNTIF`, `AVERAGEIF` |
+| Aggregate | `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `STDEV`, `VAR`, `SUMIF`, `COUNTIF`, `AVERAGEIF` |
 | Date | `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH` |
-| Lookup | `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP` |
+| Lookup | `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP`, `XLOOKUP` |
 
-Priority: logic + text are the must-haves (they make `edi-formula` derivatives genuinely powerful); math/aggregate fill gaps; dates round it out; lookups build on them all.
+Priority: logic + text are the must-haves (they make `edi-formula` derivatives genuinely powerful); math/aggregate fill gaps; dates round it out; lookups build on them all; Phase 6 closed the criteria debt and capped the set.
 
 ## Verification per phase
 

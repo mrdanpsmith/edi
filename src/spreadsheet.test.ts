@@ -766,6 +766,38 @@ describe('lookup formula cells', () => {
   })
 })
 
+describe('capstone formula cells', () => {
+  function cells(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.display))
+  }
+
+  it('CHOOSE picks and STDEV/VAR spread across a grid range', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| 2 | 4 |\n| 4 | 6 |\n| =CHOOSE(2, "Low", "Medium", "High") | =STDEV(A2:B3) |\n| =VAR(A2:B3) | |',
+    )
+    expect(out[3]![0]).toBe('Medium')
+    expect(out[3]![1]).toBe('1.633')
+    expect(out[4]![0]).toBe('2.6667')
+  })
+
+  it('XLOOKUP and criteria wildcards read a real table', () => {
+    const out = cells(
+      '| Item | Price | Qty |\n| --- | --- | --- |\n| Apples | 10 | 3 |\n| Pears | 20 | 5 |\n| =XLOOKUP("Pears", A2:A3, C2:C3, "nope") | =COUNTIF(A2:A3, "A*") | |',
+    )
+    expect(out[3]![0]).toBe('5')
+    expect(out[3]![1]).toBe('1')
+  })
+
+  it('SUMIF pairs a wider sum range by grid position, not flat index', () => {
+    const out = cells(
+      '| A | B | C | D | E | F | G |\n| --- | --- | --- | --- | --- | --- | --- |\n| h | 5 | 8 | 10 | 20 | 30 | 40 |\n| h | 3 | 9 | 50 | 60 | 70 | 80 |\n| =SUMIF(B2:C3, ">6", D2:G3) | =AVERAGEIF(B2:C3, ">6", D2:G3) | | | | | |',
+    )
+    expect(out[3]![0]).toBe('80')
+    expect(out[3]![1]).toBe('40')
+  })
+})
+
 describe('resolved table markdown helpers', () => {
   it('resolves formula cells to displays and keeps plain cells verbatim', () => {
     const { pipes, formulas } = resolveTableValue(
