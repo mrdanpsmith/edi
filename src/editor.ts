@@ -16,6 +16,7 @@ import { codeBlockNodeViewPlugin } from './node/execblock'
 import { attachBlockHandles } from './blockhandle'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
+import { formulaDefsPlugin, formulaEnvFor } from './formulaDefs'
 import { maskedFieldNodeViewPlugin } from './node/masked'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
@@ -224,6 +225,7 @@ export function createBlockEditor(
     urlPastePlugin,
     misleadingLinkPlugin,
     blockPlugin,
+    formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,
     tableNodeViewPlugin,
@@ -273,7 +275,7 @@ export function createBlockEditor(
       return view
     },
     getMarkdown() {
-      return proseToMarkdown(view.state.doc)
+      return proseToMarkdown(view.state.doc, formulaEnvFor(view.state))
     },
     setMarkdown(markdown: string) {
       // A swapped-in document is a fresh editing context: build a brand-new

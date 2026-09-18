@@ -37,6 +37,9 @@ import { commitSourceMode } from './blockview'
 import { isMisleadingLink } from './linkSecurity'
 import { FormatToolbar } from './formatToolbar'
 import { bindMenuCommands } from './menus'
+import { BUILTIN_FORMULAS } from './formulas'
+import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
+import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { createBlockEditor, type BlockEditor } from './editor'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode } from './node/table'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
@@ -45,6 +48,10 @@ import { addRecentFile, getRecentFiles } from './recents'
 import { Tabs } from './tabs'
 
 const IS_SELFTEST = new URLSearchParams(window.location.search).has('selftest')
+
+/** Comma-separated builtin names for the Welcome document, generated from the
+ * registry so the list can never drift from what the evaluator supports. */
+const WELCOME_FUNCTIONS = BUILTIN_FORMULAS.map((fn) => `\`${fn.name}\``).join(', ')
 
 const WELCOME_DOCUMENT = `# Welcome to Edi
 
@@ -78,7 +85,7 @@ Start a cell with \`=\` to compute it from other cells:
 | Gadget | 90 | 110 | =B3+C3 |
 | **Total** | =SUM(B2:B3) | =SUM(C2:C3) | =SUM(D2:D3) |
 
-Supports \`SUM\`, \`AVERAGE\`, \`MIN\`, \`MAX\`, \`COUNT\`, \`PRODUCT\`, \`ROUND\`, cell references like \`B2\`, and ranges like \`B2:C4\`.
+Supports ${WELCOME_FUNCTIONS}, cell references like \`B2\` and \`$B$2\`, and ranges like \`B2:C4\`.
 
 ## Executable code blocks
 
@@ -235,7 +242,7 @@ async function exportHtml(): Promise<void> {
     if (!doc) {
       return
     }
-    const bodyHtml = serializeDocToHtml(doc)
+    const bodyHtml = serializeDocToHtml(doc, formulaEnvFor(blockEditor!.getView().state))
     await writeTextFile(path, buildExportHtml(fileName(path), bodyHtml))
     flashStatus(`Exported ${path}`)
   } catch (error) {
@@ -249,6 +256,12 @@ function openNewTab(): void {
 
 function openWelcome(): void {
   tabs.addSession(WELCOME_DOCUMENT)
+  afterActivate()
+}
+
+function openFunctionReference(): void {
+  const state = blockEditor?.getState()
+  tabs.addSession(buildFunctionReferenceMarkdown(state ? documentFunctionsFor(state) : []))
   afterActivate()
 }
 
@@ -831,6 +844,7 @@ function init(): void {
     insertTableDefault: () => void insertTableDefault(),
     export: () => void exportHtml(),
     toggleFormatting: () => toggleFormatting(),
+    formulaReference: () => openFunctionReference(),
     undo: () => editUndo(),
     redo: () => editRedo(),
     cut: () => editCut(),

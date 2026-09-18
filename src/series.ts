@@ -10,6 +10,8 @@
  * (`Red, Green` → `Red, Green, …`), or a plain duplication of a single seed.
  */
 
+import { BUILTIN_FUNCTION_NAMES } from './formulas'
+
 const MONTH_FULL = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -19,10 +21,9 @@ const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 const DAY_ABBR = DAY_FULL.map((d) => d.slice(0, 3))
 
 /** Function names the formula parser knows; `x10`-style tokens that spell one
- * are not cell references (e.g. `=LOG10(100)` must not shift like `=LOG10`). */
-const FORMULA_FUNCTIONS = new Set([
-  'SUM', 'AVERAGE', 'AVG', 'MIN', 'MAX', 'COUNT', 'PRODUCT', 'ABS', 'SQRT', 'ROUND',
-])
+ * are not cell references (e.g. `=LOG10(100)` must not shift like `=LOG10`).
+ * Derived from the function registry so it can never drift from the evaluator. */
+const FORMULA_FUNCTIONS = BUILTIN_FUNCTION_NAMES
 
 export function fillValues(seeds: readonly string[], count: number): string[] {
   if (count <= 0) return []

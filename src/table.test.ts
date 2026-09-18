@@ -9,6 +9,7 @@ import { parsePipes } from './spreadsheet-util'
 import { blockPlugin, enterSourceMode, exitSourceMode } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode } from './node/table'
+import { formulaDefsPlugin } from './formulaDefs'
 import { getActiveCellHost } from './inline-format'
 import { encryptField } from './crypto'
 import { createBlockEditor } from './editor'
@@ -25,7 +26,7 @@ function createEditor(md: string): EditorView {
   const view = new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin],
+      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin, formulaDefsPlugin],
     }),
   })
   // Tables render in the plain view by default (`_plain` is true); enter
@@ -52,7 +53,7 @@ function createPlainTable(md: string): EditorView {
   return new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin],
+      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin, formulaDefsPlugin],
     }),
   })
 }
@@ -190,8 +191,44 @@ describe('TableNodeView grid', () => {
     const errView = createEditor('| A |\n| --- |\n| 0 |\n| =1/A2 |')
     expect(cell(errView, 2, 0).textContent).toBe('#DIV/0!')
     expect(cell(errView, 2, 0).classList.contains('ss-error')).toBe(true)
-    expect(cell(errView, 2, 0).title).toBe('=1/A2')
+    expect(cell(errView, 2, 0).title).toBe('=1/A2 — Division by zero')
     errView.destroy()
+    view.destroy()
+  })
+
+  it('evaluates a function defined in an edi-formula block', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| 5 | =DOUBLE(A2) |\n\n```edi-formula\nDOUBLE(x) = x * 2\n```',
+    )
+    expect(cell(view, 1, 1).textContent).toBe('10')
+    view.destroy()
+  })
+
+  it('updates computed cells when an edi-formula definition changes', () => {
+    const view = createEditor(
+      '| A | B |\n| --- | --- |\n| 5 | =DOUBLE(A2) |\n\n```edi-formula\nDOUBLE(x) = x * 2\n```',
+    )
+    expect(cell(view, 1, 1).textContent).toBe('10')
+
+    let blockPos = -1
+    view.state.doc.forEach((node, offset) => {
+      if (node.type.name === 'code_block') blockPos = offset
+    })
+    const block = view.state.doc.nodeAt(blockPos)!
+    view.dispatch(
+      view.state.tr.replaceWith(
+        blockPos + 1,
+        blockPos + 1 + block.content.size,
+        view.state.schema.text('DOUBLE(x) = x * 3'),
+      ),
+    )
+    expect(cell(view, 1, 1).textContent).toBe('15')
+    view.destroy()
+  })
+
+  it('marks an invalid edi-formula block in the DOM', () => {
+    const view = createEditor('```edi-formula\nSUM(x) = x\n```')
+    expect(view.dom.querySelector('.edi-formula-invalid')).not.toBeNull()
     view.destroy()
   })
 

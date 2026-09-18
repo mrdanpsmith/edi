@@ -3,6 +3,7 @@
 // style); this module converts between that text and the 2-D string grid the
 // solver and the visual grid node-view work on.
 import { renderCellHtml } from './inline-md'
+import { BUILTIN_ENV, type FormulaEnv } from './formulas'
 import { colToLetters, isFormula, parseCellRef, solve } from './spreadsheet'
 
 const DELIMITER_CELL = /^:?-+:?$/
@@ -206,10 +207,11 @@ function cellRef(row: number, col: number): string {
  */
 export function resolveTableValue(
   value: string,
+  env: FormulaEnv = BUILTIN_ENV,
 ): { pipes: string; formulas: Record<string, string> } {
   const rows = parsePipes(value)
   const align = parsePipesAlign(value)
-  const solution = solve(rows)
+  const solution = solve(rows, env)
   const formulas: Record<string, string> = {}
   const resolved = rows.map((row, r) =>
     row.map((raw, c) => {

@@ -25,7 +25,19 @@ Tables render as a visual spreadsheet grid in the preview — a live formula bar
 | **Total** | =SUM(B2:B3) | =SUM(C2:C3) | =SUM(D2:D3) |
 ```
 
-Supported: arithmetic (`+ - * / ^`), cell references (`B2`), ranges (`B2:C4`), and the functions `SUM`, `AVERAGE`/`AVG`, `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`. Errors surface in the cell as `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#CYCLE!`, or `#ERROR!`.
+Supported: arithmetic (`+ - * / ^`), cell references (`B2`), ranges (`B2:C4`), and the functions `SUM`, `AVERAGE`/`AVG`, `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`. Errors surface in the cell as `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#CYCLE!`, or `#ERROR!`, and a tooltip explains the cause. The `fx` bar and cell editor autocomplete function names, and `Help → Formula Reference…` opens a generated reference of every function.
+
+You can also define your own functions for the whole document in a fenced code block tagged `edi-formula`:
+
+````markdown
+```edi-formula
+MYAVG(a, b) = (a + b) / 2
+TAX(amount) = ROUND(amount * 0.2, 2)
+```
+````
+
+Each line is `NAME(params) = expression`; bodies may use numbers, parameters, arithmetic, and any built-in or other document function. Parameters accept numbers, cells, or ranges (a range arrives as its list of values, so it can be passed to `SUM` and friends). A definition whose name collides with a built-in, repeats another definition, or forms a loop is rejected and its block is flagged.
+
 
 ### Executable code blocks
 
@@ -63,6 +75,7 @@ Document actions live in a native menu bar instead of toolbar buttons:
 - **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
 - **Insert**: Spreadsheet, Text File, Image.
 - **View**: Preview (toggle, default on), Formatting Toolbar (toggle, default on).
+- **Help**: Formula Reference, About Edi.
 
 ### Spreadsheet import
 

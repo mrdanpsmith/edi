@@ -12,6 +12,7 @@ import {
   maskedFieldToMarkdown,
 } from './node/masked'
 import { shebangFromFenceInfo } from './exec'
+import { BUILTIN_ENV, type FormulaEnv } from './formulas'
 import {
   formatTableCarrier,
   hydrateResolvedTable,
@@ -305,10 +306,10 @@ function collectChildren(node: ProseNode): ProseNode[] {
   return children
 }
 
-function serializeNode(node: ProseNode, indent = ''): string {
+function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_ENV): string {
   switch (node.type.name) {
     case 'doc':
-      return collectChildren(node).map((c) => serializeNode(c)).join('\n\n') + '\n'
+      return collectChildren(node).map((c) => serializeNode(c, '', env)).join('\n\n') + '\n'
 
     case 'paragraph':
       return indent + serializeContent(node)
@@ -319,7 +320,7 @@ function serializeNode(node: ProseNode, indent = ''): string {
     }
 
     case 'blockquote': {
-      const inner = collectChildren(node).map((c) => serializeNode(c)).join('\n\n')
+      const inner = collectChildren(node).map((c) => serializeNode(c, '', env)).join('\n\n')
       return inner
         .split('\n')
         .map((line: string) => (line ? '> ' + line : '>'))
@@ -327,13 +328,13 @@ function serializeNode(node: ProseNode, indent = ''): string {
     }
 
     case 'bullet_list':
-      return serializeList(node, false, indent)
+      return serializeList(node, false, indent, env)
 
     case 'ordered_list':
-      return serializeList(node, true, indent)
+      return serializeList(node, true, indent, env)
 
     case 'list_item':
-      return serializeListItem(node, indent)
+      return serializeListItem(node, indent, env)
 
     case 'code_block': {
       const lang = (node.attrs.language as string) ?? ''
@@ -370,7 +371,7 @@ function serializeNode(node: ProseNode, indent = ''): string {
       if (!val) return ''
       let text = val
       if (node.attrs._resolved) {
-        const { pipes, formulas } = resolveTableValue(val)
+        const { pipes, formulas } = resolveTableValue(val, env)
         text =
           Object.keys(formulas).length === 0
             ? pipes
@@ -485,7 +486,7 @@ function serializeInlineAtom(text: string, marks: readonly Mark[]): string {
   return out
 }
 
-function serializeList(node: ProseNode, ordered: boolean, indent: string): string {
+function serializeList(node: ProseNode, ordered: boolean, indent: string, env: FormulaEnv): string {
   const items: string[] = []
   let counter = ordered ? ((node.attrs.order as number) ?? 1) : 0
   node.content.forEach((child) => {
@@ -497,25 +498,30 @@ function serializeList(node: ProseNode, ordered: boolean, indent: string): strin
         const checked = child.attrs.checked as boolean | null
         bullet = checked !== null ? (checked ? '- [x]' : '- [ ]') : '-'
       }
-      items.push(serializeListItemContent(child, bullet, indent))
+      items.push(serializeListItemContent(child, bullet, indent, env))
       counter++
     }
   })
   return items.join('\n')
 }
 
-function serializeListItem(node: ProseNode, indent: string): string {
-  return serializeListItemContent(node, '-', indent)
+function serializeListItem(node: ProseNode, indent: string, env: FormulaEnv): string {
+  return serializeListItemContent(node, '-', indent, env)
 }
 
-function serializeListItemContent(node: ProseNode, bullet: string, indent: string): string {
+function serializeListItemContent(
+  node: ProseNode,
+  bullet: string,
+  indent: string,
+  env: FormulaEnv,
+): string {
   const lines: string[] = []
   const contentIndent = indent + ' '.repeat(bullet.length + 1)
   node.content.forEach((child, _, i) => {
     if (child.type.name === 'bullet_list' || child.type.name === 'ordered_list') {
-      lines.push(serializeNode(child, contentIndent))
+      lines.push(serializeNode(child, contentIndent, env))
     } else {
-      const content = serializeNode(child)
+      const content = serializeNode(child, '', env)
       if (i === 0) {
         lines.push(indent + bullet + ' ' + content)
       } else {
@@ -538,23 +544,24 @@ export function markdownToProse(markdown: string, mdSchema: Schema): ProseNode {
   return doc
 }
 
-export function proseToMarkdown(doc: ProseNode): string {
-  return serializeNode(doc)
+export function proseToMarkdown(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {
+  return serializeNode(doc, '', env)
 }
 
-export function serializeBlock(node: ProseNode): string {
-  return serializeNode(node)
+export function serializeBlock(node: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {
+  return serializeNode(node, '', env)
 }
 
 export function extractBlockMarkdown(
   doc: ProseNode,
   blockOffsets: BlockOffset[],
   blockId: string,
+  env: FormulaEnv = BUILTIN_ENV,
 ): string {
   const offset = blockOffsets.find((o) => o.id === blockId)
   if (!offset) return ''
   const node = doc.resolve(offset.nodePos).node()
-  return serializeNode(node)
+  return serializeNode(node, '', env)
 }
 
 export function buildBlockOffsets(doc: ProseNode): BlockOffset[] {

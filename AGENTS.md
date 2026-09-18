@@ -2,6 +2,12 @@
 
 Edi is a markdown editor. Frontend: CodeMirror 6 + Mermaid + spreadsheet formulas (TypeScript/Vite) compiled to a static `dist/`. Backend: Python 3 + PySide6/QtWebEngine. A native `QWebEngineView` hosts `dist/index.html`; the page talks to Python via `QWebChannel` (`backend/bridge.py`). This is NOT a plain web app — `npm run dev` runs only the Vite server; the real app is Python.
 
+## Spreadsheet formulas
+
+`src/formulas.ts` is the single source of truth for the function registry and value/coercion helpers; `src/spreadsheet.ts` is the parser/evaluator and evaluates through a `FormulaEnv` (`{ functions: ReadonlyMap<string, FormulaFunction> }`, looked up case-insensitively). `solve`, `computeSpreadsheet`, `resolveTableValue`, `proseToMarkdown`, and `serializeDocToHtml` all take an optional env that defaults to `BUILTIN_ENV`, so any path that re-serializes a resolved table must thread the document's env through (the editor's `getMarkdown`, export, and the table node view all do). `series.ts` derives `FORMULA_FUNCTIONS` from `BUILTIN_FUNCTION_NAMES`, and `formulaReference.ts` generates the Help → Formula Reference document from `BUILTIN_FORMULAS`, so a new builtin cannot drift between the evaluator, reference-shifting, and docs.
+
+Document-local functions come from `code_block` nodes with `language === 'edi-formula'`, one `NAME(params) = expression` per line (`#` starts a comment). `src/formulaDsl.ts` parses/compiles them, rejecting builtin-name collisions, duplicate names, and cycles; `src/formulaDefs.ts` is an editor plugin that compiles every such block (document-wide) into a `FormulaEnv` in plugin state, decorates rejected blocks with `.edi-formula-invalid`, and exposes it via `formulaEnvFor(state)` / `documentFunctionsFor(state)`. Builtins are never overridable, and a rejected definition makes cells that call it resolve the usual `#NAME?` error. Function-name autocomplete lives in `src/formulaAutocomplete.ts`, fed by the table node view's `formulaFunctions()` (builtins + document defs).
+
 ## Key commands
 
 - `npm run check` — typecheck + eslint + frontend unit tests (Vitest). Run this before backend work.

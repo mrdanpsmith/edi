@@ -394,7 +394,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert insert_labels == ["&Table…", "&Spreadsheet…", "&Text File…", "&Image…"]
 
     help_labels = [action.text() for action in window._help_menu.actions()]
-    assert help_labels == ["&About Edi…"]
+    assert help_labels == ["&Formula Reference…", "", "&About Edi…"]
 
     formatting_actions = [
         action

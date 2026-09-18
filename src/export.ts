@@ -2,6 +2,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import { DOMSerializer } from 'prosemirror-model'
 import { schema } from './schema'
 import { computeSpreadsheet } from './spreadsheet'
+import { BUILTIN_ENV, type FormulaEnv } from './formulas'
 import { inlineMarkdownToHtml, parsePipes } from './spreadsheet-util'
 import { escapeHtml } from './utils'
 
@@ -229,7 +230,7 @@ body {
 }
 `
 
-export function serializeDocToHtml(doc: ProseNode): string {
+export function serializeDocToHtml(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {
   const base = DOMSerializer.fromSchema(schema)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -285,7 +286,7 @@ export function serializeDocToHtml(doc: ProseNode): string {
   const div = document.createElement('div')
   div.className = 'md-preview'
   div.appendChild(fragment)
-  computeSpreadsheet(div)
+  computeSpreadsheet(div, env)
   return div.outerHTML
 }
 

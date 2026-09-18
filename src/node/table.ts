@@ -4,6 +4,9 @@ import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, type TableAlign } from '../spreadsheet-util'
 import { cellCarriesMark, setCellMark } from '../inline-md'
 import { solve, colToLetters, isFormula, type CellSolution } from '../spreadsheet'
+import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
+import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
+import { FormulaAutocomplete } from '../formulaAutocomplete'
 import { undo, redo } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText } from '../clipboard'
@@ -64,6 +67,13 @@ const INSERT_CORRIDOR = 14
  * hit the column insert guide, which sits at the grid's trailing edge). */
 const EXIT_MARGIN = 32
 
+/** Tooltip for a table cell: the raw content, with a formula error's hint
+ * appended so hovering an error explains it without leaving the table. */
+function cellTitle(raw: string, cellSol: CellSolution | undefined): string {
+  if (!raw) return ''
+  return cellSol?.hint ? `${raw} — ${cellSol.hint}` : raw
+}
+
 function createHandleDOM(pos: number): HTMLElement {
   const handle = document.createElement('div')
   handle.className = 'block-handle'
@@ -120,6 +130,8 @@ class TableNodeView implements NodeView, InlineCellHost {
   private readonly onDocCopy = (event: Event): void => this.onClipboardCopy(event as ClipboardEvent)
   private readonly onDocCut = (event: Event): void => this.onClipboardCut(event as ClipboardEvent)
   private readonly onDocPaste = (event: Event): void => this.onClipboardPaste(event as ClipboardEvent)
+  private readonly autocomplete = new FormulaAutocomplete(() => this.formulaFunctions())
+  private unsubscribeFormulaEnv: (() => void) | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -156,6 +168,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.active = { row: 0, col: 0 }
     this.renderSelection()
     ensureInlineFocusListeners()
+    this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.refreshFormulaValues())
 
     document.addEventListener('copy', this.onDocCopy)
     document.addEventListener('cut', this.onDocCut)
@@ -332,16 +345,28 @@ class TableNodeView implements NodeView, InlineCellHost {
     fxInput.spellcheck = false
     fxInput.placeholder = 'fx'
     fxInput.addEventListener('keydown', (event) => this.onFxInputKeydown(event))
-    fxInput.addEventListener('blur', () => this.commitFxEdit())
+    fxInput.addEventListener('blur', () => {
+      this.autocomplete.close()
+      this.commitFxEdit()
+    })
     fxInput.addEventListener('focus', () => {
       setActiveCellHost(this)
       this.updatePointCursor()
     })
-    fxInput.addEventListener('input', () => this.updatePointCursor())
+    fxInput.addEventListener('input', () => {
+      this.updatePointCursor()
+      this.autocomplete.refresh(fxInput)
+    })
     fxbar.appendChild(fxInput)
     this.fxInput = fxInput
 
     this.dom.appendChild(fxbar)
+  }
+
+  /** Functions offered by formula autocomplete: builtins first, then any
+   * functions defined in the current document. */
+  private formulaFunctions(): readonly FormulaFunction[] {
+    return [...BUILTIN_FORMULAS, ...documentFunctionsFor(this.view.state)]
   }
 
   // --- Grid ---
@@ -646,7 +671,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private fillCellContents(): void {
-    const solution = solve(this.rows)
+    const solution = solve(this.rows, formulaEnvFor(this.view.state))
     for (let r = 0; r < this.rows.length; r++) {
       for (let c = 0; c < (this.rows[0]?.length ?? 0); c++) {
         const td = this.cells[r]?.[c]
@@ -654,6 +679,7 @@ class TableNodeView implements NodeView, InlineCellHost {
         const cellSol = solution.cells[r]?.[c]
         td.classList.remove('ss-formula', 'ss-error')
         td.removeAttribute('title')
+        td.textContent = ''
         const inner = document.createElement('span')
         inner.className = 'ss-cell-content'
         if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
@@ -668,9 +694,16 @@ class TableNodeView implements NodeView, InlineCellHost {
           this.bindMaskedPills(td, r, c)
         }
         const raw = this.rows[r]?.[c] ?? ''
-        if (raw) td.title = raw
+        if (raw) td.title = cellTitle(raw, cellSol)
       }
     }
+  }
+
+  /** Recompute cells after an `edi-formula` block changed the available
+   * functions. Skipped mid-edit so it never clobbers the open editor. */
+  private refreshFormulaValues(): void {
+    if (this.editing) return
+    this.fillCellContents()
   }
 
   /** Wire ``.masked-field`` pills rendered into a cell to their real token, so
@@ -1175,7 +1208,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     const cells = this.collectSelected()
     let sum = 0
     let count = 0
-    const solution = solve(this.rows)
+    const solution = solve(this.rows, formulaEnvFor(this.view.state))
     for (const { row, col } of cells) {
       const value = solution.cells[row]?.[col]?.value
       if (typeof value === 'number') {
@@ -1570,6 +1603,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     input.value = input.value.slice(0, start) + ref + input.value.slice(end)
     const caret = start + ref.length
     input.setSelectionRange(caret, caret)
+    this.autocomplete.close()
     if (input === this.editOverlay) this.fitEditColumn(input)
     this.pointInsert = { input, start, end: caret, snapshot: input.value }
     this.mirrorToFx(input)
@@ -1607,6 +1641,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     drag.input.value = value.slice(0, drag.replaceStart) + ref + value.slice(drag.replaceEnd)
     drag.replaceEnd = drag.replaceStart + ref.length
     drag.input.setSelectionRange(drag.replaceEnd, drag.replaceEnd)
+    this.autocomplete.close()
     if (drag.input === this.editOverlay) this.fitEditColumn(drag.input)
     this.pointInsert = {
       input: drag.input,
@@ -1654,6 +1689,7 @@ class TableNodeView implements NodeView, InlineCellHost {
       this.fitEditColumn(input)
       this.mirrorToFx(input)
       this.updatePointCursor()
+      this.autocomplete.refresh(input)
     })
     cell.appendChild(input)
     this.editOverlay = input
@@ -1703,6 +1739,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private onEditKeydown(event: KeyboardEvent): void {
+    if (this.autocomplete.handleKeydown(event)) return
     if (event.key === 'Enter') {
       event.preventDefault()
       event.stopPropagation()
@@ -1774,6 +1811,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.editOverlay = null
     this.editing = null
     overlay?.remove()
+    this.autocomplete.close()
     this.clearPointRange()
   }
 
@@ -1790,6 +1828,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private onFxInputKeydown(event: KeyboardEvent): void {
+    if (this.autocomplete.handleKeydown(event)) return
     const mod = event.metaKey || event.ctrlKey
     if (mod && (event.key === 'b' || event.key === 'i')) {
       event.preventDefault()
@@ -2158,6 +2197,9 @@ class TableNodeView implements NodeView, InlineCellHost {
     document.removeEventListener('copy', this.onDocCopy)
     document.removeEventListener('cut', this.onDocCut)
     document.removeEventListener('paste', this.onDocPaste)
+    this.unsubscribeFormulaEnv?.()
+    this.unsubscribeFormulaEnv = null
+    this.autocomplete.close()
   }
 }
 
@@ -2240,6 +2282,7 @@ class TablePlainView implements NodeView {
   private rows: string[][] = []
   private align: TableAlign[] = []
   private body: HTMLElement | null = null
+  private unsubscribeFormulaEnv: (() => void) | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -2270,6 +2313,7 @@ class TablePlainView implements NodeView {
       enterSpreadsheetMode(this.view, this.getPos())
     })
     this.renderBody()
+    this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.renderBody())
   }
 
   private renderBody(): void {
@@ -2303,7 +2347,7 @@ class TablePlainView implements NodeView {
     const table = document.createElement('table')
     table.className = 'ss-plain-table'
     const cols = Math.max(...this.rows.map((r) => r.length), 0)
-    const solution = solve(this.rows)
+    const solution = solve(this.rows, formulaEnvFor(this.view.state))
 
     const thead = document.createElement('thead')
     const headRow = document.createElement('tr')
@@ -2345,7 +2389,7 @@ class TablePlainView implements NodeView {
       bindMaskedPillsIn(td, this.rows, row, col, (next) => this.commitTable(next))
     }
     const raw = this.rows[row]?.[col] ?? ''
-    if (raw) td.title = raw
+    if (raw) td.title = cellTitle(raw, cellSol)
   }
 
   private commitTable(nextRows: string[][]): void {
@@ -2385,6 +2429,8 @@ class TablePlainView implements NodeView {
   }
 
   destroy(): void {
+    this.unsubscribeFormulaEnv?.()
+    this.unsubscribeFormulaEnv = null
     this.body = null
   }
 }

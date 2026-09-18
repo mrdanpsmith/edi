@@ -398,6 +398,12 @@ class MainWindow(QMainWindow):
 
         self._help_menu = menubar.addMenu("&Help")
         help_menu = self._help_menu
+        reference_action = QAction("&Formula Reference…", self)
+        reference_action.triggered.connect(
+            lambda _checked=False: self._menu_command("formulaReference")
+        )
+        help_menu.addAction(reference_action)
+        help_menu.addSeparator()
         about_action = QAction("&About Edi…", self)
         about_action.triggered.connect(lambda _checked=False: self._show_about())
         help_menu.addAction(about_action)

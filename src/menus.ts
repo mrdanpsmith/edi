@@ -10,6 +10,7 @@ export interface MenuCommands {
   insertTableDefault: () => void
   export: () => void
   toggleFormatting: () => void
+  formulaReference: () => void
   undo: () => void
   redo: () => void
   cut: () => void

@@ -1,4 +1,21 @@
 import { parseCellSegments } from './inline-md'
+import {
+  BUILTIN_ENV,
+  add,
+  applyFunction,
+  blank,
+  div,
+  err,
+  mul,
+  neg,
+  num,
+  pow,
+  setValue,
+  sub,
+  text,
+  type CellValue,
+  type FormulaEnv,
+} from './formulas'
 
 export const SPREADSHEET_PREFIX = '='
 
@@ -13,13 +30,6 @@ export function isFormula(trimmed: string): boolean {
   )
 }
 
-type CellValue =
-  | { kind: 'number'; value: number }
-  | { kind: 'blank' }
-  | { kind: 'text' }
-  | { kind: 'set'; items: CellValue[] }
-  | { kind: 'error'; message: string }
-
 export interface CellRef {
   row: number
   col: number
@@ -29,6 +39,8 @@ export interface CellSolution {
   display: string
   kind: 'formula' | 'text' | 'blank' | 'error'
   error?: string
+  /** Human-readable explanation shown as a tooltip beside the error code. */
+  hint?: string
   value?: number
 }
 
@@ -63,8 +75,10 @@ const NUMBER_RE = /^[+-]?(\d+(\.\d+)?|\.\d+)$/
  * Resolve a raw pipe-table grid into per-cell display values. Formula cells
  * (`=…`) are evaluated against the whole grid; error cells carry the message
  * in both `display` and `error`. Non-formula cells display their raw text.
+ * `env` supplies the callable functions (builtins plus any document
+ * definitions); it defaults to the builtins.
  */
-export function solve(rows: string[][]): SpreadsheetSolution {
+export function solve(rows: string[][], env: FormulaEnv = BUILTIN_ENV): SpreadsheetSolution {
   const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0)
   const grid = new SpreadsheetGrid()
   rows.forEach((row, r) => {
@@ -75,7 +89,7 @@ export function solve(rows: string[][]): SpreadsheetSolution {
   const visiting = new Set<string>()
   const cells: CellSolution[][] = rows.map((row, r) =>
     Array.from({ length: maxCols }, (_, c) =>
-      solveCell(grid, row[c] ?? '', r + 1, c + 1, visiting),
+      solveCell(grid, row[c] ?? '', r + 1, c + 1, visiting, env),
     ),
   )
   return { rows: rows.length, cols: maxCols, cells }
@@ -87,6 +101,7 @@ function solveCell(
   _row: number,
   _col: number,
   visiting: Set<string>,
+  env: FormulaEnv,
 ): CellSolution {
   const trimmed = raw.trim()
   if (!trimmed) {
@@ -97,9 +112,14 @@ function solveCell(
     if (!formula) {
       return { display: '', kind: 'blank' }
     }
-    const result = evaluateFormula(formula, grid, visiting)
+    const result = evaluateFormula(formula, grid, visiting, env)
     if (result.kind === 'error') {
-      return { display: result.message, kind: 'error', error: result.message }
+      return {
+        display: result.message,
+        kind: 'error',
+        error: result.message,
+        hint: result.hint ?? ERROR_HINTS[result.message],
+      }
     }
     if (result.kind === 'number') {
       return { display: formatNumber(result.value), kind: 'formula', value: result.value }
@@ -109,13 +129,13 @@ function solveCell(
   return { display: raw, kind: 'text' }
 }
 
-export function computeSpreadsheet(container: HTMLElement): void {
+export function computeSpreadsheet(container: HTMLElement, env: FormulaEnv = BUILTIN_ENV): void {
   for (const table of Array.from(container.querySelectorAll('table'))) {
-    applyToTable(table)
+    applyToTable(table, env)
   }
 }
 
-function applyToTable(table: HTMLTableElement): void {
+function applyToTable(table: HTMLTableElement, env: FormulaEnv): void {
   const rows = Array.from(table.querySelectorAll('tr'))
   if (rows.length === 0) {
     return
@@ -133,19 +153,22 @@ function applyToTable(table: HTMLTableElement): void {
   })
   for (const formulaCell of grid.formulaCells()) {
     const visiting = new Set<string>()
-    const result = evaluateFormula(formulaCell.formula, grid, visiting)
+    const result = evaluateFormula(formulaCell.formula, grid, visiting, env)
     const domCell = domCells[formulaCell.row - 1]?.[formulaCell.col - 1]
     if (!domCell) {
       continue
     }
     domCell.classList.add('spreadsheet-formula')
+    let hint: string | undefined
     if (result.kind === 'error') {
       domCell.textContent = result.message
       domCell.classList.add('spreadsheet-error')
+      hint = result.hint ?? ERROR_HINTS[result.message]
     } else if (result.kind === 'number') {
       domCell.textContent = formatNumber(result.value)
     }
-    domCell.title = formulaCell.raw.trim()
+    const raw = formulaCell.raw.trim()
+    domCell.title = hint ? `${raw} — ${hint}` : raw
   }
 }
 
@@ -189,9 +212,24 @@ class SpreadsheetGrid {
   }
 }
 
-function evaluateFormula(formula: string, grid: SpreadsheetGrid, visiting: Set<string>): CellValue {
+/** Human-readable tooltip text for each error code. `#NAME?` is handled at the
+ * source, where the offending name is still known. */
+const ERROR_HINTS: Record<string, string> = {
+  '#REF!': 'Reference outside the table',
+  '#DIV/0!': 'Division by zero',
+  '#VALUE!': 'Expected a number',
+  '#CYCLE!': 'Circular reference',
+  '#ERROR!': 'Could not parse the formula',
+}
+
+function evaluateFormula(
+  formula: string,
+  grid: SpreadsheetGrid,
+  visiting: Set<string>,
+  env: FormulaEnv,
+): CellValue {
   try {
-    return new FormulaParser(formula, grid, visiting).parse()
+    return new FormulaParser(formula, grid, visiting, env).parse()
   } catch {
     return err('#ERROR!')
   }
@@ -204,6 +242,7 @@ class FormulaParser {
     private readonly source: string,
     private readonly grid: SpreadsheetGrid,
     private readonly visiting: Set<string>,
+    private readonly env: FormulaEnv,
   ) {}
 
   parse(): CellValue {
@@ -306,7 +345,7 @@ class FormulaParser {
     }
     const ref = parseCellRef(ident)
     if (!ref) {
-      return err('#NAME?')
+      return err('#NAME?', `Unknown name "${ident}"`)
     }
     return this.cellValue(ref.row, ref.col)
   }
@@ -317,7 +356,7 @@ class FormulaParser {
     this.skipWs()
     if (this.peek() === ')') {
       this.pos++
-      return applyFunction(name, args)
+      return applyFunction(name, args, this.env)
     }
     for (;;) {
       args.push(this.additive())
@@ -326,7 +365,7 @@ class FormulaParser {
         continue
       }
       if (this.match(')')) {
-        return applyFunction(name, args)
+        return applyFunction(name, args, this.env)
       }
       return err('#ERROR!')
     }
@@ -343,7 +382,7 @@ class FormulaParser {
         return err('#CYCLE!')
       }
       this.visiting.add(key)
-      const result = evaluateFormula(cell.formula, this.grid, this.visiting)
+      const result = evaluateFormula(cell.formula, this.grid, this.visiting, this.env)
       this.visiting.delete(key)
       return result
     }
@@ -389,166 +428,6 @@ class FormulaParser {
       this.pos++
     }
   }
-}
-
-function applyFunction(name: string, args: CellValue[]): CellValue {
-  switch (name.toUpperCase()) {
-    case 'SUM':
-    case 'AVERAGE':
-    case 'AVG':
-    case 'MIN':
-    case 'MAX':
-    case 'COUNT':
-    case 'PRODUCT':
-      return aggregateFunction(name, args)
-    case 'ABS':
-      return scalarFunction(args, Math.abs)
-    case 'SQRT':
-      return scalarFunction(args, Math.sqrt)
-    case 'ROUND':
-      return roundFunction(args)
-    default:
-      return err('#NAME?')
-  }
-}
-
-function aggregateFunction(name: string, args: CellValue[]): CellValue {
-  const collected = collectNumbers(args)
-  if (typeof collected === 'string') {
-    return err(collected)
-  }
-  const values = collected
-  switch (name.toUpperCase()) {
-    case 'SUM':
-      return num(values.reduce((a, b) => a + b, 0))
-    case 'AVERAGE':
-    case 'AVG':
-      if (values.length === 0) {
-        return err('#DIV/0!')
-      }
-      return num(values.reduce((a, b) => a + b, 0) / values.length)
-    case 'MIN':
-      return num(values.length === 0 ? 0 : Math.min(...values))
-    case 'MAX':
-      return num(values.length === 0 ? 0 : Math.max(...values))
-    case 'COUNT':
-      return num(values.length)
-    case 'PRODUCT':
-      return num(values.reduce((a, b) => a * b, 1))
-    default:
-      return err('#NAME?')
-  }
-}
-
-function scalarFunction(args: CellValue[], fn: (n: number) => number): CellValue {
-  const first = args[0]
-  if (!first) {
-    return err('#VALUE!')
-  }
-  if (first.kind === 'error') {
-    return first
-  }
-  const value = toNumber(first)
-  if (value === null) {
-    return err('#VALUE!')
-  }
-  const result = fn(value)
-  return Number.isFinite(result) ? num(result) : err('#VALUE!')
-}
-
-function roundFunction(args: CellValue[]): CellValue {
-  const first = args[0]
-  if (!first) {
-    return err('#VALUE!')
-  }
-  if (first.kind === 'error') {
-    return first
-  }
-  const value = toNumber(first)
-  if (value === null) {
-    return err('#VALUE!')
-  }
-  const digits = args.length > 1 ? toNumber(args[1]) ?? 0 : 0
-  const factor = 10 ** digits
-  return num((Math.sign(value) * Math.round(Math.abs(value) * factor)) / factor)
-}
-
-function collectNumbers(args: CellValue[]): number[] | string {
-  const out: number[] = []
-  for (const arg of args) {
-    if (arg.kind === 'error') {
-      return arg.message
-    }
-    if (arg.kind === 'number') {
-      out.push(arg.value)
-      continue
-    }
-    if (arg.kind === 'set') {
-      for (const item of arg.items) {
-        if (item.kind === 'error') {
-          return item.message
-        }
-        if (item.kind === 'number') {
-          out.push(item.value)
-        }
-      }
-    }
-  }
-  return out
-}
-
-function binary(
-  left: CellValue,
-  right: CellValue,
-  op: (a: number, b: number) => number,
-  divZero = false,
-): CellValue {
-  if (left.kind === 'error') {
-    return left
-  }
-  if (right.kind === 'error') {
-    return right
-  }
-  if (left.kind === 'set' || right.kind === 'set') {
-    return err('#VALUE!')
-  }
-  const a = toNumber(left)
-  const b = toNumber(right)
-  if (a === null || b === null) {
-    return err('#VALUE!')
-  }
-  if (divZero && b === 0) {
-    return err('#DIV/0!')
-  }
-  const result = op(a, b)
-  return Number.isFinite(result) ? num(result) : err('#VALUE!')
-}
-
-const add = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a + b)
-const sub = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a - b)
-const mul = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a * b)
-const div = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a / b, true)
-const pow = (l: CellValue, r: CellValue): CellValue => binary(l, r, (a, b) => a ** b)
-
-function neg(value: CellValue): CellValue {
-  if (value.kind === 'error') {
-    return value
-  }
-  const n = toNumber(value)
-  if (n === null) {
-    return err('#VALUE!')
-  }
-  return num(-n)
-}
-
-function toNumber(value: CellValue): number | null {
-  if (value.kind === 'number') {
-    return value.value
-  }
-  if (value.kind === 'blank') {
-    return 0
-  }
-  return null
 }
 
 /**
@@ -628,24 +507,4 @@ export function colToLetters(col: number): string {
 
 function cellKey(row: number, col: number): string {
   return `${colToLetters(col)}${row}`
-}
-
-function num(value: number): CellValue {
-  return { kind: 'number', value }
-}
-
-function blank(): CellValue {
-  return { kind: 'blank' }
-}
-
-function text(): CellValue {
-  return { kind: 'text' }
-}
-
-function setValue(items: CellValue[]): CellValue {
-  return { kind: 'set', items }
-}
-
-function err(message: string): CellValue {
-  return { kind: 'error', message }
 }
