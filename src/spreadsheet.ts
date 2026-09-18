@@ -9,6 +9,7 @@ import {
   div,
   err,
   formatNumber,
+  invokeFunction,
   mul,
   neg,
   num,
@@ -18,6 +19,7 @@ import {
   text,
   toText,
   type CellValue,
+  type CellValueThunk,
   type CompareOp,
   type FormulaEnv,
 } from './formulas'
@@ -297,6 +299,7 @@ const ERROR_HINTS: Record<string, string> = {
   '#REF!': 'Reference outside the table',
   '#DIV/0!': 'Division by zero',
   '#VALUE!': 'Expected a number',
+  '#N/A!': 'IFS/SWITCH found no matching result',
   '#CYCLE!': 'Circular reference',
   '#ERROR!': 'Could not parse the formula',
 }
@@ -463,23 +466,38 @@ class FormulaParser {
 
   private functionCall(name: string): CellValue {
     this.match('(')
-    const args: CellValue[] = []
     this.skipWs()
+    // Only lazy functions receive `() => CellValue` thunks; eager ones get the
+    // already-evaluated values, so an argument is never parsed twice. Arguments
+    // are still parsed eagerly for a lazy call (to advance past them and
+    // validate the commas/close) but the values are dropped; the branch is
+    // re-evaluated from its source slice only when the function forces it.
+    const fn = this.env.functions.get(name.toUpperCase())
+    const lazy = fn?.lazy === true
     if (this.peek() === ')') {
       this.pos++
-      return applyFunction(name, args, this.env)
+      return invokeFunction(name, [], this.env)
     }
+    const args: CellValue[] = []
+    const argThunks: CellValueThunk[] = []
     for (;;) {
-      args.push(this.comparison())
+      const start = this.pos
+      const value = this.comparison()
+      if (lazy) {
+        const slice = this.source.slice(start, this.pos)
+        argThunks.push(() => new FormulaParser(slice, this.grid, this.visiting, this.env).parse())
+      } else {
+        args.push(value)
+      }
       this.skipWs()
       if (this.match(',')) {
         continue
       }
-      if (this.match(')')) {
-        return applyFunction(name, args, this.env)
-      }
+      if (this.match(')')) break
       return err('#ERROR!')
     }
+    if (lazy) return invokeFunction(name, argThunks, this.env)
+    return applyFunction(name, args, this.env)
   }
 
   private cellValue(row: number, col: number): CellValue {

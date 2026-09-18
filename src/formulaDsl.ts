@@ -21,6 +21,7 @@ import {
   compareValues,
   div,
   err,
+  invokeFunction,
   isBuiltinName,
   mul,
   neg,
@@ -29,6 +30,7 @@ import {
   sub,
   text,
   type CellValue,
+  type CellValueThunk,
   type CompareOp,
   type FormulaEnv,
   type FormulaFunction,
@@ -212,17 +214,41 @@ function makeFormulaFunction(def: RawDefinition): FormulaFunction {
     summary: `Document definition \`${body}\`.`,
     minArgs: def.params.length,
     maxArgs: def.params.length,
+    // Every document definition is lazy: its parameters arrive as thunks, so
+    // a body like `IF(c, a, b)` (or one built on the lazy builtins) only
+    // forces the branches it actually reads.
+    lazy: true,
     call(args, ctx): CellValue {
-      const scope = new Map<string, CellValue>()
-      def.params.forEach((param, index) => scope.set(param, args[index] ?? blank()))
+      const scope = new Map<string, CellValueThunk>()
+      def.params.forEach((param, index) => {
+        const incoming = args[index]
+        const thunk: CellValueThunk =
+          typeof incoming === 'function' ? incoming : () => incoming ?? blank()
+        scope.set(param, memoize(thunk))
+      })
       return evaluateBody(def.body, scope, ctx.env)
     },
   }
 }
 
+/** Force a parameter at most once: a body that reads a parameter several
+ * times (`D(x) = x + x`) computes its argument a single time no matter how
+ * often it is forced, and lazily not at all when the body never reads it. */
+function memoize(thunk: CellValueThunk): CellValueThunk {
+  let done = false
+  let value: CellValue | null = null
+  return () => {
+    if (!done) {
+      value = thunk()
+      done = true
+    }
+    return value as CellValue
+  }
+}
+
 function evaluateBody(
   body: string,
-  scope: ReadonlyMap<string, CellValue>,
+  scope: ReadonlyMap<string, CellValueThunk>,
   env: FormulaEnv,
 ): CellValue {
   try {
@@ -240,7 +266,7 @@ class BodyParser {
 
   constructor(
     private readonly source: string,
-    private readonly scope: ReadonlyMap<string, CellValue>,
+    private readonly scope: ReadonlyMap<string, CellValueThunk>,
     private readonly env: FormulaEnv,
   ) {}
 
@@ -355,29 +381,43 @@ class BodyParser {
     if (upperIdent === 'TRUE') return bool(true)
     if (upperIdent === 'FALSE') return bool(false)
     const param = this.scope.get(ident)
-    if (param) return param
+    if (param) return param()
     return err('#NAME?', `Unknown name "${ident}" in a function body`)
   }
 
   private functionCall(name: string): CellValue {
     this.match('(')
-    const args: CellValue[] = []
     this.skipWs()
+    // Only lazy functions receive `() => CellValue` thunks; eager ones get the
+    // already-evaluated values, so a cell range or comparison is never parsed
+    // twice. Arguments are still parsed eagerly (to walk `pos` past them and
+    // validate the commas/close) even for lazy calls; the values are dropped.
+    const fn = this.env.functions.get(name.toUpperCase())
+    const lazy = fn?.lazy === true
     if (this.peek() === ')') {
       this.pos++
-      return applyFunction(name, args, this.env)
+      return invokeFunction(name, [], this.env)
     }
+    const args: CellValue[] = []
+    const argThunks: CellValueThunk[] = []
     for (;;) {
-      args.push(this.comparison())
+      const start = this.pos
+      const value = this.comparison()
+      if (lazy) {
+        const slice = this.source.slice(start, this.pos)
+        argThunks.push(() => new BodyParser(slice, this.scope, this.env).parse())
+      } else {
+        args.push(value)
+      }
       this.skipWs()
       if (this.match(',')) {
         continue
       }
-      if (this.match(')')) {
-        return applyFunction(name, args, this.env)
-      }
+      if (this.match(')')) break
       return err('#ERROR!', 'Missing ")" in a function body')
     }
+    if (lazy) return invokeFunction(name, argThunks, this.env)
+    return applyFunction(name, args, this.env)
   }
 
   private readNumber(): number {

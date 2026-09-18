@@ -1,8 +1,8 @@
 # Formula Built-ins Expansion Plan
 
-Goal: grow the spreadsheet engine past its current 9 builtin functions so document-local `edi-formula` definitions can build real business rules (tax tiers, labels, aging, conditions, text assembly).
+Goal: grow the spreadsheet engine past its original 9 builtin functions so document-local `edi-formula` definitions can build real business rules (tax tiers, labels, aging, conditions, text assembly).
 
-Current builtins: `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`.
+Current builtins (Phase 0 and Phase 1 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`, plus the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`.
 
 ## What the engine is missing
 
@@ -27,6 +27,7 @@ Current builtins: `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUC
 - **Def-body dependency scan** (`CALL_RE`, `src/formulaDsl.ts:57`) must strip string literals before scanning, so `"SUM("` inside a literal can't false-positive as a dependency.
 - **Text values** should carry the cleaned/unwrapped string so `CONCAT(A2, …)` of `**hi**` yields `hi`.
 - **`TRUE`/`FALSE` vs refs**: `TRUE` alone is not a valid ref (no row digits), so it's safe as a literal; still only treat as literal when not followed by `(` or `:` so `TRUE1` stays a reference.
+- **Single-pass parsers make laziness a re-parse.** Both `functionCall`s are recursive-descent with a mutable position that must advance while arguments are scanned, so a lazy branch cannot be a closure over "parse at this spot later". The implemented form: each argument is still parsed eagerly (the position advances and syntax is validated), but for a **lazy** callee the *source slice* of the argument is kept and forced as `() => new FormulaParser(slice, grid, visiting, env).parse()` (or the `BodyParser` twin). An unselected branch is thus read once to be discarded (pure: reads only, no caching, so the net result is correct) and never forced; eager callees keep the already-computed value so nothing is re-parsed. `src/formulaDsl.ts` memoizes each parameter thunk on top, so a lazy definition reading a parameter twice forces it once.
 
 ## Phase 0 — value model & grammar (prerequisite, lands first)
 
@@ -53,7 +54,28 @@ Current builtins: `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUC
 
 ## Phase 1 — logic functions
 
-`IF`, `IFERROR`, `AND`, `OR`, `NOT`, `IFS`, `SWITCH` — all with proper laziness where needed (IF/IFERROR/IFS/SWITCH), plus cheap info helpers `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`.
+**Status: complete** — implemented and verified (`npm run check` → 972 vitest,
+`npm run build` → OK, `.venv/bin/pytest` → 199 passed). Commit it as its own
+unit; the handoff records what landed and the Phase 2 pickup points
+(`docs/formula-builtins-phase1-handoff.md`).
+
+`IF`, `IFERROR`, `AND`, `OR`, `NOT`, `IFS`, `SWITCH` — all with proper laziness
+where needed (IF/IFERROR/IFS/SWITCH), plus cheap info helpers `ISERROR`,
+`ISNUMBER`, `ISTEXT`, `ISBLANK`.
+
+Delivered:
+- Lazy dispatch in `src/formulas.ts`: optional `lazy` on `FormulaFunction`, the
+  `CellValueThunk` type, and `invokeFunction(name, argThunks, env)` (forces
+  thunks for eager fns, passes them through to lazy ones); `applyFunction`
+  remains the eager wrapper used by tests.
+- Both evaluators' `functionCall` (`src/spreadsheet.ts`, `src/formulaDsl.ts`)
+  capture lazy arguments as re-parseable source slices (see Design notes).
+- Every `edi-formula` definition is lazy: parameters bind as **memoized**
+  thunks, so a `IF(c, a, b)`-style body skips branches it never reads and a
+  parameter read several times is forced exactly once.
+- `AND`/`OR`/`NOT`/`IS*` are eager and cheap as planned (no short-circuit).
+- `#N/A!` joined the error vocabulary for `IFS`/`SWITCH` no-match results
+  (reference doc, README, and table tooltip hints updated).
 
 ## Phase 2 — text functions
 
@@ -97,6 +119,6 @@ Priority: logic + text are the must-haves (they make `edi-formula` derivatives g
 
 ## Known tradeoffs
 
-- Eager evaluation for functions other than IF/IFERROR/IFS/SWITCH — an unselected branch never evaluates (lazy args), but errors in *selected*, non-conditional args still surface.
+- Eager evaluation for functions other than IF/IFERROR/IFS/SWITCH — an unselected branch is never *forced* (lazy args), but errors in *selected*, non-conditional args still surface. (`AND`/`OR` are eager and do not short-circuit.) The single-pass scanner still parses every lazy argument once to advance its position; the unselected slice's value is discarded and never forced.
 - Text formula results render as markdown (may need care if output starts with `=` or breaks tables — pipes are escaped).
 - Dates are Excel serials, local-time; no cell number formats exist, so date display comes from the `date` value kind, not formatting.

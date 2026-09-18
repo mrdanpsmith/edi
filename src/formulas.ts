@@ -27,6 +27,11 @@ export type CellValue =
 
 export type ErrorCell = Extract<CellValue, { kind: 'error' }>
 
+/** A deferred argument value, produced on demand. Lazy functions (`IF` and
+ * friends) receive these so an unselected branch is never evaluated; eager
+ * functions get the already-forced values instead. */
+export type CellValueThunk = () => CellValue
+
 export type FormulaCategory = 'aggregate' | 'math' | 'logical' | 'text' | 'date' | 'custom'
 
 /** The set of callable functions available to one evaluation. Builtins are
@@ -52,7 +57,12 @@ export interface FormulaFunction {
    * formulas that pass extra or no arguments keep their old behavior. */
   readonly minArgs: number
   readonly maxArgs: number
-  call(args: readonly CellValue[], ctx: EvalContext): CellValue
+  /** When true, `call` receives `() => CellValue` thunks instead of already
+   * forced values, so the function can skip branches it never needs
+   * (`=IF(A2=0, 0, 10/A2)` must not evaluate the division). Every document
+   * definition is lazy; among the builtins, only the conditionals are. */
+  readonly lazy?: boolean
+  call(args: readonly (CellValue | CellValueThunk)[], ctx: EvalContext): CellValue
 }
 
 // --- Value constructors and coercion -------------------------------------
@@ -428,6 +438,111 @@ function roundCall(args: readonly CellValue[]): CellValue {
   return num((Math.sign(value) * Math.round(Math.abs(value) * factor)) / factor)
 }
 
+// --- Logical builtins ------------------------------------------------------
+
+/** Excel-style `IF`: force and test the condition, then force exactly one of
+ * the value branches — never both, so `=IF(A2=0, 0, 10/A2)` stays `0` when
+ * the condition is TRUE. */
+function ifCall(args: readonly CellValueThunk[]): CellValue {
+  const truthy = isTruthy(args[0]?.() ?? blank())
+  if (typeof truthy !== 'boolean') return truthy
+  if (truthy) return args[1]?.() ?? blank()
+  return args[2]?.() ?? blank()
+}
+
+/** Force the value only; when it is an error, force the fallback instead. */
+function ifErrorCall(args: readonly CellValueThunk[]): CellValue {
+  const value = args[0]?.() ?? blank()
+  if (value.kind === 'error') return args[1]?.() ?? blank()
+  return value
+}
+
+/** Force each condition in turn and return the value that follows the first
+ * TRUE one; force nothing after it (and nothing in the row itself ahead of
+ * time). `#N/A!` when no condition matches. */
+function ifsCall(args: readonly CellValueThunk[]): CellValue {
+  if (args.length % 2 !== 0) {
+    return err('#VALUE!', 'IFS expects condition/value pairs')
+  }
+  for (let i = 0; i < args.length; i += 2) {
+    const truthy = isTruthy(args[i]?.() ?? blank())
+    if (typeof truthy !== 'boolean') return truthy
+    if (truthy) return args[i + 1]?.() ?? blank()
+  }
+  return err('#N/A!', 'No condition was TRUE')
+}
+
+/** Excel-style `SWITCH`: force the expression once, then scan value/result
+ * pairs and return the first match (text compared case-insensitively), or the
+ * trailing default, or `#N/A!`. Unmatched values — and the results after the
+ * match — are never forced. */
+function switchCall(args: readonly CellValueThunk[]): CellValue {
+  if (args.length < 3) {
+    return err('#VALUE!', 'SWITCH(expression, value, result, …) needs a value and result')
+  }
+  const target = args[0]!()
+  if (target.kind === 'error') return target
+  let i = 1
+  while (i + 1 < args.length) {
+    if (switchMatches(target, args[i]!())) return args[i + 1]!()
+    i += 2
+  }
+  if (i === args.length - 1) return args[i]!()
+  return err('#N/A!', 'No value matched and no default was given')
+}
+
+/** `SWITCH`'s match: both sides coerced to a number compare numerically
+ * (so `5` matches `"5"`, blank matches `0`), otherwise the text forms compare
+ * case-insensitively — like Excel's. Errors never match. */
+function switchMatches(target: CellValue, candidate: CellValue): boolean {
+  const a = toNumber(target)
+  const b = toNumber(candidate)
+  if (a !== null && b !== null) return a === b
+  return toText(target).trim().toLowerCase() === toText(candidate).trim().toLowerCase()
+}
+
+function andCall(args: readonly CellValue[]): CellValue {
+  for (const arg of args) {
+    const truthy = isTruthy(arg)
+    if (typeof truthy !== 'boolean') return truthy
+    if (!truthy) return bool(false)
+  }
+  return bool(true)
+}
+
+function orCall(args: readonly CellValue[]): CellValue {
+  for (const arg of args) {
+    const truthy = isTruthy(arg)
+    if (typeof truthy !== 'boolean') return truthy
+    if (truthy) return bool(true)
+  }
+  return bool(false)
+}
+
+function notCall(args: readonly CellValue[]): CellValue {
+  const truthy = isTruthy(args[0] ?? blank())
+  if (typeof truthy !== 'boolean') return truthy
+  return bool(!truthy)
+}
+
+function isErrorCall(args: readonly CellValue[]): CellValue {
+  return bool(args[0]?.kind === 'error')
+}
+
+function isNumberCall(args: readonly CellValue[]): CellValue {
+  const value = args[0]
+  // Dates are Excel-style serials on the inside, so they count as numbers.
+  return bool(value?.kind === 'number' || value?.kind === 'date')
+}
+
+function isTextCall(args: readonly CellValue[]): CellValue {
+  return bool(args[0]?.kind === 'text')
+}
+
+function isBlankCall(args: readonly CellValue[]): CellValue {
+  return bool(args[0]?.kind === 'blank')
+}
+
 // --- Builtin registry -----------------------------------------------------
 
 export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
@@ -522,6 +637,120 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     maxArgs: 2,
     call: roundCall,
   },
+  {
+    name: 'IF',
+    category: 'logical',
+    signature: 'IF(condition, valueIfTrue, [valueIfFalse])',
+    summary: 'Returns the second argument when the first is TRUE, the third otherwise.',
+    example: '=IF(B2>5, "High", "Low")',
+    minArgs: 2,
+    maxArgs: 3,
+    lazy: true,
+    call: ifCall,
+  },
+  {
+    name: 'IFERROR',
+    category: 'logical',
+    signature: 'IFERROR(value, [valueIfError])',
+    summary: 'Returns the value, or the second argument when the first is an error.',
+    example: '=IFERROR(10/A2, "—")',
+    minArgs: 1,
+    maxArgs: 2,
+    lazy: true,
+    call: ifErrorCall,
+  },
+  {
+    name: 'IFS',
+    category: 'logical',
+    signature: 'IFS(condition1, value1, …)',
+    summary: 'Returns the value that follows the first TRUE condition; #N/A! when none match.',
+    example: '=IFS(B2>90, "A", B2>80, "B", TRUE, "C")',
+    minArgs: 2,
+    maxArgs: Infinity,
+    lazy: true,
+    call: ifsCall,
+  },
+  {
+    name: 'SWITCH',
+    category: 'logical',
+    signature: 'SWITCH(expression, value1, result1, …, [default])',
+    summary: 'Matches the expression against the given values, case-insensitively for text, and returns the first matching result.',
+    example: '=SWITCH(B2, "red", 1, "blue", 2, "other")',
+    minArgs: 3,
+    maxArgs: Infinity,
+    lazy: true,
+    call: switchCall,
+  },
+  {
+    name: 'AND',
+    category: 'logical',
+    signature: 'AND(logical, …)',
+    summary: 'TRUE when every argument is TRUE.',
+    example: '=AND(B2>0, C2>0)',
+    minArgs: 1,
+    maxArgs: Infinity,
+    call: andCall,
+  },
+  {
+    name: 'OR',
+    category: 'logical',
+    signature: 'OR(logical, …)',
+    summary: 'TRUE when any argument is TRUE.',
+    example: '=OR(B2<0, C2<0)',
+    minArgs: 1,
+    maxArgs: Infinity,
+    call: orCall,
+  },
+  {
+    name: 'NOT',
+    category: 'logical',
+    signature: 'NOT(logical)',
+    summary: 'The opposite of a condition: TRUE when the argument is FALSE.',
+    example: '=NOT(B2>5)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: notCall,
+  },
+  {
+    name: 'ISERROR',
+    category: 'logical',
+    signature: 'ISERROR(value)',
+    summary: 'TRUE when the value is an error.',
+    example: '=ISERROR(10/A2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: isErrorCall,
+  },
+  {
+    name: 'ISNUMBER',
+    category: 'logical',
+    signature: 'ISNUMBER(value)',
+    summary: 'TRUE when the value is a number (dates count).',
+    example: '=ISNUMBER(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: isNumberCall,
+  },
+  {
+    name: 'ISTEXT',
+    category: 'logical',
+    signature: 'ISTEXT(value)',
+    summary: 'TRUE when the value is text.',
+    example: '=ISTEXT(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: isTextCall,
+  },
+  {
+    name: 'ISBLANK',
+    category: 'logical',
+    signature: 'ISBLANK(value)',
+    summary: 'TRUE when the value is empty (a blank cell).',
+    example: '=ISBLANK(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: isBlankCall,
+  },
 ]
 
 /** Every builtin name and alias, uppercase — the canonical "is this token a
@@ -566,15 +795,37 @@ export function buildFunctionMap(
 /** The builtins-only environment; the default for every `solve` call. */
 export const BUILTIN_ENV: FormulaEnv = { functions: buildFunctionMap() }
 
-/** Resolve and invoke a function by name, case-insensitively. */
-export function applyFunction(
+/** Resolve and invoke a function by name, case-insensitively. Eager functions
+ * receive the values of their forced argument thunks; lazy ones receive the
+ * thunks unchanged so they can choose not to evaluate branches at all. */
+export function invokeFunction(
   name: string,
-  args: readonly CellValue[],
+  argThunks: readonly CellValueThunk[],
   env: FormulaEnv,
 ): CellValue {
   const fn = env.functions.get(name.toUpperCase())
   if (!fn) {
     return err('#NAME?', `Unknown function "${name}"`)
   }
-  return fn.call(args, { env })
+  const ctx: EvalContext = { env }
+  if (fn.lazy) {
+    return fn.call(argThunks, ctx)
+  }
+  const args = argThunks.map((thunk) => thunk())
+  return fn.call(args, ctx)
+}
+
+/** Eager wrapper over {@link invokeFunction}: forces every argument before
+ * dispatch, so callers that already hold values (tests, the `applyFunction`
+ * in the DSL) can invoke any function including the lazy conditionals. */
+export function applyFunction(
+  name: string,
+  args: readonly CellValue[],
+  env: FormulaEnv,
+): CellValue {
+  return invokeFunction(
+    name,
+    args.map((arg) => () => arg),
+    env,
+  )
 }

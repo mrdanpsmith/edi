@@ -522,6 +522,77 @@ describe('computeSpreadsheet', () => {
   })
 })
 
+describe('logical formula cells', () => {
+  function cells(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.display))
+  }
+
+  it('IF picks a branch lazily, never evaluating the untaken one', () => {
+    const guard = cells('| A |\n| --- |\n| 0 |\n| =IF(A2=0, 0, 10/A2) |')
+    expect(guard[2]![0]).toBe('0')
+    const skipError = cells('| A |\n| --- |\n| 1 |\n| =IF(A2>0, A2*10, 1/0) |')
+    expect(skipError[2]![0]).toBe('10')
+  })
+
+  it('IF returns text results that render like text cells', () => {
+    const grade = cells('| A |\n| --- |\n| 55 |\n| =IF(A2>=70, "Pass", "Fail") |')
+    expect(grade[2]![0]).toBe('Fail')
+    const pass = cells('| A |\n| --- |\n| 90 |\n| =IF(A2>=70, "Pass", "Fail") |')
+    expect(pass[2]![0]).toBe('Pass')
+  })
+
+  it('IFERROR, IFS, and SWITCH evaluate lazily and string literal branches', () => {
+    const out = cells(
+      '| A |\n| --- |\n| 0 |\n| =IFERROR(10/A2, "none") |\n| =IFS(A2=0, "zero", A2>0, "pos", TRUE, "neg") |\n| =SWITCH(A2, 0, "none", 1, "one", "other") |',
+    )
+    expect(out[2]![0]).toBe('none')
+    expect(out[3]![0]).toBe('zero')
+    expect(out[4]![0]).toBe('none')
+  })
+
+  it('IF selects lazily even when the untaken branch is out of range', () => {
+    const out = cells('| A |\n| --- |\n| 7 |\n| =IF(A2>3, 1, C9) |')
+    expect(out[2]![0]).toBe('1')
+  })
+
+  it('nests lazy conditionals and evaluates ranges only in the taken branch', () => {
+    const out = cells(
+      '| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| =IF(TRUE, SUM(B2:C3), 1/0) |',
+    )
+    expect(out[3]![0]).toBe('16')
+  })
+
+  it('IFS reports #N/A! when no condition matches', () => {
+    const out = cells('| A |\n| --- |\n| 5 |\n| =IFS(A2>10, "big", A2<0, "neg") |')
+    expect(out[2]![0]).toBe('#N/A!')
+  })
+
+  it('folds AND, OR, NOT, and the IS helpers to TRUE/FALSE', () => {
+    const out = cells(
+      '| A | B | C |\n| --- | --- | --- |\n| 3 | 5 | |\n| =AND(A2>0, B2>A2) | =OR(A2>10, B2=5) | =NOT(B2=5) |\n| =ISNUMBER(A2) | =ISTEXT("hi") | =ISBLANK(C2) |',
+    )
+    expect(out[2]![0]).toBe('TRUE')
+    expect(out[2]![1]).toBe('TRUE')
+    expect(out[2]![2]).toBe('FALSE')
+    expect(out[3]![0]).toBe('TRUE')
+    expect(out[3]![1]).toBe('TRUE')
+    expect(out[3]![2]).toBe('TRUE')
+  })
+
+  it('ISNUMBER rejects text that merely looks numeric', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| 3 | =ISNUMBER("3") |')
+    expect(out[1]![1]).toBe('FALSE')
+  })
+
+  it('marks a text formula result so renderers treat it as markdown', () => {
+    const solution = solve(parsePipes('| A | B |\n| --- | --- |\n| 4 | =IF(A2>1, "yes", "no") |'))
+    expect(solution.cells[1]![1]!.display).toBe('yes')
+    expect(solution.cells[1]![1]!.rendersMarkdown).toBe(true)
+    expect(solution.cells[1]![1]!.kind).toBe('formula')
+  })
+})
+
 describe('resolved table markdown helpers', () => {
   it('resolves formula cells to displays and keeps plain cells verbatim', () => {
     const { pipes, formulas } = resolveTableValue(

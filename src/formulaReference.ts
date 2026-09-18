@@ -67,6 +67,7 @@ export function buildFunctionReferenceMarkdown(defs: readonly FormulaFunction[] 
     '- `#REF!` — a reference points outside the table',
     '- `#VALUE!` — a function or operator expected a number',
     '- `#DIV/0!` — division by zero',
+    '- `#N/A!` — `IFS`/`SWITCH` found no matching result',
     '- `#CYCLE!` — a formula depends on itself, directly or indirectly',
     '- `#ERROR!` — the formula could not be parsed',
     '',

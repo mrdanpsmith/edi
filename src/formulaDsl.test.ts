@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  applyFunction,
   blank,
   bool,
   buildFunctionMap,
@@ -167,5 +168,44 @@ describe('buildDocumentFunctions', () => {
     expect(call(byName(functions, 'G'), [text('done')], envFor(functions))).toEqual(bool(true))
     expect(call(byName(functions, 'H'), [num(2)], envFor(functions))).toEqual(bool(true))
     expect(call(byName(functions, 'I'), [bool(true)], envFor(functions))).toEqual(num(1))
+  })
+
+  it('builds document definitions on the lazy builtins', () => {
+    const { functions, issues } = buildDocumentFunctions([
+      'MYIF(c, a, b) = IF(c, a, b)',
+      'MYCHECK(c) = IF(ISERROR(c), "bad", "ok")',
+    ])
+    expect(issues).toEqual([])
+    const env = envFor(functions)
+    expect(applyFunction('MYIF', [bool(true), num(1), err('#VALUE!')], env)).toEqual(num(1))
+    expect(applyFunction('MYIF', [bool(false), err('#VALUE!'), num(2)], env)).toEqual(num(2))
+    expect(applyFunction('MYCHECK', [err('#REF!')], env)).toEqual(text('bad'))
+    expect(applyFunction('MYCHECK', [num(5)], env)).toEqual(text('ok'))
+  })
+
+  it('never forces a parameter the body does not read', () => {
+    const { functions } = buildDocumentFunctions(['IGNORE(a, b) = b'])
+    const env = envFor(functions)
+    expect(applyFunction('IGNORE', [err('#VALUE!'), num(5)], env)).toEqual(num(5))
+  })
+
+  it('computes a multi-read parameter once and lazily', () => {
+    const { functions } = buildDocumentFunctions(['DUP(x) = x + x'])
+    const env = envFor(functions)
+    expect(applyFunction('DUP', [num(21)], env)).toEqual(num(42))
+    expect(applyFunction('DUP', [err('#VALUE!')], env)).toEqual(err('#VALUE!'))
+  })
+
+  it('lets a lazy document definition guard another call', () => {
+    const { functions } = buildDocumentFunctions([
+      'SAFE(c, a, b) = IF(c, a, b)',
+      'COMBINED(x) = SAFE(x > 0, x * 2, 1 / 0)',
+    ])
+    const env = envFor(functions)
+    expect(applyFunction('COMBINED', [num(3)], env)).toEqual(num(6))
+    expect(applyFunction('COMBINED', [num(0)], env)).toMatchObject({
+      kind: 'error',
+      message: '#DIV/0!',
+    })
   })
 })
