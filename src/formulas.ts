@@ -543,6 +543,213 @@ function isBlankCall(args: readonly CellValue[]): CellValue {
   return bool(args[0]?.kind === 'blank')
 }
 
+// --- Text builtins ---------------------------------------------------------
+
+/** The display form of the argument at `index`, for the multi-argument text
+ * builtins: `''` when the argument is missing or blank, an error when the
+ * argument is a set (ranges are never a single text value). Errors themselves
+ * propagate. */
+function nthText(args: readonly CellValue[], index: number): string | ErrorCell {
+  const arg = args[index]
+  if (!arg) return ''
+  if (arg.kind === 'error') return arg
+  if (arg.kind === 'set') return err('#VALUE!', 'Expected a single text value, not a range')
+  return toText(arg)
+}
+
+/** The display form of a builtin's primary argument (`LEN`, `UPPER`, …). */
+function firstText(args: readonly CellValue[]): string | ErrorCell {
+  return nthText(args, 0)
+}
+
+/** Flatten the display forms of the arguments for `CONCAT`/`TEXTJOIN`,
+ * walking `set` (range) values cell-by-cell in row-major order — the text twin
+ * of `collectNumbers`. An error at any level propagates as that error value. A
+ * blank cell — like an empty string — contributes `''`, so `TEXTJOIN` can drop
+ * both wholesale when `ignoreEmpty` is set. */
+function collectText(args: readonly CellValue[]): string[] | ErrorCell {
+  const out: string[] = []
+  for (const arg of args) {
+    if (arg.kind === 'error') return arg
+    if (arg.kind === 'set') {
+      for (const item of arg.items) {
+        if (item.kind === 'error') return item
+        out.push(toText(item))
+      }
+    } else {
+      out.push(toText(arg))
+    }
+  }
+  return out
+}
+
+/** A numeric argument truncated to an integer (Excel `INT`), for counts and
+ * positions: a missing argument takes `def`, a blank coerces to `0`; a
+ * non-numeric, a set, or an error argument surfaces as its error. Negative
+ * results are left to each caller to handle, since they differ — `REPT` and
+ * the slicing builtins reject them while `SUBSTITUTE` treats a bad instance as
+ * "leave the text alone". */
+function intArg(
+  args: readonly CellValue[],
+  index: number,
+  def: number,
+  message: string,
+): number | ErrorCell {
+  const arg = args[index]
+  if (arg === undefined) return def
+  if (arg.kind === 'error') return arg
+  if (arg.kind === 'set') return err('#VALUE!', 'Expected a number, not a range')
+  const value = toNumber(arg)
+  if (value === null) return err('#VALUE!', message)
+  return Math.trunc(value)
+}
+
+function concatCall(args: readonly CellValue[]): CellValue {
+  const parts = collectText(args)
+  if (!Array.isArray(parts)) return parts
+  return text(parts.join(''))
+}
+
+function textJoinCall(args: readonly CellValue[]): CellValue {
+  const delimiter = firstText(args)
+  if (typeof delimiter !== 'string') return delimiter
+  const ignoreEmpty = isTruthy(args[1] ?? blank())
+  if (typeof ignoreEmpty !== 'boolean') return ignoreEmpty
+  const parts = collectText(args.slice(2))
+  if (!Array.isArray(parts)) return parts
+  const kept = ignoreEmpty ? parts.filter((part) => part !== '') : parts
+  return text(kept.join(delimiter))
+}
+
+function lenCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  return num(value.length)
+}
+
+function upperCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  return text(value.toUpperCase())
+}
+
+function lowerCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  return text(value.toLowerCase())
+}
+
+function trimCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  return text(value.replace(/\s+/g, ' ').trim())
+}
+
+function leftCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  const count = intArg(args, 1, 1, 'Expected a character count')
+  if (typeof count !== 'number') return count
+  if (count < 0) return err('#VALUE!', 'Character count cannot be negative')
+  return text(value.slice(0, count))
+}
+
+function rightCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  const count = intArg(args, 1, 1, 'Expected a character count')
+  if (typeof count !== 'number') return count
+  if (count < 0) return err('#VALUE!', 'Character count cannot be negative')
+  if (count === 0) return text('')
+  return text(value.slice(-count))
+}
+
+function midCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  const start = intArg(args, 1, 1, 'Expected a start position')
+  if (typeof start !== 'number') return start
+  const length = intArg(args, 2, value.length, 'Expected a character count')
+  if (typeof length !== 'number') return length
+  if (start < 1) return err('#VALUE!', 'MID is 1-based; the start must be at least 1')
+  if (length < 0) return err('#VALUE!', 'Character count cannot be negative')
+  if (start - 1 >= value.length) return text('')
+  return text(value.slice(start - 1, start - 1 + length))
+}
+
+function reptCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  const times = intArg(args, 1, 0, 'Expected a repeat count')
+  if (typeof times !== 'number') return times
+  if (times < 0) return err('#VALUE!', 'Repeat count cannot be negative')
+  if (value.length * times > 32767) {
+    return err('#VALUE!', 'REPT result is larger than 32767 characters')
+  }
+  return text(value.repeat(times))
+}
+
+function substituteCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  const oldText = nthText(args, 1)
+  if (typeof oldText !== 'string') return oldText
+  const newText = nthText(args, 2)
+  if (typeof newText !== 'string') return newText
+  const instance = intArg(args, 3, 0, 'Expected an instance number')
+  if (typeof instance !== 'number') return instance
+  if (oldText === '' || instance < 0) return text(value) // nothing to replace
+  if (instance === 0) return text(value.split(oldText).join(newText))
+  // Replace exactly the `instance`-th occurrence (1-based); fewer occurrences
+  // than asked for leaves the text unchanged.
+  let seen = 0
+  let from = 0
+  for (;;) {
+    const found = value.indexOf(oldText, from)
+    if (found === -1) return text(value)
+    seen++
+    if (seen === instance) {
+      return text(value.slice(0, found) + newText + value.slice(found + oldText.length))
+    }
+    from = found + oldText.length
+  }
+}
+
+/** The display form `EXACT` compares: `toText` of a single value, or the
+ * concatenated display forms of a set's cells, row-major. */
+function exactText(value: CellValue | undefined): string | ErrorCell {
+  if (!value) return ''
+  if (value.kind === 'error') return value
+  if (value.kind === 'set') {
+    let out = ''
+    for (const item of value.items) {
+      if (item.kind === 'error') return item
+      out += toText(item)
+    }
+    return out
+  }
+  return toText(value)
+}
+
+function exactCall(args: readonly CellValue[]): CellValue {
+  const left = exactText(args[0])
+  if (typeof left !== 'string') return left
+  const right = exactText(args[1])
+  if (typeof right !== 'string') return right
+  return bool(left === right)
+}
+
+function valueCall(args: readonly CellValue[]): CellValue {
+  const first = args[0]
+  if (first?.kind === 'error') return first
+  if (first?.kind === 'set') return err('#VALUE!', 'Expected a single value, not a range')
+  if (!first || first.kind === 'blank') return num(0)
+  if (first.kind === 'number') return num(first.value)
+  const n = toNumber(first) // booleans → 1/0, dates → their serial, text → number
+  if (n === null) return err('#VALUE!', 'Expected numeric text')
+  return num(n)
+}
+
 // --- Builtin registry -----------------------------------------------------
 
 export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
@@ -750,6 +957,137 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     minArgs: 1,
     maxArgs: 1,
     call: isBlankCall,
+  },
+  {
+    name: 'CONCAT',
+    aliases: ['CONCATENATE'],
+    category: 'text',
+    signature: 'CONCAT(text, …)',
+    summary: 'Joins the display forms of its arguments and ranges.',
+    example: '=CONCAT(A2, " ", B2)',
+    minArgs: 1,
+    maxArgs: Infinity,
+    call: concatCall,
+  },
+  {
+    name: 'TEXTJOIN',
+    category: 'text',
+    signature: 'TEXTJOIN(delimiter, ignoreEmpty, text, …)',
+    summary: 'Joins values with a delimiter, skipping empty cells when ignoreEmpty is TRUE.',
+    example: '=TEXTJOIN(", ", TRUE, A2:C4)',
+    minArgs: 2,
+    maxArgs: Infinity,
+    call: textJoinCall,
+  },
+  {
+    name: 'LEN',
+    category: 'text',
+    signature: 'LEN(text)',
+    summary: 'How many characters the display form of a value has (blank is 0).',
+    example: '=LEN(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: lenCall,
+  },
+  {
+    name: 'UPPER',
+    category: 'text',
+    signature: 'UPPER(text)',
+    summary: 'The text with every letter uppercased.',
+    example: '=UPPER(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: upperCall,
+  },
+  {
+    name: 'LOWER',
+    category: 'text',
+    signature: 'LOWER(text)',
+    summary: 'The text with every letter lowercased.',
+    example: '=LOWER(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: lowerCall,
+  },
+  {
+    name: 'TRIM',
+    category: 'text',
+    signature: 'TRIM(text)',
+    summary: 'Removes leading and trailing spaces and collapses inner runs to one space.',
+    example: '=TRIM("  spaced   out ")',
+    minArgs: 1,
+    maxArgs: 1,
+    call: trimCall,
+  },
+  {
+    name: 'LEFT',
+    category: 'text',
+    signature: 'LEFT(text, [numChars])',
+    summary: 'The first characters of the text (default 1).',
+    example: '=LEFT(B2, 2)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: leftCall,
+  },
+  {
+    name: 'RIGHT',
+    category: 'text',
+    signature: 'RIGHT(text, [numChars])',
+    summary: 'The last characters of the text (default 1).',
+    example: '=RIGHT(B2, 2)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: rightCall,
+  },
+  {
+    name: 'MID',
+    category: 'text',
+    signature: 'MID(text, start, [numChars])',
+    summary: 'Characters from start (1-based) onward; an empty text when start is past the end.',
+    example: '=MID(B2, 3, 2)',
+    minArgs: 2,
+    maxArgs: 3,
+    call: midCall,
+  },
+  {
+    name: 'REPT',
+    category: 'text',
+    signature: 'REPT(text, times)',
+    summary: 'Repeats the text the given number of times (0 gives an empty text).',
+    example: '=REPT("ab", 3)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: reptCall,
+  },
+  {
+    name: 'SUBSTITUTE',
+    category: 'text',
+    signature: 'SUBSTITUTE(text, oldText, [newText], [instance])',
+    summary: 'Case-sensitively replaces occurrences of oldText — all of them, or only the given instance.',
+    example: '=SUBSTITUTE(B2, "-", "")',
+    minArgs: 2,
+    maxArgs: 4,
+    call: substituteCall,
+  },
+  {
+    name: 'EXACT',
+    category: 'text',
+    signature: 'EXACT(text1, text2)',
+    summary: 'TRUE when the two display forms are identical (case-sensitive).',
+    example: '=EXACT(A2, B2)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: exactCall,
+  },
+  {
+    name: 'VALUE',
+    category: 'text',
+    signature: 'VALUE(text)',
+    summary: 'Turns numbers, numeric text, dates (to their serial), and booleans into a number.',
+    example: '=VALUE("42")',
+    minArgs: 1,
+    maxArgs: 1,
+    call: valueCall,
   },
 ]
 

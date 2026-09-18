@@ -215,3 +215,194 @@ describe('logical builtins', () => {
     expect(applyFunction('ISBLANK', [num(4)], env)).toEqual(bool(false))
   })
 })
+
+describe('text builtins', () => {
+  const env = BUILTIN_ENV
+
+  it('CONCAT joins display forms, coercing numbers and booleans', () => {
+    expect(applyFunction('CONCAT', [text('a'), num(1), bool(true), blank()], env)).toEqual(
+      text('a1TRUE'),
+    )
+    expect(applyFunction('CONCAT', [num(45292)], env)).toEqual(text('45292'))
+    expect(applyFunction('CONCAT', [text(''), text('x')], env)).toEqual(text('x'))
+    expect(applyFunction('CONCAT', [dateSerial(45292), text(':'), num(5)], env)).toEqual(
+      text('2024-01-01:5'),
+    )
+  })
+
+  it('CONCAT flattens range values in row-major order', () => {
+    expect(
+      applyFunction('CONCAT', [setValue([num(1), blank(), text('c'), num(40)])], env),
+    ).toEqual(text('1c40'))
+  })
+
+  it('CONCATENATE is the same function', () => {
+    expect(applyFunction('CONCATENATE', [text('un'), text('do')], env)).toEqual(text('undo'))
+  })
+
+  it('CONCAT propagates an error anywhere in its arguments', () => {
+    expect(applyFunction('CONCAT', [text('a'), err('#REF!'), text('b')], env)).toEqual(err('#REF!'))
+    expect(
+      applyFunction('CONCAT', [setValue([num(1), err('#DIV/0!'), num(3)])], env),
+    ).toEqual(err('#DIV/0!'))
+  })
+
+  it('TEXTJOIN skips empty cells and values when ignoreEmpty is TRUE', () => {
+    expect(
+      applyFunction('TEXTJOIN', [text(','), bool(true), text('a'), text(''), text('b')], env),
+    ).toEqual(text('a,b'))
+    expect(
+      applyFunction('TEXTJOIN', [text(', '), bool(true), num(1), blank(), text('c')], env),
+    ).toEqual(text('1, c'))
+  })
+
+  it('TEXTJOIN keeps placeholder holes when ignoreEmpty is FALSE', () => {
+    expect(
+      applyFunction('TEXTJOIN', [text('-'), bool(false), text('a'), blank(), text('b')], env),
+    ).toEqual(text('a--b'))
+  })
+
+  it('TEXTJOIN flattens ranges and requires a real ignoreEmpty flag', () => {
+    expect(
+      applyFunction('TEXTJOIN', [text('-'), bool(true), setValue([num(1), blank(), text('c')])], env),
+    ).toEqual(text('1-c'))
+    expect(
+      applyFunction('TEXTJOIN', [text('-'), text('apples'), text('x')], env),
+    ).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+  })
+
+  it('LEN counts characters of the display form', () => {
+    expect(applyFunction('LEN', [text('hello')], env)).toEqual(num(5))
+    expect(applyFunction('LEN', [blank()], env)).toEqual(num(0))
+    expect(applyFunction('LEN', [text('')], env)).toEqual(num(0))
+    expect(applyFunction('LEN', [num(1234)], env)).toEqual(num(4))
+    expect(applyFunction('LEN', [bool(true)], env)).toEqual(num(4)) // "TRUE"
+  })
+
+  it('UPPER and LOWER case-shift text and numbers', () => {
+    expect(applyFunction('UPPER', [text('Hello')], env)).toEqual(text('HELLO'))
+    expect(applyFunction('LOWER', [text('Hello')], env)).toEqual(text('hello'))
+    expect(applyFunction('UPPER', [num(123)], env)).toEqual(text('123'))
+  })
+
+  it('TRIM trims the ends and collapses inner whitespace runs', () => {
+    expect(applyFunction('TRIM', [text('  a   b  ')], env)).toEqual(text('a b'))
+    expect(applyFunction('TRIM', [text('')], env)).toEqual(text(''))
+  })
+
+  it('LEFT defaults to one character and slices beyond the end safely', () => {
+    expect(applyFunction('LEFT', [text('hello')], env)).toEqual(text('h'))
+    expect(applyFunction('LEFT', [text('hello'), num(2)], env)).toEqual(text('he'))
+    expect(applyFunction('LEFT', [text('hello'), num(0)], env)).toEqual(text(''))
+    expect(applyFunction('LEFT', [text('hello'), num(99)], env)).toEqual(text('hello'))
+    expect(applyFunction('LEFT', [num(12345), num(2)], env)).toEqual(text('12'))
+    expect(applyFunction('LEFT', [text('hello'), num(-1)], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+  })
+
+  it('RIGHT defaults to one character and handles a zero count', () => {
+    expect(applyFunction('RIGHT', [text('hello')], env)).toEqual(text('o'))
+    expect(applyFunction('RIGHT', [text('hello'), num(2)], env)).toEqual(text('lo'))
+    expect(applyFunction('RIGHT', [text('hello'), num(0)], env)).toEqual(text(''))
+    expect(applyFunction('RIGHT', [text('hello'), num(99)], env)).toEqual(text('hello'))
+  })
+
+  it('MID is 1-based and clamps out-of-range starts and lengths to Excel behavior', () => {
+    expect(applyFunction('MID', [text('hello'), num(2), num(3)], env)).toEqual(text('ell'))
+    expect(applyFunction('MID', [text('hello'), num(1), num(99)], env)).toEqual(text('hello'))
+    expect(applyFunction('MID', [text('hello'), num(6), num(1)], env)).toEqual(text(''))
+    expect(applyFunction('MID', [text('hello'), num(3), num(0)], env)).toEqual(text(''))
+    expect(applyFunction('MID', [text('hello'), num(0), num(2)], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+    expect(applyFunction('MID', [text('hello'), num(2), num(-1)], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+  })
+
+  it('REPT repeats, empties on zero, and caps its result like Excel', () => {
+    expect(applyFunction('REPT', [text('ab'), num(3)], env)).toEqual(text('ababab'))
+    expect(applyFunction('REPT', [text('a'), num(0)], env)).toEqual(text(''))
+    expect(applyFunction('REPT', [text('a'), num(-1)], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+    expect(applyFunction('REPT', [text('ab'), num(20000)], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+  })
+
+  it('SUBSTITUTE replaces all occurrences by default', () => {
+    expect(
+      applyFunction('SUBSTITUTE', [text('a-b-c'), text('-'), text('/')], env),
+    ).toEqual(text('a/b/c'))
+    expect(
+      applyFunction('SUBSTITUTE', [text('a-b-c'), text('-'), text('')], env),
+    ).toEqual(text('abc'))
+  })
+
+  it('SUBSTITUTE replaces a single 1-based instance and is case-sensitive', () => {
+    expect(
+      applyFunction('SUBSTITUTE', [text('a-b-b'), text('b'), text('X'), num(2)], env),
+    ).toEqual(text('a-b-X'))
+    expect(
+      applyFunction('SUBSTITUTE', [text('a-B-b'), text('b'), text('X'), num(1)], env),
+    ).toEqual(text('a-B-X'))
+  })
+
+  it('SUBSTITUTE leaves the text alone for a bad instance or empty needle', () => {
+    expect(applyFunction('SUBSTITUTE', [text('abc'), text('b'), text('X'), num(9)], env)).toEqual(
+      text('abc'),
+    )
+    expect(applyFunction('SUBSTITUTE', [text('abc'), text('b'), text('X'), num(0)], env)).toEqual(
+      text('aXc'),
+    )
+    expect(applyFunction('SUBSTITUTE', [text('abc'), text(''), text('X')], env)).toEqual(text('abc'))
+  })
+
+  it('EXACT compares display forms case-sensitively, blanks equal empty strings', () => {
+    expect(applyFunction('EXACT', [text('abc'), text('abc')], env)).toEqual(bool(true))
+    expect(applyFunction('EXACT', [text('abc'), text('ABC')], env)).toEqual(bool(false))
+    expect(applyFunction('EXACT', [num(5), text('5')], env)).toEqual(bool(true))
+    expect(applyFunction('EXACT', [blank(), text('')], env)).toEqual(bool(true))
+  })
+
+  it('EXACT flattens a range into its concatenated text', () => {
+    expect(
+      applyFunction('EXACT', [setValue([text('a'), num(1)]), text('a1')], env),
+    ).toEqual(bool(true))
+  })
+
+  it('VALUE coerces numbers, numeric text, booleans, and dates', () => {
+    expect(applyFunction('VALUE', [num(5)], env)).toEqual(num(5))
+    expect(applyFunction('VALUE', [text('42')], env)).toEqual(num(42))
+    expect(applyFunction('VALUE', [text(' 7.5 ')], env)).toEqual(num(7.5))
+    expect(applyFunction('VALUE', [bool(true)], env)).toEqual(num(1))
+    expect(applyFunction('VALUE', [bool(false)], env)).toEqual(num(0))
+    expect(applyFunction('VALUE', [dateSerial(45292)], env)).toEqual(num(45292))
+    expect(applyFunction('VALUE', [blank()], env)).toEqual(num(0))
+  })
+
+  it('VALUE errors on text it cannot parse, including an empty string', () => {
+    expect(applyFunction('VALUE', [text('abc')], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+    expect(applyFunction('VALUE', [text('')], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+    expect(applyFunction('VALUE', [setValue([num(1)])], env)).toMatchObject({
+      kind: 'error',
+      message: '#VALUE!',
+    })
+  })
+})

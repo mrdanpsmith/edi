@@ -208,4 +208,16 @@ describe('buildDocumentFunctions', () => {
       message: '#DIV/0!',
     })
   })
+
+  it('calls the text builtins from a definition body', () => {
+    const { functions } = buildDocumentFunctions([
+      'LABEL(n) = CONCAT("Item ", n)',
+      'CODE(name) = UPPER(LEFT(name, 3))',
+      'JOINED(a, b) = TEXTJOIN("-", TRUE, a, b)',
+    ])
+    const env = envFor(functions)
+    expect(applyFunction('LABEL', [num(4)], env)).toEqual(text('Item 4'))
+    expect(applyFunction('CODE', [text('widget')], env)).toEqual(text('WID'))
+    expect(applyFunction('JOINED', [text('x'), blank()], env)).toEqual(text('x'))
+  })
 })

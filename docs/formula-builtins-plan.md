@@ -2,7 +2,7 @@
 
 Goal: grow the spreadsheet engine past its original 9 builtin functions so document-local `edi-formula` definitions can build real business rules (tax tiers, labels, aging, conditions, text assembly).
 
-Current builtins (Phase 0 and Phase 1 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`, plus the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`.
+Current builtins (Phases 0–2 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, and the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`.
 
 ## What the engine is missing
 
@@ -79,7 +79,32 @@ Delivered:
 
 ## Phase 2 — text functions
 
+**Status: complete** — implemented and verified (`npm run check`,
+`npm run build`, `.venv/bin/pytest tests/` green). Handoff:
+`docs/formula-builtins-phase2-handoff.md`.
+
 `CONCAT` (alias `CONCATENATE`), `TEXTJOIN(delim, ignoreEmpty, …)`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID` (1-based), `REPT`, `SUBSTITUTE`, `EXACT` (→ bool), `VALUE` (→ number). CONCAT/TEXTJOIN/EXACT iterate set/range args via `toText`.
+
+Delivered:
+- All 13 text functions in `BUILTIN_FORMULAS` (category `text`), fully eager —
+  the lazy machinery needed no changes.
+- `collectText` in `src/formulas.ts`: the text twin of `collectNumbers`,
+  walking set/range values cell-by-major with error propagation; `TEXTJOIN`
+  keeps placeholder holes when `ignoreEmpty` is FALSE and drops blanks (and
+  empty strings) when TRUE.
+- Excel indexing semantics: `LEFT`/`RIGHT`/`MID` are 1-based, truncate
+  fractional counts (INT) and clamp; negative counts and `MID` start < 1 are
+  `#VALUE!`; `MID` past the end gives `""`; `REPT` guards the 32767-char Excel
+  cap instead of letting the JS engine throw on a huge repeat.
+- `SUBSTITUTE` matches Excel's case-sensitive behavior: instance 0 = all,
+  instance n = that occurrence only, bad instance or empty needle leaves the
+  text unchanged.
+- `VALUE` accepts numbers, numeric text, booleans, dates (→ serial), and
+  blanks (→ 0); `""` and unparseable text are `#VALUE!`, like Excel.
+- `EXACT` compares `toText` forms case-sensitively (a blank equals `""`), and
+  flattens a range to its concatenated text.
+- README/Reference updated; autocomplete, reference-shifting, and the
+  generated reference picked everything up automatically.
 
 ## Phase 3 — math & aggregate gap-fillers
 

@@ -593,6 +593,61 @@ describe('logical formula cells', () => {
   })
 })
 
+describe('text formula cells', () => {
+  function cells(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.display))
+  }
+
+  it('CONCAT joins values, references, and ranges into a text cell', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| hello | 5 |\n| =CONCAT(A2, " ", B2) | =CONCATENATE("x", A2) |')
+    expect(out[2]![0]).toBe('hello 5')
+    expect(out[2]![1]).toBe('xhello')
+  })
+
+  it('TEXTJOIN joins a range with a delimiter and skips blanks', () => {
+    const out = cells(
+      '| A | B | C |\n| --- | --- | --- |\n| red |  | green |\n| =TEXTJOIN(", ", TRUE, A2:C2) | |',
+    )
+    expect(out[2]![0]).toBe('red, green')
+  })
+
+  it('UPPER, LOWER, TRIM, and LEN transform their display form', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| HeLLo | |\n| =UPPER(A2) | =LOWER(SUBSTITUTE(A2, "L", "l")) |\n| =LEN(TRIM("  hi   there  ")) | =CONCAT("(", A2, ")") |',
+    )
+    expect(out[2]![0]).toBe('HELLO')
+    expect(out[2]![1]).toBe('hello')
+    expect(out[3]![0]).toBe('8')
+    expect(out[3]![1]).toBe('(HeLLo)')
+  })
+
+  it('LEFT, RIGHT, and MID slice characters from a text result', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| 123456 | =LEFT(A2, 3) |\n| =RIGHT(A2, 2) | =MID(A2, 2, 2) |',
+    )
+    expect(out[1]![1]).toBe('123')
+    expect(out[2]![0]).toBe('56')
+    expect(out[2]![1]).toBe('23')
+  })
+
+  it('SUBSTITUTE, REPT, EXACT, and VALUE evaluate end to end', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| a-b-c | =EXACT(A2, "a-b-c") |\n| =SUBSTITUTE(A2, "-", "/") | =REPT("ab", 2) |\n| =VALUE("12.5") | =IF(EXACT(A2, B2), 1, 0) |',
+    )
+    expect(out[1]![1]).toBe('TRUE')
+    expect(out[2]![0]).toBe('a/b/c')
+    expect(out[2]![1]).toBe('abab')
+    expect(out[3]![0]).toBe('12.5')
+    expect(out[3]![1]).toBe('0')
+  })
+
+  it('reports a #VALUE! for a negative slice count', () => {
+    const out = cells('| A |\n| --- |\n| hello |\n| =LEFT(A2, -1) |')
+    expect(out[2]![0]).toBe('#VALUE!')
+  })
+})
+
 describe('resolved table markdown helpers', () => {
   it('resolves formula cells to displays and keeps plain cells verbatim', () => {
     const { pipes, formulas } = resolveTableValue(
