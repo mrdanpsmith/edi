@@ -774,7 +774,7 @@ class TableNodeView implements NodeView, InlineCellHost {
         const inner = document.createElement('span')
         inner.className = 'ss-cell-content'
         if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
-          if (cellSol.styled) {
+          if (cellSol.styled || cellSol.rendersMarkdown) {
             inner.innerHTML = inlineMarkdownToHtml(cellSol.display, { indexedMasked: true, markMisleading: true })
           } else {
             inner.textContent = cellSol.display
@@ -2527,7 +2527,7 @@ class TablePlainView implements NodeView {
     td.classList.remove('ss-formula', 'ss-error')
     td.removeAttribute('title')
     if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
-      if (cellSol.styled) {
+      if (cellSol.styled || cellSol.rendersMarkdown) {
         td.innerHTML = inlineMarkdownToHtml(cellSol.display, { indexedMasked: true, markMisleading: true })
       } else {
         td.textContent = cellSol.display

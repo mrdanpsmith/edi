@@ -17,6 +17,8 @@ import {
   add,
   applyFunction,
   blank,
+  bool,
+  compareValues,
   div,
   err,
   isBuiltinName,
@@ -25,7 +27,9 @@ import {
   num,
   pow,
   sub,
+  text,
   type CellValue,
+  type CompareOp,
   type FormulaEnv,
   type FormulaFunction,
 } from './formulas'
@@ -57,6 +61,38 @@ const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 const CALL_RE = /([A-Za-z_][A-Za-z0-9_]*)\s*\(/g
 const upper = (value: string): string => value.toUpperCase()
 
+/** Cut a `#` comment from a definition line without touching `#` inside a
+ * string literal (`F(x) = CONCAT("a#b", x)` keeps the `#`). */
+function stripComment(line: string): string {
+  let out = ''
+  let inString = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!
+    if (inString) {
+      out += ch
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          out += line[i + 1]!
+          i++
+        } else {
+          inString = false
+        }
+      }
+      continue
+    }
+    if (ch === '#') break
+    if (ch === '"') inString = true
+    out += ch
+  }
+  return out
+}
+
+/** Remove string literals so a dependency scan can't false-positive on `"SUM("`
+ * spoken inside a literal. Keeps doubled quotes (`""`) inside the literal. */
+function stripStringLiterals(body: string): string {
+  return body.replace(/"(?:[^"]|"")*"/g, '')
+}
+
 function parseSource(
   source: string,
   sourceIndex: number,
@@ -65,8 +101,7 @@ function parseSource(
   const issues: FormulaDefIssue[] = []
   source.split('\n').forEach((rawLine, index) => {
     const line = index + 1
-    // `#` starts a comment; the definition language has no string literals.
-    const text = rawLine.replace(/#.*$/, '').trim()
+    const text = stripComment(rawLine).trim()
     if (!text) return
     const match = DEF_RE.exec(text)
     if (!match) {
@@ -135,7 +170,7 @@ export function buildDocumentFunctions(sources: readonly string[]): DocumentFunc
   const deps = new Map<string, Set<string>>()
   for (const def of accepted) {
     const calls = new Set<string>()
-    for (const match of def.body.matchAll(CALL_RE)) {
+    for (const match of stripStringLiterals(def.body).matchAll(CALL_RE)) {
       const dep = upper(match[1]!)
       if (names.has(dep)) calls.add(dep)
     }
@@ -210,12 +245,34 @@ class BodyParser {
   ) {}
 
   parse(): CellValue {
-    const result = this.additive()
+    const result = this.comparison()
     this.skipWs()
     if (this.pos < this.source.length) {
       return err('#ERROR!', 'Unexpected text in a function body')
     }
     return result
+  }
+
+  /** Comparison level, mirroring the cell parser so `x > 5` means the same in
+   * a body as in a cell. */
+  private comparison(): CellValue {
+    let left = this.additive()
+    for (;;) {
+      this.skipWs()
+      const op = this.matchComparisonOp()
+      if (!op) return left
+      left = compareValues(left, this.additive(), op)
+    }
+  }
+
+  private matchComparisonOp(): CompareOp | null {
+    if (this.match('<>')) return '<>'
+    if (this.match('<=')) return '<='
+    if (this.match('>=')) return '>='
+    if (this.match('=')) return '='
+    if (this.match('<')) return '<'
+    if (this.match('>')) return '>'
+    return null
   }
 
   private additive(): CellValue {
@@ -269,11 +326,16 @@ class BodyParser {
   private atom(): CellValue {
     this.skipWs()
     if (this.match('(')) {
-      const inner = this.additive()
+      const inner = this.comparison()
       this.skipWs()
       return this.match(')') ? inner : err('#ERROR!', 'Missing ")" in a function body')
     }
     const ch = this.peek()
+    if (ch === '"') {
+      const value = this.readString()
+      if (value === null) return err('#ERROR!', 'Unterminated string literal')
+      return text(value)
+    }
     if (ch !== undefined && (/[0-9]/.test(ch) || ch === '.')) {
       return num(this.readNumber())
     }
@@ -289,6 +351,9 @@ class BodyParser {
     if (this.peek() === '(') {
       return this.functionCall(ident)
     }
+    const upperIdent = ident.toUpperCase()
+    if (upperIdent === 'TRUE') return bool(true)
+    if (upperIdent === 'FALSE') return bool(false)
     const param = this.scope.get(ident)
     if (param) return param
     return err('#NAME?', `Unknown name "${ident}" in a function body`)
@@ -303,7 +368,7 @@ class BodyParser {
       return applyFunction(name, args, this.env)
     }
     for (;;) {
-      args.push(this.additive())
+      args.push(this.comparison())
       this.skipWs()
       if (this.match(',')) {
         continue
@@ -321,6 +386,30 @@ class BodyParser {
       this.pos++
     }
     return Number(this.source.slice(start, this.pos))
+  }
+
+  /** A doubled `""` inside a literal is an escaped quote; `null` on an
+   * unterminated literal. */
+  private readString(): string | null {
+    this.pos++ // opening "
+    let out = ''
+    let closed = false
+    while (this.pos < this.source.length) {
+      const ch = this.source[this.pos]!
+      if (ch === '"') {
+        if (this.source[this.pos + 1] === '"') {
+          out += '"'
+          this.pos += 2
+          continue
+        }
+        this.pos++
+        closed = true
+        break
+      }
+      out += ch
+      this.pos++
+    }
+    return closed ? out : null
   }
 
   private match(op: string): boolean {

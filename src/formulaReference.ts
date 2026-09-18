@@ -8,10 +8,13 @@ import { BUILTIN_FORMULAS, type FormulaFunction } from './formulas'
 const CATEGORY_LABELS: Record<FormulaFunction['category'], string> = {
   aggregate: 'Aggregate',
   math: 'Math',
+  logical: 'Logical',
+  text: 'Text',
+  date: 'Date',
   custom: 'Custom',
 }
 
-const CATEGORY_ORDER: FormulaFunction['category'][] = ['aggregate', 'math']
+const CATEGORY_ORDER: FormulaFunction['category'][] = ['aggregate', 'math', 'logical', 'text', 'date']
 
 function functionEntry(fn: FormulaFunction): string {
   const lines = [`- **\`${fn.signature}\`** — ${fn.summary}`]
@@ -35,6 +38,9 @@ export function buildFunctionReferenceMarkdown(defs: readonly FormulaFunction[] 
     '## Operators and references',
     '',
     '- Arithmetic: `+`, `-`, `*`, `/`, `^` (and unary `-`)',
+    '- Comparisons: `=`, `<>`, `<`, `<=`, `>`, `>=` — result in `TRUE`/`FALSE`',
+    '- String literals: `"quoted text"`; double a quote to embed one (`"say ""hi"""`)',
+    '- The constants `TRUE` and `FALSE`',
     '- Cell references: `B2`; add `$` to freeze an axis when a formula is filled',
     '  or copied (`$B$2`, `B$2`, `$B2`)',
     '- Ranges: `B2:C4`, usable wherever a function expects numbers',

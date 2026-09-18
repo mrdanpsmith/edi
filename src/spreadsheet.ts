@@ -4,8 +4,11 @@ import {
   add,
   applyFunction,
   blank,
+  bool,
+  compareValues,
   div,
   err,
+  formatNumber,
   mul,
   neg,
   num,
@@ -13,9 +16,13 @@ import {
   setValue,
   sub,
   text,
+  toText,
   type CellValue,
+  type CompareOp,
   type FormulaEnv,
 } from './formulas'
+
+export { formatNumber } from './formulas'
 
 export const SPREADSHEET_PREFIX = '='
 
@@ -96,6 +103,9 @@ export interface CellSolution {
   /** True when `display` is cell markdown (a formula styled by outer inline
    * marks), so renderers HTML-render it instead of showing it verbatim. */
   styled?: boolean
+  /** True for non-numeric formula results (text, `TRUE`/`FALSE`, dates), whose
+   * displayed text is cell markdown rendered like any other text cell. */
+  rendersMarkdown?: boolean
 }
 
 export interface SpreadsheetSolution {
@@ -187,7 +197,13 @@ function solveCell(
         styled: marks.length > 0,
       }
     }
-    return { display: '', kind: 'formula' }
+    const display = toText(result)
+    return {
+      display: marks.length ? styleCellDisplay(display, marks) : display,
+      kind: 'formula',
+      styled: marks.length > 0,
+      rendersMarkdown: true,
+    }
   }
   return { display: raw, kind: 'text' }
 }
@@ -231,17 +247,15 @@ function applyToTable(table: HTMLTableElement, env: FormulaEnv): void {
     } else if (result.kind === 'number') {
       const display = formatNumber(result.value)
       domCell.innerHTML = marks.length ? renderCellHtml(styleCellDisplay(display, marks)) : display
+    } else {
+      const display = toText(result)
+      domCell.innerHTML = marks.length
+        ? renderCellHtml(styleCellDisplay(display, marks))
+        : renderCellHtml(display)
     }
     const raw = formulaCell.raw.trim()
     domCell.title = hint ? `${raw} — ${hint}` : raw
   }
-}
-
-export function formatNumber(value: number): string {
-  if (!Number.isFinite(value)) {
-    return '#VALUE!'
-  }
-  return String(Math.round(value * 10000) / 10000)
 }
 
 class SpreadsheetGrid {
@@ -311,12 +325,34 @@ class FormulaParser {
   ) {}
 
   parse(): CellValue {
-    const result = this.additive()
+    const result = this.comparison()
     this.skipWs()
     if (this.pos < this.source.length) {
       return err('#ERROR!')
     }
     return result
+  }
+
+  /** Comparison level, above additive: `A2>5`, `B2<>"Done"`. Left-associative,
+   * so `1<2<3` chains. Comparisons produce a `boolean` value. */
+  private comparison(): CellValue {
+    let left = this.additive()
+    for (;;) {
+      this.skipWs()
+      const op = this.matchComparisonOp()
+      if (!op) return left
+      left = compareValues(left, this.additive(), op)
+    }
+  }
+
+  private matchComparisonOp(): CompareOp | null {
+    if (this.match('<>')) return '<>'
+    if (this.match('<=')) return '<='
+    if (this.match('>=')) return '>='
+    if (this.match('=')) return '='
+    if (this.match('<')) return '<'
+    if (this.match('>')) return '>'
+    return null
   }
 
   private additive(): CellValue {
@@ -373,7 +409,7 @@ class FormulaParser {
       return err('#REF!')
     }
     if (this.match('(')) {
-      const inner = this.additive()
+      const inner = this.comparison()
       this.skipWs()
       if (!this.match(')')) {
         return err('#ERROR!')
@@ -381,6 +417,11 @@ class FormulaParser {
       return inner
     }
     const ch = this.peek()
+    if (ch === '"') {
+      const value = this.readString()
+      if (value === null) return err('#ERROR!')
+      return text(value)
+    }
     if (ch !== undefined && (/[0-9]/.test(ch) || ch === '.')) {
       return num(this.readNumber())
     }
@@ -393,6 +434,11 @@ class FormulaParser {
       return err('#ERROR!')
     }
     this.skipWs()
+    if (this.peek() !== '(' && this.peek() !== ':') {
+      const upperIdent = ident.toUpperCase()
+      if (upperIdent === 'TRUE') return bool(true)
+      if (upperIdent === 'FALSE') return bool(false)
+    }
     if (this.match(':')) {
       const start2 = this.pos
       while (this.pos < this.source.length && /[A-Za-z0-9_.$]/.test(this.source[this.pos]!)) {
@@ -424,7 +470,7 @@ class FormulaParser {
       return applyFunction(name, args, this.env)
     }
     for (;;) {
-      args.push(this.additive())
+      args.push(this.comparison())
       this.skipWs()
       if (this.match(',')) {
         continue
@@ -476,6 +522,30 @@ class FormulaParser {
     return Number(this.source.slice(start, this.pos))
   }
 
+  /** A doubled `""` inside a literal is an escaped quote; `null` on an
+   * unterminated literal (no closing `"`). */
+  private readString(): string | null {
+    this.pos++ // opening "
+    let out = ''
+    let closed = false
+    while (this.pos < this.source.length) {
+      const ch = this.source[this.pos]!
+      if (ch === '"') {
+        if (this.source[this.pos + 1] === '"') {
+          out += '"'
+          this.pos += 2
+          continue
+        }
+        this.pos++
+        closed = true
+        break
+      }
+      out += ch
+      this.pos++
+    }
+    return closed ? out : null
+  }
+
   private match(op: string): boolean {
     if (this.source.startsWith(op, this.pos)) {
       this.pos += op.length
@@ -512,18 +582,23 @@ function unwrapInlineMarks(raw: string): string {
 }
 
 function parseCellValue(raw: string): CellValue {
-  const cleaned = raw.replace(/,/g, '').trim()
+  const trimmed = raw.trim()
+  const cleaned = trimmed.replace(/,/g, '')
   if (!cleaned) {
     return blank()
   }
   if (NUMBER_RE.test(cleaned)) {
     return num(Number(cleaned))
   }
-  const unwrapped = unwrapInlineMarks(raw).replace(/,/g, '').trim()
-  if (unwrapped !== cleaned && NUMBER_RE.test(unwrapped)) {
-    return num(Number(unwrapped))
+  const unwrapped = unwrapInlineMarks(raw).trim()
+  if (unwrapped !== trimmed) {
+    const uCleaned = unwrapped.replace(/,/g, '')
+    if (NUMBER_RE.test(uCleaned)) {
+      return num(Number(uCleaned))
+    }
+    return text(unwrapped)
   }
-  return text()
+  return text(trimmed)
 }
 
 export function parseCellRef(raw: string): CellRef | null {

@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   blank,
+  bool,
   buildFunctionMap,
   err,
   num,
   setValue,
+  text,
   type CellValue,
   type FormulaEnv,
   type FormulaFunction,
@@ -129,5 +131,41 @@ describe('buildDocumentFunctions', () => {
     const { issues } = buildDocumentFunctions(['SUM(a) = a', 'F(a) = a'])
     expect(issues[0]!.sourceIndex).toBe(0)
     expect(issues[0]!.line).toBe(1)
+  })
+
+  it('keeps `#` and `@` inside string literals while stripping class comment lines', () => {
+    const { functions, issues } = buildDocumentFunctions([
+      'HASHTAG(x) = "a#b"',
+      'AT(x) = "@SUM(x)"',
+      'SPACES(x) = x   # trailing comment to drop',
+    ])
+    expect(issues).toEqual([])
+    expect(byName(functions, 'HASHTAG')).toBeDefined()
+    expect(call(byName(functions, 'HASHTAG'), [num(0)], envFor(functions))).toEqual(text('a#b'))
+    expect(call(byName(functions, 'AT'), [num(1)], envFor(functions))).toEqual(text('@SUM(x)'))
+    expect(call(byName(functions, 'SPACES'), [num(3)], envFor(functions))).toEqual(num(3))
+  })
+
+  it('the dependency scan ignores function-like text inside string literals', () => {
+    // Both bodies are one literal `"…"`; without stripping, `A` would look like
+    // it calls SUM and fail to compile.
+    const { functions, issues } = buildDocumentFunctions(['A(x) = "SUM("', 'B(x) = "A(x)"'])
+    expect(issues).toEqual([])
+    expect(functions.map((f) => f.name)).toEqual(['A', 'B'])
+    expect(call(byName(functions, 'B'), [num(0)], envFor(functions))).toEqual(text('A(x)'))
+  })
+
+  it('supports comparisons, string literals, and TRUE/FALSE in bodies', () => {
+    const { functions } = buildDocumentFunctions([
+      'F(x) = x > 5',
+      'G(x) = x = "done"',
+      'H(x) = x = 2', // numeric coercion: =H(2) is TRUE
+      'I(x) = (x = TRUE) * 1', // boolean to number via arithmetic
+    ])
+    expect(call(byName(functions, 'F'), [num(10)], envFor(functions))).toEqual(bool(true))
+    expect(call(byName(functions, 'F'), [num(5)], envFor(functions))).toEqual(bool(false))
+    expect(call(byName(functions, 'G'), [text('done')], envFor(functions))).toEqual(bool(true))
+    expect(call(byName(functions, 'H'), [num(2)], envFor(functions))).toEqual(bool(true))
+    expect(call(byName(functions, 'I'), [bool(true)], envFor(functions))).toEqual(num(1))
   })
 })
