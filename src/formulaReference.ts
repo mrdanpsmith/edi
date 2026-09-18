@@ -41,6 +41,7 @@ export function buildFunctionReferenceMarkdown(defs: readonly FormulaFunction[] 
     '- Comparisons: `=`, `<>`, `<`, `<=`, `>`, `>=` — result in `TRUE`/`FALSE`',
     '- String literals: `"quoted text"`; double a quote to embed one (`"say ""hi"""`)',
     '- The constants `TRUE` and `FALSE`',
+    '- Dates: an Excel-style serial number (days from 1899-12-30) — see `dateToSerial`, `serialToDate`, `formatDate`',
     '- Cell references: `B2`; add `$` to freeze an axis when a formula is filled',
     '  or copied (`$B$2`, `B$2`, `$B2`)',
     '- Ranges: `B2:C4`, usable wherever a function expects numbers',
