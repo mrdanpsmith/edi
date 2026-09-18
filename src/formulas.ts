@@ -38,6 +38,9 @@ export type FormulaCategory = 'aggregate' | 'math' | 'logical' | 'text' | 'date'
  * always present; document definitions add to (but never override) them. */
 export interface FormulaEnv {
   readonly functions: ReadonlyMap<string, FormulaFunction>
+  /** Clock for the volatile cells `TODAY`/`NOW`; defaults to the wall clock when
+   * omitted, so tests can pin the current date. */
+  readonly now?: () => Date
 }
 
 export interface EvalContext {
@@ -1091,6 +1094,149 @@ function parseCriteriaFromArgs(args: readonly CellValue[]): ((cell: CellValue) =
   return parseCriteria(criteria)
 }
 
+// --- Dates and times -------------------------------------------------------
+
+/** The calendar date parts (year, month, day) of a serial, ignoring any
+ * time-of-day fraction — the proleptic Gregorian reading shared by the date
+ * extractors and the `EDATE`/`EOMONTH` month arithmetic. */
+function serialDateParts(serial: number): [number, number, number] {
+  return civilFromDays(Math.floor(serial) - UNIX_EPOCH_SERIAL)
+}
+
+/** The rounded time-of-day parts (hours, minutes, seconds) of a serial, using
+ * the same half-up rounding as `formatDate` so extraction and display agree. */
+function serialTimeParts(serial: number): [number, number, number] {
+  const totalSeconds = Math.floor(serial * 86400 + 0.5)
+  let days = Math.floor(totalSeconds / 86400)
+  let seconds = totalSeconds - days * 86400
+  if (seconds < 0) {
+    days -= 1
+    seconds += 86400
+  }
+  return [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60]
+}
+
+/** Days in a civil month (month is 1–12), proleptic Gregorian. */
+function daysInMonth(year: number, month: number): number {
+  if (month === 12) return daysFromCivil(year + 1, 1, 1) - daysFromCivil(year, 12, 1)
+  return daysFromCivil(year, month + 1, 1) - daysFromCivil(year, month, 1)
+}
+
+/** Non-negative `x mod 7`, so weekday math stays correct before 1970. */
+function mod7(x: number): number {
+  return ((x % 7) + 7) % 7
+}
+
+/** The environment's clock as a serial (wall clock by default). */
+function nowSerial(ctx: EvalContext): number {
+  return dateToSerial(ctx.env.now?.() ?? new Date())
+}
+
+function todayCall(_args: readonly CellValue[], ctx: EvalContext): CellValue {
+  return dateSerial(Math.floor(nowSerial(ctx)))
+}
+
+function nowCall(_args: readonly CellValue[], ctx: EvalContext): CellValue {
+  return dateSerial(nowSerial(ctx))
+}
+
+/** `DATE(year, month, day)` — normalizes month/day overflow and honors Excel's
+ * legacy "years 0–1899 mean +1900" mapping; month/day may be anything. */
+function dateCall(args: readonly CellValue[]): CellValue {
+  const year = numberAt(args, 0)
+  const month = numberAt(args, 1)
+  const day = numberAt(args, 2)
+  if (typeof year !== 'number') return year
+  if (typeof month !== 'number') return month
+  if (typeof day !== 'number') return day
+  let y = Math.trunc(year)
+  if (y >= 0 && y <= 1899) y += 1900
+  if (y < 1900 || y > 9999) return err('#NUM!', 'DATE year must be 1900–9999')
+  const totalMonths = y * 12 + (Math.trunc(month) - 1)
+  const cy = Math.floor(totalMonths / 12)
+  const cm = totalMonths % 12 + 1
+  return dateSerial(daysFromCivil(cy, cm, Math.trunc(day)) + UNIX_EPOCH_SERIAL)
+}
+
+/** Build the unary extraction calls (`YEAR`/`MONTH`/`DAY`, `HOUR`/…/`SECOND`):
+ * each reads one serial-coerced argument (a date cell or a plain number) and
+ * returns the matching component. */
+function makeDatePartCall(
+  pick: (serial: number) => number,
+): (args: readonly CellValue[]) => CellValue {
+  return (args: readonly CellValue[]) => {
+    const serial = firstNumber(args)
+    if (typeof serial !== 'number') return serial
+    return num(pick(serial))
+  }
+}
+
+const yearCall = makeDatePartCall((serial) => serialDateParts(serial)[0])
+const monthCall = makeDatePartCall((serial) => serialDateParts(serial)[1])
+const dayCall = makeDatePartCall((serial) => serialDateParts(serial)[2])
+const hourCall = makeDatePartCall((serial) => serialTimeParts(serial)[0])
+const minuteCall = makeDatePartCall((serial) => serialTimeParts(serial)[1])
+const secondCall = makeDatePartCall((serial) => serialTimeParts(serial)[2])
+
+/** `WEEKDAY(serial, [type])` — type 1 (default) Sunday=1…Saturday=7, type 2
+ * Monday=1…Sunday=7, type 3 Monday=0…Sunday=6; any other type is `#NUM!`. */
+function weekdayCall(args: readonly CellValue[]): CellValue {
+  const serial = firstNumber(args)
+  if (typeof serial !== 'number') return serial
+  let type = 1
+  const typeArg = args[1]
+  if (typeArg !== undefined && typeArg.kind !== 'blank') {
+    const coerced = numberAt([typeArg], 0)
+    if (typeof coerced !== 'number') return coerced
+    type = Math.trunc(coerced)
+  }
+  if (type !== 1 && type !== 2 && type !== 3) {
+    return err('#NUM!', 'WEEKDAY type must be 1, 2, or 3')
+  }
+  let weekday = mod7(Math.floor(serial) - UNIX_EPOCH_SERIAL + 4) // 0 = Sunday … 6 = Saturday
+  if (type === 2) weekday = ((weekday + 6) % 7) + 1
+  else if (type === 3) weekday = mod7(weekday + 6)
+  else weekday = weekday + 1
+  return num(weekday)
+}
+
+/** `DAYS(end, start)` — the difference of two serial-coerced values, truncated
+ * toward zero (Excel truncates, so fractional serials don't round up). */
+function daysCall(args: readonly CellValue[]): CellValue {
+  const end = firstNumber(args)
+  const start = numberAt(args, 1)
+  if (typeof end !== 'number') return end
+  if (typeof start !== 'number') return start
+  return num(Math.trunc(end - start))
+}
+
+/** Shared `EDATE`/`EOMONTH` machinery: add a truncated number of months to a
+ * date-like serial, clamping (EDATE) or taking the end-of-month (EOMONTH) as
+ * the day, exactly as Excel's calendar months behave (`Jan 31 + 1M` → Feb 29). */
+function monthAddCall(
+  args: readonly CellValue[],
+  atMonthEnd: boolean,
+): CellValue {
+  const start = firstNumber(args)
+  const months = numberAt(args, 1)
+  if (typeof start !== 'number') return start
+  if (typeof months !== 'number') return months
+  const [y, m] = serialDateParts(start)
+  const totalMonths = y * 12 + (m - 1) + Math.trunc(months)
+  const ty = Math.floor(totalMonths / 12)
+  const tm = totalMonths % 12 + 1
+  const day = atMonthEnd ? daysInMonth(ty, tm) : Math.min(serialDateParts(start)[2], daysInMonth(ty, tm))
+  return dateSerial(daysFromCivil(ty, tm, day) + UNIX_EPOCH_SERIAL)
+}
+
+function edateCall(args: readonly CellValue[]): CellValue {
+  return monthAddCall(args, false)
+}
+
+function eomonthCall(args: readonly CellValue[]): CellValue {
+  return monthAddCall(args, true)
+}
+
 // --- Builtin registry -----------------------------------------------------
 
 export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
@@ -1669,6 +1815,136 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     minArgs: 1,
     maxArgs: 1,
     call: valueCall,
+  },
+  {
+    name: 'TODAY',
+    category: 'date',
+    signature: 'TODAY()',
+    summary: 'The current date (serial truncated to midnight).',
+    example: '=TODAY()',
+    minArgs: 0,
+    maxArgs: 0,
+    call: todayCall,
+  },
+  {
+    name: 'NOW',
+    category: 'date',
+    signature: 'NOW()',
+    summary: 'The current date and time as a date serial.',
+    example: '=NOW()',
+    minArgs: 0,
+    maxArgs: 0,
+    call: nowCall,
+  },
+  {
+    name: 'DATE',
+    category: 'date',
+    signature: 'DATE(year, month, day)',
+    summary: 'Builds a date from year, month, and day, normalizing month/day overflow (Excel\'s 0–1899 year mapping means +1900).',
+    example: '=DATE(2024, 12, 31)',
+    minArgs: 3,
+    maxArgs: 3,
+    call: dateCall,
+  },
+  {
+    name: 'YEAR',
+    category: 'date',
+    signature: 'YEAR(serial)',
+    summary: 'The year of a date or serial.',
+    example: '=YEAR(DATE(2024, 1, 15))',
+    minArgs: 1,
+    maxArgs: 1,
+    call: yearCall,
+  },
+  {
+    name: 'MONTH',
+    category: 'date',
+    signature: 'MONTH(serial)',
+    summary: 'The month (1–12) of a date or serial.',
+    example: '=MONTH(DATE(2024, 1, 15))',
+    minArgs: 1,
+    maxArgs: 1,
+    call: monthCall,
+  },
+  {
+    name: 'DAY',
+    category: 'date',
+    signature: 'DAY(serial)',
+    summary: 'The day of the month (1–31) of a date or serial.',
+    example: '=DAY(DATE(2024, 1, 15))',
+    minArgs: 1,
+    maxArgs: 1,
+    call: dayCall,
+  },
+  {
+    name: 'HOUR',
+    category: 'date',
+    signature: 'HOUR(serial)',
+    summary: 'The hour (0–23) of a date or time serial.',
+    example: '=HOUR(NOW())',
+    minArgs: 1,
+    maxArgs: 1,
+    call: hourCall,
+  },
+  {
+    name: 'MINUTE',
+    category: 'date',
+    signature: 'MINUTE(serial)',
+    summary: 'The minute (0–59) of a date or time serial.',
+    example: '=MINUTE(NOW())',
+    minArgs: 1,
+    maxArgs: 1,
+    call: minuteCall,
+  },
+  {
+    name: 'SECOND',
+    category: 'date',
+    signature: 'SECOND(serial)',
+    summary: 'The second (0–59) of a date or time serial.',
+    example: '=SECOND(NOW())',
+    minArgs: 1,
+    maxArgs: 1,
+    call: secondCall,
+  },
+  {
+    name: 'WEEKDAY',
+    category: 'date',
+    signature: 'WEEKDAY(serial, [type])',
+    summary: 'The weekday of a date or serial: type 1 (default) Sunday=1…Saturday=7, type 2 Monday=1, type 3 Monday=0.',
+    example: '=WEEKDAY(DATE(2024, 1, 1))',
+    minArgs: 1,
+    maxArgs: 2,
+    call: weekdayCall,
+  },
+  {
+    name: 'DAYS',
+    category: 'date',
+    signature: 'DAYS(end, start)',
+    summary: 'The days between two dates or serials, truncated toward zero.',
+    example: '=DAYS(DATE(2024, 3, 1), DATE(2024, 2, 1))',
+    minArgs: 2,
+    maxArgs: 2,
+    call: daysCall,
+  },
+  {
+    name: 'EDATE',
+    category: 'date',
+    signature: 'EDATE(start, months)',
+    summary: 'The date \'months\' calendar months after start, clamping the day to the month end (Jan 31 + 1 → Feb 29).',
+    example: '=EDATE(DATE(2024, 1, 31), 1)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: edateCall,
+  },
+  {
+    name: 'EOMONTH',
+    category: 'date',
+    signature: 'EOMONTH(start, months)',
+    summary: 'The last day of the month \'months\' after start\'s month.',
+    example: '=EOMONTH(DATE(2024, 1, 15), 1)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: eomonthCall,
   },
 ]
 

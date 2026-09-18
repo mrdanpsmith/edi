@@ -5,10 +5,13 @@ import {
   blank,
   bool,
   buildFunctionMap,
+  dateSerial,
+  dateToSerial,
   err,
   num,
   setValue,
   text,
+  toText,
   type CellValue,
   type FormulaEnv,
   type FormulaFunction,
@@ -231,5 +234,19 @@ describe('buildDocumentFunctions', () => {
     expect(applyFunction('DISCOUNT', [num(10)], env)).toEqual(num(1.25))
     expect(applyFunction('SPREAD', [setValue([num(5), num(1), num(9), num(3)])], env)).toEqual(num(2))
     expect(applyFunction('BIG_ONLY', [setValue([num(50), num(150), num(90)])], env)).toEqual(num(150))
+  })
+
+  it('calls the date builtins from a definition body', () => {
+    const { functions } = buildDocumentFunctions([
+      'ANNIVERSARY(y, m) = DATE(y, m, 1)',
+      'QUARTER(d) = MONTH(d)',
+      'WEEKNUM(d) = WEEKDAY(d, 2)',
+    ])
+    const env = envFor(functions)
+    const anniversary = applyFunction('ANNIVERSARY', [num(2025), num(1)], env)
+    expect(anniversary).toEqual(dateSerial(dateToSerial(new Date(2025, 0, 1))))
+    expect(toText(anniversary)).toBe('2025-01-01')
+    expect(applyFunction('QUARTER', [anniversary], env)).toEqual(num(1))
+    expect(applyFunction('WEEKNUM', [anniversary], env)).toEqual(num(3))
   })
 })

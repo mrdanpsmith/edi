@@ -566,3 +566,94 @@ describe('criteria builtins (SUMIF/COUNTIF/AVERAGEIF)', () => {
     })
   })
 })
+
+describe('date/time builtins', () => {
+  const env = BUILTIN_ENV
+
+  function display(result: CellValue): string {
+    return toText(result)
+  }
+
+  it('DATE builds dates and normalizes month/day overflow', () => {
+    expect(display(applyFunction('DATE', [num(2024), num(2), num(29)], env))).toBe('2024-02-29')
+    expect(display(applyFunction('DATE', [num(2023), num(2), num(29)], env))).toBe('2023-03-01')
+    expect(display(applyFunction('DATE', [num(2024), num(13), num(1)], env))).toBe('2025-01-01')
+    expect(display(applyFunction('DATE', [num(2024), num(0), num(5)], env))).toBe('2023-12-05')
+    expect(display(applyFunction('DATE', [num(1900), num(1), num(0)], env))).toBe('1899-12-31')
+  })
+
+  it('DATE maps years 0–1899 by +1900, like Excel', () => {
+    expect(display(applyFunction('DATE', [num(0), num(1), num(1)], env))).toBe('1900-01-01')
+    expect(display(applyFunction('DATE', [num(100), num(5), num(6)], env))).toBe('2000-05-06')
+    expect(display(applyFunction('DATE', [num(1899), num(12), num(31)], env))).toBe('3799-12-31')
+    expect(applyFunction('DATE', [num(-1), num(1), num(1)], env)).toMatchObject({ message: '#NUM!' })
+    expect(applyFunction('DATE', [num(10000), num(1), num(1)], env)).toMatchObject({
+      message: '#NUM!',
+    })
+  })
+
+  it('YEAR, MONTH, and DAY extract from a date or a plain serial', () => {
+    const d = applyFunction('DATE', [num(2024), num(6), num(15)], env)
+    expect(applyFunction('YEAR', [d], env)).toEqual(num(2024))
+    expect(applyFunction('MONTH', [d], env)).toEqual(num(6))
+    expect(applyFunction('DAY', [d], env)).toEqual(num(15))
+    expect(applyFunction('DAY', [num(0)], env)).toEqual(num(30))
+    expect(applyFunction('YEAR', [num(0)], env)).toEqual(num(1899))
+    expect(applyFunction('MONTH', [num(45292)], env)).toEqual(num(1))
+  })
+
+  it('HOUR, MINUTE, and SECOND read the time-of-day fraction', () => {
+    expect(applyFunction('HOUR', [num(0.5)], env)).toEqual(num(12))
+    expect(applyFunction('MINUTE', [num(0.5)], env)).toEqual(num(0))
+    expect(applyFunction('HOUR', [num(0.25)], env)).toEqual(num(6))
+    expect(applyFunction('SECOND', [num(0.0002)], env)).toEqual(num(17))
+    const noon = dateSerial(dateToSerial(new Date(2024, 5, 15, 14, 30, 5)))
+    expect(applyFunction('HOUR', [noon], env)).toEqual(num(14))
+    expect(applyFunction('MINUTE', [noon], env)).toEqual(num(30))
+    expect(applyFunction('SECOND', [noon], env)).toEqual(num(5))
+  })
+
+  it('WEEKDAY supports the three Excel type schemes', () => {
+    const monday = applyFunction('DATE', [num(2024), num(1), num(1)], env)
+    expect(applyFunction('WEEKDAY', [monday], env)).toEqual(num(2))
+    expect(applyFunction('WEEKDAY', [monday, num(2)], env)).toEqual(num(1))
+    expect(applyFunction('WEEKDAY', [monday, num(3)], env)).toEqual(num(0))
+    expect(applyFunction('WEEKDAY', [num(0)], env)).toEqual(num(7))
+    expect(applyFunction('WEEKDAY', [monday, num(7)], env)).toMatchObject({ message: '#NUM!' })
+  })
+
+  it('DAYS differences serials and truncates toward zero', () => {
+    const mar1 = applyFunction('DATE', [num(2024), num(3), num(1)], env)
+    const feb1 = applyFunction('DATE', [num(2024), num(2), num(1)], env)
+    expect(applyFunction('DAYS', [mar1, feb1], env)).toEqual(num(29))
+    expect(applyFunction('DAYS', [num(5), num(6)], env)).toEqual(num(-1))
+    expect(applyFunction('DAYS', [num(0.75), num(0)], env)).toEqual(num(0))
+  })
+
+  it('EDATE steps whole calendar months, clamping the day to the month end', () => {
+    const jan31 = applyFunction('DATE', [num(2024), num(1), num(31)], env)
+    expect(display(applyFunction('EDATE', [jan31, num(1)], env))).toBe('2024-02-29')
+    const jan31_23 = applyFunction('DATE', [num(2023), num(1), num(31)], env)
+    expect(display(applyFunction('EDATE', [jan31_23, num(1)], env))).toBe('2023-02-28')
+    expect(display(applyFunction('EDATE', [jan31, num(-1)], env))).toBe('2023-12-31')
+    expect(display(applyFunction('EDATE', [jan31, num(14)], env))).toBe('2025-03-31')
+  })
+
+  it('EOMONTH lands on the last day of the target month', () => {
+    const d = applyFunction('DATE', [num(2024), num(1), num(15)], env)
+    expect(display(applyFunction('EOMONTH', [d, num(0)], env))).toBe('2024-01-31')
+    expect(display(applyFunction('EOMONTH', [d, num(1)], env))).toBe('2024-02-29')
+    expect(display(applyFunction('EOMONTH', [d, num(-1)], env))).toBe('2023-12-31')
+  })
+
+  it('TODAY and NOW read the injected clock', () => {
+    const clock = { ...BUILTIN_ENV, now: () => new Date(2024, 5, 15, 14, 30, 5) }
+    expect(display(applyFunction('TODAY', [], clock))).toBe('2024-06-15')
+    expect(display(applyFunction('NOW', [], clock))).toBe('2024-06-15 14:30:05')
+  })
+
+  it('a non-numeric serial argument is a #VALUE! error', () => {
+    expect(applyFunction('YEAR', [text('abc')], env)).toMatchObject({ message: '#VALUE!' })
+    expect(applyFunction('EDATE', [text('abc'), num(1)], env)).toMatchObject({ message: '#VALUE!' })
+  })
+})

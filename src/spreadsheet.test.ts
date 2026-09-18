@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { BUILTIN_ENV } from './formulas'
 import {
   colToLetters,
   computeSpreadsheet,
@@ -689,6 +690,40 @@ describe('math, aggregate, and criteria formula cells', () => {
   it('surfaces a #NUM! for an out-of-domain math error', () => {
     const out = cells('| A |\n| --- |\n| 0 |\n| =LN(A2) |')
     expect(out[2]![0]).toBe('#NUM!')
+  })
+})
+
+describe('date formula cells', () => {
+  function cells(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.display))
+  }
+
+  it('DATE renders as YYYY-MM-DD and feeds the extractors', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| =DATE(2024, 2, 29) | =YEAR(A2) + 1 |\n| =MONTH(A2) | =WEEKDAY(A2, 2) |\n| =DAYS(DATE(2024, 3, 1), A2) | =EOMONTH(A2, 1) |',
+    )
+    expect(out[1]![0]).toBe('2024-02-29')
+    expect(out[1]![1]).toBe('2025')
+    expect(out[2]![0]).toBe('2')
+    expect(out[2]![1]).toBe('4')
+    expect(out[3]![0]).toBe('1')
+    expect(out[3]![1]).toBe('2024-03-31')
+  })
+
+  it('DATE normalizes overflow and an EDATE clamps to the month end', () => {
+    const out = cells(
+      '| A |\n| --- |\n| =DATE(2024, 13, 40) |\n| =EDATE(DATE(2024, 1, 31), 1) |',
+    )
+    expect(out[1]![0]).toBe('2025-02-09')
+    expect(out[2]![0]).toBe('2024-02-29')
+  })
+
+  it('threads the injected clock into TODAY and NOW cells', () => {
+    const env = { ...BUILTIN_ENV, now: () => new Date(2024, 5, 15, 9, 0) }
+    const solution = solve(parsePipes('| A |\n| --- |\n| =TODAY() |\n| =NOW() |'), env)
+    expect(solution.cells[1]![0]!.display).toBe('2024-06-15')
+    expect(solution.cells[2]![0]!.display).toBe('2024-06-15 09:00:00')
   })
 })
 
