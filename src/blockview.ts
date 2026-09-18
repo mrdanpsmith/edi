@@ -40,9 +40,26 @@ function buildSourceCommitTransaction(
   markdown: string,
 ): Transaction {
   const tr = view.state.tr
+  const original = view.state.doc.nodeAt(pos)
   const newDoc = markdownToProse(markdown, view.state.schema)
   const nodes: ProseNode[] = []
   newDoc.forEach((child) => nodes.push(child))
+  // A table's view-mode preference (`_plain`) is not part of its markdown, so
+  // re-parsing resets it to the plain default. Carry it onto the reparsed table
+  // when the block is still a table, so a table edited in source returns to the
+  // spreadsheet (or plain) view it was opened from.
+  if (original?.type.name === 'table') {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]!
+      if (node.type.name === 'table' && node.attrs._plain !== original.attrs._plain) {
+        nodes[i] = node.type.create(
+          { ...node.attrs, _plain: original.attrs._plain },
+          node.content,
+          node.marks,
+        )
+      }
+    }
+  }
   if (nodes.length > 0) {
     tr.replaceWith(pos, pos + nodeSize, nodes)
     const insertedSize = nodes.reduce((sum, n) => sum + n.nodeSize, 0)

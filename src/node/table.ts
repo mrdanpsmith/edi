@@ -464,11 +464,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     plus.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
-      const target = this.insertGuideTarget
-      this.hideInsertGuide()
-      if (!target) return
-      if (target.axis === 'col') this.insertColumnAt(target.index)
-      else this.insertRowAt(target.index)
+      this.commitInsertGuide()
     })
     guide.appendChild(plus)
     this.insertGuide = guide
@@ -616,6 +612,16 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.insertGuide.hidden = true
     this.insertGuideTarget = null
     this.dom.classList.remove('ss-inserting-col', 'ss-inserting-row', 'ss-guide-near-handle')
+  }
+
+  /** Insert at the guide currently shown. Shared by the `+` click and a
+   * double-click on the row/column chrome while the guide is open. */
+  private commitInsertGuide(): void {
+    const target = this.insertGuideTarget
+    this.hideInsertGuide()
+    if (!target) return
+    if (target.axis === 'col') this.insertColumnAt(target.index)
+    else this.insertRowAt(target.index)
   }
 
   /** Fit each column to its content. Widths are never persisted to markdown,
@@ -1364,6 +1370,17 @@ class TableNodeView implements NodeView, InlineCellHost {
 
   private onDblClick(event: MouseEvent): void {
     if (event.target instanceof Element && event.target.closest('.ss-edit-input')) return
+    // While an insert guide is open over the chrome, a double-click commits it
+    // (the same gesture as clicking its `+`), so the pointer never has to travel
+    // to the button.
+    const chrome =
+      event.target instanceof Element ? event.target.closest('th.ss-col, th.ss-row') : null
+    if (chrome && this.insertGuideTarget) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.commitInsertGuide()
+      return
+    }
     const target = this.resolveTarget(event.target)
     if (!target || target.kind !== 'cell') return
     event.preventDefault()

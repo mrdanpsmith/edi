@@ -589,6 +589,29 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('returns to spreadsheet mode after a source edit', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    expect(view.state.doc.child(0).attrs._plain).toBe(false)
+    view.dispatch(enterSourceMode(view.state, 0))
+    const exitBtn = (view.nodeDOM(0) as HTMLElement).querySelector<HTMLElement>('.block-source-exit')
+    exitBtn?.click()
+    expect(view.state.doc.child(0).attrs._plain).toBe(false)
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    expect(view.dom.querySelector('.ss-plain')).toBeNull()
+    view.destroy()
+  })
+
+  it('returns to plain view after a source edit when it started there', () => {
+    const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    expect(view.state.doc.child(0).attrs._plain).toBe(true)
+    view.dispatch(enterSourceMode(view.state, 0))
+    const exitBtn = (view.nodeDOM(0) as HTMLElement).querySelector<HTMLElement>('.block-source-exit')
+    exitBtn?.click()
+    expect(view.state.doc.child(0).attrs._plain).toBe(true)
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    view.destroy()
+  })
+
   it('inserts an empty table of the requested size', () => {
     const view = createEditor('hello')
     insertTable(view, 3, 4)
@@ -1522,6 +1545,36 @@ describe('TableNodeView insert row/column', () => {
     expect(spreadsheetDom(view).classList.contains('ss-inserting-row')).toBe(true)
     expect(insertPlus(view).title).toBe('Append row at the end')
     insertPlus(view).click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['1', '2'],
+      ['3', '4'],
+      ['', ''],
+    ])
+    view.destroy()
+  })
+
+  it('inserts the guided column on a double-click of the header', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const header = colHeader(view, 1)
+    stubRect(header, 100, 150)
+    hoverInsert(header, 148, 5)
+    expect(guide(view).hidden).toBe(false)
+    header.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B', ''],
+      ['1', '2', ''],
+    ])
+    view.destroy()
+  })
+
+  it('inserts the guided row on a double-click of the gutter', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    const gutter = rowGutter(view, 2)
+    stubRect(gutter, 0, 30, 100, 124)
+    hoverInsert(gutter, 5, 122)
+    expect(guide(view).hidden).toBe(false)
+    gutter.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
     expect(parsePipes(docValue(view))).toEqual([
       ['A', 'B'],
       ['1', '2'],

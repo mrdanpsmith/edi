@@ -52,8 +52,11 @@ interface TableCell {
   formula: string
 }
 
-const CELL_REF = /^([A-Za-z]+)([1-9][0-9]*)$/
-const RANGE_REF = /^([A-Za-z]+)([1-9][0-9]*):([A-Za-z]+)([1-9][0-9]*)$/
+// A1 references accept optional `$` absolute markers on either axis (`$A$2`,
+// `A$2`, `$A2`); they only matter when a reference is shifted, so evaluation
+// ignores them and resolves the cell the letters/digits name.
+const CELL_REF = /^\$?([A-Za-z]+)\$?([1-9][0-9]*)$/
+const RANGE_REF = /^\$?([A-Za-z]+)\$?([1-9][0-9]*):\$?([A-Za-z]+)\$?([1-9][0-9]*)$/
 const NUMBER_RE = /^[+-]?(\d+(\.\d+)?|\.\d+)$/
 
 /**
@@ -278,7 +281,7 @@ class FormulaParser {
       return num(this.readNumber())
     }
     const start = this.pos
-    while (this.pos < this.source.length && /[A-Za-z0-9_.]/.test(this.source[this.pos]!)) {
+    while (this.pos < this.source.length && /[A-Za-z0-9_.$]/.test(this.source[this.pos]!)) {
       this.pos++
     }
     const ident = this.source.slice(start, this.pos)
@@ -288,7 +291,7 @@ class FormulaParser {
     this.skipWs()
     if (this.match(':')) {
       const start2 = this.pos
-      while (this.pos < this.source.length && /[A-Za-z0-9_.]/.test(this.source[this.pos]!)) {
+      while (this.pos < this.source.length && /[A-Za-z0-9_.$]/.test(this.source[this.pos]!)) {
         this.pos++
       }
       const ident2 = this.source.slice(start2, this.pos)

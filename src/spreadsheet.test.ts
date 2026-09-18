@@ -100,6 +100,22 @@ describe('solve', () => {
     expect(out[3]![2]).toBe('6')
   })
 
+  it('resolves references with $ absolute markers', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| 10 | 20 |\n| =$A$2 | =A$2+$B2 |',
+    )
+    expect(out[2]![0]).toBe('10')
+    expect(out[2]![1]).toBe('30')
+    expect(kinds('| A | B |\n| --- | --- |\n| 10 | 20 |\n| =$A$2 | =A$2+$B2 |')[2]![0]).toBe('formula')
+  })
+
+  it('resolves $ markers inside ranges', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| =SUM($A$2:$B$3) | |',
+    )
+    expect(out[3]![0]).toBe('10')
+  })
+
   it('marks each error kind', () => {
     expect(kinds('| A |\n| --- |\n| 0 |\n| =5/A2 |')[2]![0]).toBe('error')
     expect(kinds('| A |\n| --- |\n| abc |\n| =A2+1 |')[2]![0]).toBe('error')
@@ -194,6 +210,13 @@ describe('cell reference helpers', () => {
     expect(parseCellRef('aa10')).toEqual({ col: 27, row: 10 })
     expect(parseCellRef('nope')).toBeNull()
     expect(parseCellRef('2B')).toBeNull()
+  })
+
+  it('parses references with $ absolute markers on either axis', () => {
+    expect(parseCellRef('$B$2')).toEqual({ col: 2, row: 2 })
+    expect(parseCellRef('B$2')).toEqual({ col: 2, row: 2 })
+    expect(parseCellRef('$B2')).toEqual({ col: 2, row: 2 })
+    expect(parseCellRef('$aa10')).toEqual({ col: 27, row: 10 })
   })
 })
 
