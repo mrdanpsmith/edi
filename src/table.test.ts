@@ -841,6 +841,28 @@ describe('TableNodeView grid', () => {
     ed.destroy()
   })
 
+  it('undoes table actions without scrolling the editor', () => {
+    const ed = createBlockEditor(document.body, '| A |\n| --- |\n| 1 |')
+    const view = ed.getView()
+    enterSpreadsheetMode(view, 0)
+    let grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const editInput = grid.querySelector('.ss-edit-input') as HTMLInputElement
+    editInput.value = '2'
+    editInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+
+    const dispatch = vi.spyOn(view, 'dispatch')
+    grid = tableGrid(view)
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
+    expect(parsePipes(docValue(view))[1]).toEqual(['1'])
+    // The history transaction must not request scrollIntoView, or the document
+    // viewport jumps to the restored selection after a table action.
+    expect((dispatch.mock.calls[0]![0] as { scrolledIntoView: boolean }).scrolledIntoView).toBe(false)
+    ed.destroy()
+  })
+
   it('a blur arriving during edit teardown does not swallow the Tab move', () => {
     // Chromium fires `blur` synchronously when the focused edit input is
     // removed mid-commit (teardownEdit). The blur handler re-enters

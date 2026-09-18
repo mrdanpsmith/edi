@@ -7,7 +7,7 @@ import { solve, colToLetters, isFormula, type CellSolution } from '../spreadshee
 import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
 import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
 import { FormulaAutocomplete } from '../formulaAutocomplete'
-import { undo, redo } from 'prosemirror-history'
+import { undoNoScroll, redoNoScroll } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText } from '../clipboard'
 import { blockNodeView } from '../blockview'
@@ -1479,7 +1479,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (mod && (key.toLowerCase() === 'z' || key.toLowerCase() === 'y')) {
       event.preventDefault()
       event.stopPropagation()
-      const fn = key.toLowerCase() === 'y' || event.shiftKey ? redo : undo
+      const fn = key.toLowerCase() === 'y' || event.shiftKey ? redoNoScroll : undoNoScroll
       fn(this.view.state, this.view.dispatch, this.view)
       return
     }

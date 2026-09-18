@@ -55,6 +55,38 @@ export async function copyText(text: string): Promise<boolean> {
   return copied
 }
 
+/**
+ * Read plain text from the clipboard. Prefers the native bridge (the desktop
+ * shell's system clipboard), then the web Clipboard API. Returns null when
+ * nothing readable is available.
+ */
+export async function readText(): Promise<string | null> {
+  if (hasBridge()) {
+    try {
+      const data = await invoke<{ text: string }>('readClipboardText')
+      if (data?.text) return data.text
+    } catch {
+      // Fall through to the web API.
+    }
+  }
+  try {
+    if (typeof navigator.clipboard?.readText === 'function') {
+      return await navigator.clipboard.readText()
+    }
+    if (typeof navigator.clipboard?.read === 'function') {
+      const items = await navigator.clipboard.read()
+      for (const item of items) {
+        if (item.types.includes('text/plain')) {
+          return await item.getType('text/plain').then((blob) => blob.text())
+        }
+      }
+    }
+  } catch {
+    // Ignore: treat unreadable clipboard as empty.
+  }
+  return null
+}
+
 async function webClipboardWrite(payload: ClipboardPayload): Promise<boolean> {
   try {
     if (typeof navigator.clipboard?.write === 'function') {

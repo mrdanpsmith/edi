@@ -64,7 +64,12 @@ export class ContextMenu {
     return this.menuEl !== null
   }
 
-  show(entries: ContextMenuEntry[], x: number, y: number): void {
+  show(
+    entries: ContextMenuEntry[],
+    x: number,
+    y: number,
+    options: { preserveFocus?: boolean } = {},
+  ): void {
     this.hide()
 
     const menu = document.createElement('div')
@@ -102,9 +107,16 @@ export class ContextMenu {
 
     menu.addEventListener('keydown', this.onKeyDown)
     this.lastFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    // preventScroll keeps QtWebEngine from scrolling the editor to the focused
-    // menu when it opens next to a right-click near the viewport edges.
-    menu.focus({ preventScroll: true })
+    if (options.preserveFocus) {
+      // Keep the current focus (e.g. an in-cell editor that commits on blur)
+      // and drive the menu from a document-level listener instead of focusing
+      // the menu itself.
+      document.addEventListener('keydown', this.onKeyDown, true)
+    } else {
+      // preventScroll keeps QtWebEngine from scrolling the editor to the focused
+      // menu when it opens next to a right-click near the viewport edges.
+      menu.focus({ preventScroll: true })
+    }
 
     // Capture listeners so any interaction outside the menu (a pointer press,
     // scrolling of the editor, window resize/blur) dismisses it immediately.
@@ -117,6 +129,7 @@ export class ContextMenu {
   hide(): void {
     document.removeEventListener('pointerdown', this.onPointerDown, true)
     document.removeEventListener('scroll', this.onDismiss, true)
+    document.removeEventListener('keydown', this.onKeyDown, true)
     window.removeEventListener('resize', this.onDismiss)
     window.removeEventListener('blur', this.onDismiss)
     this.menuEl?.removeEventListener('keydown', this.onKeyDown)
@@ -166,16 +179,19 @@ export class ContextMenu {
     switch (event.key) {
       case 'Escape':
         event.preventDefault()
+        event.stopPropagation()
         this.closeWithFocusRestore()
         break
       case 'ArrowDown':
       case 'ArrowUp':
         event.preventDefault()
+        event.stopPropagation()
         this.move(event.key === 'ArrowDown' ? 1 : -1)
         break
       case 'Enter':
       case ' ':
         event.preventDefault()
+        event.stopPropagation()
         if (this.activeIndex >= 0) {
           const ref = this.itemRefs[this.activeIndex]
           if (ref) this.select(ref.entry)

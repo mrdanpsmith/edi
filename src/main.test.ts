@@ -50,6 +50,8 @@ const mainState = vi.hoisted(() => {
     readAnyTextFile: vi.fn(),
     getRecentFiles: vi.fn().mockResolvedValue([]),
     addRecentFile: vi.fn().mockResolvedValue(undefined),
+    copyText: vi.fn().mockResolvedValue(true),
+    readText: vi.fn().mockResolvedValue('PASTED'),
     markdown: 'Welcome',
     editorView,
     editorOptions: undefined as { onChange?: () => void } | undefined,
@@ -146,6 +148,15 @@ vi.mock('./recents', () => ({
   getRecentFiles: mainState.getRecentFiles,
   addRecentFile: mainState.addRecentFile,
 }))
+
+vi.mock('./clipboard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./clipboard')>()
+  return {
+    ...actual,
+    copyText: mainState.copyText,
+    readText: mainState.readText,
+  }
+})
 
 const DOM_TEMPLATE = `
   <div id="app">
@@ -262,6 +273,8 @@ beforeEach(() => {
   mainState.getRecentFiles.mockReset().mockResolvedValue([])
   mainState.getPendingFiles.mockReset().mockResolvedValue([])
   mainState.addRecentFile.mockReset().mockResolvedValue(undefined)
+  mainState.copyText.mockReset().mockResolvedValue(true)
+  mainState.readText.mockReset().mockResolvedValue('PASTED')
   mainState.markdown = 'Welcome'
   mainState.editorOptions = undefined
   for (const mock of FILE_MOCKS) {
@@ -1046,6 +1059,168 @@ describe('context menu', () => {
     realView.destroy()
     host.remove()
     mermaid.remove()
+  })
+
+  function sheetInput(value: string, selection?: [number, number]): HTMLInputElement {
+    const input = document.createElement('input')
+    input.className = 'ss-edit-input'
+    input.value = value
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(input)
+    input.focus()
+    if (selection) input.setSelectionRange(selection[0], selection[1])
+    return input
+  }
+
+  const menuLabels = (): string[] =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item')).map(
+      (button) => button.textContent ?? '',
+    )
+
+  const findMenuItem = (label: string): HTMLButtonElement =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item')).find(
+      (button) => button.textContent === label,
+    )!
+
+  const openCellMenu = (input: HTMLInputElement): void => {
+    input.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+  }
+
+  it('scopes the menu to a spreadsheet cell editor', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const input = sheetInput('=SUM(A1)', [1, 4])
+
+    openCellMenu(input)
+    expect(menuLabels()).toEqual(['Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Select all'])
+    expect(findMenuItem('Cut').disabled).toBe(false)
+
+    findMenuItem('Copy').click()
+    expect(mainState.copyText).toHaveBeenCalledWith('SUM')
+
+    openCellMenu(input)
+    findMenuItem('Cut').click()
+    expect(input.value).toBe('=(A1)')
+  })
+
+  it('disables cut and copy on a cell editor without a selection', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const input = sheetInput('=1', [2, 2])
+
+    openCellMenu(input)
+    expect(findMenuItem('Cut').disabled).toBe(true)
+    expect(findMenuItem('Copy').disabled).toBe(true)
+  })
+
+  it('selects and pastes into the cell editor', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const input = sheetInput('=A1', [2, 2])
+
+    openCellMenu(input)
+    findMenuItem('Select all').click()
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(input.value.length)
+    expect(document.activeElement).toBe(input)
+
+    mainState.readText.mockResolvedValue('PASTED')
+    input.setSelectionRange(2, 2)
+    openCellMenu(input)
+    findMenuItem('Paste').click()
+    await flushAsync()
+    expect(input.value).toBe('=APASTED1')
+  })
+
+  it('runs undo and redo against the cell editor', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const execCommand = vi.fn()
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+    const input = sheetInput('=1', [2, 2])
+
+    openCellMenu(input)
+    findMenuItem('Undo').click()
+    expect(execCommand).toHaveBeenCalledWith('undo')
+  })
+
+  it('keeps focus in a spreadsheet input when its menu opens', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const input = sheetInput('=1', [2, 2])
+    const blurred = vi.fn()
+    input.addEventListener('blur', blurred)
+
+    openCellMenu(input)
+    expect(document.activeElement).toBe(input)
+    expect(blurred).not.toHaveBeenCalled()
+  })
+
+  it('keeps the spreadsheet actions alongside the cell menu', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+    const sheet = document.createElement('div')
+    sheet.className = 'spreadsheet'
+    sheet.innerHTML = '<div class="block-handle" data-block-pos="1"></div>'
+    const input = document.createElement('input')
+    input.className = 'ss-edit-input'
+    input.value = '=1'
+    sheet.appendChild(input)
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sheet)
+    input.focus()
+
+    openCellMenu(input)
+    expect(menuLabels()).toEqual([
+      'Undo',
+      'Redo',
+      'Cut',
+      'Copy',
+      'Paste',
+      'Select all',
+      'Table view',
+      'Edit source',
+    ])
+
+    realView.destroy()
+    host.remove()
+    sheet.remove()
+  })
+
+  it('offers only spreadsheet actions on a selected cell', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+    const sheet = document.createElement('div')
+    sheet.className = 'spreadsheet'
+    sheet.innerHTML =
+      '<div class="block-handle" data-block-pos="1"></div>' +
+      '<table><tbody><tr><td class="ss-cell">1</td></tr></tbody></table>'
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sheet)
+    const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
+
+    cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    expect(menuLabels()).toEqual(['Table view', 'Edit source'])
+
+    realView.destroy()
+    host.remove()
+    sheet.remove()
   })
 })
 

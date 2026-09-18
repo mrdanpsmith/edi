@@ -6,7 +6,7 @@ import { confirmAction, hasBridge, invoke, showError } from './bridge'
 import { startThemeWatcher } from './theme'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
-import { redo, redoDepth, redoNoScroll, undo, undoDepth, undoNoScroll } from 'prosemirror-history'
+import { redoDepth, redoNoScroll, undoDepth, undoNoScroll } from 'prosemirror-history'
 import { selectAll } from 'prosemirror-commands'
 import {
   dirname,
@@ -29,7 +29,7 @@ import {
 } from './files'
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText } from './paste'
-import { copyText, writeClipboard } from './clipboard'
+import { copyText, readText, writeClipboard } from './clipboard'
 import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
 import { toggleSourceMode } from './blockplugin'
@@ -565,24 +565,11 @@ function toggleFormatting(): void {
   syncMenuState()
 }
 
-function editUndo(): void {
-  const view = blockEditor?.getView()
-  if (view) {
-    view.focus()
-    undo(view.state, view.dispatch, view)
-  }
-}
-
-function editRedo(): void {
-  const view = blockEditor?.getView()
-  if (view) {
-    view.focus()
-    redo(view.state, view.dispatch, view)
-  }
-}
-
 // Menu-triggered undo/redo must not scroll: the transaction is dispatched with
 // scrollIntoView=false so the viewport stays put (undoNoScroll/redoNoScroll).
+// Reaching for the menu (or a context menu) means the pointer is away from the
+// content, so yanking the viewport to the restored selection is disorienting;
+// keyboard undo keeps its scroll-to-change behavior via the editor keymap.
 function editUndoNoScroll(): void {
   const view = blockEditor?.getView()
   if (view) {
@@ -680,19 +667,110 @@ function hasEditorSelection(): boolean {
 }
 
 /**
- * Build the right-click menu for a point in the document. Always starts with
- * the standard editing commands, then appends block-specific actions for the
- * element under the pointer: Run/Stop + Copy source for runnable code blocks,
- * commit back to visual mode for source-mode blocks, and Edit source for
- * visual-mode blocks with a known position (e.g. Mermaid diagrams).
+ * Build the right-click menu for a point in the document. Spreadsheet text
+ * inputs get editing commands scoped to the cell; other spreadsheet targets
+ * (a selected cell, the chrome) get only the spreadsheet actions, since the
+ * generic document commands would silently act on the whole table block.
+ * Everything else gets the standard editing commands plus any block-specific
+ * actions for the element under the pointer.
  */
 function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
+  const target = event.target instanceof Element ? event.target : null
+  const input = target?.closest<HTMLInputElement>('.ss-edit-input, .ss-fx-input') ?? null
+  let entries: ContextMenuEntry[]
+  if (input) {
+    entries = buildInputMenu(input)
+  } else if (target?.closest('.spreadsheet, .ss-plain')) {
+    entries = []
+  } else {
+    entries = buildDocumentMenu()
+  }
+  if (target) {
+    const blockEntries = buildBlockMenuItems(target)
+    if (blockEntries.length > 0) {
+      if (entries.length > 0) entries.push({ type: 'separator' })
+      entries.push(...blockEntries)
+    }
+  }
+  return entries
+}
+
+/** Standard editing commands scoped to the focused spreadsheet input. */
+function buildInputMenu(input: HTMLInputElement): ContextMenuEntry[] {
+  const hasSelection = input.selectionStart !== input.selectionEnd
+  const canUndo = typeof document.execCommand === 'function'
+  return [
+    {
+      type: 'item',
+      label: 'Undo',
+      disabled: !canUndo,
+      onSelect: () => runInputHistory(input, 'undo'),
+    },
+    {
+      type: 'item',
+      label: 'Redo',
+      disabled: !canUndo,
+      onSelect: () => runInputHistory(input, 'redo'),
+    },
+    { type: 'separator' },
+    {
+      type: 'item',
+      label: 'Cut',
+      disabled: !hasSelection,
+      onSelect: () => cutInput(input),
+    },
+    {
+      type: 'item',
+      label: 'Copy',
+      disabled: !hasSelection,
+      onSelect: () => copyInput(input),
+    },
+    { type: 'item', label: 'Paste', onSelect: () => void pasteIntoInput(input) },
+    { type: 'item', label: 'Select all', onSelect: () => input.select() },
+  ]
+}
+
+function inputSelection(input: HTMLInputElement): { text: string; start: number; end: number } {
+  const start = input.selectionStart ?? 0
+  const end = input.selectionEnd ?? start
+  return { text: input.value.slice(start, end), start, end }
+}
+
+function runInputHistory(input: HTMLInputElement, command: 'undo' | 'redo'): void {
+  input.focus()
+  if (typeof document.execCommand === 'function') document.execCommand(command)
+}
+
+function copyInput(input: HTMLInputElement): void {
+  const { text } = inputSelection(input)
+  if (text) void copyText(text)
+}
+
+function cutInput(input: HTMLInputElement): void {
+  const { text, start, end } = inputSelection(input)
+  if (!text) return
+  void copyText(text)
+  input.setRangeText('', start, end, 'start')
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.focus()
+}
+
+async function pasteIntoInput(input: HTMLInputElement): Promise<void> {
+  const text = await readText()
+  if (text === null || text === '') return
+  const { start, end } = inputSelection(input)
+  input.setRangeText(text, start, end, 'end')
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.focus()
+}
+
+function buildDocumentMenu(): ContextMenuEntry[] {
   const view = blockEditor?.getView()
   // Only offer undo/redo when there is actually history to traverse; a
   // enabled-but-no-op Redo just looks broken.
   const undoable = !!view && undoDepth(view.state) > 0
   const redoable = !!view && redoDepth(view.state) > 0
-  const entries: ContextMenuEntry[] = [
+  return [
     { type: 'item', label: 'Undo', disabled: !undoable, onSelect: () => editUndoNoScroll() },
     { type: 'item', label: 'Redo', disabled: !redoable, onSelect: () => editRedoNoScroll() },
     { type: 'separator' },
@@ -711,14 +789,6 @@ function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
     { type: 'item', label: 'Paste', onSelect: () => void editPaste() },
     { type: 'item', label: 'Select all', onSelect: () => editSelectAll() },
   ]
-  if (event.target instanceof Element) {
-    const blockEntries = buildBlockMenuItems(event.target)
-    if (blockEntries.length > 0) {
-      entries.push({ type: 'separator' })
-      entries.push(...blockEntries)
-    }
-  }
-  return entries
 }
 
 function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
@@ -814,8 +884,13 @@ function init(): void {
   editorContainer.addEventListener('contextmenu', (event) => {
     if (getState().sessions.length === 0) return
     event.preventDefault()
+    const entries = buildContextMenu(event)
+    if (entries.length === 0) return
+    const target = event.target instanceof Element ? event.target : null
+    const preserveFocus =
+      target !== null && target.closest('.ss-edit-input, .ss-fx-input') !== null
     contextMenu ??= new ContextMenu()
-    contextMenu.show(buildContextMenu(event), event.clientX, event.clientY)
+    contextMenu.show(entries, event.clientX, event.clientY, { preserveFocus })
   })
   // Drive content from the native shell (QWebChannel): the desktop shell loads
   // documents and the smoke/selftest harness drives headless runs via this hook.
@@ -845,8 +920,8 @@ function init(): void {
     export: () => void exportHtml(),
     toggleFormatting: () => toggleFormatting(),
     formulaReference: () => openFunctionReference(),
-    undo: () => editUndo(),
-    redo: () => editRedo(),
+    undo: () => editUndoNoScroll(),
+    redo: () => editRedoNoScroll(),
     cut: () => editCut(),
     copy: () => editCopy(),
     paste: () => void editPaste(),
