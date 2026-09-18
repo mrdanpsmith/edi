@@ -184,9 +184,9 @@ export function listMaskedTokens(text: string): MaskedToken[] {
  */
 export function inlineMarkdownToHtml(
   text: string,
-  opts?: { indexedMasked?: boolean },
+  opts?: { indexedMasked?: boolean; markMisleading?: boolean },
 ): string {
-  return renderCellHtml(text, opts?.indexedMasked ?? false)
+  return renderCellHtml(text, opts?.indexedMasked ?? false, opts?.markMisleading ?? false)
 }
 
 // --- Resolved tables (markdown without live formulas) ---

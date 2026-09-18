@@ -15,6 +15,7 @@ import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { remarkPlugin as maskedFieldRemarkPlugin, maskedFieldToMarkdown } from './node/masked'
+import { isMisleadingLink } from './linkSecurity'
 
 export type CellMark = 'strong' | 'em' | 'del' | 'code' | 'highlight' | 'sub' | 'sup'
 
@@ -274,32 +275,68 @@ function mergeRuns(segs: readonly CellSegment[]): CellSegment[] {
   return out
 }
 
+/** Render one segment's marks and payload (without any link wrapper). */
+function renderSegmentBody(seg: CellSegment, nextMasked: () => number): string {
+  const marks = orderedMarks(seg.marks)
+  let out = ''
+  for (const m of marks) out += `<${MARK_TAG[m]}>`
+  if (seg.masked) {
+    const label = seg.masked.label.replace(/[\\`*_{}[\]]~/g, '').replace(/[&<>"']/g, (char) =>
+      escapeCellHtml(char),
+    )
+    const index = nextMasked()
+    const attr = index >= 0 ? ` data-edi-masked="${index}"` : ''
+    out += `<span class="masked-field"${attr}>${MASKED_BULLETS}${label ? ` (${label})` : ''}</span>`
+  } else {
+    out += escapeCellHtml(seg.text)
+  }
+  for (let i = marks.length - 1; i >= 0; i--) out += `</${MARK_TAG[marks[i]!]}>`
+  return out
+}
+
+/** The visible text a link segment contributes, used to spot a misleading link
+ * whose link text claims a different destination than its href. */
+function linkRunText(seg: CellSegment): string {
+  return seg.masked ? seg.masked.content : seg.text
+}
+
 /** Render a cell's raw inline markdown to safe HTML (shared by the grid, the
  * plain view, and HTML export). ``indexedMasked`` gives each masked pill a
- * `data-edi-masked` index matching `listMaskedTokens(raw)` order. */
-export function renderCellHtml(raw: string, indexedMasked = false): string {
+ * `data-edi-masked` index matching `listMaskedTokens(raw)` order.
+ * ``markMisleading`` (view-only; export omits it) flags anchors whose link text
+ * does not match their destination with the same `.ml-misleading` class the
+ * document editor decorates links with. */
+export function renderCellHtml(
+  raw: string,
+  indexedMasked = false,
+  markMisleading = false,
+): string {
   const segs = mergeRuns(parseCellSegments(raw))
-  let out = ''
   let maskedIndex = 0
-  for (const seg of segs) {
-    const marks = orderedMarks(seg.marks)
-    if (seg.href !== null) {
-      const title = seg.hrefTitle ? ` title="${escapeCellHtml(seg.hrefTitle)}"` : ''
-      out += `<a href="${escapeCellHtml(seg.href)}"${title}>`
+  const nextMasked = (): number => (indexedMasked ? maskedIndex++ : -1)
+  let out = ''
+  let i = 0
+  while (i < segs.length) {
+    const seg = segs[i]!
+    if (seg.href === null) {
+      out += renderSegmentBody(seg, nextMasked)
+      i++
+      continue
     }
-    for (const m of marks) out += `<${MARK_TAG[m]}>`
-    if (seg.masked) {
-      const label = seg.masked.label.replace(/[\\`*_{}[\]]~/g, '').replace(/[&<>"']/g, (char) =>
-        escapeCellHtml(char),
-      )
-      const attr = indexedMasked ? ` data-edi-masked="${maskedIndex}"` : ''
-      out += `<span class="masked-field"${attr}>${MASKED_BULLETS}${label ? ` (${label})` : ''}</span>`
-      maskedIndex++
-    } else {
-      out += escapeCellHtml(seg.text)
+    // Emit one anchor per contiguous link run so a link split by nested marks
+    // (e.g. `[**a**b](x)`) stays a single <a> and its full text is known.
+    let j = i
+    let text = ''
+    while (j < segs.length && segs[j]!.href === seg.href) {
+      text += linkRunText(segs[j]!)
+      j++
     }
-    for (let i = marks.length - 1; i >= 0; i--) out += `</${MARK_TAG[marks[i]!]}>`
-    if (seg.href !== null) out += `</a>`
+    const title = seg.hrefTitle ? ` title="${escapeCellHtml(seg.hrefTitle)}"` : ''
+    const cls = markMisleading && isMisleadingLink(seg.href, text) ? ' class="ml-misleading"' : ''
+    out += `<a href="${escapeCellHtml(seg.href)}"${title}${cls}>`
+    for (let k = i; k < j; k++) out += renderSegmentBody(segs[k]!, nextMasked)
+    out += '</a>'
+    i = j
   }
   return out
 }

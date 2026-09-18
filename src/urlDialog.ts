@@ -1,9 +1,20 @@
 /**
- * A small centered modal dialog prompting the user for a URL. Used by the
- * formatting toolbar's Hyperlink button. Resolves with the entered URL (or
- * ``null`` if the user cancels).
+ * A small centered modal dialog prompting for a link's URL and, when nothing is
+ * selected to provide the link text, an optional link text defaulted to the
+ * URL. Used by the formatting toolbar's Hyperlink button for both the document
+ * and spreadsheet cells (the cell flow captures its text selection on mousedown
+ * so the dialog's focus change does not discard it).
+ *
+ * `existingText` is the text the link will cover ('' means none — the dialog
+ * then asks for link text). Resolves with the entered text/url pair (``text``
+ * is '' when the field was hidden), or ``null`` if the user cancels.
  */
-export function promptForUrl(existing: string): Promise<string | null> {
+export interface LinkPrompt {
+  text: string
+  url: string
+}
+
+export function promptForLink(existingText: string, existingUrl: string): Promise<LinkPrompt | null> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div')
     overlay.className = 'edi-dialog-overlay'
@@ -18,17 +29,32 @@ export function promptForUrl(existing: string): Promise<string | null> {
     title.textContent = 'Insert link'
     box.append(title)
 
-    const label = document.createElement('label')
-    label.className = 'edi-dialog-label'
-    label.textContent = 'URL'
-    box.append(label)
+    const urlLabel = document.createElement('label')
+    urlLabel.className = 'edi-dialog-label'
+    urlLabel.textContent = 'URL'
+    box.append(urlLabel)
 
-    const input = document.createElement('input')
-    input.className = 'edi-dialog-input'
-    input.type = 'url'
-    input.placeholder = 'https://'
-    input.value = existing
-    box.append(input)
+    const urlInput = document.createElement('input')
+    urlInput.className = 'edi-dialog-input'
+    urlInput.type = 'url'
+    urlInput.placeholder = 'https://'
+    urlInput.value = existingUrl
+    box.append(urlInput)
+
+    let textInput: HTMLInputElement | null = null
+    if (!existingText) {
+      const textLabel = document.createElement('label')
+      textLabel.className = 'edi-dialog-label'
+      textLabel.textContent = 'Link text'
+      box.append(textLabel)
+
+      textInput = document.createElement('input')
+      textInput.className = 'edi-dialog-input'
+      textInput.type = 'text'
+      textInput.placeholder = 'https://'
+      textInput.value = existingUrl
+      box.append(textInput)
+    }
 
     const actions = document.createElement('div')
     actions.className = 'edi-dialog-actions'
@@ -53,27 +79,33 @@ export function promptForUrl(existing: string): Promise<string | null> {
       overlay.remove()
     }
 
-    function finish(value: string | null): void {
+    function finish(value: LinkPrompt | null): void {
       close()
       resolve(value)
     }
 
+    function collect(): LinkPrompt {
+      return { text: textInput ? textInput.value : '', url: urlInput.value }
+    }
+
     cancel.addEventListener('click', () => finish(null))
-    ok.addEventListener('click', () => finish(input.value))
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        finish(input.value)
-      } else if (event.key === 'Escape') {
-        event.preventDefault()
-        finish(null)
-      }
-    })
+    ok.addEventListener('click', () => finish(collect()))
+    for (const input of [urlInput, ...(textInput ? [textInput] : [])]) {
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          finish(collect())
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          finish(null)
+        }
+      })
+    }
     overlay.addEventListener('mousedown', (event) => {
       if (event.target === overlay) finish(null)
     })
 
-    input.focus()
-    input.select()
+    urlInput.focus()
+    urlInput.select()
   })
 }

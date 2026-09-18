@@ -268,6 +268,22 @@ export function createBlockEditor(
   })
   viewRef.current = view
 
+  // Links inside spreadsheet/plain table node views are raw `<a>` elements in
+  // the cell HTML, not ProseMirror marks, so the click plugin above never sees
+  // them. Delegate at the editor root and route them through the same opener,
+  // so they get identical external/internal routing and clickjacking warning.
+  const onNodeViewLinkClick = (event: MouseEvent): void => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const anchor = target.closest<HTMLAnchorElement>('.spreadsheet a[href], .ss-plain a[href]')
+    if (!anchor) return
+    const href = anchor.getAttribute('href') ?? ''
+    if (!href) return
+    event.preventDefault()
+    options.onOpenLink?.(href, anchor.textContent ?? '')
+  }
+  view.dom.addEventListener('click', onNodeViewLinkClick)
+
   attachBlockHandles(view)
 
   return {
@@ -312,6 +328,7 @@ export function createBlockEditor(
       view.focus()
     },
     destroy() {
+      view.dom.removeEventListener('click', onNodeViewLinkClick)
       view.destroy()
     },
   }

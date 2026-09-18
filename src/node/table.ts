@@ -11,7 +11,12 @@ import { undoNoScroll, redoNoScroll } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText } from '../clipboard'
 import { blockNodeView } from '../blockview'
-import { setActiveCellHost, type InlineCellHost, type InlineCellKind } from '../inline-format'
+import {
+  setActiveCellHost,
+  type CellLinkContext,
+  type InlineCellHost,
+  type InlineCellKind,
+} from '../inline-format'
 import { bindCellMaskedField, maskedFieldToMarkdown, promptForNewSecret } from './masked'
 import { ContextMenu, type ContextMenuEntry } from '../contextmenu'
 
@@ -121,6 +126,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   private pointDrag: PointDrag | null = null
   private pointInsert: PointInsert | null = null
   private pointRange: { r1: number; c1: number; r2: number; c2: number } | null = null
+  private pendingLink: PendingCellLink | null = null
   private insertGuide: HTMLElement | null = null
   private insertGuideLine: HTMLElement | null = null
   private insertGuidePlus: HTMLElement | null = null
@@ -241,6 +247,87 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.commitRows(next, anchor, active)
     this.grid?.focus()
     return true
+  }
+
+  /**
+   * Capture the live edit's text and selection before the dialog opens. The
+   * toolbar calls this on mousedown (ahead of the focus change that blurs and
+   * commits the in-cell editor), so a link can be applied to exactly the
+   * selected text rather than the whole cell.
+   */
+  beginCellLink(): CellLinkContext {
+    const target = this.linkEditTarget()
+    const row = target?.row ?? this.active?.row ?? 0
+    const col = target?.col ?? this.active?.col ?? 0
+    const value = target ? target.input.value : (this.rows[row]?.[col] ?? '')
+    const start = target ? (target.input.selectionStart ?? value.length) : value.length
+    const end = target ? (target.input.selectionEnd ?? start) : start
+    this.pendingLink = { row, col, value, start, end, editing: target !== null }
+    if (target) {
+      return {
+        text: start === end ? '' : value.slice(start, end),
+        url: linkHrefIn(value, start, end),
+      }
+    }
+    return { text: value, url: wholeCellLinkHref(value) }
+  }
+
+  /** Apply (or, with an empty URL, remove) a link using the snapshot captured
+   * by `beginCellLink`, honoring the dialog's link text when nothing was
+   * selected. */
+  applyCellLink(text: string, url: string): boolean {
+    const pending = this.pendingLink
+    this.pendingLink = null
+    if (!pending) return false
+    const current = this.rows[pending.row]?.[pending.col] ?? ''
+    const href = url.trim()
+    let raw: string
+    if (pending.editing) {
+      // A selection or caret inside a link's visible text edits that link.
+      const span = linkSpans(pending.value).find(
+        (s) => pending.start >= s.from && pending.end <= s.to,
+      )
+      if (span) {
+        const spanText = pending.value.slice(span.from, span.to)
+        const linked = href ? `[${spanText}](${href})` : spanText
+        raw = pending.value.slice(0, span.rawFrom) + linked + pending.value.slice(span.rawTo)
+      } else if (pending.start !== pending.end) {
+        const selected = pending.value.slice(pending.start, pending.end)
+        const linked = href ? `[${selected}](${href})` : selected
+        raw = pending.value.slice(0, pending.start) + linked + pending.value.slice(pending.end)
+      } else if (href) {
+        const label = text.trim() || href
+        raw = pending.value.slice(0, pending.start) + `[${label}](${href})` + pending.value.slice(pending.end)
+      } else {
+        raw = pending.value
+      }
+    } else if (href) {
+      raw = pending.value.trim() ? setLink(pending.value, href) : `[${text.trim() || href}](${href})`
+    } else {
+      raw = setLink(pending.value, undefined)
+    }
+    if (raw === current) return false
+    const next = this.rows.map((r) => [...r])
+    next[pending.row]![pending.col] = raw
+    this.commitRows(
+      next,
+      { row: pending.row, col: pending.col },
+      { row: pending.row, col: pending.col },
+    )
+    this.grid?.focus()
+    return true
+  }
+
+  /** The currently focused cell text editor (in-cell overlay or fx bar), if
+   * any, with its cell coordinates. */
+  private linkEditTarget(): { input: HTMLInputElement; row: number; col: number } | null {
+    if (this.editing && this.editOverlay) {
+      return { input: this.editOverlay, row: this.editing.row, col: this.editing.col }
+    }
+    if (this.fxInput && document.activeElement === this.fxInput && this.active) {
+      return { input: this.fxInput, row: this.active.row, col: this.active.col }
+    }
+    return null
   }
 
   update(node: ProseNode): boolean {
@@ -687,7 +774,7 @@ class TableNodeView implements NodeView, InlineCellHost {
           td.classList.add(cellSol.kind === 'error' ? 'ss-error' : 'ss-formula')
         } else {
           const display = cellSol?.display ?? ''
-          if (display) inner.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true })
+          if (display) inner.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true, markMisleading: true })
         }
         td.appendChild(inner)
         if (!cellSol || (cellSol.kind !== 'formula' && cellSol.kind !== 'error')) {
@@ -2217,6 +2304,58 @@ function setLink(text: string, url?: string): string {
   return text.replace(/^\[(.+)\]\([^)]*\)$/, '$1')
 }
 
+/** A cell's live link context captured before the URL dialog steals focus. */
+interface PendingCellLink {
+  row: number
+  col: number
+  value: string
+  start: number
+  end: number
+  editing: boolean
+}
+
+/** Every `[text](href)` span in a cell's raw markdown, with the offsets of the
+ * visible text (to match a selection against) and the full raw syntax (to
+ * rebuild the link in place). */
+function linkSpans(
+  value: string,
+): Array<{ href: string; from: number; to: number; rawFrom: number; rawTo: number }> {
+  const out: Array<{
+    href: string
+    from: number
+    to: number
+    rawFrom: number
+    rawTo: number
+  }> = []
+  const re = /\[([^\]]*)\]\(([^)]*)\)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(value))) {
+    const from = match.index + 1
+    out.push({
+      href: match[2] ?? '',
+      from,
+      to: from + (match[1]?.length ?? 0),
+      rawFrom: match.index,
+      rawTo: re.lastIndex,
+    })
+  }
+  return out
+}
+
+/** The href to prefill when the selection already sits inside a link's text. */
+function linkHrefIn(value: string, start: number, end: number): string {
+  for (const span of linkSpans(value)) {
+    if (start >= span.from && end <= span.to) return span.href
+  }
+  return ''
+}
+
+/** The href of a cell that is exactly one link, for prefilling the dialog. */
+function wholeCellLinkHref(value: string): string {
+  const link = /^\[([^\]]*)\]\(([^)]*)\)$/.exec(value.trim())
+  return link ? (link[2] ?? '') : ''
+}
+
 let inlineFocusListenersAttached = false
 
 /**
@@ -2385,7 +2524,7 @@ class TablePlainView implements NodeView {
     } else {
       const display = cellSol?.display ?? ''
       if (!display) td.textContent = ''
-      else td.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true })
+      else td.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true, markMisleading: true })
       bindMaskedPillsIn(td, this.rows, row, col, (next) => this.commitTable(next))
     }
     const raw = this.rows[row]?.[col] ?? ''

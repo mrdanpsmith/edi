@@ -936,6 +936,122 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('flags a misleading cell link in the grid', () => {
+    const view = createEditor(
+      '| A |\n| --- |\n| [https://www.google.com](https://attacker.address) |',
+    )
+    const anchor = cell(view, 1, 0).querySelector<HTMLAnchorElement>('a')!
+    expect(anchor.classList.contains('ml-misleading')).toBe(true)
+    view.destroy()
+  })
+
+  it('does not flag a matching cell link', () => {
+    const view = createEditor('| A |\n| --- |\n| [https://example.com](https://example.com) |')
+    const anchor = cell(view, 1, 0).querySelector<HTMLAnchorElement>('a')!
+    expect(anchor.classList.contains('ml-misleading')).toBe(false)
+    view.destroy()
+  })
+
+  it('opens a cell link through the block editor link handler', () => {
+    const onOpenLink = vi.fn()
+    const editor = createBlockEditor(
+      document.body,
+      '| A |\n| --- |\n| [go](https://example.com) |',
+      { onOpenLink },
+    )
+    const view = editor.getView()
+    enterSpreadsheetMode(view, 0)
+    const anchor = tableGrid(view).querySelector<HTMLAnchorElement>('a[href]')!
+    expect(anchor.textContent).toBe('go')
+    anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect(onOpenLink).toHaveBeenCalledWith('https://example.com', 'go')
+    editor.destroy()
+  })
+
+  it('links the selected text of an in-cell edit', () => {
+    const view = createEditor('| A |\n| --- |\n| foo bar |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const input = grid.querySelector<HTMLInputElement>('.ss-edit-input')!
+    input.setSelectionRange(4, 7)
+    const host = getActiveCellHost()!
+    expect(host.beginCellLink()).toEqual({ text: 'bar', url: '' })
+    expect(host.applyCellLink('', 'https://example.com')).toBe(true)
+    expect(docValue(view)).toContain('foo [bar](https://example.com)')
+    view.destroy()
+  })
+
+  it('prefills and rewrites a whole-cell link', () => {
+    const view = createEditor('| A |\n| --- |\n| [go](https://old.example) |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()!
+    expect(host.beginCellLink()).toEqual({
+      text: '[go](https://old.example)',
+      url: 'https://old.example',
+    })
+    expect(host.applyCellLink('', 'https://new.example')).toBe(true)
+    expect(docValue(view)).toContain('[go](https://new.example)')
+    view.destroy()
+  })
+
+  it('removes a cell link when the URL is cleared', () => {
+    const view = createEditor('| A |\n| --- |\n| [go](https://example.com) |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()!
+    host.beginCellLink()
+    expect(host.applyCellLink('', '')).toBe(true)
+    expect(docValue(view)).not.toContain('](https://example.com)')
+    view.destroy()
+  })
+
+  it('prefills the href and rewrites a link when the edit selection sits inside it', () => {
+    const view = createEditor('| A |\n| --- |\n| [go](https://example.com) |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const input = grid.querySelector<HTMLInputElement>('.ss-edit-input')!
+    input.setSelectionRange(1, 3)
+    const host = getActiveCellHost()!
+    expect(host.beginCellLink()).toEqual({ text: 'go', url: 'https://example.com' })
+    expect(host.applyCellLink('', 'https://new.example')).toBe(true)
+    expect(docValue(view)).toContain('[go](https://new.example)')
+    view.destroy()
+  })
+
+  it('inserts a link with the dialog text at a collapsed caret', () => {
+    const view = createEditor('| A |\n| --- |\n| foo bar |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const input = grid.querySelector<HTMLInputElement>('.ss-edit-input')!
+    input.setSelectionRange(4, 4)
+    const host = getActiveCellHost()!
+    expect(host.beginCellLink()).toEqual({ text: '', url: '' })
+    expect(host.applyCellLink('My site', 'https://example.com')).toBe(true)
+    expect(docValue(view)).toContain('foo [My site](https://example.com)bar')
+    view.destroy()
+  })
+
+  it('links an empty cell with the dialog text (defaulted to the URL)', () => {
+    const view = createEditor('| A |\n| --- |\n|  |')
+    const grid = tableGrid(view)
+    grid.focus()
+    mousedown(cell(view, 1, 0))
+    const host = getActiveCellHost()!
+    expect(host.beginCellLink()).toEqual({ text: '', url: '' })
+    expect(host.applyCellLink('', 'https://example.com')).toBe(true)
+    expect(docValue(view)).toContain('[https://example.com](https://example.com)')
+    view.destroy()
+  })
+
   it('applyInline combines bold with italic as nested marks', () => {
     const view = createEditor('| A |\n| --- |\n| hello |')
     const grid = tableGrid(view)

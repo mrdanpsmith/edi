@@ -5,7 +5,8 @@ import { schema } from './schema'
 import { FormatToolbar, getButtons, toggleTaskItems, applyLink, blockTypeSelectPlugin } from './formatToolbar'
 import type { FormatToolbarContext } from './formatToolbar'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { promptForUrl } from './urlDialog'
+import { promptForLink } from './urlDialog'
+import { getActiveCellHost, setActiveCellHost } from './inline-format'
 
 vi.mock('./urlDialog')
 
@@ -463,13 +464,13 @@ describe('hyperlink', () => {
 
 describe('hyperlink dialog flow', () => {
   beforeEach(() => {
-    vi.mocked(promptForUrl).mockReset()
-    vi.mocked(promptForUrl).mockResolvedValue('https://new.example.org')
+    vi.mocked(promptForLink).mockReset()
+    vi.mocked(promptForLink).mockResolvedValue({ text: '', url: 'https://new.example.org' })
   })
 
   afterEach(() => {
     document.body.innerHTML = ''
-    vi.mocked(promptForUrl).mockReset()
+    vi.mocked(promptForLink).mockReset()
   })
 
   it('prefills the href of a linked selection then applies the new link', async () => {
@@ -481,7 +482,7 @@ describe('hyperlink dialog flow', () => {
     })
     const result = await runLinkButton(view)
     expect(result).toBe(true)
-    expect(promptForUrl).toHaveBeenCalledWith('https://old.example.com')
+    expect(promptForLink).toHaveBeenCalledWith('hello', 'https://old.example.com')
     expect(proseToMarkdown(view.state.doc)).toContain('[hello](https://new.example.org)')
     view.destroy()
     host.remove()
@@ -497,8 +498,22 @@ describe('hyperlink dialog flow', () => {
     const linkMark = view.state.schema.marks.link.create({ href: 'https://stored.example.com', title: null })
     view.dispatch(view.state.tr.setStoredMarks([linkMark]))
     await runLinkButton(view)
-    expect(promptForUrl).toHaveBeenCalledWith('https://stored.example.com')
+    expect(promptForLink).toHaveBeenCalledWith('', 'https://stored.example.com')
     expect(proseToMarkdown(view.state.doc)).toContain('https://new.example.org')
+    view.destroy()
+    host.remove()
+  })
+
+  it('uses the dialog link text when nothing is selected', async () => {
+    vi.mocked(promptForLink).mockResolvedValue({ text: 'My site', url: 'https://new.example.org' })
+    const doc = markdownToProse('plain', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
+    })
+    await runLinkButton(view)
+    expect(proseToMarkdown(view.state.doc)).toContain('[My site](https://new.example.org)')
     view.destroy()
     host.remove()
   })
@@ -508,12 +523,101 @@ describe('hyperlink dialog flow', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const view = new EditorView(host, { state: EditorState.create({ doc }) })
-    vi.mocked(promptForUrl).mockResolvedValue(null)
+    vi.mocked(promptForLink).mockResolvedValue(null)
     const result = await runLinkButton(view)
     expect(result).toBe(false)
     expect(proseToMarkdown(view.state.doc)).toBe('plain text\n')
     view.destroy()
     host.remove()
+  })
+})
+
+describe('cell hyperlink button', () => {
+  beforeEach(() => {
+    vi.mocked(promptForLink).mockReset()
+    vi.mocked(promptForLink).mockResolvedValue({ text: '', url: 'https://new.example.org' })
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    setActiveCellHost(null)
+    vi.mocked(promptForLink).mockReset()
+  })
+
+  it('captures the cell link context on mousedown and applies the URL', async () => {
+    const cellHost = {
+      applyInline: vi.fn(),
+      beginCellLink: vi.fn().mockReturnValue({ text: 'sel', url: 'https://old.example' }),
+      applyCellLink: vi.fn().mockReturnValue(true),
+    }
+    setActiveCellHost(cellHost)
+    const { bar, ctx } = makeFixture()
+    new FormatToolbar(bar, ctx)
+    const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
+    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    button.click()
+    await vi.waitFor(() =>
+      expect(cellHost.applyCellLink).toHaveBeenCalledWith('', 'https://new.example.org'),
+    )
+    expect(cellHost.applyCellLink).toHaveBeenCalledTimes(1)
+    expect(cellHost.beginCellLink).toHaveBeenCalledTimes(1)
+    expect(promptForLink).toHaveBeenCalledWith('sel', 'https://old.example')
+  })
+
+  it('still targets a cell whose live host was cleared between mousedown and click', async () => {
+    const cellHost = {
+      applyInline: vi.fn(),
+      beginCellLink: vi.fn().mockReturnValue({ text: '', url: '' }),
+      applyCellLink: vi.fn().mockReturnValue(true),
+    }
+    const { bar, ctx } = makeFixture()
+    new FormatToolbar(bar, ctx)
+    const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
+    setActiveCellHost(cellHost)
+    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    const liveHost = getActiveCellHost()
+    expect(liveHost).toBe(cellHost)
+    setActiveCellHost(null)
+    button.click()
+    await vi.waitFor(() =>
+      expect(cellHost.applyCellLink).toHaveBeenCalledWith('', 'https://new.example.org'),
+    )
+    expect(cellHost.applyCellLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the dialog link text when the cell selection was empty', async () => {
+    const cellHost = {
+      applyInline: vi.fn(),
+      beginCellLink: vi.fn().mockReturnValue({ text: '', url: '' }),
+      applyCellLink: vi.fn().mockReturnValue(true),
+    }
+    vi.mocked(promptForLink).mockResolvedValue({ text: 'My site', url: 'https://new.example.org' })
+    setActiveCellHost(cellHost)
+    const { bar, ctx } = makeFixture()
+    new FormatToolbar(bar, ctx)
+    const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
+    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    button.click()
+    await vi.waitFor(() =>
+      expect(cellHost.applyCellLink).toHaveBeenCalledWith('My site', 'https://new.example.org'),
+    )
+  })
+
+  it('falls back to wrapping the whole cell without a mousedown snapshot', async () => {
+    const cellHost = {
+      applyInline: vi.fn().mockReturnValue(true),
+      beginCellLink: vi.fn(),
+      applyCellLink: vi.fn(),
+    }
+    setActiveCellHost(cellHost)
+    const { bar, ctx } = makeFixture()
+    new FormatToolbar(bar, ctx)
+    const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
+    button.click()
+    await vi.waitFor(() =>
+      expect(cellHost.applyInline).toHaveBeenCalledWith('link', 'https://new.example.org'),
+    )
+    expect(cellHost.beginCellLink).not.toHaveBeenCalled()
   })
 })
 

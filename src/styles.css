@@ -973,6 +973,13 @@ body {
   text-overflow: ellipsis;
 }
 
+/* A cell link whose text does not match its href (the clickjacking heuristic)
+   is shown in the danger color, matching the editor's .ml-misleading. */
+.spreadsheet .ss-cell-content a.ml-misleading,
+.ss-plain .ss-plain-table a.ml-misleading {
+  color: var(--danger);
+}
+
 /* Column alignment from the GFM delimiter row (`| :---: | ---: |`). The cell
    content is a max-content block, so it is placed with auto margins rather
    than `text-align` (which would not move a block child). */

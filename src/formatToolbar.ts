@@ -3,10 +3,10 @@ import type { MarkType } from 'prosemirror-model'
 import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands'
 import { wrapInList } from 'prosemirror-schema-list'
 import { TextSelection, Plugin } from 'prosemirror-state'
-import { promptForUrl } from './urlDialog'
+import { promptForLink } from './urlDialog'
 import { insertMaskedFieldCommand } from './node/masked'
 import { insertTable } from './node/table'
-import { getActiveCellHost, type InlineCellKind } from './inline-format'
+import { getActiveCellHost, type InlineCellHost, type InlineCellKind } from './inline-format'
 
 const FORMATTING_VISIBLE_KEY = 'edi.formattingVisible'
 
@@ -39,9 +39,11 @@ function findLinkHref(view: EditorView): string {
 
 /**
  * Apply (or, when ``url`` is empty, remove) a link mark over the current
- * selection. Bare ``www.`` links are given an ``https://`` scheme.
+ * selection. With no selection, insert the URL (or the dialog's optional link
+ * text) as the linked text. Bare ``www.`` links are given an ``https://``
+ * scheme.
  */
-export function applyLink(view: EditorView, url: string): boolean {
+export function applyLink(view: EditorView, url: string, text?: string): boolean {
   const { state, dispatch } = view
   const { from, to } = state.selection
   const linkType = state.schema.marks.link
@@ -51,9 +53,10 @@ export function applyLink(view: EditorView, url: string): boolean {
     const href = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed
     const mark = linkType.create({ href, title: null })
     if (from === to) {
-      // No selection: insert the URL itself as the linked text, mirroring how
-      // pasting a raw link turns it into a clickable link.
-      const node = state.schema.text(trimmed, [mark])
+      // No selection: insert the URL itself as the linked text (mirroring how
+      // pasting a raw link turns it into a clickable link), unless the dialog
+      // supplied an explicit link text.
+      const node = state.schema.text(text?.trim() || trimmed, [mark])
       tr = tr.insert(from, node)
     } else {
       tr = tr.addMark(from, to, mark)
@@ -67,10 +70,12 @@ export function applyLink(view: EditorView, url: string): boolean {
 
 function hyperlinkRun(view: EditorView): Promise<boolean> {
   const url = findLinkHref(view)
-  return promptForUrl(url).then((entered) => {
+  const { from, to } = view.state.selection
+  const text = view.state.selection.empty ? '' : view.state.doc.textBetween(from, to, '')
+  return promptForLink(text, url).then((entered) => {
     if (entered === null) return false
     view.focus()
-    return applyLink(view, entered)
+    return applyLink(view, entered.url, entered.text)
   })
 }
 
@@ -578,17 +583,44 @@ export class FormatToolbar {
       } else {
         button.textContent = spec.label
       }
+      // The Link button needs the cell's live edit selection, but the dialog
+      // (and the button's own focus change) blur and commit the in-cell editor
+      // first. Snapshot the host and its link context on mousedown so the cell
+      // is still targetable at click time even if focus games clear the live
+      // active-host registry in between.
+      let cellLinkContext: { host: InlineCellHost; text: string; url: string } | null = null
+      button.addEventListener('mousedown', () => {
+        if (spec.inline !== 'link') return
+        const activeHost = getActiveCellHost()
+        if (!activeHost) return
+        const { text, url } = activeHost.beginCellLink()
+        cellLinkContext = { host: activeHost, text, url }
+      })
       button.addEventListener('click', () => {
         const view = this.ctx.getView()
-        const host = spec.inline ? getActiveCellHost() : null
-        if (host) {
-          if (spec.inline === 'link') {
-            void promptForUrl('').then((entered) => {
-              if (entered !== null) host.applyInline('link', entered)
+        if (spec.inline === 'link') {
+          const captured = cellLinkContext
+          cellLinkContext = null
+          if (captured) {
+            void promptForLink(captured.text, captured.url).then((entered) => {
+              if (entered !== null) captured.host.applyCellLink(entered.text, entered.url)
             })
-          } else if (spec.inline) {
-            host.applyInline(spec.inline)
+            return
           }
+          const host = getActiveCellHost()
+          if (host) {
+            void promptForLink('', '').then((entered) => {
+              if (entered !== null) host.applyInline('link', entered.url)
+            })
+            return
+          }
+          view.focus()
+          spec.run(view)
+          return
+        }
+        const host = getActiveCellHost()
+        if (spec.inline && host) {
+          host.applyInline(spec.inline)
           return
         }
         view.focus()

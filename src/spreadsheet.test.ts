@@ -339,6 +339,31 @@ describe('inlineMarkdownToHtml', () => {
       '<span class="masked-field">•••••••••••• (a&lt;b)</span>',
     )
   })
+
+  it('flags links whose text does not match their destination', () => {
+    const raw = '[https://www.google.com](https://attacker.address)'
+    expect(inlineMarkdownToHtml(raw)).toBe(
+      '<a href="https://attacker.address">https://www.google.com</a>',
+    )
+    expect(inlineMarkdownToHtml(raw, { markMisleading: true })).toBe(
+      '<a href="https://attacker.address" class="ml-misleading">https://www.google.com</a>',
+    )
+  })
+
+  it('does not flag a link whose text matches its destination', () => {
+    const raw = '[https://example.com](https://example.com)'
+    expect(inlineMarkdownToHtml(raw, { markMisleading: true })).toBe(
+      '<a href="https://example.com">https://example.com</a>',
+    )
+  })
+
+  it('keeps a link split by nested marks in one anchor', () => {
+    const raw = '[**www.google.com**](https://attacker.address)'
+    expect(inlineMarkdownToHtml(raw, { markMisleading: true })).toBe(
+      '<a href="https://attacker.address" class="ml-misleading">' +
+        '<strong>www.google.com</strong></a>',
+    )
+  })
 })
 
 describe('formatNumber', () => {
