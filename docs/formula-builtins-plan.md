@@ -2,7 +2,7 @@
 
 Goal: grow the spreadsheet engine past its original 9 builtin functions so document-local `edi-formula` definitions can build real business rules (tax tiers, labels, aging, conditions, text assembly).
 
-Current builtins (Phases 0–2 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `ABS`, `SQRT`, `ROUND`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, and the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`.
+Current builtins (Phases 0–3 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `SUMIF`, `COUNTIF`, `AVERAGEIF`, the math `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH` (lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, and the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`.
 
 ## What the engine is missing
 
@@ -107,6 +107,10 @@ Delivered:
   generated reference picked everything up automatically.
 
 ## Phase 3 — math & aggregate gap-fillers
+
+**Status: complete** — implemented and verified (`npm run check`,
+`npm run build`, `.venv/bin/pytest tests/` green). Handoff:
+`docs/formula-builtins-phase3-handoff.md`.
 
 - Math: `MOD`, `INT`, `TRUNC`, `CEILING(x, [step])`, `FLOOR(x, [step])`, `ROUNDUP`, `ROUNDDOWN`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG(x, [base])`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`.
 - Aggregate: `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE(range, k)`, `SMALL(range, k)`.

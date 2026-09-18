@@ -299,6 +299,7 @@ const ERROR_HINTS: Record<string, string> = {
   '#REF!': 'Reference outside the table',
   '#DIV/0!': 'Division by zero',
   '#VALUE!': 'Expected a number',
+  '#NUM!': 'Number out of the argument\'s valid domain',
   '#N/A!': 'IFS/SWITCH found no matching result',
   '#CYCLE!': 'Circular reference',
   '#ERROR!': 'Could not parse the formula',

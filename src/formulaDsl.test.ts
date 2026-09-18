@@ -220,4 +220,16 @@ describe('buildDocumentFunctions', () => {
     expect(applyFunction('CODE', [text('widget')], env)).toEqual(text('WID'))
     expect(applyFunction('JOINED', [text('x'), blank()], env)).toEqual(text('x'))
   })
+
+  it('calls the math, aggregate, and criteria builtins from a definition body', () => {
+    const { functions } = buildDocumentFunctions([
+      'DISCOUNT(x) = ROUNDUP(x * 0.125, 2)',
+      'SPREAD(xs) = LARGE(xs, 2) - SMALL(xs, 2)',
+      'BIG_ONLY(xs) = SUMIF(xs, ">100")',
+    ])
+    const env = envFor(functions)
+    expect(applyFunction('DISCOUNT', [num(10)], env)).toEqual(num(1.25))
+    expect(applyFunction('SPREAD', [setValue([num(5), num(1), num(9), num(3)])], env)).toEqual(num(2))
+    expect(applyFunction('BIG_ONLY', [setValue([num(50), num(150), num(90)])], env)).toEqual(num(150))
+  })
 })

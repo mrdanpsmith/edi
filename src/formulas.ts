@@ -407,14 +407,20 @@ function productCall(args: readonly CellValue[]): CellValue {
   return num(values.reduce((a, b) => a * b, 1))
 }
 
+/** Read a numeric argument at `index` (blank → 0), propagating errors and
+ * rejecting sets — the multi-argument sibling of `firstNumber`. */
+function numberAt(args: readonly CellValue[], index: number): number | ErrorCell {
+  const arg = args[index]
+  if (arg === undefined) return err('#VALUE!', 'Expected a number')
+  if (arg.kind === 'error') return arg
+  if (arg.kind === 'set') return err('#VALUE!', 'Expected a number, not a range')
+  const value = toNumber(arg)
+  return value === null ? err('#VALUE!', 'Expected a number') : value
+}
+
 /** Read the single numeric first argument shared by the unary math builtins. */
 function firstNumber(args: readonly CellValue[]): number | ErrorCell {
-  const first = args[0]
-  if (!first) return err('#VALUE!', 'Expected a number')
-  if (first.kind === 'error') return first
-  const value = toNumber(first)
-  if (value === null) return err('#VALUE!', 'Expected a number')
-  return value
+  return numberAt(args, 0)
 }
 
 function absCall(args: readonly CellValue[]): CellValue {
@@ -750,6 +756,341 @@ function valueCall(args: readonly CellValue[]): CellValue {
   return num(n)
 }
 
+// --- Math builtins ---------------------------------------------------------
+
+/** Wrap a raw arithmetic result, turning overflow/NaN into #VALUE! like the
+ * binary operators do. */
+function mathResult(value: number): CellValue {
+  return Number.isFinite(value) ? num(value) : err('#VALUE!')
+}
+
+/** Excel `MOD`: the remainder has the divisor's sign (`MOD(-3, 2)` is 1), so
+ * unlike JS `%` it is `n - d * INT(n/d)` — `INT` rounding down. */
+function modCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  const d = args[1] === undefined ? err('#VALUE!', 'MOD needs a divisor') : numberAt(args, 1)
+  if (typeof d !== 'number') return d
+  if (d === 0) return err('#DIV/0!', 'Division by zero')
+  return num(n - d * Math.floor(n / d))
+}
+
+function intCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  return num(Math.floor(n))
+}
+
+function truncCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  const digitsArg = args[1] === undefined ? 0 : numberAt(args, 1)
+  if (typeof digitsArg !== 'number') return digitsArg
+  const factor = 10 ** Math.trunc(digitsArg)
+  return mathResult(Math.trunc(n * factor) / factor)
+}
+
+/** The shared CEILING/FLOOR shape: both need `number` and `significance` to
+ * share a sign (opposite signs are `#NUM!`, like Excel), a zero operand gives
+ * zero, and `round` is applied to the quotient — `ceil` rounds away from zero,
+ * `floor` toward it. */
+function roundStepCall(
+  args: readonly CellValue[],
+  round: (x: number) => number,
+  name: string,
+): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  const significance = args[1] === undefined ? 1 : numberAt(args, 1)
+  if (typeof significance !== 'number') return significance
+  if (n === 0 || significance === 0) return num(0)
+  if (Math.sign(n) !== Math.sign(significance)) {
+    return err('#NUM!', `${name} number and significance must share a sign`)
+  }
+  return mathResult(round(n / significance) * significance)
+}
+
+function ceilingCall(args: readonly CellValue[]): CellValue {
+  return roundStepCall(args, Math.ceil, 'CEILING')
+}
+
+function floorCall(args: readonly CellValue[]): CellValue {
+  return roundStepCall(args, Math.floor, 'FLOOR')
+}
+
+function roundDirectionalCall(
+  args: readonly CellValue[],
+  round: (x: number) => number,
+): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  const digitsArg = args[1] === undefined ? 0 : numberAt(args, 1)
+  if (typeof digitsArg !== 'number') return digitsArg
+  const factor = 10 ** Math.trunc(digitsArg)
+  // Round the magnitude, then re-apply the sign: ROUNDUP away from zero,
+  // ROUNDDOWN toward it.
+  return mathResult((Math.sign(n) * round(Math.abs(n) * factor)) / factor)
+}
+
+function roundUpCall(args: readonly CellValue[]): CellValue {
+  return roundDirectionalCall(args, Math.ceil)
+}
+
+function roundDownCall(args: readonly CellValue[]): CellValue {
+  return roundDirectionalCall(args, Math.floor)
+}
+
+function signCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  return num(Math.sign(n))
+}
+
+function powerCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  const p = numberAt(args, 1)
+  if (typeof p !== 'number') return p
+  return mathResult(n ** p)
+}
+
+function expCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  return mathResult(Math.exp(n))
+}
+
+function lnCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  if (n <= 0) return err('#NUM!', 'LN needs a positive number')
+  return mathResult(Math.log(n))
+}
+
+function logCall(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  const baseArg = args[1] === undefined ? 10 : numberAt(args, 1)
+  if (typeof baseArg !== 'number') return baseArg
+  if (n <= 0 || baseArg <= 0 || baseArg === 1) {
+    if (baseArg === 1) return err('#DIV/0!', 'LOG base cannot be 1')
+    const hint = n <= 0 ? 'LOG needs a positive number' : 'LOG base must be positive'
+    return err('#NUM!', hint)
+  }
+  return mathResult(Math.log(n) / Math.log(baseArg))
+}
+
+function log10Call(args: readonly CellValue[]): CellValue {
+  const n = firstNumber(args)
+  if (typeof n !== 'number') return n
+  if (n <= 0) return err('#NUM!', 'LOG10 needs a positive number')
+  return mathResult(Math.log10(n))
+}
+
+function piCall(_args: readonly CellValue[]): CellValue {
+  return num(Math.PI)
+}
+
+function randCall(_args: readonly CellValue[]): CellValue {
+  return num(Math.random())
+}
+
+function randBetweenCall(args: readonly CellValue[]): CellValue {
+  const bottom = firstNumber(args)
+  if (typeof bottom !== 'number') return bottom
+  const top = args[1] === undefined ? err('#VALUE!', 'RANDBETWEEN needs a top value') : numberAt(args, 1)
+  if (typeof top !== 'number') return top
+  const lo = Math.trunc(bottom)
+  const hi = Math.trunc(top)
+  if (lo > hi) return err('#NUM!', 'Bottom is greater than top')
+  return num(Math.floor(Math.random() * (hi - lo + 1)) + lo)
+}
+
+// --- Aggregate & criteria builtins -----------------------------------------
+
+function medianCall(args: readonly CellValue[]): CellValue {
+  const values = collectNumbers(args)
+  if (!Array.isArray(values)) return values
+  if (values.length === 0) return num(0)
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  const median =
+    sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2
+  return num(median)
+}
+
+/** COUNTA counts every non-blank value — text, numbers, booleans, dates, and
+ * even error cells (Excel counts errors as content), so unlike the other
+ * walkers it does not propagate in-range errors. */
+function countaCall(args: readonly CellValue[]): CellValue {
+  let count = 0
+  const bump = (value: CellValue): void => {
+    if (value.kind !== 'blank') count++
+  }
+  for (const arg of args) {
+    if (arg.kind === 'set') {
+      for (const item of arg.items) bump(item)
+    } else {
+      bump(arg)
+    }
+  }
+  return num(count)
+}
+
+/** An absent cell: a blank, or an explicitly empty string — both count as
+ * empty for COUNTBLANK, as in Excel. */
+function isBlankish(value: CellValue): boolean {
+  return value.kind === 'blank' || (value.kind === 'text' && value.value === '')
+}
+
+function countblankCall(args: readonly CellValue[]): CellValue {
+  let count = 0
+  const bump = (value: CellValue): void => {
+    if (isBlankish(value)) count++
+  }
+  for (const arg of args) {
+    if (arg.kind === 'set') {
+      for (const item of arg.items) bump(item)
+    } else {
+      bump(arg)
+    }
+  }
+  return num(count)
+}
+
+/** The k-th largest/smallest numeric value of the range in `args[0]`, using the
+ * integer rank in `args[1]`. Ranks outside `1..n` are `#NUM!`, matching Excel. */
+function kthCall(args: readonly CellValue[], order: (a: number, b: number) => number): CellValue {
+  const values = collectNumbers([args[0] ?? blank()])
+  if (!Array.isArray(values)) return values
+  const k = args[1] === undefined ? err('#VALUE!', 'LARGE/SMALL needs a rank') : numberAt(args, 1)
+  if (typeof k !== 'number') return k
+  const rank = Math.trunc(k)
+  if (rank < 1) return err('#NUM!', 'The rank must be at least 1')
+  if (values.length === 0) return err('#NUM!', 'The range has no numbers')
+  if (rank > values.length) return err('#NUM!', 'The rank exceeds the number of values')
+  const sorted = [...values].sort(order)
+  return num(sorted[rank - 1]!)
+}
+
+function largeCall(args: readonly CellValue[]): CellValue {
+  return kthCall(args, (a, b) => b - a)
+}
+
+function smallCall(args: readonly CellValue[]): CellValue {
+  return kthCall(args, (a, b) => a - b)
+}
+
+/** A `SUMIF`/`COUNTIF`/`AVERAGEIF` range argument, normalized to cells: a set
+ * (range) is exposed item by item, any other single value is treated as a
+ * one-cell range (blank for a missing argument, so nothing matches). */
+function rangeCells(arg: CellValue | undefined): CellValue[] {
+  if (arg?.kind === 'set') return arg.items
+  if (arg === undefined) return []
+  return [arg]
+}
+
+/** A sortable key for criteria comparisons, matching Excel's ordering: numbers
+ * (and numeric text, and blanks as 0) rank before text, and text compares
+ * case-insensitively (`COUNTIF(A1:A9,"apples")` matches `Apples`). */
+type CriterionKey = { kind: 'num'; value: number } | { kind: 'text'; value: string }
+
+function criterionKey(value: CellValue): CriterionKey {
+  const n = toNumber(value)
+  return n !== null ? { kind: 'num', value: n } : { kind: 'text', value: toText(value).toLowerCase() }
+}
+
+/** Compare a cell to a criteria operand with an Excel operator. Errors and sets
+ * never match. */
+function matchCriterion(cell: CellValue, op: CompareOp, operand: string): boolean {
+  if (cell.kind === 'error' || cell.kind === 'set') return false
+  const a = criterionKey(cell)
+  const b = criterionKey(text(operand))
+  if (op === '=') return a.kind === b.kind && a.value === b.value
+  if (op === '<>') return a.kind !== b.kind || a.value !== b.value
+  const less = a.kind !== b.kind ? a.kind === 'num' : a.value < b.value
+  const equal = a.kind === b.kind && a.value === b.value
+  if (op === '<') return less
+  if (op === '<=') return less || equal
+  if (op === '>') return !less && !equal
+  return !less
+}
+
+/** Split a criteria string like `">5"`, `"Apples"`, or `"<>done"` into an
+ * operator and a bare operand; `*` wildcards are deferred. A dangling operator
+ * (`">"`) is the one malformed criteria and surfaces as `#VALUE!`. */
+function parseCriteria(criteria: string): ((cell: CellValue) => boolean) | ErrorCell {
+  let op: CompareOp = '='
+  let operand = criteria
+  for (const opText of ['<>', '<=', '>=', '=', '<', '>'] as const) {
+    if (criteria.startsWith(opText)) {
+      op = opText
+      operand = criteria.slice(opText.length)
+      break
+    }
+  }
+  if (op !== '=' && operand === '') {
+    return err('#VALUE!', 'Criteria needs a value after the operator')
+  }
+  return (cell) => matchCriterion(cell, op, operand)
+}
+
+function sumIfCall(args: readonly CellValue[]): CellValue {
+  const predicate = parseCriteriaFromArgs(args)
+  if (typeof predicate !== 'function') return predicate
+  if (args[0]?.kind === 'error') return args[0]
+  if (args[2]?.kind === 'error') return args[2]
+  const range = rangeCells(args[0])
+  const sums = args[2] === undefined ? range : rangeCells(args[2])
+  let total = 0
+  for (let i = 0; i < range.length; i++) {
+    if (!predicate(range[i]!)) continue
+    const n = toNumber(sums[i] ?? blank())
+    if (n !== null) total += n // non-numeric sum cells are ignored, as in Excel
+  }
+  return num(total)
+}
+
+function countIfCall(args: readonly CellValue[]): CellValue {
+  const predicate = parseCriteriaFromArgs(args)
+  if (typeof predicate !== 'function') return predicate
+  if (args[0]?.kind === 'error') return args[0]
+  const range = rangeCells(args[0])
+  let count = 0
+  for (const cell of range) {
+    if (predicate(cell)) count++
+  }
+  return num(count)
+}
+
+function averageIfCall(args: readonly CellValue[]): CellValue {
+  const predicate = parseCriteriaFromArgs(args)
+  if (typeof predicate !== 'function') return predicate
+  if (args[0]?.kind === 'error') return args[0]
+  if (args[2]?.kind === 'error') return args[2]
+  const range = rangeCells(args[0])
+  const averages = args[2] === undefined ? range : rangeCells(args[2])
+  let total = 0
+  let count = 0
+  for (let i = 0; i < range.length; i++) {
+    if (!predicate(range[i]!)) continue
+    const n = toNumber(averages[i] ?? blank())
+    if (n !== null) {
+      total += n
+      count++
+    }
+  }
+  if (count === 0) return err('#DIV/0!', 'No cells matched the criteria')
+  return num(total / count)
+}
+
+/** The criteria text shared by the SUMIF family, parsed once. */
+function parseCriteriaFromArgs(args: readonly CellValue[]): ((cell: CellValue) => boolean) | ErrorCell {
+  const criteria = nthText(args, 1)
+  if (typeof criteria !== 'string') return criteria
+  return parseCriteria(criteria)
+}
+
 // --- Builtin registry -----------------------------------------------------
 
 export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
@@ -815,6 +1156,86 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     call: productCall,
   },
   {
+    name: 'MEDIAN',
+    category: 'aggregate',
+    signature: 'MEDIAN(number, …)',
+    summary: 'The middle value of the numbers and ranges once sorted.',
+    example: '=MEDIAN(B2:B9)',
+    minArgs: 0,
+    maxArgs: Infinity,
+    call: medianCall,
+  },
+  {
+    name: 'COUNTA',
+    category: 'aggregate',
+    signature: 'COUNTA(value, …)',
+    summary: 'How many non-empty values the arguments and ranges hold.',
+    example: '=COUNTA(A2:C4)',
+    minArgs: 0,
+    maxArgs: Infinity,
+    call: countaCall,
+  },
+  {
+    name: 'COUNTBLANK',
+    category: 'aggregate',
+    signature: 'COUNTBLANK(value, …)',
+    summary: 'How many empty cells (and empty strings) the ranges hold.',
+    example: '=COUNTBLANK(A2:C4)',
+    minArgs: 0,
+    maxArgs: Infinity,
+    call: countblankCall,
+  },
+  {
+    name: 'LARGE',
+    category: 'aggregate',
+    signature: 'LARGE(array, k)',
+    summary: 'The k-th largest value of a range (1 is the largest).',
+    example: '=LARGE(A2:C4, 2)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: largeCall,
+  },
+  {
+    name: 'SMALL',
+    category: 'aggregate',
+    signature: 'SMALL(array, k)',
+    summary: 'The k-th smallest value of a range (1 is the smallest).',
+    example: '=SMALL(A2:C4, 2)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: smallCall,
+  },
+  {
+    name: 'SUMIF',
+    category: 'aggregate',
+    signature: 'SUMIF(range, criteria, [sumRange])',
+    summary: 'Adds the cells whose matching range cells meet the criteria (">5", "Apples").',
+    example: '=SUMIF(A2:A9, ">5")',
+    minArgs: 2,
+    maxArgs: 3,
+    call: sumIfCall,
+  },
+  {
+    name: 'COUNTIF',
+    category: 'aggregate',
+    signature: 'COUNTIF(range, criteria)',
+    summary: 'Counts the cells that meet the criteria (">5", "Apples").',
+    example: '=COUNTIF(A2:A9, ">5")',
+    minArgs: 2,
+    maxArgs: 2,
+    call: countIfCall,
+  },
+  {
+    name: 'AVERAGEIF',
+    category: 'aggregate',
+    signature: 'AVERAGEIF(range, criteria, [averageRange])',
+    summary: 'Averages the cells whose matching range cells meet the criteria.',
+    example: '=AVERAGEIF(A2:A9, ">5")',
+    minArgs: 2,
+    maxArgs: 3,
+    call: averageIfCall,
+  },
+  {
     name: 'ABS',
     category: 'math',
     signature: 'ABS(number)',
@@ -843,6 +1264,166 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     minArgs: 1,
     maxArgs: 2,
     call: roundCall,
+  },
+  {
+    name: 'MOD',
+    category: 'math',
+    signature: 'MOD(number, divisor)',
+    summary: 'The remainder of a division; its sign follows the divisor (Excel MOD).',
+    example: '=MOD(B2, 3)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: modCall,
+  },
+  {
+    name: 'INT',
+    category: 'math',
+    signature: 'INT(number)',
+    summary: 'Rounds a number down to the nearest integer.',
+    example: '=INT(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: intCall,
+  },
+  {
+    name: 'TRUNC',
+    category: 'math',
+    signature: 'TRUNC(number, [digits])',
+    summary: 'Truncates a number toward zero, keeping the given decimal places.',
+    example: '=TRUNC(B2, 2)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: truncCall,
+  },
+  {
+    name: 'CEILING',
+    category: 'math',
+    signature: 'CEILING(number, [significance])',
+    summary: 'Rounds a number away from zero to the nearest multiple of significance (same sign required).',
+    example: '=CEILING(B2, 2)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: ceilingCall,
+  },
+  {
+    name: 'FLOOR',
+    category: 'math',
+    signature: 'FLOOR(number, [significance])',
+    summary: 'Rounds a number toward zero to the nearest multiple of significance (same sign required).',
+    example: '=FLOOR(B2, 2)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: floorCall,
+  },
+  {
+    name: 'ROUNDUP',
+    category: 'math',
+    signature: 'ROUNDUP(number, [digits])',
+    summary: 'Rounds a number away from zero to the given decimal places.',
+    example: '=ROUNDUP(B2, 2)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: roundUpCall,
+  },
+  {
+    name: 'ROUNDDOWN',
+    category: 'math',
+    signature: 'ROUNDDOWN(number, [digits])',
+    summary: 'Rounds a number toward zero to the given decimal places.',
+    example: '=ROUNDDOWN(B2, 0)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: roundDownCall,
+  },
+  {
+    name: 'SIGN',
+    category: 'math',
+    signature: 'SIGN(number)',
+    summary: '1 for a positive number, -1 for a negative one, 0 for zero.',
+    example: '=SIGN(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: signCall,
+  },
+  {
+    name: 'POWER',
+    category: 'math',
+    signature: 'POWER(number, power)',
+    summary: 'Raises a number to a power (same as the ^ operator).',
+    example: '=POWER(B2, 2)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: powerCall,
+  },
+  {
+    name: 'EXP',
+    category: 'math',
+    signature: 'EXP(number)',
+    summary: 'e raised to a power.',
+    example: '=EXP(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: expCall,
+  },
+  {
+    name: 'LN',
+    category: 'math',
+    signature: 'LN(number)',
+    summary: 'Natural logarithm of a positive number.',
+    example: '=LN(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: lnCall,
+  },
+  {
+    name: 'LOG',
+    category: 'math',
+    signature: 'LOG(number, [base])',
+    summary: 'Logarithm of a positive number, to a given base (default 10).',
+    example: '=LOG(B2, 2)',
+    minArgs: 1,
+    maxArgs: 2,
+    call: logCall,
+  },
+  {
+    name: 'LOG10',
+    category: 'math',
+    signature: 'LOG10(number)',
+    summary: 'Base-10 logarithm of a positive number.',
+    example: '=LOG10(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: log10Call,
+  },
+  {
+    name: 'PI',
+    category: 'math',
+    signature: 'PI()',
+    summary: 'The constant π (3.14159…).',
+    example: '=PI()',
+    minArgs: 0,
+    maxArgs: 0,
+    call: piCall,
+  },
+  {
+    name: 'RAND',
+    category: 'math',
+    signature: 'RAND()',
+    summary: 'A random number between 0 and 1 (recomputed when the table changes).',
+    example: '=RAND()',
+    minArgs: 0,
+    maxArgs: 0,
+    call: randCall,
+  },
+  {
+    name: 'RANDBETWEEN',
+    category: 'math',
+    signature: 'RANDBETWEEN(bottom, top)',
+    summary: 'A random whole number between bottom and top, inclusive.',
+    example: '=RANDBETWEEN(1, 6)',
+    minArgs: 2,
+    maxArgs: 2,
+    call: randBetweenCall,
   },
   {
     name: 'IF',

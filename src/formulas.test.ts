@@ -406,3 +406,163 @@ describe('text builtins', () => {
     })
   })
 })
+
+describe('math builtins', () => {
+  const env = BUILTIN_ENV
+
+  it('MOD follows the divisor sign like Excel, and guards zero', () => {
+    expect(applyFunction('MOD', [num(3), num(2)], env)).toEqual(num(1))
+    expect(applyFunction('MOD', [num(-3), num(2)], env)).toEqual(num(1))
+    expect(applyFunction('MOD', [num(3), num(-2)], env)).toEqual(num(-1))
+    expect(applyFunction('MOD', [num(-3), num(-2)], env)).toEqual(num(-1))
+    expect(applyFunction('MOD', [text('5'), num(3)], env)).toEqual(num(2))
+    expect(applyFunction('MOD', [num(3), num(0)], env)).toMatchObject({ message: '#DIV/0!' })
+  })
+
+  it('INT floors and TRUNC cuts toward zero, honoring digits', () => {
+    expect(applyFunction('INT', [num(3.7)], env)).toEqual(num(3))
+    expect(applyFunction('INT', [num(-3.7)], env)).toEqual(num(-4))
+    expect(applyFunction('TRUNC', [num(3.7)], env)).toEqual(num(3))
+    expect(applyFunction('TRUNC', [num(-3.7)], env)).toEqual(num(-3))
+    expect(applyFunction('TRUNC', [num(1.2345), num(2)], env)).toEqual(num(1.23))
+    expect(applyFunction('TRUNC', [num(1234.5), num(-2)], env)).toEqual(num(1200))
+  })
+
+  it('CEILING and FLOOR round on a significance and reject opposite signs', () => {
+    expect(applyFunction('CEILING', [num(4.3)], env)).toEqual(num(5))
+    expect(applyFunction('CEILING', [num(4.3), num(2)], env)).toEqual(num(6))
+    expect(applyFunction('CEILING', [num(-4.3), num(-2)], env)).toEqual(num(-6))
+    expect(applyFunction('CEILING', [num(4.3), num(0)], env)).toEqual(num(0))
+    expect(applyFunction('FLOOR', [num(4.3)], env)).toEqual(num(4))
+    expect(applyFunction('FLOOR', [num(4.3), num(2)], env)).toEqual(num(4))
+    expect(applyFunction('FLOOR', [num(-4.3), num(-2)], env)).toEqual(num(-4))
+    expect(applyFunction('CEILING', [num(4.3), num(-2)], env)).toMatchObject({ message: '#NUM!' })
+    expect(applyFunction('FLOOR', [num(-4.3), num(2)], env)).toMatchObject({ message: '#NUM!' })
+  })
+
+  it('ROUNDUP and ROUNDDOWN round away from and toward zero', () => {
+    expect(applyFunction('ROUNDUP', [num(3.2), num(0)], env)).toEqual(num(4))
+    expect(applyFunction('ROUNDUP', [num(-3.2), num(0)], env)).toEqual(num(-4))
+    expect(applyFunction('ROUNDUP', [num(3.14159), num(3)], env)).toEqual(num(3.142))
+    expect(applyFunction('ROUNDDOWN', [num(3.9), num(0)], env)).toEqual(num(3))
+    expect(applyFunction('ROUNDDOWN', [num(-3.9), num(0)], env)).toEqual(num(-3))
+    expect(applyFunction('ROUNDDOWN', [num(3.14159), num(3)], env)).toEqual(num(3.141))
+  })
+
+  it('SIGN, POWER, and EXP compute directly', () => {
+    expect(applyFunction('SIGN', [num(7)], env)).toEqual(num(1))
+    expect(applyFunction('SIGN', [num(-7)], env)).toEqual(num(-1))
+    expect(applyFunction('SIGN', [num(0)], env)).toEqual(num(0))
+    expect(applyFunction('POWER', [num(2), num(10)], env)).toEqual(num(1024))
+    expect(applyFunction('EXP', [num(1)], env)).toEqual(num(Math.E))
+  })
+
+  it('LN, LOG, and LOG10 compute and guard their domain', () => {
+    expect(applyFunction('LN', [num(Math.E)], env)).toEqual(num(1))
+    expect(applyFunction('LOG', [num(8), num(2)], env)).toEqual(num(3))
+    expect(applyFunction('LOG', [num(100)], env)).toEqual(num(2))
+    expect(applyFunction('LOG10', [num(1000)], env)).toEqual(num(3))
+    expect(applyFunction('LN', [num(0)], env)).toMatchObject({ message: '#NUM!' })
+    expect(applyFunction('LN', [num(-1)], env)).toMatchObject({ message: '#NUM!' })
+    expect(applyFunction('LOG', [num(8), num(1)], env)).toMatchObject({ message: '#DIV/0!' })
+  })
+
+  it('PI, RAND, and RANDBETWEEN produce the expected shapes', () => {
+    expect(applyFunction('PI', [], env)).toEqual(num(Math.PI))
+    const rand = applyFunction('RAND', [], env)
+    expect(rand.kind).toBe('number')
+    expect((rand as { value: number }).value).toBeGreaterThanOrEqual(0)
+    expect((rand as { value: number }).value).toBeLessThan(1)
+    const roll = applyFunction('RANDBETWEEN', [num(1), num(6)], env)
+    expect(roll.kind).toBe('number')
+    expect((roll as { value: number }).value).toBeGreaterThanOrEqual(1)
+    expect((roll as { value: number }).value).toBeLessThanOrEqual(6)
+    expect(applyFunction('RANDBETWEEN', [num(6), num(1)], env)).toMatchObject({ message: '#NUM!' })
+  })
+})
+
+describe('aggregate builtins', () => {
+  const env = BUILTIN_ENV
+
+  it('MEDIAN sorts and picks the middle, averaging an even count', () => {
+    expect(applyFunction('MEDIAN', [setValue([num(3), num(1), num(2)])], env)).toEqual(num(2))
+    expect(applyFunction('MEDIAN', [setValue([num(3), num(1), num(2), num(4)])], env)).toEqual(
+      num(2.5),
+    )
+    expect(applyFunction('MEDIAN', [num(5), setValue([num(1), num(3)])], env)).toEqual(num(3))
+    expect(applyFunction('MEDIAN', [blank()], env)).toEqual(num(0))
+  })
+
+  it('COUNTA counts every non-blank value, including errors', () => {
+    expect(applyFunction('COUNTA', [text('a'), num(1), bool(true), blank()], env)).toEqual(num(3))
+    expect(
+      applyFunction('COUNTA', [setValue([num(1), text(''), blank(), err('#VALUE!')])], env),
+    ).toEqual(num(3))
+  })
+
+  it('COUNTBLANK counts blanks and empty strings', () => {
+    expect(
+      applyFunction('COUNTBLANK', [setValue([num(1), blank(), text(''), text('x')])], env),
+    ).toEqual(num(2))
+    expect(applyFunction('COUNTBLANK', [blank()], env)).toEqual(num(1))
+  })
+
+  it('LARGE and SMALL pick ordinal values and error on bad ranks', () => {
+    const range = setValue([num(3), num(9), num(4), num(1)])
+    expect(applyFunction('LARGE', [range, num(1)], env)).toEqual(num(9))
+    expect(applyFunction('LARGE', [range, num(3)], env)).toEqual(num(3))
+    expect(applyFunction('SMALL', [range, num(1)], env)).toEqual(num(1))
+    expect(applyFunction('SMALL', [range, num(4)], env)).toEqual(num(9))
+    expect(applyFunction('LARGE', [range, num(0)], env)).toMatchObject({ message: '#NUM!' })
+    expect(applyFunction('LARGE', [range, num(5)], env)).toMatchObject({ message: '#NUM!' })
+    expect(applyFunction('LARGE', [setValue([text('a'), blank()]), num(1)], env)).toMatchObject({
+      message: '#NUM!',
+    })
+  })
+})
+
+describe('criteria builtins (SUMIF/COUNTIF/AVERAGEIF)', () => {
+  const env = BUILTIN_ENV
+
+  it('SUMIF sums the cells meeting operator-prefixed criteria', () => {
+    const range = setValue([num(1), num(5), num(9), num(2)])
+    expect(applyFunction('SUMIF', [range, text('>4')], env)).toEqual(num(14))
+    expect(applyFunction('SUMIF', [range, text('>=5')], env)).toEqual(num(14))
+    expect(applyFunction('SUMIF', [range, text('<=5')], env)).toEqual(num(8))
+    expect(applyFunction('SUMIF', [range, text('<>5')], env)).toEqual(num(12))
+  })
+
+  it('SUMIF sums a separate sum range (same shape) positionally', () => {
+    const range = setValue([num(1), num(5), num(9)])
+    const sums = setValue([num(10), num(20), num(30)])
+    expect(applyFunction('SUMIF', [range, text('>4'), sums], env)).toEqual(num(50))
+  })
+
+  it('SUMIF with no match sums to zero', () => {
+    expect(applyFunction('SUMIF', [setValue([num(1), num(2)]), text('>9')], env)).toEqual(num(0))
+  })
+
+  it('COUNTIF matches text case-insensitively and skips errors', () => {
+    const range = setValue([text('Apples'), text('apples'), text('Pears'), blank()])
+    expect(applyFunction('COUNTIF', [range, text('apples')], env)).toEqual(num(2))
+    const mixed = setValue([text('Apples'), text('Pears'), num(2)])
+    expect(applyFunction('COUNTIF', [mixed, text('<>Apples')], env)).toEqual(num(2))
+    expect(applyFunction('COUNTIF', [setValue([err('#VALUE!'), num(2)]), text('>0')], env)).toEqual(
+      num(1),
+    )
+  })
+
+  it('AVERAGEIF averages the matching cells and errors when none match', () => {
+    const range = setValue([num(1), num(5), num(9)])
+    expect(applyFunction('AVERAGEIF', [range, text('>2')], env)).toEqual(num(7))
+    expect(applyFunction('AVERAGEIF', [range, text('>9')], env)).toMatchObject({
+      message: '#DIV/0!',
+    })
+  })
+
+  it('a dangling criteria operator is a #VALUE! error', () => {
+    expect(applyFunction('SUMIF', [setValue([num(1)]), text('>')], env)).toMatchObject({
+      message: '#VALUE!',
+    })
+  })
+})

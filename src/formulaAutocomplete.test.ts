@@ -141,7 +141,7 @@ describe('FormulaAutocomplete', () => {
     ac.refresh(input)
     expect(selectedName()).toBe('SUM')
     ac.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
-    expect(selectedName()).toBe('SQRT')
+    expect(selectedName()).toBe('SMALL')
     ac.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowUp' }))
     expect(selectedName()).toBe('SUM')
   })
@@ -151,11 +151,11 @@ describe('FormulaAutocomplete', () => {
     makeAutocomplete().refresh(input)
     const second = document.querySelector<HTMLElement>('.ss-ac-item[data-index="1"]')!
     second.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-    expect(selectedName()).toBe('SQRT')
+    expect(selectedName()).toBe('SMALL')
     document
       .querySelector<HTMLElement>('.ss-ac-item[data-index="1"]')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    expect(input.value).toBe('=SQRT()')
+    expect(input.value).toBe('=SMALL()')
   })
 
   it('dismisses via the close button without inserting', () => {

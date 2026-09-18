@@ -648,6 +648,50 @@ describe('text formula cells', () => {
   })
 })
 
+describe('math, aggregate, and criteria formula cells', () => {
+  function cells(markdown: string): string[][] {
+    const solution = solve(parsePipes(markdown))
+    return solution.cells.map((row) => row.map((cell) => cell.display))
+  }
+
+  it('MOD, INT, TRUNC, and ROUNDUP evaluate end to end', () => {
+    const out = cells(
+      '| A | B |\n| --- | --- |\n| 7 | 2 |\n| =MOD(A2, B2) | =INT(-1.5) |\n| =TRUNC(1.2345, 2) | =ROUNDUP(3.2, 0) |',
+    )
+    expect(out[2]![0]).toBe('1')
+    expect(out[2]![1]).toBe('-2')
+    expect(out[3]![0]).toBe('1.23')
+    expect(out[3]![1]).toBe('4')
+  })
+
+  it('CEILING, POWER, and the logarithm family evaluate end to end', () => {
+    const out = cells(
+      '| A |\n| --- |\n| 8 |\n| =LN(A2) |\n| =LOG(A2, 2) |\n| =POWER(2, 3) |\n| =CEILING(A2, 3) |',
+    )
+    expect(out[2]![0]).toBe('2.0794')
+    expect(out[3]![0]).toBe('3')
+    expect(out[4]![0]).toBe('8')
+    expect(out[5]![0]).toBe('9')
+  })
+
+  it('SUMIF, COUNTIF, AVERAGEIF, and MEDIAN work on ranges and criteria', () => {
+    const out = cells(
+      '| A | B | C |\n| --- | --- | --- |\n| 1 | Apples | 10 |\n| 5 | Pears | 20 |\n| 9 | Apples | 30 |\n| =SUMIF(B2:B4, "Apples", C2:C4) | =COUNTIF(A2:A4, ">4") | =MEDIAN(A2:A4) |\n| =LARGE(A2:A4, 2) | =AVERAGEIF(A2:A4, ">4") | =MOD(A3, 3) |',
+    )
+    expect(out[4]![0]).toBe('40')
+    expect(out[4]![1]).toBe('2')
+    expect(out[4]![2]).toBe('5')
+    expect(out[5]![0]).toBe('5')
+    expect(out[5]![1]).toBe('7')
+    expect(out[5]![2]).toBe('2')
+  })
+
+  it('surfaces a #NUM! for an out-of-domain math error', () => {
+    const out = cells('| A |\n| --- |\n| 0 |\n| =LN(A2) |')
+    expect(out[2]![0]).toBe('#NUM!')
+  })
+})
+
 describe('resolved table markdown helpers', () => {
   it('resolves formula cells to displays and keeps plain cells verbatim', () => {
     const { pipes, formulas } = resolveTableValue(
