@@ -112,15 +112,21 @@ test:
   before_script:
     - *setup_venv
     - npm ci --no-audit --no-fund
-  # The whole quality gate lives here: lint + typecheck before the unit tests
-  # (coverage) and backend pytest (which also reports coverage via pytest-cov),
-  # so branch/MR pipelines get full feedback from a single job.
+# The whole quality gate lives here: lint + typecheck + duplicate-code scan
+# before the unit tests (coverage) and backend pytest (which also reports
+# coverage via pytest-cov), so branch/MR pipelines get full feedback from a
+# single job. Dependency audits (npm audit / pip-audit) need the network, so
+# they run last, after the deterministic gate.
   script:
     - npm run lint
     - npm run typecheck
+    - npm run dupcheck
     - npm run coverage
     - npm run build
+    - .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py run_edi.py -q
     - .venv/bin/pytest tests/
+    - npm run audit
+    - .venv/bin/pip-audit -r requirements.txt
   coverage: '/All files[^|]*\|[^|]*\s+([\d.]+)/'
   artifacts:
     when: always

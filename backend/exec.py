@@ -88,8 +88,11 @@ def run_code_block(shebang: str, source: str) -> dict:
         env.pop("PYTHONHOME", None)
         env.pop("PYTHONPATH", None)
 
+    # Running the code block the user chose to execute is the whole point of this
+    # feature: the interpreter binary is allow-listed and nothing is
+    # shell-evaluated.
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # nosec B603
             [program, *args],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -159,8 +162,10 @@ def run_code_block_streamed(
     has_pty = pty is not None
     if has_pty:
         stdout_master, stdout_slave = pty.openpty()
+    # Same allow-listed interpreter, same explicit argv; streaming adds a pty
+    # but nothing shell-related.
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # nosec B603
             [program, *args],
             stdin=subprocess.PIPE,
             stdout=stdout_slave if has_pty else subprocess.PIPE,

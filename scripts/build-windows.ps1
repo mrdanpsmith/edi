@@ -99,7 +99,7 @@ Invoke-Py -m venv '.venv-win'
 $PyVenv = Join-Path $PWD '.venv-win\Scripts\python.exe'
 & $PyVenv -m pip install --upgrade pip --quiet
 Assert-ExitCode 'pip upgrade'
-& $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' --quiet
+& $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' 'defusedxml' --quiet
 Assert-ExitCode 'pip install PySide6/pyinstaller'
 
 # --- PyInstaller onefile ---

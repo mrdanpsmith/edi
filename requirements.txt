@@ -1,4 +1,7 @@
 PySide6==6.11.1
+defusedxml
 pytest
 pytest-qt
 pytest-cov
+bandit
+pip-audit

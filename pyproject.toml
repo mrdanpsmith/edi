@@ -2,3 +2,10 @@
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "--cov=backend --cov-report=term-missing --cov-report=xml:coverage-py/cobertura-coverage.xml"
+
+[tool.bandit]
+# B404 ("consider security implications of importing subprocess") is a pure
+# advisory import blacklist and adds no signal — every subprocess *call site*
+# is still reviewed and gated by the B603/B607 checks (and individually
+# documented with "# nosec B603" where the strict-argv pattern is deliberate).
+skips = ["B404"]

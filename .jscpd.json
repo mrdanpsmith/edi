@@ -1,0 +1,9 @@
+{
+  "threshold": 5,
+  "minLines": 6,
+  "minTokens": 60,
+  "gitignore": true,
+  "reporters": ["console"],
+  "absolute": false,
+  "ignore": ["**/package-lock.json", "**/package.json"]
+}

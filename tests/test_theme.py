@@ -190,6 +190,7 @@ def test_probe_gsettings_cli_gated_to_gnome(monkeypatch):
     # headless container has neither), so stub the subprocess deterministically.
     fake = _gsettings_fake_run({"gtk-theme": "'Yaru'\n"})
     monkeypatch.setattr(theme_module.subprocess, "run", fake)
+    monkeypatch.setattr(theme_module.shutil, "which", lambda _name: "/usr/bin/gsettings")
     monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
     monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
     assert theme_module._probe_gsettings_cli() is None
@@ -214,11 +215,13 @@ def test_probe_gsettings_cli_reads_value(monkeypatch):
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
     fake = _gsettings_fake_run({"color-scheme": "'prefer-dark'\n"})
     monkeypatch.setattr(theme_module.subprocess, "run", fake)
+    monkeypatch.setattr(theme_module.shutil, "which", lambda _name: "/usr/bin/gsettings")
     assert theme_module._probe_gsettings_cli() == "prefer-dark"
 
 
 def test_probe_gsettings_cli_reads_gtk_theme(monkeypatch):
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+    monkeypatch.setattr(theme_module.shutil, "which", lambda _name: "/usr/bin/gsettings")
     fake = _gsettings_fake_run({"gtk-theme": "'Yaru-dark'\n"})
     monkeypatch.setattr(theme_module.subprocess, "run", fake)
     assert theme_module._probe_gsettings_cli() == "prefer-dark"
@@ -231,6 +234,7 @@ def test_probe_gsettings_cli_prefers_scheme_over_theme(monkeypatch):
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
     fake = _gsettings_fake_run({"color-scheme": "'prefer-dark'\n", "gtk-theme": "'Yaru'\n"})
     monkeypatch.setattr(theme_module.subprocess, "run", fake)
+    monkeypatch.setattr(theme_module.shutil, "which", lambda _name: "/usr/bin/gsettings")
     assert theme_module._probe_gsettings_cli() == "prefer-dark"
 
 
@@ -243,6 +247,7 @@ def test_read_gsettings_key_scrubs_bundle_env(monkeypatch):
         return type("R", (), {"returncode": 0, "stdout": "'x'\n", "stderr": ""})()
 
     monkeypatch.setattr(theme_module.subprocess, "run", run)
+    monkeypatch.setattr(theme_module.shutil, "which", lambda _name: "/usr/bin/gsettings")
     assert theme_module._read_gsettings_key("color-scheme") == "x"
     assert "LD_LIBRARY_PATH" not in captured["env"]
     assert "GIO_MODULE_DIR" not in captured["env"]
@@ -252,9 +257,21 @@ def test_probe_gsettings_cli_error_is_none(monkeypatch):
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
     broken = lambda *a, **k: (_ for _ in ()).throw(OSError("no gsettings"))
     monkeypatch.setattr(theme_module.subprocess, "run", broken)
+    monkeypatch.setattr(theme_module.shutil, "which", lambda _name: "/usr/bin/gsettings")
     assert theme_module._probe_gsettings_cli() is None
     nonzero = lambda *a, **k: type("R", (), {"returncode": 1, "stdout": ""})()
     monkeypatch.setattr(theme_module.subprocess, "run", nonzero)
+    assert theme_module._probe_gsettings_cli() is None
+
+
+def test_probe_gsettings_cli_without_binary_is_none(monkeypatch):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+    monkeypatch.setattr(
+        theme_module.subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("run must not be called")),
+    )
+    monkeypatch.setattr(theme_module.shutil, "which", lambda _name: None)
     assert theme_module._probe_gsettings_cli() is None
 
 

@@ -9,6 +9,7 @@ the behaviour that ``xdg-open`` children get a clean environment.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -35,13 +36,31 @@ def test_xdg_open_spawns_handler_with_clean_environment(monkeypatch):
             captured["env"] = kwargs.get("env")
 
     monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/xdg-open")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEIabc123")
     monkeypatch.setenv("LD_PRELOAD", "/some/evil.so")
 
     assert _xdg_open("https://example.com/a") is True
-    assert captured["args"] == ["xdg-open", "https://example.com/a"]
+    assert captured["args"][0].endswith("/xdg-open")
+    assert captured["args"] == [captured["args"][0], "https://example.com/a"]
     assert "LD_LIBRARY_PATH" not in captured["env"]
     assert "LD_PRELOAD" not in captured["env"]
+
+
+def test_xdg_open_reports_failure_when_handler_missing(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Popen must not be called")))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    assert _xdg_open("https://example.com") is False
+
+
+def test_xdg_open_reports_failure_when_spawn_raises(monkeypatch):
+    def raising_popen(*_args, **_kwargs):
+        raise FileNotFoundError("xdg-open not found")
+
+    monkeypatch.setattr(subprocess, "Popen", raising_popen)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/xdg-open")
+    assert _xdg_open("https://example.com") is False
 
 
 def test_xdg_open_discards_stdio(monkeypatch):
@@ -56,15 +75,8 @@ def test_xdg_open_discards_stdio(monkeypatch):
             )
 
     monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/xdg-open")
     assert _xdg_open("https://example.com") is True
     assert captured["stdin"] is subprocess.DEVNULL
     assert captured["stdout"] is subprocess.DEVNULL
     assert captured["stderr"] is subprocess.DEVNULL
-
-
-def test_xdg_open_reports_failure_when_handler_missing(monkeypatch):
-    def raising_popen(*_args, **_kwargs):
-        raise FileNotFoundError("xdg-open not found")
-
-    monkeypatch.setattr(subprocess, "Popen", raising_popen)
-    assert _xdg_open("https://example.com") is False

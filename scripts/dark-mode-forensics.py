@@ -10,6 +10,7 @@ then prints a diff showing exactly which setting (if any) changes.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -36,9 +37,13 @@ SCHEMAS = (
 
 def gsettings_list(schema: str) -> dict[str, str]:
     """Return ``key -> value`` for every setting in ``schema``."""
+    gsettings = shutil.which("gsettings")
+    if gsettings is None:
+        return {}
+    # Fixed argv, no shell.
     try:
-        result = subprocess.run(
-            ["gsettings", "list-recursively", schema],
+        result = subprocess.run(  # nosec B603
+            [gsettings, "list-recursively", schema],
             capture_output=True,
             text=True,
             timeout=5,

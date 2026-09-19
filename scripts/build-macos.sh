@@ -63,7 +63,7 @@ npm run build
 python3 -m venv .venv-macos
 PY_VENV="$ROOT/.venv-macos/bin/python"
 "$PY_VENV" -m pip install --upgrade pip
-"$PY_VENV" -m pip install "PySide6==6.11.1" "pyinstaller==6.22.0"
+"$PY_VENV" -m pip install "PySide6==6.11.1" "pyinstaller==6.22.0" "defusedxml"
 
 # --- Icons (ico + icns from the 1024 master, pure Node) ---------------------
 node scripts/generate-icon.mjs

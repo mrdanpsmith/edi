@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -114,9 +115,14 @@ def _xdg_open(url: str) -> bool:
     sanitized environment. stdio is discarded so a failing handler cannot
     flood Edi's console.
     """
+    opener = shutil.which("xdg-open")
+    if opener is None:
+        return False
+    # xdg-open receives a single argv element, no shell; the OS registered
+    # handler is exactly what QDesktopServices would use.
     try:
-        subprocess.Popen(
-            ["xdg-open", url],
+        subprocess.Popen(  # nosec B603
+            [opener, url],
             env=_child_env(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

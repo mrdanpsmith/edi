@@ -24,6 +24,7 @@ theme instead of an explicit light preference.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -159,9 +160,14 @@ def _read_gsettings_key(key: str) -> object | None:
     env = dict(os.environ)
     for var in ("LD_LIBRARY_PATH", "GIO_MODULE_DIR", "GSETTINGS_BACKEND", "GSETTINGS_SCHEMA_DIR"):
         env.pop(var, None)
+    gsettings = shutil.which("gsettings")
+    if gsettings is None:
+        return None
+    # Fixed argv ["gsettings","get",<schema>,<key>], no shell; gsettings was
+    # resolved to an absolute path above.
     try:
-        result = subprocess.run(
-            ["gsettings", "get", _GSETTINGS_SCHEMA, key],
+        result = subprocess.run(  # nosec B603
+            [gsettings, "get", _GSETTINGS_SCHEMA, key],
             capture_output=True,
             text=True,
             timeout=2,

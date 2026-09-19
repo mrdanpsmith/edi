@@ -11,7 +11,7 @@ import csv
 import io
 import zipfile
 from pathlib import Path
-from xml.etree import ElementTree
+from defusedxml import ElementTree
 
 ODS_NS = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",

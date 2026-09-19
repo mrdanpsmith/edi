@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from contextlib import suppress
 import threading
 
 from PySide6.QtCore import QTimer
@@ -141,12 +142,11 @@ def main() -> int:
         # Must not be the application title string.
         import ctypes
 
-        try:
+        # Best-effort taskbar identity; failure is cosmetic only.
+        with suppress(AttributeError, OSError):
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
                 "com.mrdanpsmith.edi"
             )
-        except Exception:
-            pass
     return app.exec()
 
 

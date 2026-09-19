@@ -54,6 +54,26 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1 || [[ "$REBUILD" == 1 ]]; the
   docker build -f Dockerfile.ci -t "$IMAGE" "$ROOT"
 fi
 
+# A stale local image (built before a tool was baked into /opt/edi/venv) fails
+# mid-run with a cryptic "No such file or directory"; the Docker cache makes
+# this a no-op whenever Dockerfile.ci is current.
+TOOLS='python pytest'
+[[ "$PYTEST_ONLY" == 1 ]] || TOOLS="$TOOLS bandit pip-audit"
+check_bake_tools() {
+  docker run --rm "$IMAGE" bash -euc "
+    missing=0
+    for t in $TOOLS; do
+      PATH=/opt/edi/venv/bin:\$PATH command -v \"\$t\" >/dev/null 2>&1 || { echo \"baked tool missing from $IMAGE: \$t\" >&2; missing=1; }
+    done
+    exit \$missing
+  "
+}
+if ! check_bake_tools; then
+  print_step "Stale $IMAGE (missing a baked tool); rebuilding from Dockerfile.ci"
+  docker build -f Dockerfile.ci -t "$IMAGE" "$ROOT"
+  check_bake_tools
+fi
+
 # The exact `test` job steps (.gitlab-ci.yml), minus the `.venv` symlink: the
 # host checkout already has a real .venv, and /opt/edi/venv/bin/pytest is the
 # same interpreter the job would resolve through the link.
@@ -76,12 +96,20 @@ echo "[sim] npm run lint"
 npm run lint
 echo "[sim] npm run typecheck"
 npm run typecheck
+echo "[sim] npm run dupcheck"
+npm run dupcheck
 echo "[sim] npm run coverage"
 npm run coverage
 echo "[sim] npm run build"
 npm run build
+echo "[sim] bandit (backend security, all findings)"
+/opt/edi/venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py run_edi.py -q
 echo "[sim] pytest tests/"
 /opt/edi/venv/bin/pytest tests/
+echo "[sim] npm audit (network)"
+npm run audit
+echo "[sim] pip-audit -r requirements.txt (network)"
+/opt/edi/venv/bin/pip-audit -r requirements.txt
 echo "[sim] SIMULATED TEST JOB PASSED"'
 fi
 
