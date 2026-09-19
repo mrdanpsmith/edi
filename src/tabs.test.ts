@@ -258,3 +258,58 @@ describe('Tabs content isolation', () => {
     editor.destroy()
   })
 })
+
+describe('Tabs tab strip arrows', () => {
+  function stubScrollSizes(scroll: HTMLElement) {
+    const state = { scrollLeft: 0 }
+    Object.defineProperty(scroll, 'scrollWidth', { configurable: true, value: 1000 })
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 200 })
+    Object.defineProperty(scroll, 'scrollLeft', {
+      configurable: true,
+      get: () => state.scrollLeft,
+      set: (v: number) => {
+        state.scrollLeft = v
+      },
+    })
+    return state
+  }
+
+  function makeStrip() {
+    const tabbar = createTabbar()
+    const tabs = new Tabs(
+      tabbar,
+      { getMarkdown: () => '', setMarkdown: vi.fn() },
+      makeCallbacks(),
+    )
+    tabs.addSession()
+    const scroll = tabbar.querySelector<HTMLElement>('.tabbar-scroll')!
+    const left = tabbar.querySelector<HTMLButtonElement>('.tab-arrow-left')!
+    const right = tabbar.querySelector<HTMLButtonElement>('.tab-arrow-right')!
+    return { tabs, scroll, left, right }
+  }
+
+  it('hides the arrows while the tabs fit and shows them once they overflow', () => {
+    const { scroll, left, right } = makeStrip()
+    expect(left.hidden).toBe(true)
+    expect(right.hidden).toBe(true)
+
+    stubScrollSizes(scroll)
+    scroll.dispatchEvent(new Event('scroll'))
+    expect(left.hidden).toBe(false)
+    expect(right.hidden).toBe(false)
+  })
+
+  it('disables an arrow when its edge is reached', () => {
+    const { scroll, left, right } = makeStrip()
+    const state = stubScrollSizes(scroll)
+
+    scroll.dispatchEvent(new Event('scroll'))
+    expect(left.disabled).toBe(true)
+    expect(right.disabled).toBe(false)
+
+    state.scrollLeft = 800
+    scroll.dispatchEvent(new Event('scroll'))
+    expect(left.disabled).toBe(false)
+    expect(right.disabled).toBe(true)
+  })
+})

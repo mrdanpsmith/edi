@@ -160,7 +160,7 @@ vi.mock('./clipboard', async (importOriginal) => {
 
 const DOM_TEMPLATE = `
   <div id="app">
-    <nav id="tabbar" role="tablist" aria-label="Documents"></nav>
+    <nav id="tabbar"></nav>
     <main id="workspace">
       <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
       <section id="editor-container" aria-label="Editor"></section>

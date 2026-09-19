@@ -36,12 +36,48 @@ export class Tabs {
   // that does not own them — a desynced view would poison that tab's snapshot
   // with another tab's content.
   private appliedSession = ''
+  private readonly scroll: HTMLDivElement
+  private readonly leftButton: HTMLButtonElement
+  private readonly rightButton: HTMLButtonElement
+  private readonly resizeObserver?: ResizeObserver
 
   constructor(
     private readonly tabbar: HTMLElement,
     private readonly content: TabContent,
     private readonly callbacks: TabCallbacks,
   ) {
+    // The tab strip is a persistent shell (left/right arrow buttons flanking
+    // a scroll viewport); only the tabs inside the viewport are re-rendered,
+    // so the scroll position survives tab add/close/activate.
+    this.scroll = document.createElement('div')
+    this.scroll.className = 'tabbar-scroll'
+    this.scroll.setAttribute('role', 'tablist')
+    this.scroll.setAttribute('aria-label', 'Documents')
+    this.scroll.addEventListener('scroll', () => this.updateArrows())
+
+    this.leftButton = document.createElement('button')
+    this.leftButton.type = 'button'
+    this.leftButton.className = 'tab-arrow tab-arrow-left'
+    this.leftButton.ariaLabel = 'Scroll tabs left'
+    this.leftButton.title = 'Scroll tabs left'
+    this.leftButton.textContent = '‹'
+    this.leftButton.addEventListener('click', () => this.scrollTabs(-1))
+
+    this.rightButton = document.createElement('button')
+    this.rightButton.type = 'button'
+    this.rightButton.className = 'tab-arrow tab-arrow-right'
+    this.rightButton.ariaLabel = 'Scroll tabs right'
+    this.rightButton.title = 'Scroll tabs right'
+    this.rightButton.textContent = '›'
+    this.rightButton.addEventListener('click', () => this.scrollTabs(1))
+
+    this.tabbar.replaceChildren(this.leftButton, this.scroll, this.rightButton)
+
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.updateArrows())
+      this.resizeObserver.observe(this.scroll)
+    }
+
     subscribe(() => this.render())
   }
 
@@ -203,6 +239,38 @@ export class Tabs {
     add.textContent = '+'
     add.addEventListener('click', () => this.callbacks.onNewTab())
 
-    this.tabbar.replaceChildren(...nodes, add)
+    this.scroll.replaceChildren(...nodes, add)
+    this.scrollActiveIntoView()
+    this.updateArrows()
+  }
+
+  private scrollTabs(direction: number): void {
+    const step = Math.max(160, Math.round(this.scroll.clientWidth * 0.8))
+    this.scroll.scrollBy({ left: direction * step, behavior: 'smooth' })
+  }
+
+  private scrollActiveIntoView(): void {
+    const active = this.scroll.querySelector<HTMLElement>('.tab.active')
+    if (!active) return
+    const left = active.offsetLeft
+    const right = left + active.offsetWidth
+    if (left < this.scroll.scrollLeft) {
+      this.scroll.scrollLeft = left
+    } else if (right > this.scroll.scrollLeft + this.scroll.clientWidth) {
+      this.scroll.scrollLeft = right - this.scroll.clientWidth
+    } else {
+      return
+    }
+    this.updateArrows()
+  }
+
+  private updateArrows(): void {
+    const { scrollLeft, scrollWidth, clientWidth } = this.scroll
+    const overflows = scrollWidth > clientWidth + 1
+    this.leftButton.hidden = !overflows
+    this.rightButton.hidden = !overflows
+    if (!overflows) return
+    this.leftButton.disabled = scrollLeft <= 1
+    this.rightButton.disabled = scrollLeft + clientWidth >= scrollWidth - 1
   }
 }

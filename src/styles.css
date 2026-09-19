@@ -95,12 +95,58 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex: none;
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 
-#tabbar::-webkit-scrollbar {
-  height: 4px;
+.tabbar-scroll {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+  position: relative;
+}
+
+.tabbar-scroll::-webkit-scrollbar {
+  display: none;
+  height: 0;
+}
+
+.tab-arrow {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tab-arrow:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.tab-arrow:disabled {
+  color: var(--text-muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tab-arrow[hidden] {
+  display: none;
 }
 
 #formatbar {
