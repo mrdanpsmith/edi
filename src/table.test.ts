@@ -196,6 +196,54 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('Use values is enabled when any selected cell is a formula and freezes a range in one commit', () => {
+    const view = createEditor(
+      '| A | B | C |\n| --- | --- | --- |\n| 5 | =A2*3 | =SUM(A2:B3) |\n| 2 | 0 | =UUID() |',
+    )
+    // The values on screen before the click are the ones that must be baked —
+    // never a fresh solve, so a volatile cell can't change between looking at
+    // it and freezing it.
+    const shown = {
+      b2: cell(view, 1, 1).textContent,
+      c2: cell(view, 1, 2).textContent,
+      c3: cell(view, 2, 2).textContent,
+    }
+    const btn = tool(view, 'Use values')
+    mousedown(cell(view, 1, 0))
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
+    selectRegion(view, 1, 1, 2, 2)
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    btn.click()
+    expect(cell(view, 1, 1).textContent).toBe(shown.b2)
+    expect(cell(view, 1, 2).textContent).toBe(shown.c2)
+    expect(cell(view, 2, 2).textContent).toBe(shown.c3)
+    expect(cell(view, 1, 0).textContent).toBe('5')
+    expect(cell(view, 1, 0).classList.contains('ss-formula')).toBe(false)
+    const value = view.state.doc.child(0).attrs.value as string
+    expect(value).toContain(shown.b2!)
+    expect(value).toContain(shown.c2!)
+    expect(value).not.toContain('=A2*3')
+    expect(value).not.toContain('=SUM(A2:B3)')
+    expect(value).not.toContain('=UUID()')
+    view.destroy()
+  })
+
+  it('Use values freezes a volatile UUID cell to its generated value', () => {
+    const view = createEditor('| A |\n| --- |\n| =UUID() |')
+    const shown = cell(view, 1, 0).textContent
+    mousedown(cell(view, 1, 0))
+    const btn = tool(view, 'Use values')
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    btn.click()
+    const text = cell(view, 1, 0).textContent ?? ''
+    expect(text).toBe(shown)
+    expect(text).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    const value = view.state.doc.child(0).attrs.value as string
+    expect(value).toContain(text)
+    expect(value).not.toContain('=UUID()')
+    view.destroy()
+  })
+
   it('evaluates a function defined in an edi-formula block', () => {
     const view = createEditor(
       '| A | B |\n| --- | --- |\n| 5 | =DOUBLE(A2) |\n\n```edi-formula\nDOUBLE(x) = x * 2\n```',

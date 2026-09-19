@@ -12,6 +12,7 @@ const CATEGORY_LABELS: Record<FormulaFunction['category'], string> = {
   text: 'Text',
   lookup: 'Lookup',
   date: 'Date',
+  utility: 'Utility',
   custom: 'Custom',
 }
 
@@ -22,6 +23,7 @@ const CATEGORY_ORDER: FormulaFunction['category'][] = [
   'text',
   'lookup',
   'date',
+  'utility',
 ]
 
 function functionEntry(fn: FormulaFunction): string {

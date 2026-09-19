@@ -3,7 +3,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, type TableAlign } from '../spreadsheet-util'
 import { cellCarriesMark, setCellMark } from '../inline-md'
-import { solve, colToLetters, formulaParts, isFormula, SPREADSHEET_PREFIX, type CellSolution } from '../spreadsheet'
+import { solve, colToLetters, formulaParts, isFormula, SPREADSHEET_PREFIX, type CellSolution, type SpreadsheetSolution } from '../spreadsheet'
 import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
 import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
 import { FormulaAutocomplete } from '../formulaAutocomplete'
@@ -120,6 +120,12 @@ class TableNodeView implements NodeView, InlineCellHost {
   private nameBox: HTMLElement | null = null
   private statusEl: HTMLElement | null = null
   private resolveInput: HTMLInputElement | null = null
+  private valuesButton: HTMLButtonElement | null = null
+  /** The solution backing what's currently rendered (set by
+   * `fillCellContents`). Tools that should freeze what the user sees — `Use
+   * values` — read from here instead of re-solving, so a volatile cell's value
+   * can't change between the screen and the commit. */
+  private renderedSolution: SpreadsheetSolution | null = null
   private dragging = false
   private menu: ContextMenu | null = null
   private cutSource: { r1: number; c1: number; r2: number; c2: number } | null = null
@@ -393,6 +399,17 @@ class TableNodeView implements NodeView, InlineCellHost {
     status.className = 'ss-status'
     tools.appendChild(status)
     this.statusEl = status
+    const valuesBtn = document.createElement('button')
+    valuesBtn.type = 'button'
+    valuesBtn.className = 'ss-tool ss-tool-view'
+    valuesBtn.textContent = 'Use values'
+    valuesBtn.title =
+      'Replace the selected cells’ formulas with their current computed values (they stop recalculating — undo with Ctrl+Z)'
+    valuesBtn.addEventListener('click', () => {
+      this.useValues()
+    })
+    this.valuesButton = valuesBtn
+    tools.appendChild(valuesBtn)
     const viewBtn = document.createElement('button')
     viewBtn.type = 'button'
     viewBtn.className = 'ss-tool ss-tool-view'
@@ -763,6 +780,7 @@ class TableNodeView implements NodeView, InlineCellHost {
 
   private fillCellContents(): void {
     const solution = solve(this.rows, formulaEnvFor(this.view.state))
+    this.renderedSolution = solution
     for (let r = 0; r < this.rows.length; r++) {
       for (let c = 0; c < (this.rows[0]?.length ?? 0); c++) {
         const td = this.cells[r]?.[c]
@@ -850,6 +868,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.cornerEl?.classList.toggle('ss-selected', selRows.size === rows && selCols.size === cols)
     this.renderFillHandle()
     this.updateAlignButtons()
+    this.updateValuesButton()
   }
 
   /** Columns the align buttons act on: the selected columns, or the active
@@ -1303,7 +1322,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     const cells = this.collectSelected()
     let sum = 0
     let count = 0
-    const solution = solve(this.rows, formulaEnvFor(this.view.state))
+    const solution = this.renderedSolution ?? solve(this.rows, formulaEnvFor(this.view.state))
     for (const { row, col } of cells) {
       const value = solution.cells[row]?.[col]?.value
       if (typeof value === 'number') {
@@ -1908,6 +1927,52 @@ class TableNodeView implements NodeView, InlineCellHost {
     overlay?.remove()
     this.autocomplete.close()
     this.clearPointRange()
+  }
+
+  /** The `Use values` tool: replace every formula cell in the selection with
+   * its currently *rendered* display, so volatile cells (`UUID`, `RAND`,
+   * `NOW`, …) stop recalculating — the spreadsheet equivalent of Excel's copy
+   * → paste values. The values come from the last `fillCellContents` solve
+   * (what's on screen), never re-solved here, so a volatile cell's cooked
+   * value is exactly the one the user is looking at. Non-formula cells are
+   * left alone; the whole selection is written in one commit, and the undo is
+   * the normal history. */
+  private useValues(): void {
+    if (!this.active) return
+    this.commitFxEdit()
+    const solution = this.renderedSolution ?? solve(this.rows, formulaEnvFor(this.view.state))
+    const next = this.rows.map((r) => [...r])
+    let changed = false
+    for (const { row, col } of this.collectSelected()) {
+      const raw = next[row]?.[col] ?? ''
+      if (!isFormula(raw)) continue
+      const cell = solution.cells[row]?.[col]
+      if (!cell || (cell.kind !== 'formula' && cell.kind !== 'error')) continue
+      const value = cell.display
+      if (value === raw) continue
+      next[row]![col] = value
+      changed = true
+    }
+    if (!changed) {
+      this.grid?.focus()
+      return
+    }
+    const anchor = this.anchor ?? { row: 0, col: 0 }
+    this.commitRows(next, anchor, this.active)
+    this.grid?.focus()
+  }
+
+  /** Enable `Use values` whenever any selected cell holds a formula. */
+  private updateValuesButton(): void {
+    if (!this.valuesButton) return
+    let any = false
+    for (const { row, col } of this.collectSelected()) {
+      if (isFormula(this.rows[row]?.[col] ?? '')) {
+        any = true
+        break
+      }
+    }
+    this.valuesButton.disabled = !any
   }
 
   /** Drop any in-flight reference pick and its `ss-point` highlight. */

@@ -691,6 +691,11 @@ body {
   margin-left: 8px;
 }
 
+.spreadsheet .ss-tool-view:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .spreadsheet .ss-tool-check {
   display: inline-flex;
   align-items: center;

@@ -18,6 +18,9 @@ import {
   text,
   toNumber,
   toText,
+  base64ToUtf8,
+  randomUuid,
+  utf8ToBase64,
   type CellValue,
 } from './formulas'
 
@@ -894,6 +897,69 @@ describe('capstone builtins (CHOOSE/STDEV/VAR/XLOOKUP)', () => {
       message: '#VALUE!',
     })
     expect(applyFunction('XLOOKUP', [num(1), vec, vec, blank(), num(0), num(2)], env)).toMatchObject({
+      message: '#VALUE!',
+    })
+  })
+})
+
+describe('utility builtins (UUID/B64ENCODE/B64DECODE)', () => {
+  const env = BUILTIN_ENV
+
+  it('UUID returns a lowercase dotted RFC 4122 v4 string', () => {
+    const value = applyFunction('UUID', [], env)
+    expect(value.kind).toBe('text')
+    expect(value.kind === 'text' ? value.value : '').toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
+  })
+
+  it('GUID resolves to the same generator as an alias', () => {
+    const value = applyFunction('GUID', [], env)
+    expect(value.kind === 'text' && value.value).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
+  })
+
+  it('randomUuid pins the version and variant bits', () => {
+    const uuid = randomUuid()
+    expect(uuid.slice(14, 15)).toBe('4')
+    expect('89ab').toContain(uuid.slice(19, 20))
+    expect(uuid).toHaveLength(36)
+  })
+
+  it('B64ENCODE encodes UTF-8 text with the standard alphabet', () => {
+    expect(utf8ToBase64('hello')).toBe('aGVsbG8=')
+    expect(utf8ToBase64('')).toBe('')
+    expect(utf8ToBase64('sömé stüff ✓')).toBe('c8O2bcOpIHN0w7xmZiDinJM=')
+  })
+
+  it('B64ENCODE/B64DECODE round-trip through the evaluator, coercing scalars', () => {
+    expect(applyFunction('B64ENCODE', [text('hello')], env)).toEqual(text('aGVsbG8='))
+    expect(applyFunction('B64DECODE', [text('aGVsbG8=')], env)).toEqual(text('hello'))
+    expect(applyFunction('B64ENCODE', [num(42)], env)).toEqual(text('NDI='))
+    expect(applyFunction('B64DECODE', [text('NDI=')], env)).toEqual(text('42'))
+    expect(applyFunction('B64ENCODE', [blank()], env)).toEqual(text(''))
+    expect(applyFunction('B64DECODE', [text('')], env)).toEqual(text(''))
+  })
+
+  it('B64DECODE tolerates whitespace and rejects malformed input', () => {
+    expect(base64ToUtf8('aGVs bG8=')).toBe('hello')
+    expect(applyFunction('B64DECODE', [text('aGVs bG8=')], env)).toEqual(text('hello'))
+    for (const bad of ['aGVsbG8==', '%%%%', 'aGVsbG']) {
+      expect(applyFunction('B64DECODE', [text(bad)], env)).toMatchObject({ message: '#VALUE!' })
+    }
+  })
+
+  it('B64DECODE rejects bytes that are not valid UTF-8', () => {
+    expect(base64ToUtf8('/w==')).toBeNull()
+    expect(applyFunction('B64DECODE', [text('/w==')], env)).toMatchObject({ message: '#VALUE!' })
+  })
+
+  it('B64ENCODE propagates errors and rejects ranges like the other text functions', () => {
+    expect(applyFunction('B64ENCODE', [err('#DIV/0!', 'no')], env)).toMatchObject({
+      message: '#DIV/0!',
+    })
+    expect(applyFunction('B64ENCODE', [setValue([text('a'), text('b')], 2, 1)], env)).toMatchObject({
       message: '#VALUE!',
     })
   })

@@ -42,7 +42,7 @@ export type ErrorCell = Extract<CellValue, { kind: 'error' }>
  * functions get the already-forced values instead. */
 export type CellValueThunk = () => CellValue
 
-export type FormulaCategory = 'aggregate' | 'math' | 'logical' | 'text' | 'date' | 'lookup' | 'custom'
+export type FormulaCategory = 'aggregate' | 'math' | 'logical' | 'text' | 'date' | 'lookup' | 'utility' | 'custom'
 
 /** The set of callable functions available to one evaluation. Builtins are
  * always present; document definitions add to (but never override) them. */
@@ -929,6 +929,75 @@ function randBetweenCall(args: readonly CellValue[]): CellValue {
   const hi = Math.trunc(top)
   if (lo > hi) return err('#NUM!', 'Bottom is greater than top')
   return num(Math.floor(Math.random() * (hi - lo + 1)) + lo)
+}
+
+// --- Utility builtins ------------------------------------------------------
+
+function uuidCall(_args: readonly CellValue[]): CellValue {
+  return text(randomUuid())
+}
+
+/** A lowercase RFC 4122 version-4 UUID, via `crypto.randomUUID` when the
+ * runtime has it, else a `Math.random`-seeded fallback (the version and
+ * variant bits are pinned either way). */
+export function randomUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const bytes = new Uint8Array(16)
+  const fill = (arr: Uint8Array): Uint8Array => arr.map(() => Math.floor(Math.random() * 256))
+  const random = fill(bytes)
+  random[6] = (random[6]! & 0x0f) | 0x40
+  random[8] = (random[8]! & 0x3f) | 0x80
+  const hex = Array.from(random, (b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function b64encodeCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  return text(utf8ToBase64(value))
+}
+
+function b64decodeCall(args: readonly CellValue[]): CellValue {
+  const value = firstText(args)
+  if (typeof value !== 'string') return value
+  const decoded = base64ToUtf8(value)
+  if (decoded === null) return err('#VALUE!', 'Invalid base64 text')
+  return text(decoded)
+}
+
+/** UTF-8 → base64 (standard alphabet, no line breaks). */
+export function utf8ToBase64(input: string): string {
+  const bytes = new TextEncoder().encode(input)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+/** base64 → UTF-8, or `null` when the text is not valid base64 (wrong
+ * alphabet, wrong padding, or bytes that aren't valid UTF-8). Whitespace is
+ * tolerated, so wrapped/indented values decode fine. */
+export function base64ToUtf8(input: string): string | null {
+  const cleaned = input.replace(/\s+/g, '')
+  if (cleaned === '') return ''
+  const body = cleaned.replace(/=+$/, '')
+  if (!/^[A-Za-z0-9+/]*$/.test(body)) return null
+  const remainder = body.length % 4
+  const padding = cleaned.length - body.length
+  const paddingMatches =
+    (remainder === 0 && padding === 0) ||
+    (remainder === 3 && padding === 1) ||
+    (remainder === 2 && padding === 2)
+  if (!paddingMatches) return null
+  try {
+    const binary = atob(cleaned)
+    return new TextDecoder('utf-8', { fatal: true }).decode(
+      Uint8Array.from(binary, (char) => char.charCodeAt(0)),
+    )
+  } catch {
+    return null
+  }
 }
 
 // --- Aggregate & criteria builtins -----------------------------------------
@@ -2418,6 +2487,37 @@ export const BUILTIN_FORMULAS: readonly FormulaFunction[] = [
     minArgs: 3,
     maxArgs: 6,
     call: xlookupCall,
+  },
+  {
+    name: 'UUID',
+    category: 'utility',
+    aliases: ['GUID'],
+    signature: 'UUID()',
+    summary: 'A fresh random RFC 4122 version-4 UUID (lowercase, dashed). Recomputed when the table changes.',
+    example: '=UUID()',
+    minArgs: 0,
+    maxArgs: 0,
+    call: uuidCall,
+  },
+  {
+    name: 'B64ENCODE',
+    category: 'utility',
+    signature: 'B64ENCODE(text)',
+    summary: 'The base64 encoding of the text value (UTF-8).',
+    example: '=B64ENCODE("hello")',
+    minArgs: 1,
+    maxArgs: 1,
+    call: b64encodeCall,
+  },
+  {
+    name: 'B64DECODE',
+    category: 'utility',
+    signature: 'B64DECODE(text)',
+    summary: 'The original text of a base64 value; #VALUE! when the text is not valid base64.',
+    example: '=B64DECODE(B2)',
+    minArgs: 1,
+    maxArgs: 1,
+    call: b64decodeCall,
   },
 ]
 

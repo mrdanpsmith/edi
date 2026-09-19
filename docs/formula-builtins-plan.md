@@ -2,7 +2,7 @@
 
 Goal: grow the spreadsheet engine past its original 9 builtin functions so document-local `edi-formula` definitions can build real business rules (tax tiers, labels, aging, conditions, text assembly).
 
-Current builtins (Phases 0–6 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `STDEV`, `VAR`, `SUMIF`, `COUNTIF`, `AVERAGEIF` (criteria support `*`/`?` wildcards with `~` escape), the math `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH`, `CHOOSE` (all lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`, the date/time `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH`, and the lookup `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP`, `XLOOKUP`.
+Current builtins (Phases 0–7 complete): `SUM`, `AVERAGE` (alias `AVG`), `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `STDEV`, `VAR`, `SUMIF`, `COUNTIF`, `AVERAGEIF` (criteria support `*`/`?` wildcards with `~` escape), the math `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical `IF`, `IFERROR`, `IFS`, `SWITCH`, `CHOOSE` (all lazy), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, the text `CONCAT` (alias `CONCATENATE`), `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`, the date/time `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH`, and the lookup `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP`, `XLOOKUP`, and the utility `UUID` (alias `GUID`), `B64ENCODE`, `B64DECODE`.
 
 ## What the engine is missing
 
@@ -181,10 +181,40 @@ now that Phase 5's range geometry exists, then adds a final builtin batch:
 `CHOOSE` joins the `logical` category, `STDEV`/`VAR` the `aggregate`, `XLOOKUP`
 the `lookup` — no reference-category changes needed.
 
+## Phase 7 — utility builtins + the Use values tool
+
+**Status: complete** — implemented and verified (`npm run check` → all vitest
+passing, `npm run build` → OK, `.venv/bin/pytest tests/` → 199 passed). Handoff:
+`docs/formula-builtins-phase7-handoff.md`. A small post-program batch turning
+the "no timer/no cache" volatility model into a feature:
+
+1. **`UUID()`** (alias `GUID`) — a fresh RFC 4122 version-4 UUID (lowercase,
+   dashed), dropped into the new `utility` category. Recomputed on every solve
+   like `RAND`, since the engine deliberately holds no evaluated-value cache;
+   this is the "generate on each edit" mode.
+2. **`B64ENCODE(text)` / `B64DECODE(text)`** — base64 over the text value model
+   (UTF‑8 in/out): encode coerces via `toText`, decode returns the original
+   text or `#VALUE!` for non-base64 input (whitespace tolerated, padding
+   enforced, non‑UTF‑8 bytes rejected). Named `B64…` rather than `BASE64…` to
+   avoid colliding conceptually with Excel's `BASE(number, radix)` family.
+3. **Use values** — the selection counterpart to Excel's copy → paste-values: a
+   `Use values` toolbar button (enabled whenever any selected cell is a
+   formula) replaces every formula cell in the selection with its **currently
+   rendered** display, so volatile cells stop recalculating. The tool reads the
+   last render solve (never re-solves), so a volatile cell's cooked value is
+   exactly the one on screen; the whole selection is written in one commit,
+   undoable via the normal history. The whole-table `Resolve formulas?`
+   checkbox already saved every value with a carrier-comment rehydrate; Use
+   values is the surgical selection-sized version.
+
+`UUID`, `B64ENCODE`, `B64DECODE` live under a new `utility` reference category
+(the only category-shape change since Phase 5's `lookup`).
+
 ## Suggested function list (recap)
 
 | Category | Functions |
 | --- | --- |
+| Utility | `UUID` (alias `GUID`), `B64ENCODE`, `B64DECODE` |
 | Logic | `IF`, `IFERROR`, `AND`, `OR`, `NOT`, `IFS`, `SWITCH`, `CHOOSE`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK` |
 | Text | `CONCAT`/`CONCATENATE`, `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE` |
 | Math | `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `ROUNDUP`, `ROUNDDOWN`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN` |
@@ -192,7 +222,7 @@ the `lookup` — no reference-category changes needed.
 | Date | `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH` |
 | Lookup | `INDEX`, `MATCH`, `VLOOKUP`, `HLOOKUP`, `XLOOKUP` |
 
-Priority: logic + text are the must-haves (they make `edi-formula` derivatives genuinely powerful); math/aggregate fill gaps; dates round it out; lookups build on them all; Phase 6 closed the criteria debt and capped the set.
+Priority: logic + text are the must-haves; math/aggregate fill gaps; dates round it out; lookups build on them all; Phase 6 closed the criteria debt and capped the set; Phase 7 added the utility trio (`UUID`/`GUID`, `B64ENCODE`, `B64DECODE`) and the `Use values` selection tool.
 
 ## Verification per phase
 
