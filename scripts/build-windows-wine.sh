@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Builds the Windows Edi onefile (dist-app/Edi-<ver>-win64.exe) WITHOUT a
-# Windows host: a real Windows Python 3.12 + PyInstaller run under WineHQ-stable
+# Windows host: a real Windows Python 3.12 + PyInstaller run under WineHQ-staging
 # (Dockerfile.wine). PyInstaller cannot cross-compile; Wine provides the Windows
 # runtime that makes edi.spec take its win32 branch (VSVersionInfo, .ico,
 # WebEngine companion DLLs, console Selftest twin) on Linux.
@@ -372,6 +372,28 @@ echo "[wine] wrapping artifacts"
 rm -f dist-app/Edi-selftest.exe
 mv dist-app/Edi.exe "dist-app/Edi-$VERSION-win64.exe"
 echo "[wine] DONE: dist-app/Edi-$VERSION-win64.exe"
+
+# --- 6. NSIS installer (native makensis, baked into the image) ---------------
+# edi.nsi is platform-neutral (relative dist-app\ paths, /DVERSION /DSETUPEXE
+# defines), so the Linux NSIS compiles byte-identically to a desktop Windows
+# build — no Wine needed for this step. Output: dist-app/Edi-<v>-win64-setup.exe
+echo "[wine] NSIS installer"
+if command -v makensis >/dev/null 2>&1; then
+  # edi.nsi resolves relative File/OutFile paths against the SCRIPT's dir, so
+  # every define is passed ABSOLUTE ($B/dist-app/...); OUTEXE overrides the
+  # default relative OutFile. Linux makensis uses -D defines, not /D.
+  makensis -V2 \
+    "-DVERSION=$VERSION" \
+    "-DSETUPEXE=$B/dist-app/Edi-$VERSION-win64.exe" \
+    "-DICO=$B/scripts/assets/app-icon.ico" \
+    "-DOUTEXE=$B/dist-app/Edi-$VERSION-win64-setup.exe" \
+    packaging/edi.nsi
+  [ -f "dist-app/Edi-$VERSION-win64-setup.exe" ] || { echo "error: installer not produced" >&2; exit 1; }
+  echo "[wine] DONE: dist-app/Edi-$VERSION-win64-setup.exe"
+else
+  echo "error: makensis not found in the image (run 'apt-get install nsis')" >&2
+  exit 1
+fi
 EDI_STEPS
 )
 

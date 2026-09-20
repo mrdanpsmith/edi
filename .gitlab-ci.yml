@@ -5,9 +5,11 @@
 #   * `edi-builder:jammy`      — Ubuntu 22.04 (glibc 2.35) + Qt runtime libs,
 #     Node 22, and a venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
 #     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/package job.
-#   * `edi-wine-builder:jammy` — Ubuntu 22.04 + WineHQ-stable, a baked win_amd64
-#     wheel set and the Windows Python installer (Dockerfile.wine). Consumed only
-#     by the `build-windows-wine` job (and locally by scripts/build-windows-wine.sh),
+#   * `edi-wine-builder:jammy` — Ubuntu 22.04 + WineHQ-staging (≥11.5 devline,
+#     so its bundled ICU can satisfy Qt6Core.dll — wine-stable 11.0 predates
+#     that), a baked win_amd64 wheel set, the Windows Python installer, the VC
+#     redist, and native `nsis` (Dockerfile.wine). Consumed only by the
+#     `build-windows-wine` job (and locally by scripts/build-windows-wine.sh),
 #     so its ~1 GB stays out of the everyday image pull.
 # Building those images is the single expensive setup step; it is cached in the
 # registry (buildx cache) and only rebuilt when Dockerfile.ci / Dockerfile.wine
@@ -221,15 +223,22 @@ build:
     - mkdir -p build/tmp
     - TMPDIR="$CI_PROJECT_DIR/build/tmp" EDI_SELFTEST=1 timeout 60 ./dist-app/edi
 
-# Windows onefile, produced WITHOUT a Windows host: the `edi-wine-builder:jammy`
+# Windows deliverables, produced WITHOUT a Windows host: the `edi-wine-builder:jammy`
 # image (Dockerfile.wine) runs a real Windows Python 3.12 + PyInstaller under
-# WineHQ-stable, so scripts/build-windows-wine.sh emits Edi.exe + the console
-# Edi-selftest.exe twin via edi.spec's win32 branch. It replaces the GitLab SaaS
+# WineHQ-staging, so scripts/build-windows-wine.sh emits the onefile Edi.exe +
+# the console Edi-selftest.exe twin via edi.spec's win32 branch, then the NSIS
+# installer (native Linux makensis, `nsis` baked in). It replaces the GitLab SaaS
 # Windows runner — that Server-SKU runner's frozen smoke was SKIPPED_ENVIRONMENTAL
-# anyway (no dcomp.dll/bthprops.cpl, so QtWebEngine could never load). Wine has
-# the same renderer gap, so this job validates the bundle STRUCTURALLY: onefile
-# self-extraction, PE/DLL resolution, Python boot and the SELFTEST_BOOTING
-# heartbeat. A full page render only happens on a real Windows desktop
+# anyway (no dcomp.dll/bthprops.cpl, so QtWebEngine could never load). Wine has a
+# similar renderer gap (proven Chromium-init crash), so this job validates the
+# bundle STRUCTURALLY: `import PySide6.QtCore` succeeds only because the script
+# stages the image's bundled ICU next to Qt6Core.dll (Qt's hooks otherwise find
+# no plugins), the onefile CArchive is checked to actually CONTAIN the platform
+# plugins + ICU (4a), and the frozen smoke is bounded — the proven Chromium-init
+# crash classifies SELFTEST_SKIPPED_ENVIRONMENTAL (structural pass) while
+# extraction / DLL-load defects hard-fail. The artifact phase ships the versioned
+# onefile AND its NSIS installer (`Edi-<v>-win64-setup.exe`). A full page render
+# only happens on a real Windows desktop
 # (scripts/build-windows.ps1). The frontend dist/ + app icons come from the
 # `frontend` job artifacts (byte-identical everywhere), so no Node/npm is needed.
 build-windows-wine:

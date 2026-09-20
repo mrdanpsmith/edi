@@ -13,10 +13,15 @@
 #   3. smoke test it offscreen (EDI_SELFTEST=1, verdict via EDI_SELFTEST_OUT)
 #   4. copy to dist-app\Edi-<ver>-win64.exe
 #
-# The onefile is shipped as-is; the NSIS installer is NOT built in CI — the
-# previous make-it-mandatory attempts burned many runs on runner-specific
-# quirks (makensis not on PATH, then undebuggable File-path resolution). Build
-# packaging/edi.nsi on a real desktop when an installer is wanted.
+# The NSIS installer (packaging/edi.nsi) is built by the CI wine job now
+# (native Linux makensis, `nsis` baked into Dockerfile.wine, absolute defines),
+# so this desktop path ships the onefile as-is. It can still produce a
+# `-win64-setup.exe` by hand: running makensis from the checkout root with
+# ABSOLUTE -D defines (makensis resolves relative File/OutFile paths against
+# the SCRIPT's dir, not the CWD, and Linux makensis takes -D, not /D):
+#   makensis -DVERSION=0.5.0 -DSETUPEXE=C:\path\Edi-0.5.0-win64.exe \
+#            -DICO=C:\path\app-icon.ico -DOUTEXE=C:\path\Edi-0.5.0-win64-setup.exe
+#            packaging\edi.nsi
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Version 0.5.0
 

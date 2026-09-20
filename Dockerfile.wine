@@ -1,18 +1,22 @@
 # syntax=docker/dockerfile:1
 #
 # Windows Edi binary builder: runs a real Windows Python 3.12 + PyInstaller
-# under WineHQ-stable on Ubuntu 22.04, so the Windows onefile is produced
+# under WineHQ-staging on Ubuntu 22.04, so the Windows onefile is produced
 # without a Windows host. PyInstaller cannot cross-compile; Wine provides the
 # Windows runtime/Python that yields sys.platform == 'win32', so edi.spec takes
 # its win32 branch for real: VSVersionInfo, the .ico, the WebEngine-companion
 # DLL set, and the console Edi-selftest.exe twin.
 #
-# This CANNOT host the QtWebEngine renderer — the same hard limit GitLab's
-# Server-SKU Windows runners had (missing dcomp.dll/bthprops.cpl, so their
-# frozen smoke was SKIPPED_ENVIRONMENTAL too). Wine's job is structural
-# validation: the onefile self-extracts, the PE bundle's DLLs resolve, and
-# Python boots and writes the SELFTEST_BOOTING heartbeat via the console twin.
-# A full render only happens on a real Windows desktop (scripts/build-windows.ps1).
+# This CANNOT host the QtWebEngine rendered page — the same hard limit GitLab's
+# Server-SKU Windows runners had (missing dcomp.dll/bthprops.cpl; and Wine's
+# Chromium FATALs in network_change_notifier_win.cc/hwnd_util at init), so their
+# frozen smoke was SKIPPED_ENVIRONMENTAL too. Wine's job is structural
+# validation: the script stages this Wine's bundled ICU next to Qt6Core.dll so
+# the Qt hooks collect the platform plugins, checks the onefile CArchive
+# actually contains them (plugins + ICU), and bounded-smokes the console twin —
+# the proven Chromium-init crash classifies SELFTEST_SKIPPED_ENVIRONMENTAL,
+# extraction/DLL-load defects hard-fail. A full render only happens on a real
+# Windows desktop (scripts/build-windows.ps1).
 #
 # win_amd64 wheels are baked HERE by downloading them on the build host (no
 # Wine TLS flakiness), and the python.org "full" installer is fetched so the
@@ -46,6 +50,7 @@ RUN dpkg --add-architecture i386 \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         gnupg2 \
+        nsis \
         wget \
         python3 \
         python3-pip \
