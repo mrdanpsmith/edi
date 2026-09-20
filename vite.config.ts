@@ -14,7 +14,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
-    exclude: ['**/node_modules/**', '**/.cache/**', '**/dist/**'],
+    exclude: ['**/node_modules/**', '**/.cache/**', '**/.npm/**', '**/dist/**', '**/dist-app/**', '**/build/**', '**/coverage-py/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'cobertura'],

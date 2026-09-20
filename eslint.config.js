@@ -3,7 +3,21 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['dist/', 'coverage/', '.cache/', 'node_modules/', 'scripts/', '.venv/', 'backend/'],
+    ignores: [
+      'dist/',
+      'dist-app/',
+      'coverage/',
+      'coverage-py/',
+      '.cache/',
+      '.npm/',
+      'node_modules/',
+      'build/',
+      'scripts/',
+      '.venv/',
+      '.venv-win/',
+      '.venv-macos/',
+      'backend/',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
