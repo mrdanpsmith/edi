@@ -323,7 +323,8 @@ release:
       [ -n "$PREV_TAG" ] && RANGE="${PREV_TAG}..${CI_COMMIT_TAG}"
       printf '## Changes in %s\n\n' "$CI_COMMIT_TAG" > /tmp/CHANGELOG.md
       git log --pretty=format:'- %h %s' "$RANGE" >> /tmp/CHANGELOG.md
-      printf '\n' >> /tmp/CHANGELOG.md
+      printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
+      printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: replace `Edi-%s-win64.exe`); settings and documents are untouched. Linux: upgrade via your package manager. macOS: replace the app bundle. Full instructions in README → Upgrading.\n' "${CI_COMMIT_TAG#v}" "${CI_COMMIT_TAG#v}" >> /tmp/CHANGELOG.md
     # A CI job token can access the Releases/Packages APIs but not the generic
     # /uploads endpoint (401 Unauthorized), so glab publishes the artifacts to
     # the generic package registry instead and links them to the release.

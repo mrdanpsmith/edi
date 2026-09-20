@@ -9,7 +9,7 @@ Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets
 
 - **Frontend**: CodeMirror 6 + Mermaid + spreadsheet formulas in TypeScript, built with Vite into a single static `dist/`.
 - **Backend**: Python 3 + PySide6 (QtWidgets / QtWebEngine). A native `QWebEngineView` hosts the frontend; the page talks to Python through `QWebChannel` (`backend/bridge.py`), which provides file dialogs, file IO, and code-block execution.
-- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too. Windows binaries are built on a hosted Windows runner; macOS has a manual build script (PyInstaller cannot cross-compile — both need their native OS).
+- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too. Windows binaries are built in an WineHQ-staging container — a real Windows Python + PyInstaller under Wine, no Windows host needed — and shipped with an NSIS installer; macOS has a manual build script (PyInstaller cannot cross-compile).
 
 ## Features
 
@@ -174,19 +174,19 @@ for the bare binary.
 
 ### Windows and macOS binaries
 
-Windows and macOS bundles must be built on those OSes — PyInstaller cannot
-cross-compile.
-
-Each `vX.Y.Z` release also publishes the **Windows** onefile (built by the CI
-`build-windows` job on a hosted Windows runner):
+Each `vX.Y.Z` release publishes two Windows artifacts, both built by the CI
+`build-windows-wine` job (a real Windows Python + PyInstaller running under
+WineHQ-staging — PyInstaller cannot cross-compile, but Wine provides the
+Windows runtime that makes edi.spec take its win32 branch):
 
 | Artifact | Format | Install |
 | --- | --- | --- |
-| `Edi-X.Y.Z-win64.exe` | portable onefile | run directly |
+| `Edi-X.Y.Z-win64-setup.exe` | NSIS installer (recommended) | run it; installs to `%ProgramFiles%\Edi` with Start Menu / desktop shortcuts and a Settings → Apps uninstall entry |
+| `Edi-X.Y.Z-win64.exe` | portable onefile | run directly; nothing is installed and settings are still shared via the registry |
 
-No Windows installer is shipped from CI (the `build-windows` job builds only
-the onefile); an NSIS installer can be produced manually on a Windows desktop
-with `packaging/edi.nsi` if one is wanted.
+Both run the same app — the installer just adds desktop integration and
+version tracking, and can be run over an existing install to upgrade it (see
+[Upgrading](#upgrading) below).
 
 Build Windows binaries locally on a Windows box:
 
@@ -209,6 +209,31 @@ The macOS app is ad-hoc code-signed (arm64 requires it) but not notarized (no
 Apple Developer account in CI), so the first open on another Mac shows a
 Gatekeeper warning — open via right-click → Open, or clear the quarantine flag:
 `xattr -dr com.apple.quarantine Edi.app`.
+
+## Upgrading
+
+There is no in-app updater — update by installing the latest release artifact.
+Installing a newer version never touches your settings or documents.
+
+- **Windows (installer):** download the new `Edi-<version>-win64-setup.exe` and
+  run it over the existing install. It replaces the app in `%ProgramFiles%\Edi`,
+  refreshes the Start Menu / desktop shortcuts, updates the Settings → Apps
+  entry, and needs no uninstall first (it will ask for elevation). Settings
+  (recent files, theme) live in the registry and your `.md` files are wherever
+  you put them, so both are left intact.
+- **Windows (portable):** replace your downloaded `Edi-<version>-win64.exe`.
+  Each launch unpacks the app to a temp directory, so there is nothing to
+  uninstall; settings are still shared via the registry.
+- **Linux:** upgrade through your package manager — `sudo apt install
+  ./edi_<version>_amd64.deb` or `sudo dnf install ./edi-<version>-1.x86_64.rpm`
+  replaces the previous version. AppImage / tar.gz users just download the new
+  archive.
+- **macOS:** download `Edi-<version>-macos-arm64.dmg` and drag the new `Edi.app`
+  over the old one in Applications.
+
+All released versions are listed on the project's Releases page. No
+version-ordering is enforced: installing an older artifact over a newer
+installation downgrades it.
 
 ## Checks and tests
 
