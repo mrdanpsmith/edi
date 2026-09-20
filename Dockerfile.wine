@@ -1,0 +1,108 @@
+# syntax=docker/dockerfile:1
+#
+# Windows Edi binary builder: runs a real Windows Python 3.12 + PyInstaller
+# under WineHQ-stable on Ubuntu 22.04, so the Windows onefile is produced
+# without a Windows host. PyInstaller cannot cross-compile; Wine provides the
+# Windows runtime/Python that yields sys.platform == 'win32', so edi.spec takes
+# its win32 branch for real: VSVersionInfo, the .ico, the WebEngine-companion
+# DLL set, and the console Edi-selftest.exe twin.
+#
+# This CANNOT host the QtWebEngine renderer — the same hard limit GitLab's
+# Server-SKU Windows runners had (missing dcomp.dll/bthprops.cpl, so their
+# frozen smoke was SKIPPED_ENVIRONMENTAL too). Wine's job is structural
+# validation: the onefile self-extracts, the PE bundle's DLLs resolve, and
+# Python boots and writes the SELFTEST_BOOTING heartbeat via the console twin.
+# A full render only happens on a real Windows desktop (scripts/build-windows.ps1).
+#
+# win_amd64 wheels are baked HERE by downloading them on the build host (no
+# Wine TLS flakiness), and the python.org "full" installer is fetched so the
+# runtime just runs it offline under wine. NO wine prefix is baked in: the
+# prefix is created at runtime under the CI/host uid (wine refuses to run as
+# root, and a baked prefix would couple the image to one uid).
+#
+#   docker build -f Dockerfile.wine -t edi-wine-builder:jammy .
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG PY_WIN_VERSION=3.12.8
+
+# Curry-bump marker: the winehq line below is installed unpinned so builders
+# always get a current build; bumping EDI_WINE_REFRESH invalidates the (cached)
+# apt layer and re-resolves it. STAGING not stable is deliberate: Qt6Core.dll
+# hard-imports icuuc.dll (the Windows ICU — real System32 provides it, but Wine
+# and Server SKUs do not), and Wine only bundles that ICU as of the 11.5
+# development line; wine-stable 11.0 is still too old for the PyInstaller Qt
+# hook's `import PySide6.QtCore` metadata probe to succeed, which would silently
+# ship a bundle with NO platform plugins.
+ARG EDI_WINE_REFRESH=2026-09-20
+ENV EDI_WINE_REFRESH=$EDI_WINE_REFRESH
+
+# WineHQ staging (jammy) plus the X tools the console-twin smoke uses. i386 in
+# DPkg is required so winehq-staging can pull wine-staging-i386.
+RUN dpkg --add-architecture i386 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gnupg2 \
+        wget \
+        python3 \
+        python3-pip \
+        python3-venv \
+        xvfb \
+        xauth \
+    # WineHQ repo: the key must be in place before the .sources file is used.
+    && install -d -m0755 /etc/apt/keyrings \
+    && wget -q -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key \
+    && wget -q -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends winehq-staging \
+    # wine refuses to run as root; the sanity check drops to a build user.
+    && useradd -m -s /bin/bash builder \
+    && runuser -u builder -- wine --version \
+    # The Qt-hook ICU requirement is structural; fail the build if the wine we
+    # just installed does not actually ship it.
+    && runuser -u builder -- bash -c 'test -n "$(find /opt/wine-* -iname "icuuc.dll" | head -n1)"' \
+    && rm -rf /var/lib/apt/lists/*
+
+# Changing requirements-win.txt invalidates the wheel bake (and therefore every
+# layer below it) via this build arg, so a stale local image cannot silently
+# keep old wheel pins.
+ARG REQ_HASH=0
+ENV EDI_REQ_HASH=$REQ_HASH
+
+# Windows wheels for the Python the container installs at runtime; downloaded
+# on the Linux host so no Wine TLS is ever involved. Pins mirror
+# requirements.txt / scripts/build-windows.ps1 exactly.
+COPY requirements-win.txt /requirements-win.txt
+RUN python3 -m venv /opt/wheeldl \
+    && /opt/wheeldl/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/wheeldl/bin/pip download \
+        --dest /opt/wheels \
+        --no-cache-dir \
+        --only-binary=:all: \
+        --platform win_amd64 \
+        --implementation cp \
+        --python-version 3.12 \
+        --abi cp312 \
+        -r /requirements-win.txt \
+    && rm -rf /opt/wheeldl
+
+# Windows Python "full" installer (NOT the -webinstall bootstrapper) so the
+# runtime installs it into the prefix offline.
+RUN mkdir -p /opt/py \
+    && wget -q -O /opt/py/python-${PY_WIN_VERSION}-amd64.exe \
+        "https://www.python.org/ftp/python/${PY_WIN_VERSION}/python-${PY_WIN_VERSION}-amd64.exe"
+
+# VC++ 2015-2022 redistributable. Not for the frozen binary (real System32 has
+# msvcp140.dll etc.) but for the BUILD: PyInstaller's Qt hooks probe the Qt
+# install by importing PySide6.QtCore in an isolated subprocess, and that needs
+# msvcp140.dll, which exists in every desktop System32 but not in a fresh wine
+# prefix. Without it the import fails, the Qt hooks come back empty, and the
+# bundle is produced with NO platform plugins (qwindows.dll missing — Qt then
+# refuses to start with "no Qt platform plugin could be initialized"). The
+# runtime installs this into the prefix (under xvfb-run) before pip/PyInstaller.
+RUN mkdir -p /opt/vc \
+    && wget -q -O /opt/vc/vc_redist.x64.exe \
+        "https://aka.ms/vs/17/release/vc_redist.x64.exe"

@@ -1,11 +1,17 @@
 # GitLab CI for Edi
 #
-# All jobs run in a pre-built builder image (`edi-builder:jammy`) pushed to the
-# project's container registry by the `build-image` job: Ubuntu 22.04 (glibc
-# 2.35) with the Qt runtime libs, Node 22, and a venv at /opt/edi/venv holding
-# PySide6==6.11.1, pyinstaller==6.22.0, pytest, pytest-qt, pytest-cov. Building
-# that image is the single expensive setup step; it is cached in the registry
-# (buildx cache) and only rebuilt when Dockerfile.ci / requirements.txt change.
+# All jobs run in pre-built images pushed to the project's container registry
+# by the `build-image` job (only when their definitions change):
+#   * `edi-builder:jammy`      — Ubuntu 22.04 (glibc 2.35) + Qt runtime libs,
+#     Node 22, and a venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
+#     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/package job.
+#   * `edi-wine-builder:jammy` — Ubuntu 22.04 + WineHQ-stable, a baked win_amd64
+#     wheel set and the Windows Python installer (Dockerfile.wine). Consumed only
+#     by the `build-windows-wine` job (and locally by scripts/build-windows-wine.sh),
+#     so its ~1 GB stays out of the everyday image pull.
+# Building those images is the single expensive setup step; it is cached in the
+# registry (buildx cache) and only rebuilt when Dockerfile.ci / Dockerfile.wine
+# / requirements.txt / requirements-win.txt / .gitlab-ci.yml change.
 #
 # Jobs link the baked venv into the checkout (`ln -s /opt/edi/venv .venv`)
 # because scripts/package-linux.sh hardcodes $ROOT/.venv. The venv is a
@@ -64,14 +70,15 @@ default:
 .setup_venv: &setup_venv
   - ln -s /opt/edi/venv .venv
 
-# Builds and pushes the shared builder image so downstream jobs skip apt/Node/
-# venv setup. Runs on the default branch when the image definition OR the CI
+# Builds and pushes the shared builder images so downstream jobs skip apt/Node/
+# venv setup. Runs on the default branch when an image definition OR the CI
 # config itself changes (the job lives in .gitlab-ci.yml); the registry buildx
-# cache keeps rebuilds fast. To force a rebuild, touch Dockerfile.ci or
-# requirements.txt. It does NOT run on tag pipelines: main rebuilds the image
-# whenever its definition changes, so a release tag (cut after main passes)
-# always finds it. (No `when: manual` fallback: a paused manual job would
-# block every `needs` dependent via the DAG.)
+# cache keeps rebuilds fast. To force a rebuild, touch Dockerfile.ci,
+# Dockerfile.wine, requirements.txt or requirements-win.txt. It does NOT run on
+# tag pipelines: main rebuilds the images whenever their definitions change, so
+# a release tag (cut after main passes) always finds them. (No `when: manual`
+# fallback: a paused manual job would block every `needs` dependent via the
+# DAG.)
 build-image:
   stage: prepare
   image: docker:27-dind
@@ -85,7 +92,9 @@ build-image:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes:
         - Dockerfile.ci
+        - Dockerfile.wine
         - requirements.txt
+        - requirements-win.txt
         - .gitlab-ci.yml
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
@@ -96,12 +105,21 @@ build-image:
     # Must pass -f Dockerfile.ci explicitly: the repo also contains a plain
     # "Dockerfile" (the app's container image), which buildx would build by
     # default -- an image with no node and a venv at /app/.venv instead of
-    # /opt/edi/venv.
+    # /opt/edi/venv. REQ_HASH invalidates the wheel bake when
+    # requirements-win.txt changes even though the file itself is not in the
+    # build context root that buildx sees after the tar upload.
     - docker buildx build --push --progress=plain
       -f Dockerfile.ci
       -t "$CI_REGISTRY_IMAGE/edi-builder:jammy"
       --cache-from "type=registry,ref=$CI_REGISTRY_IMAGE/edi-builder:cache"
       --cache-to "type=registry,ref=$CI_REGISTRY_IMAGE/edi-builder:cache,mode=max"
+      .
+    - docker buildx build --push --progress=plain
+      -f Dockerfile.wine
+      -t "$CI_REGISTRY_IMAGE/edi-wine-builder:jammy"
+      --build-arg REQ_HASH="$(md5sum requirements-win.txt | cut -d' ' -f1)"
+      --cache-from "type=registry,ref=$CI_REGISTRY_IMAGE/edi-wine-builder:cache"
+      --cache-to "type=registry,ref=$CI_REGISTRY_IMAGE/edi-wine-builder:cache,mode=max"
       .
 
 test:
@@ -143,7 +161,7 @@ test:
 # every platform, so produce them once (on the pinned Node 22 builder image)
 # and share them with the Linux and Windows binary jobs instead of rebuilding
 # per-OS. This also keeps the ~193 MB PyInstaller payload out of the Windows
-# job's artifact downloads. On v* tags only; `build` and `build-windows`
+# job's artifact downloads. On v* tags only; `build` and `build-windows-wine`
 # consume the artifacts via `needs`.
 frontend:
   stage: build
@@ -173,8 +191,8 @@ build:
   stage: build
   # build is deliberately decoupled from `test` (parallel, both waiting only on
   # the frontend producer job + build-image): the frontend quality gate (lint +
-  # typecheck) lives in the `frontend` job that this job and build-windows both
-  # consume.
+  # typecheck) lives in the `frontend` job that this job and build-windows-wine
+  # both consume.
   needs:
     - job: build-image
       optional: true
@@ -203,46 +221,35 @@ build:
     - mkdir -p build/tmp
     - TMPDIR="$CI_PROJECT_DIR/build/tmp" EDI_SELFTEST=1 timeout 60 ./dist-app/edi
 
-# Windows onefile, built on a GitLab-hosted Windows runner
-# (`saas-windows-medium-amd64`, PowerShell shell, elevated) because PyInstaller
-# cannot cross-compile — the Windows binary MUST be produced on Windows.
-# Windows runners take no image/services (shell executor; the inherited
-# default.image is ignored). The frontend `dist/` and the app icons come from
-# the `frontend` job artifacts (byte-identical on every platform), so this job
-# needs NO Node/npm at all — it only gates Python >= 3.10 (Chocolatey fallback).
-# It builds the onefile, runs the offscreen selftest (verdict via
-# EDI_SELFTEST_OUT; skipped-environmental on Server-SKU runners that lack
-# QtWebEngine's system DLLs), then renames it to the versioned .exe (NSIS
-# installer deliberately NOT built in CI — it burned many runs on runner-only
-# makensis quirks; build packaging/edi.nsi on a desktop when wanted). Like
-# `build`, only on v* tags; the .exe artifacts feed the `release` job via
-# `needs`.
-build-windows:
+# Windows onefile, produced WITHOUT a Windows host: the `edi-wine-builder:jammy`
+# image (Dockerfile.wine) runs a real Windows Python 3.12 + PyInstaller under
+# WineHQ-stable, so scripts/build-windows-wine.sh emits Edi.exe + the console
+# Edi-selftest.exe twin via edi.spec's win32 branch. It replaces the GitLab SaaS
+# Windows runner — that Server-SKU runner's frozen smoke was SKIPPED_ENVIRONMENTAL
+# anyway (no dcomp.dll/bthprops.cpl, so QtWebEngine could never load). Wine has
+# the same renderer gap, so this job validates the bundle STRUCTURALLY: onefile
+# self-extraction, PE/DLL resolution, Python boot and the SELFTEST_BOOTING
+# heartbeat. A full page render only happens on a real Windows desktop
+# (scripts/build-windows.ps1). The frontend dist/ + app icons come from the
+# `frontend` job artifacts (byte-identical everywhere), so no Node/npm is needed.
+build-windows-wine:
   stage: build
-  tags:
-    - saas-windows-medium-amd64
+  image: $CI_REGISTRY_IMAGE/edi-wine-builder:jammy
   needs:
     - job: build-image
       optional: true
     - job: frontend
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v/'
-  # pip (venv + PySide6 + pyinstaller) dominates this job's wall time (~20 min)
-  # on the Windows runner; caching pip's downloads makes repeat runs near-free.
-  # Job-level cache overrides the global .npm one (this job has no Node).
-  cache:
-    key:
-      files:
-        - requirements.txt
-    paths:
-      - build/.pip-cache/
   artifacts:
     name: edi-win-$CI_COMMIT_TAG
     paths:
       - dist-app/Edi-*.exe
     expire_in: never
   script:
-    - .\scripts\build-windows.ps1 -Version "$env:CI_COMMIT_TAG"
+    # The wine prefix init (Windows Python install + pip offline) costs a few
+    # minutes on a tag; `build` (Linux) is the fast parallel twin.
+    - ./scripts/build-windows-wine.sh "${CI_COMMIT_TAG#v}"
 
 # Wraps the onefile binary into versioned .deb/.rpm/.tar.gz/.AppImage
 # artifacts (scripts/package-linux.sh). Runs only on v* tags; the names embed
@@ -271,11 +278,11 @@ release:
   stage: release
   # Only needs bash (version.sh) + git for the changelog + curl for glab — all
   # in the builder image. Runs rarely (tag pushes), so keep it light. The
-  # Windows binaries (built by build-windows) are pulled in alongside the Linux
+  # Windows exe (built by build-windows-wine) is pulled in alongside the Linux
   # packages via the needs edge.
   needs:
     - package
-    - build-windows
+    - build-windows-wine
     - job: build-image
       optional: true
   rules:

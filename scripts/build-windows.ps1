@@ -1,7 +1,9 @@
-# Builds the Windows Edi binary: the PyInstaller onefile.
+# Builds the Windows Edi binary: the PyInstaller onefile. This is the FULL-SMOKE
+# desktop path — CI produces the .exe inside the 'edi-wine-builder' image
+# (Dockerfile.wine + scripts/build-windows-wine.sh), which cannot host the
+# QtWebEngine renderer; only a real Windows machine can run the complete smoke.
 #
-# PyInstaller cannot cross-compile, so this must run on real Windows (GitLab
-# hosted Windows runner, `saas-windows-medium-amd64`, PowerShell shell). The
+# PyInstaller cannot cross-compile, so this must run on real Windows. The
 # frontend `dist/` and `scripts/assets/app-icon.ico` come from the `frontend`
 # CI job (byte-identical on every platform), so NO Node/npm is needed here.
 # It detects Python >= 3.10 on PATH (installs via Chocolatey only when missing),
@@ -99,8 +101,32 @@ Invoke-Py -m venv '.venv-win'
 $PyVenv = Join-Path $PWD '.venv-win\Scripts\python.exe'
 & $PyVenv -m pip install --upgrade pip --quiet
 Assert-ExitCode 'pip upgrade'
-& $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' 'defusedxml' --quiet
+& $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' 'pefile==2024.8.26' 'pywin32-ctypes==0.2.3' 'defusedxml' --quiet
 Assert-ExitCode 'pip install PySide6/pyinstaller'
+
+# --- Bundle Windows' system ICU next to Qt6Core.dll --------------------------
+# Qt6Core.dll hard-imports icuuc.dll (the Windows ICU). Real desktops have it
+# in System32, but Server SKUs and Wine < 11.5 do not — and PyInstaller's Qt
+# hooks only collect the platform plugins and translations if that isolated
+# `import PySide6.QtCore` succeeds. Copying the system ICU into the PySide6
+# package (a) lets the probe run on ANY build host and (b) makes the analysis
+# resolve icuuc.dll from an app path so it is shipped IN the bundle — the exe
+# then boots even on no-ICU Windows. ICU went unversioned-icuuc/icuin-first
+# (1703+) and gains the combined icu.dll from 1903+; copy whichever exist.
+$PySideDir = Join-Path $PWD '.venv-win\Lib\site-packages\PySide6'
+$System32 = Join-Path $env:WinDir 'System32'
+$copiedIcu = @()
+foreach ($icu in 'icu.dll', 'icuuc.dll', 'icuin.dll') {
+    $src = Join-Path $System32 $icu
+    if (Test-Path $src) {
+        Copy-Item -Force $src (Join-Path $PySideDir $icu)
+        $copiedIcu += $icu
+    }
+}
+if ($copiedIcu.Count -eq 0) {
+    throw "no system ICU found in $System32 (icuuc.dll is required by Qt6Core.dll)"
+}
+Write-Host "==> Bundled system ICU into PySide6 dir: $($copiedIcu -join ', ')"
 
 # --- PyInstaller onefile ---
 Write-Host '==> PyInstaller onefile'
