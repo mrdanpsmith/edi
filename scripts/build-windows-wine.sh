@@ -102,6 +102,7 @@ else
             && [ -f /opt/vc/vc_redist.x64.exe ] \
             && command -v wine >/dev/null 2>&1 \
             && command -v xvfb-run >/dev/null 2>&1 \
+            && command -v makensis >/dev/null 2>&1 \
             && find /opt/wine-* -iname "icuuc.dll" | head -n1 | grep -q .'; then
     print_step "Stale $IMAGE (missing a baked tool); rebuilding from Dockerfile.wine"
     docker build --build-arg REQ_HASH="$REQ_HASH" -f Dockerfile.wine -t "$IMAGE" "$ROOT"
