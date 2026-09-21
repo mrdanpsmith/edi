@@ -394,7 +394,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert insert_labels == ["&Table…", "&Spreadsheet…", "&Text File…", "&Image…"]
 
     help_labels = [action.text() for action in window._help_menu.actions()]
-    assert help_labels == ["&Formula Reference…", "", "&About Edi…"]
+    assert help_labels == ["&Edi Guide…", "&Formula Reference…", "", "&About Edi…"]
 
     toolbar_actions = [
         action
@@ -478,6 +478,33 @@ def test_view_menu_toolbar_action_invokes_js_command(visible, qtbot):
 
     qtbot.waitUntil(fetched, timeout=3000)
     assert result["value"] == "toggleToolbar"
+
+
+def test_help_menu_edi_guide_action_invokes_js_command(visible, qtbot):
+    window = visible
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__menuCmd = null;"
+        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
+        "true",
+        lambda _v: None,
+    )
+
+    help_menu = window._help_menu
+    guide_action = next(
+        action for action in help_menu.actions() if action.text().startswith("&Edi Guide")
+    )
+    guide_action.trigger()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "window.__menuCmd", lambda v: result.__setitem__("value", v)
+        )
+        return result.get("value") is not None
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "helpGuide"
 
 
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):

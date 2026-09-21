@@ -75,7 +75,7 @@ Document actions live in the native menu bar and, for the four most common ones 
 - **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
 - **Insert**: Spreadsheet, Text File, Image.
 - **View**: Preview (toggle, default on), Toolbar (toggle, default on).
-- **Help**: Formula Reference, About Edi.
+- **Help**: Edi Guide, Formula Reference, About Edi.
 
 ### Spreadsheet import
 

@@ -11,6 +11,7 @@ export interface MenuCommands {
   export: () => void
   toggleToolbar: () => void
   formulaReference: () => void
+  helpGuide: () => void
   undo: () => void
   redo: () => void
   cut: () => void

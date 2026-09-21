@@ -40,6 +40,7 @@ import { bindMenuCommands } from './menus'
 import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
+import { buildHelpGuideMarkdown } from './helpGuide'
 import { createBlockEditor, type BlockEditor } from './editor'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode } from './node/table'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
@@ -262,6 +263,11 @@ function openWelcome(): void {
 function openFunctionReference(): void {
   const state = blockEditor?.getState()
   tabs.addSession(buildFunctionReferenceMarkdown(state ? documentFunctionsFor(state) : []))
+  afterActivate()
+}
+
+function openHelpGuide(): void {
+  tabs.addSession(buildHelpGuideMarkdown())
   afterActivate()
 }
 
@@ -923,6 +929,7 @@ function init(): void {
     export: () => void exportHtml(),
     toggleToolbar: () => toggleToolbar(),
     formulaReference: () => openFunctionReference(),
+    helpGuide: () => openHelpGuide(),
     undo: () => editUndoNoScroll(),
     redo: () => editRedoNoScroll(),
     cut: () => editCut(),

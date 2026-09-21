@@ -404,6 +404,11 @@ class MainWindow(QMainWindow):
 
         self._help_menu = menubar.addMenu("&Help")
         help_menu = self._help_menu
+        guide_action = QAction("&Edi Guide…", self)
+        guide_action.triggered.connect(
+            lambda _checked=False: self._menu_command("helpGuide")
+        )
+        help_menu.addAction(guide_action)
         reference_action = QAction("&Formula Reference…", self)
         reference_action.triggered.connect(
             lambda _checked=False: self._menu_command("formulaReference")

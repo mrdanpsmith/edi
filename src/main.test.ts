@@ -525,6 +525,17 @@ describe('tabs', () => {
       { title: '* notes.md — Edi' },
     )
   })
+
+  it('opens the Edi Guide as an untitled tab from the Help menu', async () => {
+    await loadMain()
+    menu('helpGuide')
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(1)
+    expect(activeTabTitle()).toBe('Untitled')
+    expect(mainState.markdown).toContain('# Edi Guide')
+    expect(mainState.markdown).toContain('## Masked fields')
+  })
 })
 
 describe('open and save', () => {
