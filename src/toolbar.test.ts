@@ -2,8 +2,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
-import { FormatToolbar, getButtons, toggleTaskItems, applyLink, blockTypeSelectPlugin } from './formatToolbar'
-import type { FormatToolbarContext } from './formatToolbar'
+import { Toolbar, getFormattingButtons, getFileButtons, toggleTaskItems, applyLink, blockTypeSelectPlugin } from './toolbar'
+import type { ToolbarContext } from './toolbar'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { promptForLink } from './urlDialog'
 import { getActiveCellHost, setActiveCellHost } from './inline-format'
@@ -11,8 +11,8 @@ import { getActiveCellHost, setActiveCellHost } from './inline-format'
 vi.mock('./urlDialog')
 
 async function runLinkButton(view: EditorView): Promise<boolean | undefined> {
-  const ctx: FormatToolbarContext = { getView: () => view }
-  const link = getButtons(ctx).find((b) => b.title === 'Hyperlink')!
+  const ctx: ToolbarContext = { getView: () => view }
+  const link = getFormattingButtons(ctx).find((b) => b.title === 'Hyperlink')!
   return link.run(view)
 }
 
@@ -29,7 +29,7 @@ function makeFixture() {
     }),
   })
 
-  const ctx: FormatToolbarContext = {
+  const ctx: ToolbarContext = {
     getView: () => view,
   }
   return { bar, view, ctx, host }
@@ -51,7 +51,7 @@ function makeMultiBlockFixture() {
   })
   const view = new EditorView(host, { state })
 
-  const ctx: FormatToolbarContext = {
+  const ctx: ToolbarContext = {
     getView: () => view,
   }
   return { bar, view, ctx, host }
@@ -71,7 +71,7 @@ function makeFixtureWithCursor(cursorPos: number) {
   })
   const view = new EditorView(host, { state })
 
-  const ctx: FormatToolbarContext = {
+  const ctx: ToolbarContext = {
     getView: () => view,
   }
   return { bar, view, ctx, host }
@@ -92,13 +92,13 @@ function makeHeadingFixture(level: number, withParagraph = false) {
   })
   const view = new EditorView(host, { state })
 
-  const ctx: FormatToolbarContext = {
+  const ctx: ToolbarContext = {
     getView: () => view,
   }
   return { bar, view, ctx, host }
 }
 
-describe('FormatToolbar', () => {
+describe('Toolbar', () => {
   beforeEach(() => {
     localStorage.clear()
   })
@@ -109,21 +109,75 @@ describe('FormatToolbar', () => {
 
   it('builds buttons for format commands', () => {
     const { bar, ctx } = makeFixture()
-    const toolbar = new FormatToolbar(bar, ctx)
+    const toolbar = new Toolbar(bar, ctx)
     expect(toolbar.isVisible()).toBe(true)
-    expect(bar.querySelectorAll('.fmt-btn').length).toBeGreaterThan(5)
+    expect(bar.querySelectorAll('.toolbar-btn').length).toBeGreaterThan(5)
+  })
+
+  it('getFileButtons returns the four file-action specs', () => {
+    const files = getFileButtons()
+    expect(files).toHaveLength(4)
+    expect(files.map((f) => f.title)).toEqual([
+      'New (Ctrl+N)',
+      'Open… (Ctrl+O)',
+      'Save (Ctrl+S)',
+      'Save As… (Ctrl+Shift+S)',
+    ])
+    for (const file of files) {
+      expect(file.markup).toBeTruthy()
+      expect(file.markup).toContain('<svg')
+    }
+  })
+
+  it('renders file buttons then a separator before the format buttons', () => {
+    const { bar, ctx } = makeFixture()
+    new Toolbar(bar, ctx, getFileButtons())
+    const children = Array.from(bar.children)
+    const fileTitles = children.slice(0, 4).map(
+      (el) => (el as HTMLButtonElement).title,
+    )
+    expect(fileTitles).toEqual([
+      'New (Ctrl+N)',
+      'Open… (Ctrl+O)',
+      'Save (Ctrl+S)',
+      'Save As… (Ctrl+Shift+S)',
+    ])
+    const separator = children[4]
+    expect(separator.classList.contains('toolbar-separator')).toBe(true)
+    expect(separator.getAttribute('aria-hidden')).toBe('true')
+    expect((children[5] as HTMLButtonElement).title).toBe('Bold (Ctrl+B)')
+  })
+
+  it('renders no separator without file actions', () => {
+    const { bar, ctx } = makeFixture()
+    new Toolbar(bar, ctx)
+    expect(bar.querySelector('.toolbar-separator')).toBeNull()
+    const first = bar.querySelector<HTMLButtonElement>('.toolbar-btn')!
+    expect(first.title).toBe('Bold (Ctrl+B)')
+  })
+
+  it('file buttons invoke their action without focusing the editor', () => {
+    const { bar, view, ctx } = makeFixture()
+    const action = vi.fn()
+    const focus = vi.spyOn(view, 'focus')
+    new Toolbar(bar, ctx, [{ label: 'New', title: 'New (Ctrl+N)', markup: '<svg></svg>', action }])
+    const button = bar.querySelector<HTMLButtonElement>('.toolbar-btn')!
+    expect(button.title).toBe('New (Ctrl+N)')
+    button.click()
+    expect(action).toHaveBeenCalledTimes(1)
+    expect(focus).not.toHaveBeenCalled()
   })
 
   it('is hidden by default only when the user hid it before', () => {
-    localStorage.setItem('edi.formattingVisible', 'false')
+    localStorage.setItem('edi.toolbarVisible', 'false')
     const { bar, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
     expect(bar.hidden).toBe(true)
   })
 
   it('hides and shows the toolbar on setVisible', () => {
     const { bar, ctx } = makeFixture()
-    const toolbar = new FormatToolbar(bar, ctx)
+    const toolbar = new Toolbar(bar, ctx)
     toolbar.setVisible(false)
     expect(bar.hidden).toBe(true)
     expect(toolbar.isVisible()).toBe(false)
@@ -133,7 +187,7 @@ describe('FormatToolbar', () => {
 
   it('toggles visibility', () => {
     const { bar, ctx } = makeFixture()
-    const toolbar = new FormatToolbar(bar, ctx)
+    const toolbar = new Toolbar(bar, ctx)
     toolbar.toggle()
     expect(bar.hidden).toBe(true)
     toolbar.toggle()
@@ -142,7 +196,7 @@ describe('FormatToolbar', () => {
 
   it('applies bold on button click', () => {
     const { bar, view, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
     const bold = bar.querySelector<HTMLButtonElement>('button[title="Bold (Ctrl+B)"]')!
     bold.click()
     expect(view.state.doc.textContent).toBe('hello world')
@@ -150,7 +204,7 @@ describe('FormatToolbar', () => {
 
   it('inserts a horizontal rule via run function', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const hrBtn = getButtons(ctx).find((b) => b.title === 'Horizontal rule')!
+    const hrBtn = getFormattingButtons(ctx).find((b) => b.title === 'Horizontal rule')!
     const result = hrBtn.run(view)
     expect(result).toBe(true)
     expect(view.state.doc.childCount).toBe(2)
@@ -159,7 +213,7 @@ describe('FormatToolbar', () => {
 
   it('inserts a horizontal rule via button click', () => {
     const { bar, view, ctx } = makeFixtureWithCursor(5)
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
     const hrBtn = bar.querySelector<HTMLButtonElement>('button[title="Horizontal rule"]')!
     hrBtn.click()
     expect(view.state.doc.childCount).toBe(2)
@@ -168,8 +222,8 @@ describe('FormatToolbar', () => {
 
   it('renders the heading dropdown with Normal and H1–H6', () => {
     const { bar, ctx } = makeFixtureWithCursor(5)
-    new FormatToolbar(bar, ctx)
-    const select = bar.querySelector<HTMLSelectElement>('select.fmt-btn.fmt-select.fmt-heading')!
+    new Toolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.toolbar-btn.toolbar-select.toolbar-heading')!
     expect(select).not.toBeNull()
     const labels = Array.from(select.options).map((o) => o.textContent)
     expect(labels).toEqual(['Normal', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 'Heading 5', 'Heading 6'])
@@ -178,8 +232,8 @@ describe('FormatToolbar', () => {
   it('applies the selected heading level from the dropdown', () => {
     const { bar, view, ctx } = makeFixtureWithCursor(5)
     vi.spyOn(view, 'focus').mockImplementation(() => {})
-    new FormatToolbar(bar, ctx)
-    const select = bar.querySelector<HTMLSelectElement>('select.fmt-select')!
+    new Toolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.toolbar-select')!
     select.value = 'Heading 5'
     select.dispatchEvent(new Event('change'))
     expect(view.state.doc.firstChild?.attrs.level).toBe(5)
@@ -188,8 +242,8 @@ describe('FormatToolbar', () => {
 
   it('dropdown reflects the block under the cursor', () => {
     const { bar, view, ctx } = makeHeadingFixture(3, true)
-    new FormatToolbar(bar, ctx)
-    const select = bar.querySelector<HTMLSelectElement>('select.fmt-select')!
+    new Toolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.toolbar-select')!
     expect(select.selectedIndex).toBe(3)
 
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, view.state.doc.content.size - 2)))
@@ -202,8 +256,8 @@ describe('FormatToolbar', () => {
   it('selecting Normal converts an existing heading back to a paragraph', () => {
     const { bar, view, ctx } = makeHeadingFixture(1)
     vi.spyOn(view, 'focus').mockImplementation(() => {})
-    new FormatToolbar(bar, ctx)
-    const select = bar.querySelector<HTMLSelectElement>('select.fmt-select')!
+    new Toolbar(bar, ctx)
+    const select = bar.querySelector<HTMLSelectElement>('select.toolbar-select')!
     expect(select.selectedIndex).toBe(1)
     select.value = 'Normal'
     select.dispatchEvent(new Event('change'))
@@ -213,7 +267,7 @@ describe('FormatToolbar', () => {
 
   it('wraps paragraph in bullet list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
     const result = btn.run(view)
     expect(result).toBe(true)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
@@ -222,7 +276,7 @@ describe('FormatToolbar', () => {
 
   it('wraps paragraph in numbered list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getButtons(ctx).find((b) => b.title === 'Numbered list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Numbered list')!
     const result = btn.run(view)
     expect(result).toBe(true)
     expect(view.state.doc.firstChild!.type.name).toBe('ordered_list')
@@ -231,7 +285,7 @@ describe('FormatToolbar', () => {
 
   it('toggles off bullet list when clicking bullet list again', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     btn.run(view)
@@ -241,7 +295,7 @@ describe('FormatToolbar', () => {
 
   it('preserves cursor position when toggling off a list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     btn.run(view)
@@ -252,7 +306,7 @@ describe('FormatToolbar', () => {
 
   it('preserves selection range when toggling off a list', () => {
     const { view, ctx } = makeFixture()
-    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
     const doc = view.state.doc
     const sel = TextSelection.create(doc, 2, 7)
     view.dispatch(view.state.tr.setSelection(sel))
@@ -268,8 +322,8 @@ describe('FormatToolbar', () => {
 
   it('switches bullet list to numbered list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const bullet = getButtons(ctx).find((b) => b.title === 'Bullet list')!
-    const numbered = getButtons(ctx).find((b) => b.title === 'Numbered list')!
+    const bullet = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const numbered = getFormattingButtons(ctx).find((b) => b.title === 'Numbered list')!
     bullet.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     numbered.run(view)
@@ -279,7 +333,7 @@ describe('FormatToolbar', () => {
 
   it('wraps multiple blocks into a single list', () => {
     const { view, ctx } = makeMultiBlockFixture()
-    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
     btn.run(view)
     const doc = view.state.doc
     expect(doc.childCount).toBe(1)
@@ -293,7 +347,7 @@ describe('FormatToolbar', () => {
 
   it('toggles off multi-block bullet list', () => {
     const { view, ctx } = makeMultiBlockFixture()
-    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     btn.run(view)
@@ -305,7 +359,7 @@ describe('FormatToolbar', () => {
 
   it('wraps paragraph in task list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
     const result = btn.run(view)
     expect(result).toBe(true)
     const doc = view.state.doc
@@ -316,7 +370,7 @@ describe('FormatToolbar', () => {
 
   it('toggles off task list when clicking task list again', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(false)
@@ -375,7 +429,7 @@ describe('FormatToolbar', () => {
 
   it('wraps multiple blocks into a task list', () => {
     const { view, ctx } = makeMultiBlockFixture()
-    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
     btn.run(view)
     const doc = view.state.doc
     expect(doc.childCount).toBe(1)
@@ -395,7 +449,7 @@ describe('hyperlink', () => {
 
   it('offers a Hyperlink toolbar button', () => {
     const { ctx } = makeFixture()
-    const link = getButtons(ctx).find((b) => b.title === 'Hyperlink')!
+    const link = getFormattingButtons(ctx).find((b) => b.title === 'Hyperlink')!
     expect(link).toBeDefined()
     expect(link.markup).toContain('<svg')
   })
@@ -552,7 +606,7 @@ describe('cell hyperlink button', () => {
     }
     setActiveCellHost(cellHost)
     const { bar, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
     const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
     button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
     button.click()
@@ -571,7 +625,7 @@ describe('cell hyperlink button', () => {
       applyCellLink: vi.fn().mockReturnValue(true),
     }
     const { bar, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
     const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
     setActiveCellHost(cellHost)
     button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
@@ -594,7 +648,7 @@ describe('cell hyperlink button', () => {
     vi.mocked(promptForLink).mockResolvedValue({ text: 'My site', url: 'https://new.example.org' })
     setActiveCellHost(cellHost)
     const { bar, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
     const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
     button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
     button.click()
@@ -611,7 +665,7 @@ describe('cell hyperlink button', () => {
     }
     setActiveCellHost(cellHost)
     const { bar, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
     const button = bar.querySelector<HTMLButtonElement>('button[title="Hyperlink"]')!
     button.click()
     await vi.waitFor(() =>
@@ -627,8 +681,8 @@ describe('command buttons', () => {
   })
 
   function runTitle(title: string, view: EditorView): boolean | Promise<boolean> {
-    const ctx: FormatToolbarContext = { getView: () => view }
-    const spec = getButtons(ctx).find((b) => b.title === title)!
+    const ctx: ToolbarContext = { getView: () => view }
+    const spec = getFormattingButtons(ctx).find((b) => b.title === title)!
     return spec.run(view)
   }
 
@@ -655,8 +709,8 @@ describe('command buttons', () => {
     const view = new EditorView(host, {
       state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
     })
-    const ctx: FormatToolbarContext = { getView: () => view }
-    const heading = getButtons(ctx).find((b) => b.title === 'Heading')!
+    const ctx: ToolbarContext = { getView: () => view }
+    const heading = getFormattingButtons(ctx).find((b) => b.title === 'Heading')!
     expect(heading.options).toHaveLength(7)
     for (const [label, level] of [['Heading 1', 1], ['Heading 2', 2], ['Heading 3', 3], ['Heading 4', 4], ['Heading 5', 5], ['Heading 6', 6]] as const) {
       const option = heading.options!.find((o) => o.label === label)!
@@ -690,8 +744,8 @@ describe('insertCodeBlock', () => {
   })
 
   function runCodeBlock(view: EditorView): boolean | Promise<boolean> {
-    const ctx: FormatToolbarContext = { getView: () => view }
-    const spec = getButtons(ctx).find((b) => b.title === 'Code block')!
+    const ctx: ToolbarContext = { getView: () => view }
+    const spec = getFormattingButtons(ctx).find((b) => b.title === 'Code block')!
     return spec.run(view)
   }
 
@@ -756,8 +810,8 @@ describe('task and list toggles', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const view = makeListView('- item')
-    const ctx: FormatToolbarContext = { getView: () => view }
-    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    const ctx: ToolbarContext = { getView: () => view }
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
     btn.run(view)
     expect(view.state.doc.firstChild?.type.name).toBe('bullet_list')
     expect(view.state.doc.firstChild?.child(0).attrs.checked).toBe(false)
@@ -772,8 +826,8 @@ describe('task and list toggles', () => {
     const view = new EditorView(host, {
       state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
     })
-    const ctx: FormatToolbarContext = { getView: () => view }
-    const btn = getButtons(ctx).find((b) => b.title === 'Task list')!
+    const ctx: ToolbarContext = { getView: () => view }
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
     btn.run(view)
     const item = view.state.doc.firstChild!.child(0)
     expect(item.type.name).toBe('list_item')
@@ -789,8 +843,8 @@ describe('task and list toggles', () => {
     const view = new EditorView(host, {
       state: EditorState.create({ doc, selection: TextSelection.create(doc, 4) }),
     })
-    const ctx: FormatToolbarContext = { getView: () => view }
-    const btn = getButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const ctx: ToolbarContext = { getView: () => view }
+    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.childCount).toBe(1)
     expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
@@ -818,7 +872,7 @@ describe('table grid size picker', () => {
 
   it('highlights the hovered N×M rect and inserts a table atom of that size', () => {
     const { bar, view, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
+    new Toolbar(bar, ctx)
 
     const boxes = bar.querySelectorAll<HTMLElement>('.grid-picker-box')
     expect(boxes.length).toBe(25)
@@ -842,9 +896,9 @@ describe('table grid size picker', () => {
 
   it('opens as a fixed layer anchored to the button rect and closes on toggle', () => {
     const { bar, view, ctx } = makeFixture()
-    new FormatToolbar(bar, ctx)
-    const button = bar.querySelector<HTMLElement>('.fmt-menu-host .fmt-btn')!
-    const popover = bar.querySelector<HTMLElement>('.fmt-menu-host .fmt-popover')!
+    new Toolbar(bar, ctx)
+    const button = bar.querySelector<HTMLElement>('.toolbar-menu-host .toolbar-btn')!
+    const popover = bar.querySelector<HTMLElement>('.toolbar-menu-host .toolbar-popover')!
     expect(popover.hidden).toBe(true)
 
     button.click()

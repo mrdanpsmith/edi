@@ -162,7 +162,7 @@ const DOM_TEMPLATE = `
   <div id="app">
     <nav id="tabbar"></nav>
     <main id="workspace">
-      <div id="formatbar" role="toolbar" aria-label="Formatting"></div>
+      <div id="toolbar" role="toolbar" aria-label="Toolbar"></div>
       <section id="editor-container" aria-label="Editor"></section>
       <section id="home-screen" aria-label="Home">
         <h1>Edi</h1>

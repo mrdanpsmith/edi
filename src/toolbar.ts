@@ -8,7 +8,7 @@ import { insertMaskedFieldCommand } from './node/masked'
 import { insertTable } from './node/table'
 import { getActiveCellHost, type InlineCellHost, type InlineCellKind } from './inline-format'
 
-const FORMATTING_VISIBLE_KEY = 'edi.formattingVisible'
+const TOOLBAR_VISIBLE_KEY = 'edi.toolbarVisible'
 
 function icon(markup: string, viewBox = '0 0 16 16'): string {
   return (
@@ -23,6 +23,31 @@ const BULLET_LINES = '<path d="M7 4h7M7 8h7M7 12h7"/>'
 const LINK_ICON = icon(
   '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
     '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  '0 0 24 24',
+)
+
+/** 24×24 stroke-based icons for the toolbar's file actions. */
+export const NEW_ICON = icon(
+  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+    '<path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15h6"/>',
+  '0 0 24 24',
+)
+
+export const OPEN_ICON = icon(
+  '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+  '0 0 24 24',
+)
+
+export const SAVE_ICON = icon(
+  '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>' +
+    '<path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
+  '0 0 24 24',
+)
+
+export const SAVE_AS_ICON = icon(
+  '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>' +
+    '<path d="M17 21v-8H7v8"/><path d="M7 3v5h6"/>' +
+    '<path d="M13 12l7 7"/><path d="M12 15l2 2"/>',
   '0 0 24 24',
 )
 
@@ -79,8 +104,17 @@ function hyperlinkRun(view: EditorView): Promise<boolean> {
   })
 }
 
-export interface FormatToolbarContext {
+export interface ToolbarContext {
   getView(): EditorView
+}
+
+/** A toolbar button that runs an app-level action instead of a document command. */
+export interface FileActionSpec {
+  label: string
+  title: string
+  className?: string
+  markup?: string
+  action(): void | Promise<void>
 }
 
 interface ButtonSpec {
@@ -359,11 +393,25 @@ export function taskClickPlugin(): Plugin {
   })
 }
 
-export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
+/**
+ * The four standard file actions (New/Open/Save/Save As) shown at the front of
+ * the toolbar. The actions here are placeholders: `main.ts` wires the real
+ * document actions in when it constructs the `Toolbar`.
+ */
+export function getFileButtons(): FileActionSpec[] {
   return [
-    { label: 'B', title: 'Bold (Ctrl+B)', className: 'fmt-bold', inline: 'bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
-    { label: 'I', title: 'Italic (Ctrl+I)', className: 'fmt-italic', inline: 'italic', run: (view) => toggleMarkCmd(view.state.schema.marks.em)(view) },
-    { label: 'S', title: 'Strikethrough', className: 'fmt-strike', inline: 'strike', run: (view) => toggleMarkCmd(view.state.schema.marks.strikethrough)(view) },
+    { label: 'New', title: 'New (Ctrl+N)', markup: NEW_ICON, action: () => undefined },
+    { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => undefined },
+    { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => undefined },
+    { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => undefined },
+  ]
+}
+
+export function getFormattingButtons(_ctx: ToolbarContext): ButtonSpec[] {
+  return [
+    { label: 'B', title: 'Bold (Ctrl+B)', className: 'toolbar-bold', inline: 'bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
+    { label: 'I', title: 'Italic (Ctrl+I)', className: 'toolbar-italic', inline: 'italic', run: (view) => toggleMarkCmd(view.state.schema.marks.em)(view) },
+    { label: 'S', title: 'Strikethrough', className: 'toolbar-strike', inline: 'strike', run: (view) => toggleMarkCmd(view.state.schema.marks.strikethrough)(view) },
     { label: 'Link', title: 'Hyperlink', markup: LINK_ICON, inline: 'link', run: hyperlinkRun },
     {
       label: 'Highlight', title: 'Highlight', markup: icon(
@@ -376,7 +424,7 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
     { label: 'Sub', title: 'Subscript', inline: 'sub', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view) },
     { label: 'Sup', title: 'Superscript', inline: 'sup', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view) },
     {
-      label: 'Normal', title: 'Heading', className: 'fmt-heading',
+      label: 'Normal', title: 'Heading', className: 'toolbar-heading',
       run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch),
       options: [
         { label: 'Normal', run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch) },
@@ -455,14 +503,15 @@ export function getButtons(_ctx: FormatToolbarContext): ButtonSpec[] {
   ]
 }
 
-export class FormatToolbar {
+export class Toolbar {
   private visible: boolean
 
   constructor(
     private readonly bar: HTMLElement,
-    private readonly ctx: FormatToolbarContext,
+    private readonly ctx: ToolbarContext,
+    private readonly fileActions: FileActionSpec[] = [],
   ) {
-    this.visible = readBool(FORMATTING_VISIBLE_KEY, true)
+    this.visible = readBool(TOOLBAR_VISIBLE_KEY, true)
     this.build()
     this.applyVisibility()
     updateBlockTypeSelect(this.ctx.getView())
@@ -478,7 +527,7 @@ export class FormatToolbar {
 
   setVisible(visible: boolean): void {
     this.visible = visible
-    localStorage.setItem(FORMATTING_VISIBLE_KEY, String(visible))
+    localStorage.setItem(TOOLBAR_VISIBLE_KEY, String(visible))
     this.applyVisibility()
   }
 
@@ -487,20 +536,44 @@ export class FormatToolbar {
   }
 
   private build(): void {
-    for (const spec of getButtons(this.ctx)) {
-      if (spec.kind === 'menu') {
-        const host = document.createElement('span')
-        host.className = 'fmt-menu-host'
+    if (this.fileActions.length > 0) {
+      for (const spec of this.fileActions) {
         const button = document.createElement('button')
         button.type = 'button'
-        button.className = spec.className ? `fmt-btn ${spec.className}` : 'fmt-btn'
+        button.className = spec.className ? `toolbar-btn ${spec.className}` : 'toolbar-btn'
+        button.title = spec.title
+        button.ariaLabel = spec.title
+        if (spec.markup) {
+          button.innerHTML = spec.markup
+        } else {
+          button.textContent = spec.label
+        }
+        // File actions run directly; unlike format buttons they must not steal
+        // focus from the editor (a menu-driven Open/Save prompt is modal anyway).
+        button.addEventListener('click', () => {
+          void spec.action()
+        })
+        this.bar.append(button)
+      }
+      const separator = document.createElement('span')
+      separator.className = 'toolbar-separator'
+      separator.setAttribute('aria-hidden', 'true')
+      this.bar.append(separator)
+    }
+    for (const spec of getFormattingButtons(this.ctx)) {
+      if (spec.kind === 'menu') {
+        const host = document.createElement('span')
+        host.className = 'toolbar-menu-host'
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = spec.className ? `toolbar-btn ${spec.className}` : 'toolbar-btn'
         button.title = spec.title
         button.ariaLabel = spec.title
         if (spec.markup) button.innerHTML = spec.markup
         else button.textContent = spec.label
 
         const popover = document.createElement('div')
-        popover.className = 'fmt-popover'
+        popover.className = 'toolbar-popover'
         popover.hidden = true
         const label = document.createElement('div')
         label.className = 'grid-picker-label'
@@ -553,7 +626,7 @@ export class FormatToolbar {
       }
       if (spec.options) {
         const select = document.createElement('select')
-        select.className = spec.className ? `fmt-btn ${spec.className} fmt-select` : 'fmt-btn fmt-select'
+        select.className = spec.className ? `toolbar-btn ${spec.className} toolbar-select` : 'toolbar-btn toolbar-select'
         select.title = spec.title
         select.ariaLabel = spec.title
         for (const option of spec.options) {
@@ -575,7 +648,7 @@ export class FormatToolbar {
       }
       const button = document.createElement('button')
       button.type = 'button'
-      button.className = spec.className ? `fmt-btn ${spec.className}` : 'fmt-btn'
+      button.className = spec.className ? `toolbar-btn ${spec.className}` : 'toolbar-btn'
       button.title = spec.title
       button.ariaLabel = spec.title
       if (spec.markup) {
@@ -637,14 +710,14 @@ function readBool(key: string, fallback: boolean): boolean {
 }
 
 /**
- * Keep the heading dropdown (`<select class="fmt-heading fmt-select">` in the
- * document) showing the block the cursor is actually in: "Normal" for plain
- * paragraphs and any other textblock, else the heading level. Runs on every
- * view update so typing, selecting, undoing, and toolbar clicks all stay in
- * sync. No-ops while the toolbar (and its select) do not exist yet.
+ * Keep the heading dropdown (`<select class="toolbar-heading toolbar-select">`
+ * in the document) showing the block the cursor is actually in: "Normal" for
+ * plain paragraphs and any other textblock, else the heading level. Runs on
+ * every view update so typing, selecting, undoing, and toolbar clicks all stay
+ * in sync. No-ops while the toolbar (and its select) do not exist yet.
  */
 export function updateBlockTypeSelect(view: EditorView): void {
-  const select = document.querySelector<HTMLSelectElement>('.fmt-heading.fmt-select')
+  const select = document.querySelector<HTMLSelectElement>('.toolbar-heading.toolbar-select')
   if (!select) return
   const parent = view.state?.selection?.$from?.parent
   if (!parent) return

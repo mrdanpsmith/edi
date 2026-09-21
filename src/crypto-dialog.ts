@@ -78,7 +78,7 @@ export function promptForPassword(
 
     const toggle = document.createElement('button')
     toggle.type = 'button'
-    toggle.className = 'fmt-btn edi-dialog-reveal-toggle'
+    toggle.className = 'toolbar-btn edi-dialog-reveal-toggle'
     toggle.textContent = 'Show'
     toggle.addEventListener('mousedown', (e) => e.preventDefault())
     toggle.addEventListener('click', () => {
@@ -99,13 +99,13 @@ export function promptForPassword(
 
     const cancel = document.createElement('button')
     cancel.type = 'button'
-    cancel.className = 'fmt-btn'
+    cancel.className = 'toolbar-btn'
     cancel.textContent = 'Cancel'
     actions.append(cancel)
 
     const ok = document.createElement('button')
     ok.type = 'button'
-    ok.className = 'fmt-btn fmt-primary'
+    ok.className = 'toolbar-btn toolbar-primary'
     ok.textContent = opts?.okText ?? 'Unlock'
     actions.append(ok)
 
@@ -202,13 +202,13 @@ export function promptForSecretCreate(): Promise<SecretCreateResult | null> {
 
     const cancel = document.createElement('button')
     cancel.type = 'button'
-    cancel.className = 'fmt-btn'
+    cancel.className = 'toolbar-btn'
     cancel.textContent = 'Cancel'
     actions.append(cancel)
 
     const ok = document.createElement('button')
     ok.type = 'button'
-    ok.className = 'fmt-btn fmt-primary'
+    ok.className = 'toolbar-btn toolbar-primary'
     ok.textContent = 'Insert'
     actions.append(ok)
 

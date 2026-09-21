@@ -2434,7 +2434,7 @@ let inlineFocusListenersAttached = false
 /**
  * One per-document `focusout` watcher keeps the toolbar's active-cell host in
  * sync: it is cleared whenever focus leaves to something that is neither a
- * spreadsheet nor the formatting bar, so a click on Bold/Italic/etc. still
+ * spreadsheet nor the toolbar, so a click on Bold/Italic/etc. still
  * finds the cell it was aimed at.
  */
 function ensureInlineFocusListeners(): void {
@@ -2445,7 +2445,7 @@ function ensureInlineFocusListeners(): void {
       event.relatedTarget instanceof Element
         ? event.relatedTarget
         : (document.activeElement as HTMLElement | null)
-    if (next && next.closest('.spreadsheet, .fmt-btn, .fmt-menu-host, .fmt-popover, .fmt-select')) return
+    if (next && next.closest('.spreadsheet, .toolbar-btn, .toolbar-menu-host, .toolbar-popover, .toolbar-select')) return
     setActiveCellHost(null)
   })
 }

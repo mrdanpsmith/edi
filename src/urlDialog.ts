@@ -1,7 +1,7 @@
 /**
  * A small centered modal dialog prompting for a link's URL and, when nothing is
  * selected to provide the link text, an optional link text defaulted to the
- * URL. Used by the formatting toolbar's Hyperlink button for both the document
+ * URL. Used by the toolbar's Hyperlink button for both the document
  * and spreadsheet cells (the cell flow captures its text selection on mousedown
  * so the dialog's focus change does not discard it).
  *
@@ -61,13 +61,13 @@ export function promptForLink(existingText: string, existingUrl: string): Promis
 
     const cancel = document.createElement('button')
     cancel.type = 'button'
-    cancel.className = 'fmt-btn'
+    cancel.className = 'toolbar-btn'
     cancel.textContent = 'Cancel'
     actions.append(cancel)
 
     const ok = document.createElement('button')
     ok.type = 'button'
-    ok.className = 'fmt-btn fmt-primary'
+    ok.className = 'toolbar-btn toolbar-primary'
     ok.textContent = 'Insert'
     actions.append(ok)
 

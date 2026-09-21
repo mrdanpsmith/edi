@@ -28,7 +28,7 @@ describe('promptForLink', () => {
     const inputs = document.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
     inputs[0]!.value = 'https://example.com'
     inputs[1]!.value = 'My site'
-    document.querySelector<HTMLButtonElement>('.fmt-primary')!.click()
+    document.querySelector<HTMLButtonElement>('.toolbar-primary')!.click()
     await expect(promise).resolves.toEqual({ text: 'My site', url: 'https://example.com' })
   })
 

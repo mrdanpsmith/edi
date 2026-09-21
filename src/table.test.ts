@@ -1305,7 +1305,7 @@ describe('TableNodeView grid', () => {
     expect(overlay).toBeTruthy()
     const input = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
     input.value = 'pw'
-    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
     }, { timeout: 5000 })
@@ -1324,7 +1324,7 @@ describe('TableNodeView grid', () => {
     expect(overlay).toBeTruthy()
     const pwInput = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
     pwInput.value = 'pw'
-    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
     }, { timeout: 5000 })
@@ -1353,7 +1353,7 @@ describe('TableNodeView grid', () => {
     const overlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
     const pwInput = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
     pwInput.value = 'wrong'
-    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       const err = overlay.querySelector('.edi-dialog-error') as HTMLElement
       expect(err.hidden).toBe(false)
@@ -1361,7 +1361,7 @@ describe('TableNodeView grid', () => {
     expect(overlay.querySelector('.edi-dialog-error')?.textContent).toBe('Incorrect password')
     expect(pill.querySelector('.masked-field-input')).toBeNull()
 
-    const cancel = overlay.querySelector('.edi-dialog-actions .fmt-btn:not(.fmt-primary)') as HTMLButtonElement
+    const cancel = overlay.querySelector('.edi-dialog-actions .toolbar-btn:not(.toolbar-primary)') as HTMLButtonElement
     cancel.click()
     await vi.waitFor(() => {
       expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
@@ -1381,7 +1381,7 @@ describe('TableNodeView grid', () => {
     const createInputs = createOverlay.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
     createInputs[0]!.value = 'Api'
     createInputs[1]!.value = 'hunter2'
-    ;(createOverlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    ;(createOverlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       expect(document.body.querySelector('.edi-dialog-overlay')).toBeTruthy()
     }, { timeout: 3000 })
@@ -1390,7 +1390,7 @@ describe('TableNodeView grid', () => {
     expect(pwdOverlay).toBeTruthy()
     const pwdInput = pwdOverlay.querySelector('.edi-dialog-input') as HTMLInputElement
     pwdInput.value = 'pw3'
-    ;(pwdOverlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    ;(pwdOverlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       expect(docValue(view)).toContain('!masked[')
     }, { timeout: 5000 })
@@ -1482,7 +1482,7 @@ describe('TableNodeView grid', () => {
     const overlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
     const input = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
     input.value = 'pw'
-    ;(overlay.querySelector('.fmt-primary') as HTMLButtonElement).click()
+    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       expect(document.body.querySelector('.edi-dialog-overlay')).toBeNull()
     }, { timeout: 5000 })

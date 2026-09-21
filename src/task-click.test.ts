@@ -5,7 +5,7 @@ import { keymap } from 'prosemirror-keymap'
 import { baseKeymap } from 'prosemirror-commands'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { taskClickPlugin } from './formatToolbar'
+import { taskClickPlugin } from './toolbar'
 
 beforeEach(() => {
   document.body.innerHTML = ''

@@ -12,7 +12,7 @@ async function unlockViaDialog(password: string): Promise<void> {
   expect(overlay, 'expected a password dialog to be open').toBeTruthy()
   const input = overlay.querySelector('.edi-dialog-input') as HTMLInputElement
   input.value = password
-  const ok = overlay.querySelector('.fmt-primary') as HTMLButtonElement
+  const ok = overlay.querySelector('.toolbar-primary') as HTMLButtonElement
   ok.click()
   await vi.waitFor(
     () => {

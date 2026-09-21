@@ -9,7 +9,7 @@ export interface MenuCommands {
   insertImage: () => void
   insertTableDefault: () => void
   export: () => void
-  toggleFormatting: () => void
+  toggleToolbar: () => void
   formulaReference: () => void
   undo: () => void
   redo: () => void

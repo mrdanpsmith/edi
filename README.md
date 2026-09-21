@@ -15,7 +15,7 @@ Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets
 
 ### Spreadsheet tables
 
-Tables render as a visual spreadsheet grid in the preview — a live formula bar, click-and-drag cell selection (Mod+click toggles cells, column/row/corner selectors), row/column add/remove, TSV clipboard, a **Use values** button (freezes the selected cells' formulas to their current computed values, so volatile cells stop recalculating), a whole-table **Resolve formulas?** mode (saves every computed value with the formulas kept in a comment and restored on reopen), and a handy `Insert → Table` size picker in the formatting toolbar. Any cell whose content starts with `=` is computed live:
+Tables render as a visual spreadsheet grid in the preview — a live formula bar, click-and-drag cell selection (Mod+click toggles cells, column/row/corner selectors), row/column add/remove, TSV clipboard, a **Use values** button (freezes the selected cells' formulas to their current computed values, so volatile cells stop recalculating), a whole-table **Resolve formulas?** mode (saves every computed value with the formulas kept in a comment and restored on reopen), and a handy `Insert → Table` size picker in the toolbar. Any cell whose content starts with `=` is computed live:
 
 ```markdown
 | Item | Q1 | Q2 | Total |
@@ -70,11 +70,11 @@ Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Eac
 
 ### Menus
 
-Document actions live in a native menu bar instead of toolbar buttons:
+Document actions live in the native menu bar and, for the four most common ones (New, Open, Save, Save As), as toolbar buttons:
 
 - **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
 - **Insert**: Spreadsheet, Text File, Image.
-- **View**: Preview (toggle, default on), Formatting Toolbar (toggle, default on).
+- **View**: Preview (toggle, default on), Toolbar (toggle, default on).
 - **Help**: Formula Reference, About Edi.
 
 ### Spreadsheet import
@@ -85,9 +85,9 @@ Document actions live in a native menu bar instead of toolbar buttons:
 
 `Insert → Text File` reads any text file and inserts it at the cursor. `Insert → Image` picks an image and inserts a markdown image reference: relative to the document when the image lives inside its folder (so the document stays portable), otherwise absolute. The preview resolves relative image paths against the active document's directory so images always display.
 
-### Formatting toolbar
+### Toolbar
 
-The toolbar above the editor toggles markdown formatting on the selection: **bold**, *italic*, strikethrough, a heading dropdown (Paragraph + Heading 1–6, replacing the old H1/H2 buttons), blockquote, inline code, fenced code blocks, task/bullet/numbered lists, horizontal rules, and links. `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` trigger bold, italic, and strikethrough. Hide it anytime via `View → Formatting Toolbar`.
+The toolbar above the editor leads with the file actions — New (Ctrl+N), Open… (Ctrl+O), Save (Ctrl+S), Save As… (Ctrl+Shift+S) — then toggles markdown formatting on the selection: **bold**, *italic*, strikethrough, a heading dropdown (Paragraph + Heading 1–6, replacing the old H1/H2 buttons), blockquote, inline code, fenced code blocks, task/bullet/numbered lists, horizontal rules, and links. `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` trigger bold, italic, and strikethrough. Hide it anytime via `View → Toolbar`.
 
 ### Copy tables
 

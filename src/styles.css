@@ -149,7 +149,7 @@ body {
   display: none;
 }
 
-#formatbar {
+#toolbar {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -162,11 +162,19 @@ body {
   scrollbar-width: thin;
 }
 
-#formatbar[hidden] {
+#toolbar[hidden] {
   display: none;
 }
 
-.fmt-btn {
+.toolbar-separator {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--border);
+  flex: none;
+}
+
+.toolbar-btn {
   font: inherit;
   font-size: 14px;
   line-height: 1;
@@ -183,35 +191,35 @@ body {
   justify-content: center;
 }
 
-.fmt-btn svg {
+.toolbar-btn svg {
   display: block;
   width: 20px;
   height: 20px;
 }
 
-.fmt-btn.fmt-bold {
+.toolbar-btn.toolbar-bold {
   font-weight: 700;
 }
 
-.fmt-btn.fmt-italic {
+.toolbar-btn.toolbar-italic {
   font-style: italic;
 }
 
-.fmt-btn.fmt-strike {
+.toolbar-btn.toolbar-strike {
   text-decoration: line-through;
 }
 
-.fmt-btn.fmt-heading {
+.toolbar-btn.toolbar-heading {
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
-.fmt-btn.fmt-select {
+.toolbar-btn.toolbar-select {
   cursor: pointer;
   background: transparent;
   appearance: none;
   -webkit-appearance: none;
-  /* line-height: 1 (from .fmt-btn) clips lowercase descenders (the "g" in
+  /* line-height: 1 (from .toolbar-btn) clips lowercase descenders (the "g" in
    * "Heading") inside the select; normal lets them fully render. */
   line-height: normal;
   padding-right: 18px;
@@ -225,13 +233,13 @@ body {
   text-align: center;
 }
 
-.fmt-btn:hover {
+.toolbar-btn:hover {
   background: var(--bg);
   color: var(--text-primary);
   border-color: var(--border);
 }
 
-.fmt-btn.fmt-select:hover {
+.toolbar-btn.toolbar-select:hover {
   background-image: linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
     linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
   background-position:
@@ -241,7 +249,7 @@ body {
   background-repeat: no-repeat;
 }
 
-.fmt-btn:focus-visible {
+.toolbar-btn:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
@@ -351,7 +359,7 @@ body {
 }
 
 #app[data-view='home'] #tabbar,
-#app[data-view='home'] #formatbar,
+#app[data-view='home'] #toolbar,
 #app[data-view='home'] #editor-container {
   display: none;
 }
@@ -1163,14 +1171,14 @@ body {
   color: var(--danger, #dc2626);
 }
 
-/* Table insert grid picker (formatting toolbar popover) */
+/* Table insert grid picker (toolbar popover) */
 
-.fmt-menu-host {
+.toolbar-menu-host {
   position: relative;
   display: inline-flex;
 }
 
-.fmt-menu-host .fmt-popover {
+.toolbar-menu-host .toolbar-popover {
   position: fixed;
   z-index: 1000;
   background: var(--surface-raised);
@@ -1180,7 +1188,7 @@ body {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 }
 
-.fmt-menu-host .fmt-popover[hidden] {
+.toolbar-menu-host .toolbar-popover[hidden] {
   display: none;
 }
 
@@ -1813,13 +1821,13 @@ body {
   gap: 8px;
 }
 
-.fmt-btn.fmt-primary {
+.toolbar-btn.toolbar-primary {
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);
 }
 
-.fmt-btn.fmt-primary:hover {
+.toolbar-btn.toolbar-primary:hover {
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);

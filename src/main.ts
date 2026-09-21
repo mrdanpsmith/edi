@@ -35,7 +35,7 @@ import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './cont
 import { toggleSourceMode } from './blockplugin'
 import { commitSourceMode } from './blockview'
 import { isMisleadingLink } from './linkSecurity'
-import { FormatToolbar } from './formatToolbar'
+import { NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
 import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
@@ -109,7 +109,7 @@ print("Hello from Python!")
 `
 
 const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
-const formatBar = document.querySelector<HTMLElement>('#formatbar')!
+const toolbarEl = document.querySelector<HTMLElement>('#toolbar')!
 const statusLeft = document.querySelector<HTMLElement>('#status-left')!
 const statusRight = document.querySelector<HTMLElement>('#status-right')!
 const tabbar = document.querySelector<HTMLElement>('#tabbar')!
@@ -117,7 +117,7 @@ const tabbar = document.querySelector<HTMLElement>('#tabbar')!
 let lastNativeTitle = ''
 
 let blockEditor: BlockEditor | null = null
-let formatToolbar: FormatToolbar | null = null
+let toolbar: Toolbar | null = null
 let homeScreen: HomeScreen | null = null
 let contextMenu: ContextMenu | null = null
 
@@ -206,7 +206,7 @@ function syncMenuState(): void {
   const active = getActive()
   void invoke('setMenuState', {
     canRevert: Boolean(active?.path),
-    formattingVisible: formatToolbar?.isVisible() ?? true,
+    toolbarVisible: toolbar?.isVisible() ?? true,
   }).catch(() => undefined)
 }
 
@@ -539,7 +539,7 @@ function registerShortcuts(): void {
     } else if (key === 'a' && !event.defaultPrevented) {
       // Focus the editor and select all. When the editor already had focus,
       // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
-      // this only kicks in when focus is elsewhere (e.g. the formatting bar)
+      // this only kicks in when focus is elsewhere (e.g. the toolbar)
       // where the browser would otherwise select the whole window.
       event.preventDefault()
       editSelectAll()
@@ -560,8 +560,8 @@ function requestQuit(event?: CloseRequestEvent): void {
   window.close()
 }
 
-function toggleFormatting(): void {
-  formatToolbar?.toggle()
+function toggleToolbar(): void {
+  toolbar?.toggle()
   syncMenuState()
 }
 
@@ -874,9 +874,12 @@ function init(): void {
     onChange: () => setActiveDirty(true),
     resolveImageSrc: resolveImageFileUrl,
   })
-  formatToolbar = new FormatToolbar(formatBar, {
-    getView: () => blockEditor!.getView(),
-  })
+  toolbar = new Toolbar(toolbarEl, { getView: () => blockEditor!.getView() }, [
+    { label: 'New', title: 'New (Ctrl+N)', markup: NEW_ICON, action: openNewTab },
+    { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => void openFile() },
+    { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => void saveFile() },
+    { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => void saveFileAs() },
+  ])
   homeScreen = buildHomeScreen()
   registerShortcuts()
   // Right-click opens a custom menu (the browser's native one is suppressed by
@@ -918,7 +921,7 @@ function init(): void {
     insertImage: () => void insertImage(),
     insertTableDefault: () => void insertTableDefault(),
     export: () => void exportHtml(),
-    toggleFormatting: () => toggleFormatting(),
+    toggleToolbar: () => toggleToolbar(),
     formulaReference: () => openFunctionReference(),
     undo: () => editUndoNoScroll(),
     redo: () => editRedoNoScroll(),

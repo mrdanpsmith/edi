@@ -396,35 +396,35 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     help_labels = [action.text() for action in window._help_menu.actions()]
     assert help_labels == ["&Formula Reference…", "", "&About Edi…"]
 
-    formatting_actions = [
+    toolbar_actions = [
         action
         for action in window._view_menu.actions()
-        if action.text().startswith("&Formatting")
+        if action.text().startswith("&Toolbar")
     ]
-    assert formatting_actions
-    assert formatting_actions[0].isCheckable()
-    assert formatting_actions[0].isChecked() is True
+    assert toolbar_actions
+    assert toolbar_actions[0].isCheckable()
+    assert toolbar_actions[0].isChecked() is True
 
 
 def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
     assert window._revert_action.isEnabled() is False
-    assert window._formatting_action.isChecked() is True
+    assert window._toolbar_action.isChecked() is True
     assert window._insert_actions is not None
     assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
-        can_revert=True, formatting_visible=False
+        can_revert=True, toolbar_visible=False
     )
     assert window._revert_action.isEnabled() is True
-    assert window._formatting_action.isChecked() is False
+    assert window._toolbar_action.isChecked() is False
     assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
-        can_revert=False, formatting_visible=True
+        can_revert=False, toolbar_visible=True
     )
     assert window._revert_action.isEnabled() is False
-    assert window._formatting_action.isChecked() is True
+    assert window._toolbar_action.isChecked() is True
     assert all(action.isEnabled() for action in window._insert_actions)
 
 
@@ -453,7 +453,7 @@ def test_menu_action_invokes_js_command(visible, qtbot):
     assert result["value"] == "open"
 
 
-def test_view_menu_formatting_action_invokes_js_command(visible, qtbot):
+def test_view_menu_toolbar_action_invokes_js_command(visible, qtbot):
     window = visible
     result = {}
 
@@ -465,10 +465,10 @@ def test_view_menu_formatting_action_invokes_js_command(visible, qtbot):
     )
 
     view_menu = window._view_menu
-    formatting_action = next(
-        action for action in view_menu.actions() if action.text().startswith("&Formatting")
+    toolbar_action = next(
+        action for action in view_menu.actions() if action.text().startswith("&Toolbar")
     )
-    formatting_action.trigger()
+    toolbar_action.trigger()
 
     def fetched():
         window._web.page().runJavaScript(
@@ -477,7 +477,7 @@ def test_view_menu_formatting_action_invokes_js_command(visible, qtbot):
         return result.get("value") is not None
 
     qtbot.waitUntil(fetched, timeout=3000)
-    assert result["value"] == "toggleFormatting"
+    assert result["value"] == "toggleToolbar"
 
 
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):

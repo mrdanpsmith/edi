@@ -24,7 +24,7 @@ class StubWindow(QObject):
         self.confirm_messages: list[str] = []
         self.alert_messages: list[str] = []
         self.can_revert = False
-        self.formatting_visible = True
+        self.toolbar_visible = True
         self.opened_urls: list[str] = []
         self.recent_files_list: list[str] = []
 
@@ -43,10 +43,10 @@ class StubWindow(QObject):
         self.title = title
 
     def update_menu_state(
-        self, can_revert=False, formatting_visible=True
+        self, can_revert=False, toolbar_visible=True
     ) -> None:
         self.can_revert = can_revert
-        self.formatting_visible = formatting_visible
+        self.toolbar_visible = toolbar_visible
 
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
@@ -175,13 +175,13 @@ def test_set_menu_state(bridge):
         "setMenuState",
         {
             "canRevert": True,
-            "formattingVisible": False,
+            "toolbarVisible": False,
         },
     )
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.can_revert is True
-    assert window.formatting_visible is False
+    assert window.toolbar_visible is False
 
 
 def test_pick_import_path(bridge):

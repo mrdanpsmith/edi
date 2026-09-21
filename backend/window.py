@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._allow_close = False
         self._revert_action = None
-        self._formatting_action = None
+        self._toolbar_action = None
         self._insert_actions = None
 
         self._bridge = Bridge(self, pending_files)
@@ -394,13 +394,13 @@ class MainWindow(QMainWindow):
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu
-        self._formatting_action = QAction("&Formatting Toolbar", self)
-        self._formatting_action.setCheckable(True)
-        self._formatting_action.setChecked(True)
-        self._formatting_action.triggered.connect(
-            lambda _checked=False: self._menu_command("toggleFormatting")
+        self._toolbar_action = QAction("&Toolbar", self)
+        self._toolbar_action.setCheckable(True)
+        self._toolbar_action.setChecked(True)
+        self._toolbar_action.triggered.connect(
+            lambda _checked=False: self._menu_command("toggleToolbar")
         )
-        view_menu.addAction(self._formatting_action)
+        view_menu.addAction(self._toolbar_action)
 
         self._help_menu = menubar.addMenu("&Help")
         help_menu = self._help_menu
@@ -435,12 +435,12 @@ class MainWindow(QMainWindow):
     def update_menu_state(
         self,
         can_revert: bool,
-        formatting_visible: bool,
+        toolbar_visible: bool,
     ) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
-        if self._formatting_action is not None:
-            self._formatting_action.setChecked(formatting_visible)
+        if self._toolbar_action is not None:
+            self._toolbar_action.setChecked(toolbar_visible)
         if self._insert_actions is not None:
             for action in self._insert_actions:
                 action.setEnabled(True)
