@@ -1446,6 +1446,67 @@ body {
   padding-right: 3.5em;
 }
 
+/* ── Code language bar / embedded code editor ── */
+
+.ProseMirror .runnable-block.has-code-lang > .code-copy {
+  top: 24px;
+}
+
+.ProseMirror .code-lang-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+/* The embedded CodeMirror host that replaces the `.runnable-source` pre for
+ * blocks with a code grammar. The CM theme handles the font and scroller; this
+ * gives it the same inset and bottom border as the plain renderer. */
+.ProseMirror .code-editor-host {
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  overflow-x: auto;
+}
+
+/* Keep the editor on the runnable-block surface (`--surface`) rather than the
+ * document background — CM injects its theme styles after this sheet at
+ * runtime, so the scoped theme override alone loses the cascade. */
+.ProseMirror .runnable-block .cm-editor,
+.ProseMirror .runnable-block .cm-scroller {
+  background: var(--surface);
+}
+
+.ProseMirror .code-editor-host.source-has-copy {
+  padding-right: 3.5em;
+}
+
+/* Live per-line diagnostics for `edi-formula` blocks. */
+.ProseMirror .formula-errors {
+  border-top: 1px solid var(--border);
+}
+
+.ProseMirror .formula-error-row {
+  padding: 3px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
+.ProseMirror .formula-error-row::before {
+  content: '▲ ';
+}
+
 /* ── Block source mode (inline CodeMirror) ── */
 
 .block-source-mode {

@@ -1,14 +1,21 @@
 import { Plugin, PluginKey } from 'prosemirror-state'
+import type { EditorState } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { blockNodeView } from '../blockview'
 import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
+import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
+import { codeLanguageFor, shebangLanguage } from '../codeLanguages'
+import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../formulaDefs'
+import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
 
 // A runnable code block is an ordinary `code_block` whose first line starts
-// with `#!`. This node view renders the standard code block and, for such
-// blocks, adds a Run button and an output area. Editing stays fully native
-// because the view exposes the `<code>` element as its contentDOM.
+// with `#!`. Code blocks whose language tag (or shebang) resolves to a code
+// grammar render their content in an embedded CodeMirror editor so they get
+// syntax highlighting while typing; everything else keeps the plain native
+// `<pre><code>` contenteditable. Runnable blocks add a Run button and an
+// output area in both renderers.
 
 function shebangOf(text: string): string | null {
   const line = text.split('\n', 1)[0] ?? ''
@@ -110,10 +117,31 @@ function createCopyButton(
   return btn
 }
 
+/** Issues reported against one `edi-formula` block, resolved through the
+ * document-wide compiled state (so a call into another block validates). */
+function formulaIssuesForBlock(state: EditorState, pos: number): FormulaDefIssue[] {
+  const blocks = collectFormulaBlocks(state.doc)
+  const index = blocks.findIndex((block) => block.from === pos)
+  if (index < 0) return []
+  const value = formulaDefsKey.getState(state)
+  const issues = value
+    ? value.issues
+    : buildDocumentFunctions(blocks.map((block) => block.source)).issues
+  return issues.filter((issue) => issue.sourceIndex === index)
+}
+
 class RunnableBlockNodeView implements NodeView {
   dom: HTMLElement
-  contentDOM: HTMLElement
+  contentDOM: HTMLElement | null = null
   private node: ProseNode
+  private view: EditorView
+  private getPos: () => number | undefined
+  private editor: BlockCodeMirror | null = null
+  private editorBusy = false
+  private sourceHost: HTMLElement | null = null
+  private langBar: HTMLElement | null = null
+  private formulaErrors: HTMLElement | null = null
+  private unsubscribeEnv: (() => void) | null = null
   private runButton: HTMLButtonElement | null = null
   private output: HTMLPreElement | null = null
   private outputCopy: HTMLButtonElement | null = null
@@ -126,8 +154,10 @@ class RunnableBlockNodeView implements NodeView {
   private runEpoch = 0
   private sawErrorOutput = false
 
-  constructor(node: ProseNode, _view: EditorView, getPos: () => number | undefined) {
+  constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
+    this.view = view
+    this.getPos = getPos
     this.shebang = shebangOf(node.textContent)
     this.lastContent = node.textContent
 
@@ -139,18 +169,97 @@ class RunnableBlockNodeView implements NodeView {
       this.dom.appendChild(createHandleDOM(pos))
     }
 
-    const pre = document.createElement('pre')
-    pre.className = 'runnable-source'
-    const code = document.createElement('code')
-    const lang = String(node.attrs.language ?? '')
-    if (lang && !lang.startsWith('#')) code.className = `language-${lang}`
-    this.contentDOM = code
-    pre.appendChild(code)
-    this.dom.appendChild(pre)
+    const langTag = String(node.attrs.language ?? '').trim()
+    const info = codeLanguageFor(langTag || null, node.textContent)
+    const badge =
+      langTag ||
+      (info?.formula ? info.label : '') ||
+      (this.shebang ? shebangLanguage(this.shebang) ?? '' : '')
+    if (badge) {
+      this.langBar = document.createElement('div')
+      this.langBar.className = 'code-lang-bar'
+      this.langBar.setAttribute('data-language', badge)
+      const label = document.createElement('span')
+      label.className = 'code-lang-badge'
+      label.textContent = badge
+      this.langBar.appendChild(label)
+      this.dom.appendChild(this.langBar)
+      this.dom.classList.add('has-code-lang')
+    }
+
+    if (info) {
+      const host = document.createElement('div')
+      host.className = 'code-editor-host'
+      this.sourceHost = host
+      this.editor = createCodeEditor(host, node.textContent, info.extension, (value) => {
+        this.commitEditorText(value)
+      })
+      this.dom.appendChild(host)
+    } else {
+      const pre = document.createElement('pre')
+      pre.className = 'runnable-source'
+      const code = document.createElement('code')
+      if (langTag && !langTag.startsWith('#')) code.className = `language-${langTag}`
+      this.contentDOM = code
+      pre.appendChild(code)
+      this.sourceHost = pre
+      this.dom.appendChild(pre)
+    }
 
     this.appendSourceCopyButton()
 
     if (this.shebang) this.buildControls(this.shebang)
+    if (info?.formula) this.buildFormulaStatus()
+  }
+
+  /** Keep the ProseMirror document in lock-step with the embedded editor.
+   * Runs while `editorBusy` is set only when a PM-side change is being
+   * mirrored back into CodeMirror, so it never echoes its own dispatch. */
+  private commitEditorText(value: string): void {
+    if (this.editorBusy) return
+    if (value === this.node.textContent) return
+    const pos = this.getPos()
+    if (pos === undefined) return
+    const newNode = this.node.type.create(this.node.attrs, this.node.type.schema.text(value))
+    this.view.dispatch(
+      this.view.state.tr
+        .replaceWith(pos, pos + this.node.nodeSize, newNode)
+        .setMeta('addToHistory', true),
+    )
+  }
+
+  private buildFormulaStatus(): void {
+    this.formulaErrors = document.createElement('div')
+    this.formulaErrors.className = 'formula-errors'
+    this.dom.appendChild(this.formulaErrors)
+    this.unsubscribeEnv = subscribeFormulaEnv(this.view, () => this.renderFormulaStatus())
+    this.renderFormulaStatus()
+  }
+
+  private renderFormulaStatus(): void {
+    const errors = this.formulaErrors
+    if (!errors) return
+    const pos = this.getPos()
+    const issues = pos === undefined ? [] : formulaIssuesForBlock(this.view.state, pos)
+    if (this.langBar) {
+      const badge = this.langBar.querySelector('.code-lang-badge')
+      if (badge) {
+        const count = countDefinitions(this.node.textContent)
+        const parts = ['edi-formula']
+        if (count > 0) parts.push(`${count} ${count === 1 ? 'function' : 'functions'}`)
+        if (issues.length > 0) parts.push(`${issues.length} ${issues.length === 1 ? 'error' : 'errors'}`)
+        badge.textContent = parts.join(' · ')
+        this.dom.classList.toggle('edi-formula-invalid', issues.length > 0)
+      }
+    }
+    errors.replaceChildren()
+    for (const issue of issues) {
+      const row = document.createElement('div')
+      row.className = 'formula-error-row'
+      row.textContent = `line ${issue.line}: ${issue.message}`
+      errors.appendChild(row)
+    }
+    errors.hidden = issues.length === 0
   }
 
   private buildControls(shebang: string): void {
@@ -196,10 +305,10 @@ class RunnableBlockNodeView implements NodeView {
   }
 
   private appendSourceCopyButton(): void {
-    const source = this.dom.querySelector('.runnable-source')
+    const source = this.sourceHost
     if (!source) return
     source.classList.add('source-has-copy')
-    const btn = createCopyButton(() => this.node.textContent, this.dom, '.runnable-source')
+    const btn = createCopyButton(() => this.node.textContent, this.dom, '.runnable-source, .code-editor-host')
     btn.classList.add('code-copy-source')
     this.dom.appendChild(btn)
   }
@@ -317,6 +426,9 @@ class RunnableBlockNodeView implements NodeView {
 
   update(node: ProseNode): boolean {
     if (node.attrs['_source'] !== this.node.attrs['_source']) return false
+    // A change to the language tag can swap the grammar, the badge, or the
+    // code/plaintext renderer — rebuild from scratch rather than reconcile.
+    if (node.attrs.language !== this.node.attrs.language) return false
     this.node = node
     const newShebang = shebangOf(node.textContent)
     // Rebuild the controls/output whenever the block's text changes, not just
@@ -325,42 +437,59 @@ class RunnableBlockNodeView implements NodeView {
     // switch), so a different body must not inherit the previous block's
     // result cell — fresh code always starts with no output.
     if (node.textContent !== this.lastContent) {
+      this.lastContent = node.textContent
       this.clearControls()
       this.shebang = newShebang
-      this.lastContent = node.textContent
+      if (this.editor) {
+        const current = this.editor.getValue()
+        if (current !== node.textContent) {
+          // PM-side change (undo, a swap, or a formatting command): mirror it
+          // into the embedded editor without echo-dispatching back.
+          this.editorBusy = true
+          this.editor.setDoc(node.textContent)
+          this.editorBusy = false
+        }
+      }
       if (newShebang) this.buildControls(newShebang)
     }
+    if (this.formulaErrors) this.renderFormulaStatus()
     return true
   }
 
-  getContentDOM(): { dom: HTMLElement; contentDOM: HTMLElement } {
-    return { dom: this.dom, contentDOM: this.contentDOM }
+  getContentDOM(): { dom: HTMLElement; contentDOM?: HTMLElement } {
+    return { dom: this.dom, contentDOM: this.contentDOM ?? undefined }
   }
 
   ignoreMutation(mutation: unknown): boolean {
+    const target = (mutation as { target: Node }).target
+    // CM-backed blocks manage their own DOM completely — CodeMirror mutates it
+    // on every keystroke and ProseMirror must never try to reconcile it.
+    if (this.editor) return true
     // Only content edits to the `<code>` element matter to ProseMirror. Our own
     // UI mutations (Run button text/disabled, unhiding/filling the output, the
     // block handle) live outside the contentDOM; if PM treats them as external
     // edits it remounts the view and wipes the transient output before the
     // async run resolves.
-    return this.contentDOM === null || !this.contentDOM.contains(
-      (mutation as { target: Node }).target,
-    )
+    return this.contentDOM === null || !this.contentDOM.contains(target)
   }
 
   stopEvent(event: Event): boolean {
-    const t = event.target as HTMLElement
+    const t = event.target
+    if (!(t instanceof Element)) return false
     return (
       t.closest('.exec-run') !== null ||
       t.closest('.block-handle') !== null ||
-      t.closest('.code-copy') !== null
+      t.closest('.code-copy') !== null ||
+      t.closest('.cm-editor') !== null
     )
   }
 
   destroy(): void {
+    this.unsubscribeEnv?.()
     // clearControls stops any in-flight run (sends stopCodeBlock to kill the
     // backend process) and tears the DOM down.
     this.clearControls()
+    this.editor?.destroy()
   }
 }
 

@@ -14,6 +14,7 @@
  * inline error state).
  */
 import {
+  BUILTIN_ENV,
   add,
   applyFunction,
   blank,
@@ -179,6 +180,18 @@ export function buildDocumentFunctions(sources: readonly string[]): DocumentFunc
     deps.set(upper(def.name), calls)
   }
 
+  // Syntax-check every accepted body against the names visible in this
+  // document. This is parse-only: it never evaluates, so `x / 0` is fine
+  // (the divisor is a parameter) but `ROUNDU(` and `x +` are not. Builtin and
+  // document-function names both resolve, so a call across blocks validates.
+  if (accepted.length > 0) {
+    const validationEnv = makeValidationEnv(accepted)
+    for (const def of accepted) {
+      const message = validateBody(def.body, def.params, validationEnv)
+      if (message) issues.push({ ...def, message })
+    }
+  }
+
   // Peel definitions whose dependencies are all resolvable; whatever remains
   // is either inside a cycle or reaches one, so it can never be evaluated.
   const resolved = new Set<string>()
@@ -203,6 +216,59 @@ export function buildDocumentFunctions(sources: readonly string[]): DocumentFunc
     functions.push(makeFormulaFunction(def))
   }
   return { functions, issues }
+}
+
+/** A validation environment: builtins plus a stub per accepted document
+ * function, so a body can call any function visible in the document. */
+function makeValidationEnv(accepted: readonly RawDefinition[]): FormulaEnv {
+  const functions = new Map(BUILTIN_ENV.functions)
+  for (const def of accepted) {
+    functions.set(
+      upper(def.name),
+      {
+        name: def.name,
+        category: 'custom' as const,
+        signature: '',
+        summary: '',
+        minArgs: 0,
+        maxArgs: Infinity,
+        lazy: true,
+        call: () => blank(),
+      },
+    )
+  }
+  return { functions }
+}
+
+/** Syntax-check a definition body without evaluating it. Returns an
+ * issue message, or null when the body parses cleanly. */
+export function validateBody(
+  body: string,
+  params: readonly string[],
+  env: FormulaEnv,
+): string | null {
+  const scope = new Map<string, CellValueThunk>()
+  for (const param of params) scope.set(param, () => num(0))
+  const result = new BodyParser(body, scope, env, true).parse()
+  if (result.kind === 'error') return result.hint ?? result.message
+  return null
+}
+
+/** Number of header-valid definitions on a block's source (used for the
+ * `edi-formula` badge count and the live formula-status rendering). */
+export function countDefinitions(source: string): number {
+  let count = 0
+  for (const rawLine of source.split('\n')) {
+    const text = stripComment(rawLine).trim()
+    if (!text) continue
+    if (!DEF_RE.test(text)) continue
+    const paramText = DEF_RE.exec(text)![2]!.trim()
+    const params = paramText ? paramText.split(',').map((param) => param.trim()) : []
+    if (params.some((param) => !PARAM_RE.test(param))) continue
+    if (new Set(params.map(upper)).size !== params.length) continue
+    count++
+  }
+  return count
 }
 
 function makeFormulaFunction(def: RawDefinition): FormulaFunction {
@@ -268,6 +334,7 @@ class BodyParser {
     private readonly source: string,
     private readonly scope: ReadonlyMap<string, CellValueThunk>,
     private readonly env: FormulaEnv,
+    private readonly validateOnly = false,
   ) {}
 
   parse(): CellValue {
@@ -287,8 +354,18 @@ class BodyParser {
       this.skipWs()
       const op = this.matchComparisonOp()
       if (!op) return left
-      left = compareValues(left, this.additive(), op)
+      const right = this.additive()
+      left = this.validateOnly ? this.mergeValidate(left, right) : compareValues(left, right, op)
     }
+  }
+
+  /** In validate-only mode an operator folds to a stub unless one of its
+   * operands already hit a syntax error — a swallowed error would let
+   * `x + (y`-style bodies (and `x +)` tails) pass a "clean" check. */
+  private mergeValidate(left: CellValue, right: CellValue): CellValue {
+    if (left.kind === 'error') return left
+    if (right.kind === 'error') return right
+    return num(0)
   }
 
   private matchComparisonOp(): CompareOp | null {
@@ -306,9 +383,11 @@ class BodyParser {
     for (;;) {
       this.skipWs()
       if (this.match('+')) {
-        left = add(left, this.multiplicative())
+        const right = this.multiplicative()
+        left = this.validateOnly ? this.mergeValidate(left, right) : add(left, right)
       } else if (this.match('-')) {
-        left = sub(left, this.multiplicative())
+        const right = this.multiplicative()
+        left = this.validateOnly ? this.mergeValidate(left, right) : sub(left, right)
       } else {
         return left
       }
@@ -320,9 +399,11 @@ class BodyParser {
     for (;;) {
       this.skipWs()
       if (this.match('*')) {
-        left = mul(left, this.unary())
+        const right = this.unary()
+        left = this.validateOnly ? this.mergeValidate(left, right) : mul(left, right)
       } else if (this.match('/')) {
-        left = div(left, this.unary())
+        const right = this.unary()
+        left = this.validateOnly ? this.mergeValidate(left, right) : div(left, right)
       } else {
         return left
       }
@@ -332,7 +413,8 @@ class BodyParser {
   private unary(): CellValue {
     this.skipWs()
     if (this.match('-')) {
-      return neg(this.unary())
+      const operand = this.unary()
+      return this.validateOnly ? this.mergeValidate(operand, num(0)) : neg(operand)
     }
     if (this.match('+')) {
       return this.unary()
@@ -344,7 +426,8 @@ class BodyParser {
     const left = this.atom()
     this.skipWs()
     if (this.match('^')) {
-      return pow(left, this.unary())
+      const exponent = this.unary()
+      return this.validateOnly ? this.mergeValidate(left, exponent) : pow(left, exponent)
     }
     return left
   }
@@ -381,7 +464,10 @@ class BodyParser {
     if (upperIdent === 'TRUE') return bool(true)
     if (upperIdent === 'FALSE') return bool(false)
     const param = this.scope.get(ident)
-    if (param) return param()
+    if (param) {
+      if (this.validateOnly) return num(0)
+      return param()
+    }
     return err('#NAME?', `Unknown name "${ident}" in a function body`)
   }
 
@@ -396,18 +482,24 @@ class BodyParser {
     const lazy = fn?.lazy === true
     if (this.peek() === ')') {
       this.pos++
+      if (this.validateOnly) return this.validateFunction(name, fn)
       return invokeFunction(name, [], this.env)
     }
     const args: CellValue[] = []
     const argThunks: CellValueThunk[] = []
     for (;;) {
       const start = this.pos
-      const value = this.comparison()
-      if (lazy) {
-        const slice = this.source.slice(start, this.pos)
-        argThunks.push(() => new BodyParser(slice, this.scope, this.env).parse())
+      if (this.validateOnly) {
+        const value = this.comparison()
+        if (value.kind === 'error') return value
       } else {
-        args.push(value)
+        const value = this.comparison()
+        if (lazy) {
+          const slice = this.source.slice(start, this.pos)
+          argThunks.push(() => new BodyParser(slice, this.scope, this.env).parse())
+        } else {
+          args.push(value)
+        }
       }
       this.skipWs()
       if (this.match(',')) {
@@ -416,8 +508,16 @@ class BodyParser {
       if (this.match(')')) break
       return err('#ERROR!', 'Missing ")" in a function body')
     }
+    if (this.validateOnly) return this.validateFunction(name, fn)
     if (lazy) return invokeFunction(name, argThunks, this.env)
     return applyFunction(name, args, this.env)
+  }
+
+  /** In validate-only mode, a call resolves to a stub once it is known to
+   * exist; the arity and the arguments were already syntax-checked above. */
+  private validateFunction(name: string, fn: FormulaFunction | undefined): CellValue {
+    if (!fn) return err('#NAME?', `Unknown function "${name}" in a function body`)
+    return num(0)
   }
 
   private readNumber(): number {

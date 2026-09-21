@@ -16,7 +16,7 @@ import {
   type FormulaEnv,
   type FormulaFunction,
 } from './formulas'
-import { buildDocumentFunctions } from './formulaDsl'
+import { buildDocumentFunctions, countDefinitions, validateBody } from './formulaDsl'
 
 function envFor(functions: readonly FormulaFunction[]): FormulaEnv {
   return { functions: buildFunctionMap(functions) }
@@ -286,5 +286,85 @@ describe('buildDocumentFunctions', () => {
     expect(applyFunction('PICK', [num(1), text('first'), err('#DIV/0!')], env)).toEqual(
       text('first'),
     )
+  })
+})
+
+describe('body validation (parse-only, no evaluation)', () => {
+  function messageFor(source: string): string | null {
+    const { issues } = buildDocumentFunctions([source])
+    return issues.length > 0 ? issues[0]!.message : null
+  }
+
+  it('accepts a well-formed body', () => {
+    expect(messageFor('GREET(name) = CONCAT("Hello ", name, "!")')).toBeNull()
+  })
+
+  it('does not flag an evaluation hazard like `x / 0`', () => {
+    // The divisor is a parameter and valid at runtime; a parse-only check must
+    // not report it. (A literal `1 / 0` would be constant-folded at runtime,
+    // but static checking has no way to know and must stay silent too.)
+    expect(messageFor('D(x) = x / 0')).toBeNull()
+  })
+
+  it('resolves a call into another document definition', () => {
+    expect(messageFor('RATE(amount) = amount * 0.2\nTAX(amount) = RATE(amount)')).toBeNull()
+  })
+
+  it('flags an unterminated string literal', () => {
+    expect(messageFor('GREET(name) = CONCAT("Hello, ')).toMatch(/Unterminated string literal/)
+  })
+
+  it('flags a missing closing parenthesis', () => {
+    expect(messageFor('PART(a, b) = CONCAT(a, b')).toMatch(/Missing "\)"/)
+  })
+
+  it('flags an unknown function name in a body', () => {
+    expect(messageFor('ROUNDOF(x) = ROUNDU(x, 2)')).toMatch(/Unknown function "ROUNDU"/)
+  })
+
+  it('flags an unknown name (not call) in a body', () => {
+    expect(messageFor('F(x) = y + 1')).toMatch(/Unknown name "y"/)
+  })
+
+  it('flags trailing text after a complete expression', () => {
+    expect(messageFor('F(x) = x ,')).toMatch(/Unexpected text/)
+  })
+
+  it('does not validate a definition rejected for another reason', () => {
+    // The builtin collision is reported once; body validation is not run on it.
+    const { issues } = buildDocumentFunctions(['SUM(a) = ROUNDU(a, 2)'])
+    expect(issues).toHaveLength(1)
+    expect(issues[0]!.message).toMatch(/built-in/)
+  })
+
+  it('reports the body issue on the definition line', () => {
+    const { issues } = buildDocumentFunctions(['OK(x) = x\nBAD(x) = (x + 1'])
+    const bad = issues.find((issue) => issue.name === 'BAD')
+    expect(bad?.line).toBe(2)
+    expect(bad?.sourceIndex).toBe(0)
+  })
+
+  it('keeps invalid definitions callable so cells still fold their error', () => {
+    const { functions } = buildDocumentFunctions(['F(x) = (x + 1'])
+    expect(functions.map((f) => f.name)).toEqual(['F'])
+  })
+
+  it('validateBody returns a message or null for a single body', () => {
+    const env = envFor([])
+    expect(validateBody('a + 1', ['a'], env)).toBeNull()
+    expect(validateBody('a +', ['a'], env)).toMatch(/Unexpected/)
+    expect(validateBody('b * 2', ['a'], env)).toMatch(/Unknown name "b"/)
+  })
+})
+
+describe('countDefinitions', () => {
+  it('counts header-valid definitions and skips comments and blanks', () => {
+    expect(
+      countDefinitions('# a comment\n\nF(a) = a + 1\nG(b) = b # trailing\nnot a def\n'),
+    ).toBe(2)
+  })
+
+  it('excludes lines with invalid parameters', () => {
+    expect(countDefinitions('F(1x) = 2\nF(a, a) = a\nF(x) = x')).toBe(1)
   })
 })
