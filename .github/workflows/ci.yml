@@ -260,18 +260,22 @@ jobs:
         with:
           # Full history + tags for the git-describe changelog.
           fetch-depth: 0
+      # upload-artifact flattens wildcard uploads (paths are preserved only
+      # "after the first wildcard"), so every platform artifact unzips flat
+      # here. Download all three into one staging dir and enumerate the files
+      # with `find` in the release step instead of guessing names.
       - uses: actions/download-artifact@v4
         with:
           name: edi-packages
-          path: .
+          path: artifacts
       - uses: actions/download-artifact@v4
         with:
           name: edi-win
-          path: .
+          path: artifacts
       - uses: actions/download-artifact@v4
         with:
           name: edi-macos
-          path: .
+          path: artifacts
       # Refuse to publish if the tag does not match the version declared in
       # package.json / backend/__init__.py (kept in sync by scripts/version.sh).
       - name: Verify tag matches declared version
@@ -293,12 +297,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          mapfile -t FILES < <(find artifacts -type f | sort)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "error: no release artifacts were downloaded to artifacts/" >&2
+            ls -laR artifacts
+            exit 1
+          fi
+          echo "Uploading ${#FILES[@]} release files:"
+          printf '  %s\n' "${FILES[@]}"
           gh release create "$GITHUB_REF_NAME" \
             --title "Edi $GITHUB_REF_NAME" \
             --notes-file /tmp/CHANGELOG.md \
-            dist-app/edi_*.deb \
-            dist-app/edi-*.rpm \
-            dist-app/edi-*.tar.gz \
-            dist-app/Edi-*.AppImage \
-            dist-app/Edi-*.exe \
-            dist-app/Edi-*.dmg
+            "${FILES[@]}"
