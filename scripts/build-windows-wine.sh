@@ -74,10 +74,11 @@ fi
 REQ_HASH="$(md5sum "$ROOT/requirements-win.txt" | cut -d' ' -f1)"
 
 if [ "$DIRECT" = 1 ]; then
-  if [ "$(id -u)" -eq 0 ]; then
+  if [ "$(id -u)" -eq 0 ] && [ -t 0 ]; then
     # CI runs as root inside the baked image; STEPS re-execs as `ediwin`
-    # (wine refuses root). Reject root only when invoked interactively so the
-    # user fixes it themselves instead of the wine aborts wall of text.
+    # (wine refuses root). Only an INTERACTIVE root run is rejected here so the
+    # user fixes it themselves instead of the wine aborts wall of text — a
+    # non-interactive root (CI) proceeds and drops down below.
     echo "error: wine refuses to run as root — run this script as a normal user" >&2
     exit 1
   fi

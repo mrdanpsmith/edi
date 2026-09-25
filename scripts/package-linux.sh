@@ -40,10 +40,16 @@ if ! command -v file >/dev/null 2>&1; then
 fi
 
 BIN="${1:-$ROOT/dist-app/edi}"
-if [ ! -x "$BIN" ]; then
-  echo "error: executable not found: $BIN" >&2
+if [ ! -f "$BIN" ]; then
+  echo "error: binary not found: $BIN" >&2
   echo "usage: $0 [path/to/edi] [version]" >&2
   exit 1
+fi
+if [ ! -x "$BIN" ]; then
+  # GitHub Actions artifacts do not preserve POSIX modes, so a downloaded binary
+  # comes back 0644; the packages must carry the exec bit.
+  echo "warning: $BIN is not executable; chmod +x" >&2
+  chmod +x "$BIN"
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 

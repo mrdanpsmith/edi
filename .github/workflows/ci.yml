@@ -225,6 +225,8 @@ jobs:
           path: .
       - name: Link baked venv (read-only image layer)
         run: ln -s /opt/edi/venv .venv
+      - name: Restore executable bit (GH artifacts do not preserve POSIX modes)
+        run: chmod +x dist-app/edi
       - name: Wrap onefile into deb/rpm/tar.gz/AppImage
         run: ./scripts/package-linux.sh dist-app/edi "${VER#v}"
       - name: Upload packages
