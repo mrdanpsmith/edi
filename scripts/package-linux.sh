@@ -109,7 +109,7 @@ join_space() {
 STAGE="$ROOT/build/package"
 OUT="$ROOT/dist-app"
 rm -rf "$STAGE"
-mkdir -p "$STAGE"
+mkdir -p "$STAGE" "$OUT"
 
 print_step() {
   printf '\n\033[1;34m==>\033[0m %s\n' "$*"
