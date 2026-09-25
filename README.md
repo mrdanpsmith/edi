@@ -9,7 +9,7 @@ Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets
 
 - **Frontend**: CodeMirror 6 + Mermaid + spreadsheet formulas in TypeScript, built with Vite into a single static `dist/`.
 - **Backend**: Python 3 + PySide6 (QtWidgets / QtWebEngine). A native `QWebEngineView` hosts the frontend; the page talks to Python through `QWebChannel` (`backend/bridge.py`), which provides file dialogs, file IO, and code-block execution.
-- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too. Windows binaries are built in an WineHQ-staging container — a real Windows Python + PyInstaller under Wine, no Windows host needed — and shipped with an NSIS installer; macOS has a manual build script (PyInstaller cannot cross-compile).
+- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too. Windows binaries are built in an WineHQ-staging container — a real Windows Python + PyInstaller under Wine, no Windows host needed — and shipped with an NSIS installer; macOS builds run natively on GitHub Actions' arm64 macOS runners (PyInstaller cannot cross-compile, so it must build on a Mac).
 
 ## Features
 
@@ -175,7 +175,7 @@ for the bare binary.
 ### Windows and macOS binaries
 
 Each `vX.Y.Z` release publishes two Windows artifacts, both built by the CI
-`build-windows-wine` job (a real Windows Python + PyInstaller running under
+`build-windows` job (a real Windows Python + PyInstaller running under
 WineHQ-staging — PyInstaller cannot cross-compile, but Wine provides the
 Windows runtime that makes edi.spec take its win32 branch):
 
@@ -197,16 +197,17 @@ powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Version 0.5.
 (Requires Node 20+ and Python 3.10+; missing toolchains are installed via
 Chocolatey.)
 
-**macOS** has no CI job — GitLab's hosted macOS runners are Premium/Ultimate-only.
+**macOS** is built by the CI `build-macos` job on a free arm64 `macos-15`
+runner for every `vX.Y.Z` release.
 `scripts/build-macos.sh` builds `Edi-X.Y.Z-macos-arm64.dmg` (drag-to-Applications;
-Apple Silicon only) on any Mac; attach it to a release manually to publish it:
+Apple Silicon only); it is also the manual path on any Mac:
 
 ```sh
 ./scripts/build-macos.sh [x.y.z]   # version defaults to scripts/version.sh
 ```
 
 The macOS app is ad-hoc code-signed (arm64 requires it) but not notarized (no
-Apple Developer account in CI), so the first open on another Mac shows a
+Apple Developer account), so the first open on another Mac shows a
 Gatekeeper warning — open via right-click → Open, or clear the quarantine flag:
 `xattr -dr com.apple.quarantine Edi.app`.
 
@@ -255,7 +256,7 @@ Manage the version tracked in `package.json`, `package-lock.json`, and `backend/
 ./scripts/version.sh tag       # create annotated git tag v<current-version>
 ```
 
-`set`/`bump` update all three files and print the git commands to commit and push; pushing the `vX.Y.Z` tag triggers the GitLab CI `release` job.
+`set`/`bump` update all three files and print the git commands to commit and push; pushing the `vX.Y.Z` tag triggers the GitHub Actions CI `release` job.
 
 ## Keyboard shortcuts
 
@@ -274,7 +275,7 @@ Manage the version tracked in `package.json`, `package-lock.json`, and `backend/
 
 1. All features are thoroughly tested using automated tests (Vitest for the frontend, `pytest` for the backend).
 2. Code is checked for duplication and poor quality using free, open static code analysis tools (ESLint and `tsc`).
-3. Versioning and tagging automatically results in releases being created by the GitLab CI pipeline (using the new `glab` tools, not the deprecated `release-cli`). See `.gitlab-ci.yml`; the `release` job authenticates with the built-in `CI_JOB_TOKEN` via glab CI auto-login (no `GITLAB_TOKEN` variable needed) and requires the project setting "Allow CI job token to create releases".
+3. Versioning and tagging automatically results in releases being created by the GitHub Actions CI pipeline (using the `gh` CLI with the runner's built-in `GITHUB_TOKEN`). See `.github/workflows/ci.yml`; the `release` job refuses to run if the tag doesn't match the declared version (`version.sh check`).
 4. All unnecessary files are `.gitignore`d.
 5. All files necessary for building the project can be installed via a simple script (`scripts/install-deps.sh`) so that a new developer or user can easily build the project from source.
 6. Linting is part of the standard checks.

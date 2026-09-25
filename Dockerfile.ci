@@ -2,8 +2,8 @@
 #
 # CI builder image: everything the check/test/build/package jobs need,
 # preinstalled on Ubuntu 22.04 (glibc 2.35) so the PyInstaller onefile stays
-# portable to older desktop Linux. Built+published by the `build-image` job
-# (`.gitlab-ci.yml`) and referenced as `$CI_REGISTRY_IMAGE/edi-builder:jammy`.
+# portable to older desktop Linux. Built+published by `.github/workflows/images.yml`
+# and referenced as `ghcr.io/<owner>/edi-builder:jammy`.
 #
 # Baked in: PySide6, pyinstaller, pytest, pytest-qt, pytest-cov, defusedxml,
 # bandit, pip-audit, Node 22, and the Qt runtime libs.
@@ -21,7 +21,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Qt runtime deps (identical list to .gitlab-ci.yml's old .setup_full anchor),
+# Qt runtime deps (identical list to the CI jobs' needs),
 # plus rpm/file for packaging, plus the toolchain bits used at job time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl xz-utils ca-certificates git \

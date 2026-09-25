@@ -6,7 +6,7 @@
 # runtime that makes edi.spec take its win32 branch (VSVersionInfo, .ico,
 # WebEngine companion DLLs, console Selftest twin) on Linux.
 #
-# It replaces the deleted GitLab SaaS Windows runner job as the release's
+# It replaces the former hosted-SaaS Windows runner job as the release's
 # Windows producer. Validation is STRUCTURAL, not a render: like that runner
 # (Server SKU, no dcomp.dll/bthprops.cpl — its frozen smoke was
 # SELFTEST_SKIPPED_ENVIRONMENTAL), Wine cannot host QtWebEngine. We prove the
@@ -137,7 +137,7 @@ if [ -z "$PY_INSTALLER" ] || [ -z "$VC_REDIST" ] || [ ! -d /opt/wheels ] || ! co
 fi
 [ -f "$B/requirements-win.txt" ] || { echo "error: requirements-win.txt missing" >&2; exit 1; }
 
-# Wine refuses to run as root (GitLab's docker executor does), so re-exec the
+# Wine refuses to run as root (CI container jobs do), so re-exec the
 # whole script as an unprivileged user after making the dirs we write (build/,
 # dist-app/) available to it. EDI_DROPPED prevents a loop.
 if [ "$(id -u)" -eq 0 ] && [ "${EDI_DROPPED:-0}" != 1 ]; then

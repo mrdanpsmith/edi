@@ -8,6 +8,11 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         codeSplitting: false,
+        // Stable, hash-free filenames: the AV false-positive mitigation. AV
+        // vendors that flagged the minified bundle can key on the known
+        // assets/index.js path instead of re-scanning every hash-named build.
+        entryFileNames: 'assets/index.js',
+        assetFileNames: 'assets/[name][extname]',
       },
     },
   },

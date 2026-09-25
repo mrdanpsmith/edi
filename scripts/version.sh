@@ -74,7 +74,7 @@ print_next_steps() {
   printf '  ./scripts/version.sh tag\n'
   printf '  git push\n'
   printf '  git push origin v%s\n' "$version"
-  printf '\nPushing the v%s tag triggers the GitLab CI release job.\n' "$version"
+  printf '\nPushing the v%s tag triggers the GitHub Actions release job.\n' "$version"
 }
 
 cmd_current() {

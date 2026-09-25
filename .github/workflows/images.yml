@@ -1,0 +1,88 @@
+# Builds and publishes the CI builder images to ghcr.io.
+#
+# Mirrors the old GitLab `build-image` job. Both images keep the Ubuntu 22.04
+# (glibc 2.35) base so the PyInstaller onefile stays portable to older desktop
+# Linux:
+#   * ghcr.io/<owner>/edi-builder:jammy     — Ubuntu 22.04 + Qt runtime libs,
+#     Node 22, and a venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
+#     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/build job.
+#   * ghcr.io/<owner>/edi-wine-builder:jammy — Ubuntu 22.04 + WineHQ-staging
+#     (>=11.5 devline so its bundled ICU satisfies Qt6Core.dll — wine-stable 11.0
+#     predates that), baked win_amd64 wheels, the Windows Python installer, the
+#     VC redist, and native `nsis` (Dockerfile.wine). Consumed only by the
+#     build-windows job (+ locally by scripts/build-windows-wine.sh), so its
+#     ~1 GB stays out of the everyday image pull.
+#
+# Building these is the single expensive setup step, cached in the registry
+# (buildx cache): rebuilds only happen when a Dockerfile / requirements file /
+# this workflow changes, or on manual dispatch. Jobs never pip-install into the
+# baked venv (a read-only image layer) — bake changes into these images instead.
+#
+# Trigger setup note: a tag push alone does NOT rebuild images (paths filter);
+# run this workflow manually after first import so ghcr has the images before
+# any CI run needs them.
+
+name: Build CI images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile.ci
+      - Dockerfile.wine
+      - requirements.txt
+      - requirements-win.txt
+      - .github/workflows/images.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # The default "docker" driver cannot export a registry cache; the
+          # docker-container (BuildKit-in-a-container) driver can.
+          driver: docker-container
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push edi-builder
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Must pass the Dockerfile explicitly: the repo also contains a plain
+          # "Dockerfile" (the app's container image), which buildx would build by
+          # default — an image with no Node and a venv at /app/.venv.
+          file: Dockerfile.ci
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-builder:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-builder:cache,mode=max
+
+      - name: Build and push edi-wine-builder
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.wine
+          push: true
+          # REQ_HASH invalidates the wheel bake when requirements-win.txt changes
+          # (evaluated after checkout, so it reflects the checked-out file).
+          build-args: |
+            REQ_HASH=${{ hashFiles('requirements-win.txt') }}
+          tags: ghcr.io/${{ github.repository_owner }}/edi-wine-builder:jammy
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-wine-builder:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-wine-builder:cache,mode=max

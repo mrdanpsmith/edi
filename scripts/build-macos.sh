@@ -2,10 +2,10 @@
 #
 # Builds the macOS Edi app (Edi.app) + a drag-to-Applications .dmg on a Mac.
 #
-# PyInstaller cannot cross-compile, so this must run on macOS. GitLab's hosted
-# macOS runners are Premium/Ultimate-only (beta), so there is NO macOS CI job —
-# run this on a Mac when cutting a release and attach the .dmg to the release
-# manually if you want a published artifact.
+# PyInstaller cannot cross-compile, so this must run on macOS. CI (GitHub
+# Actions, `build-macos` job in .github/workflows/ci.yml) runs it natively on
+# an arm64 `macos-15` runner for v* tags; this script is also the local path —
+# run it on a Mac when cutting a release without CI.
 #
 #   ./scripts/build-macos.sh [x.y.z]      # version from scripts/version.sh by default
 #
@@ -93,13 +93,35 @@ codesign --verify --deep --strict "$APP"
 # code are the gate. The onefile self-extracts to $TMPDIR, so point it at a
 # disk-backed dir under build/.
 print_step "Verifying Edi.app via the offscreen smoke test"
+SMOKE_LOG="$ROOT/build/smoke-tmp-macos/selftest.log"
 mkdir -p "$ROOT/build/smoke-tmp-macos"
+# GNU coreutils `timeout` is not on stock macOS, so bound the app ourselves:
+# run in the background, poll up to 120s, then kill. The app os._exits after
+# printing SELFTEST; its exit code is the gate.
 TMPDIR="$ROOT/build/smoke-tmp-macos" \
 QT_QPA_PLATFORM=offscreen \
 QTWEBENGINE_DISABLE_SANDBOX=1 \
 QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage --disable-gpu" \
 EDI_SELFTEST=1 \
-timeout 120 "$APP/Contents/MacOS/Edi"
+"$APP/Contents/MacOS/Edi" >"$SMOKE_LOG" 2>&1 &
+SMOKE_PID=$!
+DEADLINE=$(( $(date +%s) + 120 ))
+while kill -0 "$SMOKE_PID" 2>/dev/null && [ "$(date +%s)" -lt "$DEADLINE" ]; do
+  sleep 1
+done
+if kill -0 "$SMOKE_PID" 2>/dev/null; then
+  echo "selftest timed out after 120s" >&2
+  kill "$SMOKE_PID" 2>/dev/null || true
+  wait "$SMOKE_PID" 2>/dev/null || true
+  cat "$SMOKE_LOG"
+  exit 124
+fi
+wait "$SMOKE_PID"
+SMOKE_STATUS=$?
+cat "$SMOKE_LOG"
+if [ "$SMOKE_STATUS" -ne 0 ]; then
+  exit "$SMOKE_STATUS"
+fi
 
 # --- Drag-to-Applications .dmg ---------------------------------------------------
 print_step "Creating the .dmg"

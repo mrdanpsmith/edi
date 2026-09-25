@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Local simulation of the GitLab CI `test` job (the branch-push quality gate).
+# Local simulation of the GitHub Actions CI `test` job (the quality gate).
 #
 # CI runs that job in the pre-built `edi-builder:jammy` image: Ubuntu 22.04,
 # Python 3.10 (the `f"...{...\\n...}"` f-string restriction and other syntax
 # gates that a host 3.14 venv miss), a baked venv at /opt/edi/venv (PySide6,
 # pytest, pytest-qt, pytest-cov), Node 22, and NO GNOME session / gsettings /
 # dconf (tests must not depend on them). Replicating it locally means a green
-# run here is green in CI, without spending shared-runner minutes.
+# run here is green in CI, without spending CI minutes.
 #
 # The image is built from Dockerfile.ci once (then reused from the Docker cache);
 # the checkout is mounted read-write at /builds/edi and the same env vars and
@@ -74,7 +74,8 @@ if ! check_bake_tools; then
   check_bake_tools
 fi
 
-# The exact `test` job steps (.gitlab-ci.yml), minus the `.venv` symlink: the
+# The exact `test` job steps (.github/workflows/ci.yml), minus the `.venv`
+# symlink: the
 # host checkout already has a real .venv, and /opt/edi/venv/bin/pytest is the
 # same interpreter the job would resolve through the link.
 if [[ "$PYTEST_ONLY" == 1 ]]; then
