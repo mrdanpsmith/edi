@@ -397,6 +397,9 @@ else
 fi
 EDI_STEPS
 )
+# The STEPS body references $STEPS to re-exec itself under `ediwin` (wine
+# refuses root, and CI runs as root), so it must reach the subprocess.
+export STEPS
 
 # --- Invocation ---------------------------------------------------------------
 if [ "$DIRECT" = 1 ]; then

@@ -225,10 +225,15 @@ jobs:
           path: .
       - name: Link baked venv (read-only image layer)
         run: ln -s /opt/edi/venv .venv
-      - name: Restore executable bit (GH artifacts do not preserve POSIX modes)
-        run: chmod +x dist-app/edi
+      - name: Locate onefile + restore exec bit (GH artifacts flatten a single-file path and drop POSIX modes)
+        run: |
+          BIN="dist-app/edi"
+          [ -f "$BIN" ] || BIN="edi"
+          [ -f "$BIN" ] || { echo "error: onefile not found (looked for dist-app/edi and edi)" >&2; ls -la; exit 1; }
+          chmod +x "$BIN"
+          echo "EDI_BIN=$BIN" >> "$GITHUB_ENV"
       - name: Wrap onefile into deb/rpm/tar.gz/AppImage
-        run: ./scripts/package-linux.sh dist-app/edi "${VER#v}"
+        run: ./scripts/package-linux.sh "$EDI_BIN" "${VER#v}"
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
