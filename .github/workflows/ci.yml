@@ -1,43 +1,35 @@
 # CI for Edi (GitHub Actions) — replaced the GitLab pipeline.
 #
+# Normal commit pipeline: runs on every push to main / release/* branches and
+# runs ONLY the testing phases (lint, typecheck, dupcheck, frontend build +
+# unit tests, backend pytest, security audits). It never builds binaries or
+# creates releases — the tag-gated full DAG (platform builds, packaging,
+# publishing) lives in release.yml.
+#
+# Frontend + test jobs also exist (byte-identical copies) in release.yml so a
+# tag run gets the same gate; the shared job bodies are duplicated on purpose.
+#
 # Jobs run in pre-built images pushed to ghcr.io by images.yml:
-#   * <owner>/edi-builder:jammy      — Ubuntu 22.04 (glibc 2.35) + Qt runtime
-#     libs, Node 22, venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
-#     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/build job.
-#   * <owner>/edi-wine-builder:jammy — Ubuntu 22.04 + WineHQ-staging, baked
-#     win_amd64 wheels + Windows Python + VC redist, native `nsis`. Only the
-#     build-windows job (+ locally scripts/build-windows-wine.sh).
+#   * <owner>/edi-builder:jammy — Ubuntu 22.04 (glibc 2.35) + Qt runtime libs,
+#     Node 22, venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
+#     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Used by the test job.
 # The venv is a read-only image layer — never pip-install at job time; bake
 # changes into the images (images.yml). Nodes: images must exist in ghcr before
 # the first CI run (run images.yml manually once after import).
-#
-# The Linux onefile is built inside the SAME glibc 2.35 base, so the packaged
-# binary runs on older desktop Linux (Ubuntu 22.04 pin; glibc compatibility is
-# guaranteed by construction). macOS is built natively on macos-15 (arm64) by
-# scripts/build-macos.sh. Windows is built WITHOUT a Windows host: the wine
-# image runs real Windows Python + PyInstaller under WineHQ-staging via
-# scripts/build-windows-wine.sh (structural CArchive/PE validation; Wine cannot
-# render QtWebEngine). A full render only happens on a real Windows desktop
-# (scripts/build-windows.ps1).
-#
-# Tag pipelines (v*) run the full DAG + release. workflow_dispatch runs the
-# builds without a tag (VER defaults to 0.0.0) for pre-tag validation.
 
 name: CI
 
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch: {}
+    branches:
+      - main
+      - 'release/**'
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # The release version for the platform build scripts: the tag on tag builds,
-  # 0.0.0 on manual/validation dispatch (scripts strip the leading v).
-  VER: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0' }}
   QT_QPA_PLATFORM: offscreen
   QTWEBENGINE_DISABLE_SANDBOX: "1"
   # Chromium in containers: /dev/shm is tiny and the GPU is absent, so
@@ -46,9 +38,9 @@ env:
   QTWEBENGINE_CHROMIUM_FLAGS: "--disable-dev-shm-usage --disable-gpu"
   PYTHONUNBUFFERED: "1"
 
-# The frontend bundle and icons are byte-identical on every platform, so produce
-# them once and share them with the binary jobs instead of rebuilding per-OS.
-# Also gates style (lint) + typecheck + duplicate-code scan.
+# The frontend bundle and icons are byte-identical on every platform, and the
+# backend tests load dist/index.html, so produce dist/ once and hand it to the
+# test job. Also gates style (lint) + typecheck + duplicate-code scan.
 jobs:
   frontend:
     runs-on: ubuntu-24.04
@@ -120,192 +112,3 @@ jobs:
           tail -n 12 /tmp/frontend-cov.txt >> "$GITHUB_STEP_SUMMARY"
           printf '\n## Backend coverage (pytest-cov)\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 25 /tmp/backend-cov.txt >> "$GITHUB_STEP_SUMMARY"
-
-  # PyInstaller onefile; only matters for releases (tag + manual validation).
-  build-linux:
-    needs: frontend
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
-    timeout-minutes: 45
-    env:
-      # PKG archive at zlib level 1 (default is 9): ~3x faster pack step; the
-      # binary grows ~18 MiB but every release wrapper recompresses it anyway.
-      PYINSTALLER_ZLIB_COMPRESSION_LEVEL: "1"
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: edi-web
-          path: .
-      - name: Link baked venv (read-only image layer)
-        run: ln -s /opt/edi/venv .venv
-      - name: Build onefile binary
-        run: .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
-      - name: Offscreen smoke test
-        # EDI_SELFTEST=1 makes the binary print "SELFTEST {...}" and exit 0/1;
-        # rely on the exit code. The onefile unpack (~450 MB) goes to $TMPDIR;
-        # point it at the runner's disk since a small tmpfs makes the bootloader
-        # fail with "decompression resulted in return code -1".
-        run: |
-          mkdir -p build/tmp
-          TMPDIR="$GITHUB_WORKSPACE/build/tmp" EDI_SELFTEST=1 timeout 60 ./dist-app/edi
-      - name: Upload onefile
-        uses: actions/upload-artifact@v7
-        with:
-          name: edi
-          path: dist-app/edi
-          if-no-files-found: error
-          retention-days: 30
-
-  # Windows deliverables WITHOUT a Windows host (see workflow header comment).
-  build-windows:
-    needs: frontend
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/${{ github.repository_owner }}/edi-wine-builder:jammy
-    timeout-minutes: 180
-    env:
-      EDI_WINE_IMAGE: ghcr.io/${{ github.repository_owner }}/edi-wine-builder:jammy
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: edi-web
-          path: .
-      - name: Build Windows onefile + installer via Wine
-        run: ./scripts/build-windows-wine.sh "${VER#v}"
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: edi-win
-          path: dist-app/Edi-*.exe
-          if-no-files-found: error
-          retention-days: 90
-
-  # macOS .dmg, built natively on an arm64 Mac (scripts/build-macos.sh is fully
-  # self-contained: npm ci + frontend build + .venv-macos + PyInstaller + ad-hoc
-  # code-sign + offscreen smoke + hdiutil .dmg). Not notarized (no Apple
-  # Developer account), so Gatekeeper warns on first open — accepted tradeoff.
-  build-macos:
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: macos-15
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Build macOS app + dmg
-        run: ./scripts/build-macos.sh "${VER#v}"
-      - name: Upload dmg
-        uses: actions/upload-artifact@v7
-        with:
-          name: edi-macos
-          path: dist-app/Edi-*.dmg
-          if-no-files-found: error
-          retention-days: 90
-
-  # Wraps the onefile into versioned .deb/.rpm/.tar.gz/.AppImage.
-  package:
-    needs: build-linux
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: edi
-          path: .
-      - name: Link baked venv (read-only image layer)
-        run: ln -s /opt/edi/venv .venv
-      - name: Locate onefile + restore exec bit (GH artifacts flatten a single-file path and drop POSIX modes)
-        run: |
-          BIN="dist-app/edi"
-          [ -f "$BIN" ] || BIN="edi"
-          [ -f "$BIN" ] || { echo "error: onefile not found (looked for dist-app/edi and edi)" >&2; ls -la; exit 1; }
-          chmod +x "$BIN"
-          echo "EDI_BIN=$BIN" >> "$GITHUB_ENV"
-      - name: Wrap onefile into deb/rpm/tar.gz/AppImage
-        run: ./scripts/package-linux.sh "$EDI_BIN" "${VER#v}"
-      - name: Upload packages
-        uses: actions/upload-artifact@v7
-        with:
-          name: edi-packages
-          path: |
-            dist-app/edi_*.deb
-            dist-app/edi-*.rpm
-            dist-app/edi-*.tar.gz
-            dist-app/Edi-*.AppImage
-          if-no-files-found: error
-          retention-days: 90
-
-  # Publishes the GitHub release with all platform artifacts. The changelog is
-  # every commit since the previous tag (auto-linked by GitHub).
-  release:
-    needs: [package, build-windows, build-macos]
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Full history + tags for the git-describe changelog.
-          fetch-depth: 0
-      # upload-artifact flattens wildcard uploads (paths are preserved only
-      # "after the first wildcard"), so every platform artifact unzips flat
-      # here. Download all three into one staging dir and enumerate the files
-      # with `find` in the release step instead of guessing names.
-      - uses: actions/download-artifact@v8
-        with:
-          name: edi-packages
-          path: artifacts
-      - uses: actions/download-artifact@v8
-        with:
-          name: edi-win
-          path: artifacts
-      - uses: actions/download-artifact@v8
-        with:
-          name: edi-macos
-          path: artifacts
-      # Refuse to publish if the tag does not match the version declared in
-      # package.json / backend/__init__.py (kept in sync by scripts/version.sh).
-      - name: Verify tag matches declared version
-        run: |
-          if [ "${GITHUB_REF_NAME}" != "v$(./scripts/version.sh current)" ]; then
-            echo "error: tag ${GITHUB_REF_NAME} does not match declared version $(./scripts/version.sh current)" >&2
-            exit 1
-          fi
-      - name: Build changelog
-        run: |
-          PREV_TAG=$(git describe --abbrev=0 --tags "${GITHUB_REF_NAME}^" 2>/dev/null || true)
-          RANGE="${GITHUB_REF_NAME}"
-          [ -n "$PREV_TAG" ] && RANGE="${PREV_TAG}..${GITHUB_REF_NAME}"
-          printf '## Changes in %s\n\n' "$GITHUB_REF_NAME" > /tmp/CHANGELOG.md
-          git log --pretty=format:'- %h %s' "$RANGE" >> /tmp/CHANGELOG.md
-          printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
-          printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: replace `Edi-%s-win64.exe`); settings and documents are untouched. Linux: upgrade via your package manager. macOS: replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" >> /tmp/CHANGELOG.md
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mapfile -t FILES < <(find artifacts -type f | sort)
-          if [ "${#FILES[@]}" -eq 0 ]; then
-            echo "error: no release artifacts were downloaded to artifacts/" >&2
-            ls -laR artifacts
-            exit 1
-          fi
-          echo "Uploading ${#FILES[@]} release files:"
-          printf '  %s\n' "${FILES[@]}"
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Edi $GITHUB_REF_NAME" \
-            --notes-file /tmp/CHANGELOG.md \
-            "${FILES[@]}"

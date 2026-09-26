@@ -256,7 +256,7 @@ Manage the version tracked in `package.json`, `package-lock.json`, and `backend/
 ./scripts/version.sh tag       # create annotated git tag v<current-version>
 ```
 
-`set`/`bump` update all three files and print the git commands to commit and push; pushing the `vX.Y.Z` tag triggers the GitHub Actions CI `release` job.
+`set`/`bump` update all three files and print the git commands to commit and push; pushing the `vX.Y.Z` tag triggers the GitHub Actions `Release` workflow's `release` job.
 
 ## Keyboard shortcuts
 
@@ -275,7 +275,7 @@ Manage the version tracked in `package.json`, `package-lock.json`, and `backend/
 
 1. All features are thoroughly tested using automated tests (Vitest for the frontend, `pytest` for the backend).
 2. Code is checked for duplication and poor quality using free, open static code analysis tools (ESLint and `tsc`).
-3. Versioning and tagging automatically results in releases being created by the GitHub Actions CI pipeline (using the `gh` CLI with the runner's built-in `GITHUB_TOKEN`). See `.github/workflows/ci.yml`; the `release` job refuses to run if the tag doesn't match the declared version (`version.sh check`).
+3. Versioning and tagging automatically results in releases being created by the GitHub Actions pipeline (using the `gh` CLI with the runner's built-in `GITHUB_TOKEN`). The tag-gated `Release` workflow (`.github/workflows/release.yml`) runs it; the `release` job refuses to run if the tag doesn't match the declared version (`version.sh check`).
 4. All unnecessary files are `.gitignore`d.
 5. All files necessary for building the project can be installed via a simple script (`scripts/install-deps.sh`) so that a new developer or user can easily build the project from source.
 6. Linting is part of the standard checks.

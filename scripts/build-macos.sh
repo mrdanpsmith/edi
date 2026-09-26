@@ -3,7 +3,7 @@
 # Builds the macOS Edi app (Edi.app) + a drag-to-Applications .dmg on a Mac.
 #
 # PyInstaller cannot cross-compile, so this must run on macOS. CI (GitHub
-# Actions, `build-macos` job in .github/workflows/ci.yml) runs it natively on
+# Actions, `build-macos` job in .github/workflows/release.yml) runs it natively on
 # an arm64 `macos-15` runner for v* tags; this script is also the local path —
 # run it on a Mac when cutting a release without CI.
 #
