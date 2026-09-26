@@ -284,6 +284,7 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._allow_close = False
         self._revert_action = None
+        self._copy_path_action = None
         self._toolbar_action = None
         self._insert_actions = None
 
@@ -350,6 +351,14 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("revert")
         )
         file_menu.addAction(self._revert_action)
+
+        # Enabled by the frontend only while the document in view has a path.
+        self._copy_path_action = QAction("Copy File &Path\tCtrl+Shift+C", self)
+        self._copy_path_action.setEnabled(False)
+        self._copy_path_action.triggered.connect(
+            lambda _checked=False: self._menu_command("copyFilePath")
+        )
+        file_menu.addAction(self._copy_path_action)
 
         file_menu.addSeparator()
 
@@ -497,10 +506,13 @@ class MainWindow(QMainWindow):
     def update_menu_state(
         self,
         can_revert: bool,
+        can_copy_path: bool,
         toolbar_visible: bool,
     ) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
+        if self._copy_path_action is not None:
+            self._copy_path_action.setEnabled(can_copy_path)
         if self._toolbar_action is not None:
             self._toolbar_action.setChecked(toolbar_visible)
         if self._insert_actions is not None:

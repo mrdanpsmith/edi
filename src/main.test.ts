@@ -756,6 +756,65 @@ describe('revert', () => {
   })
 })
 
+describe('copy file path', () => {
+  async function openNotes(): Promise<void> {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+  }
+
+  it('copies the path of the document in view', async () => {
+    await openNotes()
+    menu('copyFilePath')
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('/tmp/notes.md')
+  })
+
+  it('copies the new path after a save as', async () => {
+    await openNotes()
+    mainState.pickSavePath.mockResolvedValue('/tmp/copy.md')
+    menu('saveAs')
+    await flushAsync()
+    mainState.copyText.mockClear()
+    menu('copyFilePath')
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('/tmp/copy.md')
+  })
+
+  it('copies nothing for an unsaved document', async () => {
+    await loadMain()
+    menu('copyFilePath')
+    await flushAsync()
+    expect(mainState.copyText).not.toHaveBeenCalled()
+  })
+
+  it('is bound to Ctrl+Shift+C', async () => {
+    await openNotes()
+    mainState.copyText.mockClear()
+    press('c', { shiftKey: true })
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('/tmp/notes.md')
+  })
+
+  it('reports the copyable path in the menu state', async () => {
+    function lastMenuState(): { canCopyPath?: boolean } {
+      const calls = mainState.invoke.mock.calls.filter((call) => call[0] === 'setMenuState')
+      return calls[calls.length - 1]?.[1] as { canCopyPath?: boolean }
+    }
+
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    expect(lastMenuState().canCopyPath).toBe(false)
+
+    menu('open')
+    await flushAsync()
+    expect(lastMenuState().canCopyPath).toBe(true)
+  })
+})
+
 describe('export', () => {
   it('exports to HTML', async () => {
     mainState.pickExportPath.mockResolvedValue('/tmp/out.html')

@@ -43,9 +43,10 @@ class StubWindow(QObject):
         self.title = title
 
     def update_menu_state(
-        self, can_revert=False, toolbar_visible=True
+        self, can_revert=False, can_copy_path=False, toolbar_visible=True
     ) -> None:
         self.can_revert = can_revert
+        self.can_copy_path = can_copy_path
         self.toolbar_visible = toolbar_visible
 
     def pick_open_path(self, callback=None) -> None:

@@ -72,7 +72,7 @@ Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Eac
 
 Document actions live in the native menu bar and, for the four most common ones (New, Open, Save, Save As), as toolbar buttons:
 
-- **File**: New, Open, Open Recent (the last 8 documents, same list as the home screen), Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
+- **File**: New, Open, Open Recent (the last 8 documents, same list as the home screen), Save, Save As, Revert (enabled once the document has a path), Copy File Path (`Ctrl+Shift+C`, likewise enabled once the document has a path), Export HTML, Quit.
 - **Insert**: Spreadsheet, Text File, Image.
 - **View**: Preview (toggle, default on), Toolbar (toggle, default on).
 - **Help**: Edi Guide, Formula Reference, About Edi.

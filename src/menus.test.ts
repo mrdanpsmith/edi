@@ -26,6 +26,7 @@ function makeHandlers() {
     find: vi.fn(),
     replace: vi.fn(),
     openRecent: vi.fn(),
+    copyFilePath: vi.fn(),
   }
 }
 
@@ -52,6 +53,7 @@ const COMMANDS = [
   'find',
   'replace',
   'openRecent',
+  'copyFilePath',
 ]
 
 describe('bindMenuCommands', () => {

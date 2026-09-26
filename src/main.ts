@@ -209,6 +209,7 @@ function syncMenuState(): void {
   const active = getActive()
   void invoke('setMenuState', {
     canRevert: Boolean(active?.path),
+    canCopyPath: Boolean(active?.path),
     toolbarVisible: toolbar?.isVisible() ?? true,
   }).catch(() => undefined)
 }
@@ -476,6 +477,12 @@ async function revertFile(): Promise<void> {
   }
 }
 
+/** Copy the path of the document in view; a no-op for an unsaved one. */
+function copyFilePath(): void {
+  const path = getActive()?.path
+  if (path) void copyText(path)
+}
+
 async function importTable(): Promise<void> {
   const path = await pickImportPath()
   if (!path) {
@@ -544,6 +551,9 @@ function registerShortcuts(): void {
     } else if (key === 'q') {
       event.preventDefault()
       void requestQuit()
+    } else if (key === 'c' && event.shiftKey) {
+      event.preventDefault()
+      copyFilePath()
     } else if (key === 'a' && !event.defaultPrevented) {
       // Focus the editor and select all. When the editor already had focus,
       // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
@@ -969,6 +979,7 @@ function init(): void {
     openRecent: (path) => {
       if (path) void openDocument(path)
     },
+    copyFilePath: () => copyFilePath(),
   })
   startThemeWatcher()
   subscribe(() => {

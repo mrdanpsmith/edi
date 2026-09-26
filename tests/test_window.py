@@ -405,6 +405,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "&Save\tCtrl+S" in file_labels
     assert "Save &As…\tCtrl+Shift+S" in file_labels
     assert "&Revert" in file_labels
+    assert "Copy File &Path\tCtrl+Shift+C" in file_labels
     assert "&Export HTML…\tCtrl+Shift+E" in file_labels
     assert "&Quit\tCtrl+Q" in file_labels
     # Open Recent belongs directly under Open.
@@ -439,26 +440,34 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
 def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
     assert window._revert_action.isEnabled() is False
+    assert window._copy_path_action.isEnabled() is False
     assert window._toolbar_action.isChecked() is True
     assert window._insert_actions is not None
     assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
-        can_revert=True, toolbar_visible=False
+        can_revert=True, can_copy_path=True, toolbar_visible=False
     )
     assert window._revert_action.isEnabled() is True
+    assert window._copy_path_action.isEnabled() is True
     assert window._toolbar_action.isChecked() is False
     assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
-        can_revert=False, toolbar_visible=True
+        can_revert=False, can_copy_path=False, toolbar_visible=True
     )
     assert window._revert_action.isEnabled() is False
+    assert window._copy_path_action.isEnabled() is False
     assert window._toolbar_action.isChecked() is True
     assert all(action.isEnabled() for action in window._insert_actions)
 
 
-def test_menu_action_invokes_js_command(visible, qtbot):
+def _menu_action(menu, prefix):
+    return next(action for action in menu.actions() if action.text().startswith(prefix))
+
+
+def _assert_menu_action_sends_command(visible, qtbot, action, expected):
+    """Trigger ``action`` and assert the page's dispatcher received ``expected``."""
     window = visible
     result = {}
 
@@ -469,11 +478,7 @@ def test_menu_action_invokes_js_command(visible, qtbot):
         lambda _v: None,
     )
 
-    file_menu = window._file_menu
-    open_action = next(
-        action for action in file_menu.actions() if action.text().startswith("&Open…")
-    )
-    open_action.trigger()
+    action.trigger()
 
     def fetched():
         window._web.page().runJavaScript(
@@ -482,61 +487,34 @@ def test_menu_action_invokes_js_command(visible, qtbot):
         return result.get("value") is not None
 
     qtbot.waitUntil(fetched, timeout=3000)
-    assert result["value"] == "open"
+    assert result["value"] == expected
+
+
+def test_menu_action_invokes_js_command(visible, qtbot):
+    _assert_menu_action_sends_command(
+        visible, qtbot, _menu_action(visible._file_menu, "&Open…"), "open"
+    )
+
+
+def test_copy_file_path_action_invokes_js_command(visible, qtbot):
+    visible.update_menu_state(
+        can_revert=True, can_copy_path=True, toolbar_visible=True
+    )
+    _assert_menu_action_sends_command(
+        visible, qtbot, visible._copy_path_action, "copyFilePath"
+    )
 
 
 def test_view_menu_toolbar_action_invokes_js_command(visible, qtbot):
-    window = visible
-    result = {}
-
-    window._web.page().runJavaScript(
-        "window.__menuCmd = null;"
-        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
-        "true",
-        lambda _v: None,
+    _assert_menu_action_sends_command(
+        visible, qtbot, _menu_action(visible._view_menu, "&Toolbar"), "toggleToolbar"
     )
-
-    view_menu = window._view_menu
-    toolbar_action = next(
-        action for action in view_menu.actions() if action.text().startswith("&Toolbar")
-    )
-    toolbar_action.trigger()
-
-    def fetched():
-        window._web.page().runJavaScript(
-            "window.__menuCmd", lambda v: result.__setitem__("value", v)
-        )
-        return result.get("value") is not None
-
-    qtbot.waitUntil(fetched, timeout=3000)
-    assert result["value"] == "toggleToolbar"
 
 
 def test_help_menu_edi_guide_action_invokes_js_command(visible, qtbot):
-    window = visible
-    result = {}
-
-    window._web.page().runJavaScript(
-        "window.__menuCmd = null;"
-        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
-        "true",
-        lambda _v: None,
+    _assert_menu_action_sends_command(
+        visible, qtbot, _menu_action(visible._help_menu, "&Edi Guide"), "helpGuide"
     )
-
-    help_menu = window._help_menu
-    guide_action = next(
-        action for action in help_menu.actions() if action.text().startswith("&Edi Guide")
-    )
-    guide_action.trigger()
-
-    def fetched():
-        window._web.page().runJavaScript(
-            "window.__menuCmd", lambda v: result.__setitem__("value", v)
-        )
-        return result.get("value") is not None
-
-    qtbot.waitUntil(fetched, timeout=3000)
-    assert result["value"] == "helpGuide"
 
 
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):

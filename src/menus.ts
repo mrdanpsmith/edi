@@ -21,6 +21,7 @@ export interface MenuCommands {
   find: () => void
   replace: () => void
   openRecent: (path?: string) => void
+  copyFilePath: () => void
 }
 
 type MenuHandler = (argument?: string) => void
