@@ -1,6 +1,10 @@
 # AGENTS.md
 
-Edi is a markdown editor. Frontend: CodeMirror 6 + Mermaid + spreadsheet formulas (TypeScript/Vite) compiled to a static `dist/`. Backend: Python 3 + PySide6/QtWebEngine. A native `QWebEngineView` hosts `dist/index.html`; the page talks to Python via `QWebChannel` (`backend/bridge.py`). This is NOT a plain web app — `npm run dev` runs only the Vite server; the real app is Python.
+Edi is a markdown editor. Frontend: ProseMirror (the document editor) + CodeMirror 6 (embedded code blocks only) + Mermaid + spreadsheet formulas (TypeScript/Vite) compiled to a static `dist/`. Backend: Python 3 + PySide6/QtWebEngine. A native `QWebEngineView` hosts `dist/index.html`; the page talks to Python via `QWebChannel` (`backend/bridge.py`). This is NOT a plain web app — `npm run dev` runs only the Vite server; the real app is Python.
+
+## Find / replace
+
+`src/search.ts` is a ProseMirror plugin + pure matching layer; `src/searchPanel.ts` is the `#edi-search-bar` UI. Search runs over the document's raw flat text — every text node (including fenced code blocks) plus the `attrs.value` markup of `table`/`mermaid_block` atoms — and highlights matches on the rendered editor via inline decorations (with whole-block `NodeSelection` for atom matches). Masked fields, images and source blocks contribute no searchable text. Replace preserves marks; a table's pipe value refuses a replacement containing `\n` (row corruption). The document focus follows the search: typing or toggling a flag jumps the caret/scroll to the first match while the panel keeps keyboard focus (plain doc edits do NOT reset the active match — `SearchPanel.refresh()` re-applies only after a doc swap), Enter/Shift+Enter step matches, and spreadsheet/plain view tables additionally scroll the cell under the match into view (`onSearchChange`/`scrollActiveCellIntoView` in `src/node/table.ts`). Esc closes, Ctrl+F opens find and Ctrl+H the find+replace bar (wired in `src/main.ts`, `src/menus.ts`, `backend/window.py`'s Edit menu).
 
 ## Spreadsheet formulas
 

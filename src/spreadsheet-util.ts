@@ -6,7 +6,7 @@ import { renderCellHtml } from './inline-md'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
 import { colToLetters, isFormula, parseCellRef, solve } from './spreadsheet'
 
-const DELIMITER_CELL = /^:?-+:?$/
+export const DELIMITER_CELL = /^:?-+:?$/
 
 /** Column alignment as expressed by the GFM delimiter row's colons. `none`
  * (plain `---`) means the default, left-aligned content. */

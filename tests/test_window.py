@@ -393,6 +393,16 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     insert_labels = [action.text() for action in window._insert_menu.actions()]
     assert insert_labels == ["&Table…", "&Spreadsheet…", "&Text File…", "&Image…"]
 
+    edit_labels = [action.text() for action in window._edit_menu.actions()]
+    assert "&Undo\tCtrl+Z" in edit_labels
+    assert "&Redo\tCtrl+Shift+Z" in edit_labels
+    assert "Cu&t\tCtrl+X" in edit_labels
+    assert "&Copy\tCtrl+C" in edit_labels
+    assert "&Paste\tCtrl+V" in edit_labels
+    assert "Select &All\tCtrl+A" in edit_labels
+    assert "&Find…\tCtrl+F" in edit_labels
+    assert "&Replace…\tCtrl+H" in edit_labels
+
     help_labels = [action.text() for action in window._help_menu.actions()]
     assert help_labels == ["&Edi Guide…", "&Formula Reference…", "", "&About Edi…"]
 

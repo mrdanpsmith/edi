@@ -42,6 +42,7 @@ import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import { createBlockEditor, type BlockEditor } from './editor'
+import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode } from './node/table'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { HomeScreen } from './home'
@@ -121,6 +122,7 @@ let blockEditor: BlockEditor | null = null
 let toolbar: Toolbar | null = null
 let homeScreen: HomeScreen | null = null
 let contextMenu: ContextMenu | null = null
+let searchPanel: SearchPanel | null = null
 
 const tabs = new Tabs(tabbar, {
   getMarkdown(): string {
@@ -547,8 +549,17 @@ function registerShortcuts(): void {
       // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
       // this only kicks in when focus is elsewhere (e.g. the toolbar)
       // where the browser would otherwise select the whole window.
+      if (!(document.activeElement instanceof HTMLInputElement) &&
+          !(document.activeElement instanceof HTMLTextAreaElement)) {
+        event.preventDefault()
+        editSelectAll()
+      }
+    } else if (key === 'f') {
       event.preventDefault()
-      editSelectAll()
+      openSearch()
+    } else if (key === 'h') {
+      event.preventDefault()
+      openSearch(true)
     }
   })
 }
@@ -569,6 +580,11 @@ function requestQuit(event?: CloseRequestEvent): void {
 function toggleToolbar(): void {
   toolbar?.toggle()
   syncMenuState()
+}
+
+function openSearch(replace = false): void {
+  if (getState().sessions.length === 0) return
+  searchPanel?.open({ replace })
 }
 
 // Menu-triggered undo/redo must not scroll: the transaction is dispatched with
@@ -794,6 +810,17 @@ function buildDocumentMenu(): ContextMenuEntry[] {
     },
     { type: 'item', label: 'Paste', onSelect: () => void editPaste() },
     { type: 'item', label: 'Select all', onSelect: () => editSelectAll() },
+    { type: 'separator' },
+    {
+      type: 'item',
+      label: 'Find…',
+      onSelect: () => openSearch(),
+    },
+    {
+      type: 'item',
+      label: 'Replace…',
+      onSelect: () => openSearch(true),
+    },
   ]
 }
 
@@ -887,6 +914,7 @@ function init(): void {
     { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => void saveFileAs() },
   ])
   homeScreen = buildHomeScreen()
+  searchPanel = new SearchPanel({ getView: () => blockEditor?.getView() ?? null })
   registerShortcuts()
   // Right-click opens a custom menu (the browser's native one is suppressed by
   // the desktop shell). On the home screen there is no document to act on.
@@ -936,6 +964,8 @@ function init(): void {
     copy: () => editCopy(),
     paste: () => void editPaste(),
     selectAll: () => editSelectAll(),
+    find: () => openSearch(),
+    replace: () => openSearch(true),
   })
   startThemeWatcher()
   subscribe(() => {
@@ -944,6 +974,8 @@ function init(): void {
     updateStatus()
     syncDirty()
     syncMenuState()
+    // Re-base an open search on the newly activated/swapped document.
+    searchPanel?.refresh()
   })
   // Re-resolve relative image references when the active document's path
   // changes (e.g. Save As into a different directory) so they keep pointing at

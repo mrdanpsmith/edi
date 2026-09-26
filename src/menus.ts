@@ -18,6 +18,8 @@ export interface MenuCommands {
   copy: () => void
   paste: () => void
   selectAll: () => void
+  find: () => void
+  replace: () => void
 }
 
 export function bindMenuCommands(handlers: MenuCommands): void {

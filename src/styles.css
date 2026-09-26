@@ -254,6 +254,65 @@ body {
   outline-offset: -1px;
 }
 
+/* ── Find / replace bar ── */
+
+#edi-search-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+#edi-search-bar[hidden] {
+  display: none;
+}
+
+.edi-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.edi-search-input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  min-width: 160px;
+  flex: 0 1 280px;
+}
+
+.edi-search-input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.edi-search-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.edi-search-btn {
+  padding: 4px 7px;
+  font-size: 13px;
+}
+
+.edi-search-btn[aria-pressed='true'] {
+  background: var(--bg);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .tab {
   display: flex;
   align-items: center;
@@ -360,7 +419,8 @@ body {
 
 #app[data-view='home'] #tabbar,
 #app[data-view='home'] #toolbar,
-#app[data-view='home'] #editor-container {
+#app[data-view='home'] #editor-container,
+#app[data-view='home'] #edi-search-bar {
   display: none;
 }
 
@@ -611,6 +671,19 @@ body {
 /* Inline decorations wrap the link text in a span inside the anchor. */
 .ProseMirror a .ml-misleading {
   color: var(--danger);
+}
+
+/* Search matches: inline decorations wrap the matched text in a span, with the
+ * active match drawn more strongly than the rest. */
+.ProseMirror .edi-search-match {
+  background: var(--selection);
+  border-radius: 2px;
+}
+
+.ProseMirror .edi-search-match-current {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-radius: 2px;
 }
 
 .ProseMirror code {

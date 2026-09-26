@@ -1,11 +1,12 @@
 import { Plugin, PluginKey, TextSelection, type EditorState, type NodeSelection, type Transaction } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
-import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, type TableAlign } from '../spreadsheet-util'
+import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, DELIMITER_CELL, type TableAlign } from '../spreadsheet-util'
 import { cellCarriesMark, setCellMark } from '../inline-md'
 import { solve, colToLetters, formulaParts, isFormula, SPREADSHEET_PREFIX, type CellSolution, type SpreadsheetSolution } from '../spreadsheet'
 import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
 import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
+import { getSearchState, searchMatchesInText, subscribeSearchChanges } from '../search'
 import { FormulaAutocomplete } from '../formulaAutocomplete'
 import { undoNoScroll, redoNoScroll } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
@@ -148,6 +149,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   private readonly onDocPaste = (event: Event): void => this.onClipboardPaste(event as ClipboardEvent)
   private readonly autocomplete = new FormulaAutocomplete(() => this.formulaFunctions())
   private unsubscribeFormulaEnv: (() => void) | null = null
+  private unsubscribeSearchChanges: (() => void) | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -185,6 +187,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.renderSelection()
     ensureInlineFocusListeners()
     this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.refreshFormulaValues())
+    this.unsubscribeSearchChanges = subscribeSearchChanges(view, () => this.onSearchChange())
 
     document.addEventListener('copy', this.onDocCopy)
     document.addEventListener('cut', this.onDocCut)
@@ -781,6 +784,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   private fillCellContents(): void {
     const solution = solve(this.rows, formulaEnvFor(this.view.state))
     this.renderedSolution = solution
+    const active = searchActiveCell(this.view, this.node, this.getPos)
     for (let r = 0; r < this.rows.length; r++) {
       for (let c = 0; c < (this.rows[0]?.length ?? 0); c++) {
         const td = this.cells[r]?.[c]
@@ -806,6 +810,7 @@ class TableNodeView implements NodeView, InlineCellHost {
         if (!cellSol || (cellSol.kind !== 'formula' && cellSol.kind !== 'error')) {
           this.bindMaskedPills(td, r, c)
         }
+        highlightTableCell(this.view, td, r, c, active)
         const raw = this.rows[r]?.[c] ?? ''
         if (raw) td.title = cellTitle(raw, cellSol)
       }
@@ -817,6 +822,24 @@ class TableNodeView implements NodeView, InlineCellHost {
   private refreshFormulaValues(): void {
     if (this.editing) return
     this.fillCellContents()
+  }
+
+  /** The search state moved (query, flags or active match): repaint the cell
+   * highlights, then bring the cell under the active match into view. */
+  private onSearchChange(): void {
+    this.refreshFormulaValues()
+    this.scrollActiveCellIntoView()
+  }
+
+  /** Scroll the spreadsheet so the cell carrying the current search match is
+   * visible. Deferred a frame so ProseMirror's own block-level scroll for the
+   * NodeSelection (which aligns the whole grid, not the cell) applies first. */
+  private scrollActiveCellIntoView(): void {
+    const active = searchActiveCell(this.view, this.node, this.getPos)
+    if (!active?.span) return
+    const td = this.cells[active.span.row]?.[active.span.col]
+    if (!td) return
+    requestAnimationFrame(() => td.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }))
   }
 
   /** Wire ``.masked-field`` pills rendered into a cell to their real token, so
@@ -2359,6 +2382,8 @@ class TableNodeView implements NodeView, InlineCellHost {
     document.removeEventListener('paste', this.onDocPaste)
     this.unsubscribeFormulaEnv?.()
     this.unsubscribeFormulaEnv = null
+    this.unsubscribeSearchChanges?.()
+    this.unsubscribeSearchChanges = null
     this.autocomplete.close()
   }
 }
@@ -2450,6 +2475,169 @@ function ensureInlineFocusListeners(): void {
   })
 }
 
+/** Raw `attrs.value`-offset span of each grid cell. Mirrors `tableToPipes`'s
+ * normalized layout so a search block match's `from`/`to` (indexed against the
+ * value string) maps exactly onto the rendered cell that contains it; blank
+ * lines and the GFM delimiter row are skipped, as in `parsePipes`. */
+interface CellSpan {
+  row: number
+  col: number
+  from: number
+  to: number
+}
+
+function cellSpansInValue(value: string): CellSpan[] {
+  const spans: CellSpan[] = []
+  let row = 0
+  let offset = 0
+  for (const rawLine of value.split('\n')) {
+    const lineStart = offset
+    offset += rawLine.length + 1
+    if (rawLine.trim() === '') continue
+    const line = rawLine.startsWith('|') ? rawLine.slice(1) : rawLine.trim()
+    const tokens: { text: string; from: number; to: number }[] = []
+    let buf = ''
+    let bufStart = 0
+    let prev = ''
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]!
+      if (ch === '|' && prev !== '\\') {
+        tokens.push({ text: buf, from: bufStart, to: i })
+        buf = ''
+        bufStart = i + 1
+      } else {
+        buf += ch
+      }
+      prev = ch
+    }
+    tokens.push({ text: buf, from: bufStart, to: line.length })
+    // parsePipes equivalent: a trailing `|` produces a phantom empty token, so
+    // drop it before the delimiter-row check or a GFM `|--- | --- |` row reads
+    // as ordinary data (the phantom's empty string fails `DELIMITER_CELL`).
+    const cells =
+      tokens.length > 0 && tokens[tokens.length - 1]!.from === tokens[tokens.length - 1]!.to
+        ? tokens.slice(0, -1)
+        : tokens
+    if (cells.length > 0 && cells.every((token) => DELIMITER_CELL.test(token.text.trim()))) {
+      continue
+    }
+    cells.forEach((token, col) => {
+      if (token.from === token.to) return
+      spans.push({ row, col, from: lineStart + 1 + token.from, to: lineStart + 1 + token.to })
+    })
+    row++
+  }
+  return spans
+}
+
+/** Highlight every occurrence of the active search query inside a rendered
+ * table cell by wrapping matched text nodes in `<span>`s carrying the same
+ * `edi-search-match` classes the editor uses. `currentText` names the active
+ * match's raw value slice: when the run of text it sits in is reproduced in
+ * the cell, that segment (else the cell's first) is marked current. */
+function applyCellSearchHighlights(view: EditorView, container: Element, currentText: string | null): void {
+  const search = getSearchState(view)
+  const query = search?.query ?? ''
+  if (query === '') return
+  const text = container.textContent ?? ''
+  const ranges = searchMatchesInText(query, search.flags, text)
+  if (ranges.length === 0) return
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  const entries: { node: Text; start: number; end: number }[] = []
+  let offset = 0
+  let textNode: Text | null
+  while ((textNode = walker.nextNode() as Text | null)) {
+    const start = offset
+    const length = (textNode.nodeValue ?? '').length
+    entries.push({ node: textNode, start, end: start + length })
+    offset += length
+  }
+
+  let rangeIndex = 0
+  let cellFirstRange: { from: number; to: number; current: boolean } | null = null
+  for (const entry of entries) {
+    while (rangeIndex < ranges.length && ranges[rangeIndex]!.to <= entry.start) rangeIndex++
+    const local: { from: number; to: number; current: boolean }[] = []
+    while (rangeIndex < ranges.length && ranges[rangeIndex]!.from < entry.end) {
+      const range = ranges[rangeIndex]!
+      const from = Math.max(range.from, entry.start) - entry.start
+      const to = Math.min(range.to, entry.end) - entry.start
+      if (from < to) {
+        const localRange = { from, to, current: false }
+        local.push(localRange)
+        if (cellFirstRange === null) cellFirstRange = localRange
+      }
+      rangeIndex++
+    }
+    if (local.length === 0) continue
+    if (currentText !== null) {
+      // Find the segment that reproduced the active match's raw slice; the
+      // active match only lands in the cell whose text matches it exactly, and
+      // consuming the marker here stops a second cell claiming it.
+      for (const range of local) {
+        const absoluteFrom = entry.start + range.from
+        const absoluteTo = entry.start + range.to
+        if (text.slice(absoluteFrom, absoluteTo) === currentText) {
+          range.current = true
+          currentText = null
+          break
+        }
+      }
+    }
+    wrapTextNodeRanges(entry.node, local)
+  }
+  // The active match may not survive into the displayed text verbatim (solved
+  // formula cells); drop the emphasis on the cell's first match so the cursor
+  // still lands on something visible in the right cell.
+  if (currentText !== null && cellFirstRange !== null) cellFirstRange.current = true
+}
+
+/** Resolve the active search match to the rendered table cell that contains
+ * it, if this node view is the table the cursor is sitting on. `span` locates
+ * the cell by raw value offsets; `text` is the active match's raw slice.
+ * Returns null when the active match is a doc match, another block, or none. */
+function searchActiveCell(
+  view: EditorView,
+  node: ProseNode,
+  getPos: () => number | undefined,
+): { span: CellSpan | null; text: string | null } | null {
+  const search = getSearchState(view)
+  if (!search || search.current < 0) return null
+  const match = search.matches[search.current]
+  if (!match || match.kind !== 'block') return null
+  const pos = getPos()
+  if (pos === undefined || match.pos !== pos) return null
+  const value = String(node.attrs.value ?? '')
+  const span =
+    cellSpansInValue(value).find((s) => match.from < s.to && match.to > s.from) ?? null
+  return { span, text: value.slice(match.from, match.to) }
+}
+
+function highlightTableCell(
+  view: EditorView,
+  td: HTMLElement,
+  row: number,
+  col: number,
+  active: ReturnType<typeof searchActiveCell>,
+): void {
+  const currentText =
+    active?.span && active.span.row === row && active.span.col === col ? active.text : null
+  applyCellSearchHighlights(view, td, currentText)
+}
+
+function wrapTextNodeRanges(node: Text, ranges: { from: number; to: number; current: boolean }[]): void {
+  for (const range of [...ranges].sort((a, b) => b.from - a.from)) {
+    if (range.from >= range.to) continue
+    const tail = node.splitText(range.to)
+    const mid = node.splitText(range.from)
+    const span = document.createElement('span')
+    span.className = range.current ? 'edi-search-match-current' : 'edi-search-match'
+    span.appendChild(mid)
+    node.parentNode!.insertBefore(span, tail)
+  }
+}
+
 // --- Plain (view) rendering ---------------------------------------------------
 
 /**
@@ -2494,7 +2682,9 @@ class TablePlainView implements NodeView {
   private rows: string[][] = []
   private align: TableAlign[] = []
   private body: HTMLElement | null = null
+  private cells: HTMLElement[][] = []
   private unsubscribeFormulaEnv: (() => void) | null = null
+  private unsubscribeSearchChanges: (() => void) | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -2526,6 +2716,7 @@ class TablePlainView implements NodeView {
     })
     this.renderBody()
     this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.renderBody())
+    this.unsubscribeSearchChanges = subscribeSearchChanges(view, () => this.onSearchChange())
   }
 
   private renderBody(): void {
@@ -2560,35 +2751,49 @@ class TablePlainView implements NodeView {
     table.className = 'ss-plain-table'
     const cols = Math.max(...this.rows.map((r) => r.length), 0)
     const solution = solve(this.rows, formulaEnvFor(this.view.state))
+    const active = searchActiveCell(this.view, this.node, this.getPos)
+    this.cells = []
 
     const thead = document.createElement('thead')
     const headRow = document.createElement('tr')
+    const headCells: HTMLElement[] = []
     for (let c = 0; c < cols; c++) {
       const th = document.createElement('th')
       th.dataset.align = this.align[c] ?? 'none'
-      this.fillCell(th, 0, c, solution.cells[0]?.[c])
+      this.fillCell(th, 0, c, solution.cells[0]?.[c], active)
       headRow.appendChild(th)
+      headCells.push(th)
     }
     thead.appendChild(headRow)
     table.appendChild(thead)
+    this.cells.push(headCells)
 
     const tbody = document.createElement('tbody')
     for (let r = 1; r < this.rows.length; r++) {
       const tr = document.createElement('tr')
+      const rowCells: HTMLElement[] = []
       for (let c = 0; c < cols; c++) {
         const td = document.createElement('td')
         td.dataset.align = this.align[c] ?? 'none'
-        this.fillCell(td, r, c, solution.cells[r]?.[c])
+        this.fillCell(td, r, c, solution.cells[r]?.[c], active)
         tr.appendChild(td)
+        rowCells.push(td)
       }
       tbody.appendChild(tr)
+      this.cells.push(rowCells)
     }
     table.appendChild(tbody)
 
     return table
   }
 
-  private fillCell(td: HTMLElement, row: number, col: number, cellSol: CellSolution | undefined): void {
+  private fillCell(
+    td: HTMLElement,
+    row: number,
+    col: number,
+    cellSol: CellSolution | undefined,
+    active: ReturnType<typeof searchActiveCell>,
+  ): void {
     td.classList.remove('ss-formula', 'ss-error')
     td.removeAttribute('title')
     if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
@@ -2604,6 +2809,7 @@ class TablePlainView implements NodeView {
       else td.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true, markMisleading: true })
       bindMaskedPillsIn(td, this.rows, row, col, (next) => this.commitTable(next))
     }
+    highlightTableCell(this.view, td, row, col, active)
     const raw = this.rows[row]?.[col] ?? ''
     if (raw) td.title = cellTitle(raw, cellSol)
   }
@@ -2615,6 +2821,20 @@ class TablePlainView implements NodeView {
     if (value === this.node.attrs.value) return
     const tr = this.view.state.tr.setNodeMarkup(pos, undefined, { ...this.node.attrs, value })
     this.view.dispatch(tr)
+  }
+
+  /** The search state moved: repaint + bring the matching cell into view. */
+  private onSearchChange(): void {
+    this.renderBody()
+    this.scrollActiveCellIntoView()
+  }
+
+  private scrollActiveCellIntoView(): void {
+    const active = searchActiveCell(this.view, this.node, this.getPos)
+    if (!active?.span) return
+    const td = this.cells[active.span.row]?.[active.span.col]
+    if (!td) return
+    requestAnimationFrame(() => td.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }))
   }
 
   update(node: ProseNode): boolean {
@@ -2647,6 +2867,8 @@ class TablePlainView implements NodeView {
   destroy(): void {
     this.unsubscribeFormulaEnv?.()
     this.unsubscribeFormulaEnv = null
+    this.unsubscribeSearchChanges?.()
+    this.unsubscribeSearchChanges = null
     this.body = null
   }
 }

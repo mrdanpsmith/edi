@@ -23,6 +23,8 @@ function makeHandlers() {
     copy: vi.fn(),
     paste: vi.fn(),
     selectAll: vi.fn(),
+    find: vi.fn(),
+    replace: vi.fn(),
   }
 }
 
@@ -46,6 +48,8 @@ const COMMANDS = [
   'copy',
   'paste',
   'selectAll',
+  'find',
+  'replace',
 ]
 
 describe('bindMenuCommands', () => {

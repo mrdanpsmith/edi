@@ -368,6 +368,16 @@ class MainWindow(QMainWindow):
         select_all_action.triggered.connect(lambda _checked=False: self._menu_command("selectAll"))
         edit_menu.addAction(select_all_action)
 
+        edit_menu.addSeparator()
+
+        for label, command in (
+            ("&Find…\tCtrl+F", "find"),
+            ("&Replace…\tCtrl+H", "replace"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
+            edit_menu.addAction(action)
+
         self._insert_menu = menubar.addMenu("&Insert")
         insert_menu = self._insert_menu
         table_action = QAction("&Table…", self)

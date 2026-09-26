@@ -269,6 +269,8 @@ Manage the version tracked in `package.json`, `package-lock.json`, and `backend/
 | `Ctrl+Shift+S` | Save As |
 | `Ctrl+Shift+P` | Toggle preview |
 | `Ctrl+Shift+E` | Export preview as HTML |
+| `Ctrl+F` | Find in current document |
+| `Ctrl+H` | Find & replace in current document |
 | `Ctrl+Q` | Quit |
 
 ## Development process
