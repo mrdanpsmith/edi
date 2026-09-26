@@ -49,6 +49,15 @@ def _is_main_index_file(local: str) -> bool:
     )
 
 
+def _recent_label(path: str) -> str:
+    """Menu text for a recent document: its file name, qualified by its folder."""
+    name = os.path.basename(path) or path
+    parent = os.path.dirname(path)
+    if not parent:
+        return name
+    return f"{name} — {parent}"
+
+
 def _app_url(is_selftest: bool = False) -> QUrl:
     """URL for the frontend index file, optionally tagged for selftest mode.
 
@@ -315,6 +324,19 @@ class MainWindow(QMainWindow):
         for label, command in (
             ("&New\tCtrl+N", "new"),
             ("&Open…\tCtrl+O", "open"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
+            file_menu.addAction(action)
+
+        # The recent list lives in QSettings and can change between launches, so
+        # the submenu is repopulated every time it is opened rather than once
+        # here. `self._recent_menu` is kept for the same ownership reason as the
+        # other menus above.
+        self._recent_menu = file_menu.addMenu("Open &Recent")
+        self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
+
+        for label, command in (
             ("&Save\tCtrl+S", "save"),
             ("Save &As…\tCtrl+Shift+S", "saveAs"),
         ):
@@ -434,8 +456,33 @@ class MainWindow(QMainWindow):
         dialog = _AboutDialog(self)
         dialog.open()
 
-    def _menu_command(self, command: str) -> None:
-        self._web.page().runJavaScript(f"window.ediMenuCommand({json.dumps(command)})")
+    def _menu_command(self, command: str, argument: str = "") -> None:
+        """Run a menu command in the page, with an optional string argument."""
+        self._web.page().runJavaScript(
+            f"window.ediMenuCommand({json.dumps(command)}, {json.dumps(argument)})"
+        )
+
+    def _refresh_recent_menu(self) -> None:
+        """Rebuild File > Open Recent from the stored recent documents.
+
+        Each entry is labelled with its file name plus the containing folder, so
+        two documents called ``notes.md`` stay distinguishable; the full path is
+        the action's tooltip.
+        """
+        self._recent_menu.clear()
+        paths = self.recent_files()
+        if not paths:
+            empty = self._recent_menu.addAction("No recent documents")
+            empty.setEnabled(False)
+            return
+        for path in paths:
+            action = self._recent_menu.addAction(_recent_label(path))
+            action.setToolTip(path)
+            action.triggered.connect(
+                lambda _checked=False, target=path: self._menu_command(
+                    "openRecent", target
+                )
+            )
 
     def open_external_url(self, url: str) -> None:
         """Open ``url`` in the system default application (usually a browser).

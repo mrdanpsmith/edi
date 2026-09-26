@@ -62,7 +62,7 @@ The shebang is interpreted like a shell's, so all of these forms work: `#!python
 
 ### Home screen
 
-Edi starts on a home screen instead of an unsaved document. From there you can start a new document (`Ctrl+N`), open one (`Ctrl+O`), jump back into a recently opened file (the last 8, remembered per machine), reopen the welcome document, or quit. The editor is shown again automatically the moment a document is opened or created, and returns to the home screen when you close the last tab.
+Edi starts on a home screen instead of an unsaved document. From there you can start a new document (`Ctrl+N`), open one (`Ctrl+O`), jump back into a recently opened file (the last 8, remembered per machine — also under `File → Open Recent` once you're in the editor), reopen the welcome document, or quit. The editor is shown again automatically the moment a document is opened or created, and returns to the home screen when you close the last tab.
 
 ### Tabs
 
@@ -72,7 +72,7 @@ Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Eac
 
 Document actions live in the native menu bar and, for the four most common ones (New, Open, Save, Save As), as toolbar buttons:
 
-- **File**: New, Open, Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
+- **File**: New, Open, Open Recent (the last 8 documents, same list as the home screen), Save, Save As, Revert (enabled once the document has a path), Export HTML, Quit.
 - **Insert**: Spreadsheet, Text File, Image.
 - **View**: Preview (toggle, default on), Toolbar (toggle, default on).
 - **Help**: Edi Guide, Formula Reference, About Edi.

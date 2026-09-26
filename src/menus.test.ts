@@ -25,6 +25,7 @@ function makeHandlers() {
     selectAll: vi.fn(),
     find: vi.fn(),
     replace: vi.fn(),
+    openRecent: vi.fn(),
   }
 }
 
@@ -50,6 +51,7 @@ const COMMANDS = [
   'selectAll',
   'find',
   'replace',
+  'openRecent',
 ]
 
 describe('bindMenuCommands', () => {
@@ -78,5 +80,19 @@ describe('bindMenuCommands', () => {
     bindMenuCommands(handlers)
     expect(() => window.ediMenuCommand?.('nope')).not.toThrow()
     expect(handlers.open).not.toHaveBeenCalled()
+  })
+
+  it('forwards a command argument to its handler', () => {
+    const handlers = makeHandlers()
+    bindMenuCommands(handlers)
+    window.ediMenuCommand?.('openRecent', '/x/a.md')
+    expect(handlers.openRecent).toHaveBeenCalledWith('/x/a.md')
+  })
+
+  it('ignores a missing argument', () => {
+    const handlers = makeHandlers()
+    bindMenuCommands(handlers)
+    expect(() => window.ediMenuCommand?.('openRecent')).not.toThrow()
+    expect(handlers.openRecent).toHaveBeenCalledWith(undefined)
   })
 })

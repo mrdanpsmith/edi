@@ -20,11 +20,14 @@ export interface MenuCommands {
   selectAll: () => void
   find: () => void
   replace: () => void
+  openRecent: (path?: string) => void
 }
 
+type MenuHandler = (argument?: string) => void
+
 export function bindMenuCommands(handlers: MenuCommands): void {
-  window.ediMenuCommand = (command: string) => {
-    const handler = handlers[command as keyof MenuCommands]
-    handler?.()
+  window.ediMenuCommand = (command: string, argument?: string) => {
+    const handler: MenuHandler | undefined = handlers[command as keyof MenuCommands]
+    handler?.(argument)
   }
 }

@@ -966,6 +966,9 @@ function init(): void {
     selectAll: () => editSelectAll(),
     find: () => openSearch(),
     replace: () => openSearch(true),
+    openRecent: (path) => {
+      if (path) void openDocument(path)
+    },
   })
   startThemeWatcher()
   subscribe(() => {

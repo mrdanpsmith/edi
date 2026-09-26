@@ -233,8 +233,8 @@ function activeTabTitle(): string | null {
   return tabbarEl().querySelector('.tab.active .tab-title')?.textContent ?? null
 }
 
-function menu(command: string): void {
-  window.ediMenuCommand?.(command)
+function menu(command: string, argument?: string): void {
+  window.ediMenuCommand?.(command, argument)
 }
 
 function matchMediaStub(): typeof window.matchMedia {
@@ -820,6 +820,25 @@ describe('recent files', () => {
     menu('save')
     await flushAsync()
     expect(mainState.addRecentFile).toHaveBeenCalledWith('/tmp/new.md')
+  })
+
+  it('opens a document from the Open Recent menu command', async () => {
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    menu('openRecent', '/tmp/notes.md')
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(1)
+    expect(document.title).toBe('notes.md — Edi')
+  })
+
+  it('ignores Open Recent without a path', async () => {
+    await loadMain()
+    menu('openRecent')
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(0)
+    expect(mainState.readTextFile).not.toHaveBeenCalled()
   })
 })
 

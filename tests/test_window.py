@@ -88,6 +88,23 @@ def visible(window, qtbot):
     return window
 
 
+@pytest.fixture
+def stored_recents():
+    """Empty the persisted recent-files list, restoring the real value after.
+
+    QSettings() resolves its file at first use per-process and then caches the
+    location, so XDG_CONFIG_HOME cannot redirect it mid-session; save and
+    restore the value instead so the test stays self-contained.
+    """
+    settings = QSettings()
+    saved = settings.value("recentFiles", [])
+    settings.setValue("recentFiles", [])
+    try:
+        yield settings
+    finally:
+        settings.setValue("recentFiles", saved)
+
+
 def test_window_minimum_size(window):
     assert window.minimumSize() == QSize(800, 560)
     window.resize(100, 100)
@@ -384,11 +401,14 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     file_labels = [action.text() for action in window._file_menu.actions()]
     assert "&New\tCtrl+N" in file_labels
     assert "&Open…\tCtrl+O" in file_labels
+    assert "Open &Recent" in file_labels
     assert "&Save\tCtrl+S" in file_labels
     assert "Save &As…\tCtrl+Shift+S" in file_labels
     assert "&Revert" in file_labels
     assert "&Export HTML…\tCtrl+Shift+E" in file_labels
     assert "&Quit\tCtrl+Q" in file_labels
+    # Open Recent belongs directly under Open.
+    assert file_labels.index("Open &Recent") == file_labels.index("&Open…\tCtrl+O") + 1
 
     insert_labels = [action.text() for action in window._insert_menu.actions()]
     assert insert_labels == ["&Table…", "&Spreadsheet…", "&Text File…", "&Image…"]
@@ -450,7 +470,9 @@ def test_menu_action_invokes_js_command(visible, qtbot):
     )
 
     file_menu = window._file_menu
-    open_action = next(action for action in file_menu.actions() if "Open" in action.text())
+    open_action = next(
+        action for action in file_menu.actions() if action.text().startswith("&Open…")
+    )
     open_action.trigger()
 
     def fetched():
@@ -687,17 +709,12 @@ def test_app_url_selftest_query():
     )
 
 
-def test_recent_files_single_entry_reads_back_across_processes(window):
+def test_recent_files_single_entry_reads_back_across_processes(window, stored_recents):
     # QSettings' native format stores a one-element QStringList as a scalar
     # (`recentFiles=/only/x.md`), so a fresh process reads a str, not a list.
     # Simulate that persisted shape and confirm it still round-trips.
-    settings = QSettings()
-    saved = settings.value("recentFiles", [])
-    settings.setValue("recentFiles", "/only/x.md")
-    try:
-        assert window.recent_files() == ["/only/x.md"]
-    finally:
-        settings.setValue("recentFiles", saved)
+    stored_recents.setValue("recentFiles", "/only/x.md")
+    assert window.recent_files() == ["/only/x.md"]
 
 
 def test_right_click_context_menu_is_suppressed(window):
@@ -714,29 +731,86 @@ def test_right_click_context_menu_is_suppressed(window):
     assert QApplication.activePopupWidget() is None
 
 
-def test_add_recent_file_deduplicates_and_caps(window):
-    # QSettings() resolves its file at first use per-process and then caches the
-    # location, so XDG_CONFIG_HOME cannot redirect it mid-session. Save and
-    # restore the real value instead so the test is self-contained.
-    settings = QSettings()
-    saved = settings.value("recentFiles", [])
-    settings.setValue("recentFiles", [])
-    try:
-        assert window.recent_files() == []
+def test_add_recent_file_deduplicates_and_caps(window, stored_recents):
+    assert window.recent_files() == []
 
-        window.add_recent_file("/x/a.md")
-        window.add_recent_file("/x/b.md")
-        window.add_recent_file("/x/a.md")  # dup moves back to the front
-        assert window.recent_files() == ["/x/a.md", "/x/b.md"]
+    window.add_recent_file("/x/a.md")
+    window.add_recent_file("/x/b.md")
+    window.add_recent_file("/x/a.md")  # dup moves back to the front
+    assert window.recent_files() == ["/x/a.md", "/x/b.md"]
 
-        for i in range(10):
-            window.add_recent_file(f"/x/f{i}.md")
-        recent = window.recent_files()
-        assert len(recent) == window_module.RECENT_LIMIT
-        assert recent[0] == "/x/f9.md"
-        assert "/x/b.md" not in recent
-    finally:
-        settings.setValue("recentFiles", saved)
+    for i in range(10):
+        window.add_recent_file(f"/x/f{i}.md")
+    recent = window.recent_files()
+    assert len(recent) == window_module.RECENT_LIMIT
+    assert recent[0] == "/x/f9.md"
+    assert "/x/b.md" not in recent
+
+
+def test_open_recent_menu_lists_stored_recent_files(window, stored_recents):
+    stored_recents.setValue("recentFiles", ["/docs/a.md", "/other/b.md"])
+    window._refresh_recent_menu()
+
+    entries = window._recent_menu.actions()
+    assert [action.text() for action in entries] == [
+        "a.md — /docs",
+        "b.md — /other",
+    ]
+    assert [action.toolTip() for action in entries] == ["/docs/a.md", "/other/b.md"]
+    assert all(action.isEnabled() for action in entries)
+
+
+def test_open_recent_menu_replaces_previous_entries(window, stored_recents):
+    stored_recents.setValue("recentFiles", ["/docs/a.md"])
+    window._refresh_recent_menu()
+    stored_recents.setValue("recentFiles", ["/other/b.md"])
+    window._refresh_recent_menu()
+
+    assert [action.text() for action in window._recent_menu.actions()] == [
+        "b.md — /other"
+    ]
+
+
+def test_open_recent_menu_is_disabled_placeholder_when_empty(window, stored_recents):
+    window._refresh_recent_menu()
+
+    entries = window._recent_menu.actions()
+    assert [action.text() for action in entries] == ["No recent documents"]
+    assert entries[0].isEnabled() is False
+
+
+def test_recent_label_falls_back_to_the_raw_path():
+    assert window_module._recent_label("notes.md") == "notes.md"
+    assert window_module._recent_label("/docs/notes.md") == "notes.md — /docs"
+
+
+def test_open_recent_action_invokes_js_command_with_path(
+    visible, qtbot, stored_recents
+):
+    window = visible
+    stored_recents.setValue("recentFiles", ["/docs/a.md"])
+    result = {}
+
+    window._web.page().runJavaScript(
+        "window.__menuArgs = null;"
+        "window.ediMenuCommand = function (cmd, arg) {"
+        "  window.__menuArgs = cmd + ':' + (arg || '');"
+        "};"
+        "true",
+        lambda _v: None,
+    )
+
+    window._refresh_recent_menu()
+    window._recent_menu.actions()[0].trigger()
+
+    def fetched():
+        window._web.page().runJavaScript(
+            "window.__menuArgs", lambda v: result.__setitem__("value", v)
+        )
+        return result.get("value") is not None
+
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert result["value"] == "openRecent:/docs/a.md"
 
 
 def test_pick_save_path_cancel_returns_none(visible, qtbot):
