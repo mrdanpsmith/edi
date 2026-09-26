@@ -54,8 +54,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -72,7 +72,7 @@ jobs:
       - name: Build frontend (dist/)
         run: npm run build
       - name: Upload frontend artifacts (dist + icons)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: edi-web
           path: |
@@ -95,8 +95,8 @@ jobs:
       run:
         shell: bash --noprofile --norc -e -o pipefail {0}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: edi-web
           path: .
@@ -134,8 +134,8 @@ jobs:
       # binary grows ~18 MiB but every release wrapper recompresses it anyway.
       PYINSTALLER_ZLIB_COMPRESSION_LEVEL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: edi-web
           path: .
@@ -152,7 +152,7 @@ jobs:
           mkdir -p build/tmp
           TMPDIR="$GITHUB_WORKSPACE/build/tmp" EDI_SELFTEST=1 timeout 60 ./dist-app/edi
       - name: Upload onefile
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: edi
           path: dist-app/edi
@@ -170,15 +170,15 @@ jobs:
     env:
       EDI_WINE_IMAGE: ghcr.io/${{ github.repository_owner }}/edi-wine-builder:jammy
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: edi-web
           path: .
       - name: Build Windows onefile + installer via Wine
         run: ./scripts/build-windows-wine.sh "${VER#v}"
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: edi-win
           path: dist-app/Edi-*.exe
@@ -194,15 +194,15 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - name: Build macOS app + dmg
         run: ./scripts/build-macos.sh "${VER#v}"
       - name: Upload dmg
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: edi-macos
           path: dist-app/Edi-*.dmg
@@ -218,8 +218,8 @@ jobs:
       image: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: edi
           path: .
@@ -235,7 +235,7 @@ jobs:
       - name: Wrap onefile into deb/rpm/tar.gz/AppImage
         run: ./scripts/package-linux.sh "$EDI_BIN" "${VER#v}"
       - name: Upload packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: edi-packages
           path: |
@@ -256,7 +256,7 @@ jobs:
       contents: write
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history + tags for the git-describe changelog.
           fetch-depth: 0
@@ -264,15 +264,15 @@ jobs:
       # "after the first wildcard"), so every platform artifact unzips flat
       # here. Download all three into one staging dir and enumerate the files
       # with `find` in the release step instead of guessing names.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: edi-packages
           path: artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: edi-win
           path: artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: edi-macos
           path: artifacts
