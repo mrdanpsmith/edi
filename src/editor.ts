@@ -37,10 +37,26 @@ function inlineMarkRules(): InputRule[] {
     })
   }
 
+  /**
+   * A code span ends at its closing backtick, and the caret leaves it there: the
+   * mark is dropped from the stored marks so the rest of the sentence is plain
+   * text. Without that, a finished `code` span drags everything typed after it
+   * into the mark, and there is no way back out — only Mod-b and Mod-i are bound
+   * to a mark shortcut, and the toolbar is not a keyboard.
+   */
+  function codeRule(): InputRule {
+    const mark = schema.marks.code.create()
+    return new InputRule(/`([^`]+)`$/, (state, match, start, end) => {
+      const tr = state.tr.replaceWith(start, end, state.schema.text(match[1], [mark]))
+      tr.setStoredMarks(mark.removeFromSet(state.doc.resolve(start).marks()))
+      return tr
+    })
+  }
+
   return [
     markRule(/\*\*([^*]+)\*\*$/, schema.marks.strong),
     markRule(/(?<!\*)\*([^*]+)\*(?!\*)$/, schema.marks.em),
-    markRule(/`([^`]+)`$/, schema.marks.code),
+    codeRule(),
     markRule(/~~([^~]+)~~$/, schema.marks.strikethrough),
     highlight.createInputRule(schema),
     subscript.createInputRule(schema),

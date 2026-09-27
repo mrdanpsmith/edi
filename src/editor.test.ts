@@ -97,6 +97,40 @@ describe('input rules', () => {
     expect(view.state.doc.textContent).toBe(inner)
     editor.destroy()
   })
+
+  it('ends an inline code section on the closing backtick, so prose after it stays plain', () => {
+    const editor = createBlockEditor(document.body, '')
+    const view = editor.getView()
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1)))
+    typeText(view, '`hi` and /usr/bin/')
+    const { doc } = view.state
+    expect(doc.textContent).toBe('hi and /usr/bin/')
+    const para = doc.firstChild!
+    // The delimiters are gone from the text, and the sentence after them is plain.
+    expect(para.child(0).text).toBe('hi')
+    expect(para.child(0).marks.map(m => m.type.name)).toEqual(['code'])
+    expect(para.child(1).text).toBe(' and /usr/bin/')
+    expect(para.child(1).marks).toEqual([])
+    expect(proseToMarkdown(doc).trim()).toBe('`hi` and /usr/bin/')
+    editor.destroy()
+  })
+
+  it('does not leave the caret inside the code mark a second span would inherit', () => {
+    const editor = createBlockEditor(document.body, '')
+    const view = editor.getView()
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1)))
+    typeText(view, '`a`')
+    // This is the mark the next typed character would inherit.
+    expect(view.state.storedMarks ?? view.state.selection.$from.marks()).toEqual([])
+    typeText(view, 'b')
+    expect(view.state.doc.textContent).toBe('ab')
+    const para = view.state.doc.firstChild!
+    expect(para.child(0).marks.map(m => m.type.name)).toEqual(['code'])
+    expect(para.child(1).text).toBe('b')
+    expect(para.child(1).marks).toEqual([])
+    expect(proseToMarkdown(view.state.doc).trim()).toBe('`a`b')
+    editor.destroy()
+  })
 })
 
 describe('undo/redo keymap', () => {
