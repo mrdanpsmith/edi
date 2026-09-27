@@ -43,7 +43,7 @@ import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import { createBlockEditor, type BlockEditor } from './editor'
 import { SearchPanel } from './searchPanel'
-import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode } from './node/table'
+import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { HomeScreen } from './home'
 import { addRecentFile, getRecentFiles } from './recents'
@@ -713,7 +713,9 @@ function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
   if (input) {
     entries = buildInputMenu(input)
   } else if (target?.closest('.spreadsheet, .ss-plain')) {
-    entries = []
+    // The node view owns the grid's editing commands; the plain/read-only
+    // view has none, so it falls through to the block actions alone.
+    entries = spreadsheetMenuEntries(target) ?? []
   } else {
     entries = buildDocumentMenu()
   }

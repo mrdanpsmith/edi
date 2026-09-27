@@ -3,18 +3,28 @@ import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Plugin } from 'prosemirror-state'
 import { NodeSelection } from 'prosemirror-state'
+import { history } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { parsePipes } from './spreadsheet-util'
 import { blockPlugin, enterSourceMode, exitSourceMode } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
-import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode } from './node/table'
+import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode, spreadsheetMenuEntries } from './node/table'
+import { ContextMenu, type ContextMenuEntry } from './contextmenu'
 import { formulaDefsPlugin } from './formulaDefs'
 import { getActiveCellHost } from './inline-format'
 import { encryptField } from './crypto'
 import { createBlockEditor } from './editor'
+import { copyText, readText } from './clipboard'
 
-function createEditor(md: string): EditorView {
+// The cell menu writes through the app's clipboard bridge, which jsdom has no
+// bridge (or navigator.clipboard) for.
+vi.mock('./clipboard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./clipboard')>()
+  return { ...actual, copyText: vi.fn(() => Promise.resolve(true)), readText: vi.fn(() => Promise.resolve('1')) }
+})
+
+function createEditor(md: string, withHistory = false): EditorView {
   const doc = markdownToProse(md, schema)
   const nodeViewPlugin = new Plugin({
     props: {
@@ -26,16 +36,24 @@ function createEditor(md: string): EditorView {
   const view = new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin, formulaDefsPlugin],
+      plugins: [
+        blockPlugin,
+        nodeViewPlugin,
+        ...(withHistory ? [history()] : []),
+        tableNodeViewPlugin,
+        formulaDefsPlugin,
+      ],
     }),
   })
   // Tables render in the plain view by default (`_plain` is true); enter
   // spreadsheet mode for the existing suite so `.ss-grid` etc. are present.
   const firstNode = view.state.doc.child(0)
   if (firstNode?.type.name === 'table') {
-    view.dispatch(
-      view.state.tr.setNodeMarkup(0, undefined, { ...firstNode.attrs, _plain: false }),
-    )
+    const tr = view.state.tr.setNodeMarkup(0, undefined, { ...firstNode.attrs, _plain: false })
+    // The app keeps the view-mode switch out of the undo stack, so the menu's
+    // undo/redo only ever rewinds cell edits.
+    if (withHistory) tr.setMeta('addToHistory', false)
+    view.dispatch(tr)
   }
   return view
 }
@@ -97,14 +115,41 @@ function deleteViaMenu(el: Element, label: string): void {
   el.dispatchEvent(
     new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
   )
-  const items = document.querySelectorAll<HTMLButtonElement>('.edi-menu-item')
-  for (const item of items) {
-    if (item.textContent === label) {
-      item.click()
-      return
-    }
+  menuItem(label).click()
+}
+
+function menuItem(label: string): HTMLButtonElement {
+  for (const item of document.querySelectorAll<HTMLButtonElement>('.edi-menu-item')) {
+    if (item.textContent === label) return item
   }
   throw new Error(`no context-menu item ${label}`)
+}
+
+function menuLabels(): string[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item')).map(
+    (button) => button.textContent ?? '',
+  )
+}
+
+/** Right-click a grid cell the way a browser does — mousedown first, which is
+ *  what moves the selection onto the clicked cell — then open the app-level
+ *  menu on the entries the node view hands over. */
+function openCellMenu(view: EditorView, row: number, col: number): void {
+  const el = cell(view, row, col)
+  mousedown(el, { button: 2 })
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  el.dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
+  )
+  const entries: ContextMenuEntry[] | null = spreadsheetMenuEntries(el)
+  if (!entries) throw new Error('no spreadsheet menu entries')
+  new ContextMenu().show(entries, 30, 30)
+}
+
+/** Right-click a cell and pick one of the app-level menu's items. */
+function pickCellMenuItem(view: EditorView, row: number, col: number, label: string): void {
+  openCellMenu(view, row, col)
+  menuItem(label).click()
 }
 
 function mousedown(el: Element, init: MouseEventInit = {}): void {
@@ -152,6 +197,8 @@ function docValue(view: EditorView): string {
 describe('TableNodeView grid', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    vi.mocked(copyText).mockClear()
+    vi.mocked(readText).mockClear()
   })
 
   afterEach(() => {
@@ -434,6 +481,134 @@ describe('TableNodeView grid', () => {
     rowItem!.click()
     expect(parsePipes(docValue(view))).toEqual([['1']])
     view.destroy()
+  })
+
+  it('offers the spreadsheet editing commands on a cell right-click', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |', true)
+    openCellMenu(view, 1, 0)
+    expect(menuLabels()).toEqual([
+      'Undo',
+      'Redo',
+      'Cut',
+      'Copy',
+      'Paste',
+      'Select all',
+      'Clear contents',
+      'Insert row above',
+      'Insert column left',
+    ])
+    // Nothing has been edited yet, so there is nothing to undo or redo; the
+    // right-click has moved the selection, so the cell commands are live.
+    expect(menuItem('Undo').disabled).toBe(true)
+    expect(menuItem('Redo').disabled).toBe(true)
+    expect(menuItem('Cut').disabled).toBe(false)
+    expect(menuItem('Insert row above').disabled).toBe(false)
+    view.destroy()
+  })
+
+  it('will not grow a row above the header from the cell menu', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    openCellMenu(view, 0, 0)
+    expect(menuItem('Insert row above').disabled).toBe(true)
+    expect(menuItem('Insert column left').disabled).toBe(false)
+    view.destroy()
+  })
+
+  it('copies the right-clicked selection as TSV from the menu', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    selectRegion(view, 1, 0, 2, 1)
+    pickCellMenuItem(view, 1, 0, 'Copy')
+    expect(copyText).toHaveBeenCalledWith('1\t2\r\n3\t4')
+    view.destroy()
+  })
+
+  it('cuts from the menu and pastes the cell somewhere else', async () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    pickCellMenuItem(view, 1, 0, 'Cut')
+    expect(copyText).toHaveBeenCalledWith('1')
+    expect(cell(view, 1, 0).classList.contains('ss-cut')).toBe(true)
+
+    pickCellMenuItem(view, 2, 1, 'Paste')
+    await vi.waitFor(() =>
+      expect(parsePipes(docValue(view))).toEqual([
+        ['A', 'B'],
+        ['', '2'],
+        ['3', '1'],
+      ]),
+    )
+    expect(tableGrid(view).querySelector('td.ss-cut')).toBeNull()
+    view.destroy()
+  })
+
+  it('clears the right-clicked selection from the menu', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    selectRegion(view, 1, 0, 2, 1)
+    pickCellMenuItem(view, 2, 1, 'Clear contents')
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['', ''],
+      ['', ''],
+    ])
+    view.destroy()
+  })
+
+  it('selects every cell from the menu and hands focus back to the grid', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+    openCellMenu(view, 1, 0)
+    menuItem('Select all').click()
+    expect(tableGrid(view).querySelectorAll('td.ss-range')).toHaveLength(6)
+    expect(document.activeElement).toBe(tableGrid(view))
+    view.destroy()
+  })
+
+  it('inserts a row above the right-clicked cell from the menu', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    pickCellMenuItem(view, 1, 0, 'Insert row above')
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['', ''],
+      ['1', '2'],
+    ])
+    view.destroy()
+  })
+
+  it('inserts a column left of the right-clicked cell from the menu', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    pickCellMenuItem(view, 1, 1, 'Insert column left')
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', '', 'B'],
+      ['1', '', '2'],
+    ])
+    view.destroy()
+  })
+
+  it('undoes a cell-menu edit from the menu', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |', true)
+    pickCellMenuItem(view, 1, 0, 'Clear contents')
+    expect(docValue(view)).toContain('|  | 2 |')
+
+    openCellMenu(view, 1, 0)
+    expect(menuItem('Undo').disabled).toBe(false)
+    menuItem('Undo').click()
+    expect(parsePipes(docValue(view))).toEqual([
+      ['A', 'B'],
+      ['1', '2'],
+    ])
+    view.destroy()
+  })
+
+  it('has no cell menu outside a live spreadsheet view', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const el = cell(view, 1, 0)
+    expect(spreadsheetMenuEntries(el)).not.toBeNull()
+    view.destroy()
+    expect(spreadsheetMenuEntries(el)).toBeNull()
+
+    const plain = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    expect(spreadsheetMenuEntries(plain.dom.querySelector('table'))).toBeNull()
+    expect(spreadsheetMenuEntries(null)).toBeNull()
+    expect(spreadsheetMenuEntries(document.createElement('p'))).toBeNull()
+    plain.destroy()
   })
 
   it('adjusts a sum range when a row inside it is removed', () => {

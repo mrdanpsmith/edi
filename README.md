@@ -15,7 +15,7 @@ Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets
 
 ### Spreadsheet tables
 
-Tables render as a visual spreadsheet grid in the preview — a live formula bar, click-and-drag cell selection (Mod+click toggles cells, column/row/corner selectors), row/column add/remove, TSV clipboard, a **Use values** button (freezes the selected cells' formulas to their current computed values, so volatile cells stop recalculating), a whole-table **Resolve formulas?** mode (saves every computed value with the formulas kept in a comment and restored on reopen), and a handy `Insert → Table` size picker in the toolbar. Any cell whose content starts with `=` is computed live:
+Tables render as a visual spreadsheet grid in the preview — a live formula bar, click-and-drag cell selection (Mod+click toggles cells, column/row/corner selectors), row/column add/remove, TSV clipboard, a right-click menu on any cell (undo/redo, cut, copy, paste, select all, clear contents, insert a row above / column left — plus the block's **Table view** and **Edit source**; right-click a column letter or row number to delete it), a **Use values** button (freezes the selected cells' formulas to their current computed values, so volatile cells stop recalculating), a whole-table **Resolve formulas?** mode (saves every computed value with the formulas kept in a comment and restored on reopen), and a handy `Insert → Table` size picker in the toolbar. Any cell whose content starts with `=` is computed live:
 
 ```markdown
 | Item | Q1 | Q2 | Total |

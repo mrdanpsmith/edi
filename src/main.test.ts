@@ -4,6 +4,7 @@ import { EditorView } from 'prosemirror-view'
 import { history } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
+import { type ContextMenuEntry } from './contextmenu'
 
 const zeroRect = {
   top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
@@ -52,6 +53,9 @@ const mainState = vi.hoisted(() => {
     addRecentFile: vi.fn().mockResolvedValue(undefined),
     copyText: vi.fn().mockResolvedValue(true),
     readText: vi.fn().mockResolvedValue('PASTED'),
+    spreadsheetMenuEntries: vi.fn<(target: EventTarget | null) => ContextMenuEntry[] | null>(
+      () => null,
+    ),
     markdown: 'Welcome',
     editorView,
     editorOptions: undefined as { onChange?: () => void } | undefined,
@@ -133,6 +137,16 @@ vi.mock('./node/mermaid', async (importOriginal) => {
   return {
     ...actual,
     rethemeMermaid: vi.fn(),
+  }
+})
+
+// The grid's editing commands come from the live node view; the menu itself
+// stays owned by main so the block actions can be appended below them.
+vi.mock('./node/table', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./node/table')>()
+  return {
+    ...actual,
+    spreadsheetMenuEntries: mainState.spreadsheetMenuEntries,
   }
 })
 
@@ -275,6 +289,7 @@ beforeEach(() => {
   mainState.addRecentFile.mockReset().mockResolvedValue(undefined)
   mainState.copyText.mockReset().mockResolvedValue(true)
   mainState.readText.mockReset().mockResolvedValue('PASTED')
+  mainState.spreadsheetMenuEntries.mockReset().mockReturnValue(null)
   mainState.markdown = 'Welcome'
   mainState.editorOptions = undefined
   for (const mock of FILE_MOCKS) {
@@ -1174,6 +1189,29 @@ describe('context menu', () => {
     input.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
   }
 
+  /** A `.spreadsheet` block (block handle included, so the block actions
+   *  resolve) with a live view behind it, plus its teardown. */
+  const fakeSheet = (): { sheet: HTMLElement; teardown: () => void } => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
+    })
+    mainState.editorView = view as unknown as typeof mainState.editorView
+    const sheet = document.createElement('div')
+    sheet.className = 'spreadsheet'
+    sheet.innerHTML = '<div class="block-handle" data-block-pos="1"></div>'
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sheet)
+    return {
+      sheet,
+      teardown: () => {
+        view.destroy()
+        host.remove()
+        sheet.remove()
+      },
+    }
+  }
+
   it('scopes the menu to a spreadsheet cell editor', async () => {
     await loadMain()
     window.ediSetContent?.('Hello')
@@ -1253,20 +1291,11 @@ describe('context menu', () => {
     await loadMain()
     window.ediSetContent?.('Hello')
     await flushAsync()
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const realView = new EditorView(host, {
-      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
-    })
-    mainState.editorView = realView as unknown as typeof mainState.editorView
-    const sheet = document.createElement('div')
-    sheet.className = 'spreadsheet'
-    sheet.innerHTML = '<div class="block-handle" data-block-pos="1"></div>'
+    const { sheet, teardown } = fakeSheet()
     const input = document.createElement('input')
     input.className = 'ss-edit-input'
     input.value = '=1'
     sheet.appendChild(input)
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sheet)
     input.focus()
 
     openCellMenu(input)
@@ -1281,35 +1310,50 @@ describe('context menu', () => {
       'Edit source',
     ])
 
-    realView.destroy()
-    host.remove()
-    sheet.remove()
+    teardown()
   })
 
-  it('offers only spreadsheet actions on a selected cell', async () => {
+  it('offers only block actions on a cell with no live spreadsheet view', async () => {
     await loadMain()
     window.ediSetContent?.('Hello')
     await flushAsync()
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const realView = new EditorView(host, {
-      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
-    })
-    mainState.editorView = realView as unknown as typeof mainState.editorView
-    const sheet = document.createElement('div')
-    sheet.className = 'spreadsheet'
-    sheet.innerHTML =
-      '<div class="block-handle" data-block-pos="1"></div>' +
-      '<table><tbody><tr><td class="ss-cell">1</td></tr></tbody></table>'
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sheet)
+    const { sheet, teardown } = fakeSheet()
+    sheet.insertAdjacentHTML(
+      'beforeend',
+      '<table><tbody><tr><td class="ss-cell">1</td></tr></tbody></table>',
+    )
     const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     expect(menuLabels()).toEqual(['Table view', 'Edit source'])
 
-    realView.destroy()
-    host.remove()
-    sheet.remove()
+    teardown()
+  })
+
+  it('keeps the grid editing commands above the block actions on a cell', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const { sheet, teardown } = fakeSheet()
+    sheet.insertAdjacentHTML(
+      'beforeend',
+      '<table><tbody><tr><td class="ss-cell">1</td></tr></tbody></table>',
+    )
+    const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
+    const cut = vi.fn()
+    mainState.spreadsheetMenuEntries.mockReturnValue([
+      { type: 'item', label: 'Cut', onSelect: cut },
+      { type: 'item', label: 'Copy', onSelect: vi.fn() },
+    ])
+
+    cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    expect(mainState.spreadsheetMenuEntries).toHaveBeenCalledWith(cell)
+    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Table view', 'Edit source'])
+
+    findMenuItem('Cut').click()
+    expect(cut).toHaveBeenCalledTimes(1)
+
+    teardown()
   })
 })
 

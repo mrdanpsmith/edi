@@ -8,9 +8,9 @@ import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
 import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
 import { getSearchState, searchMatchesInText, subscribeSearchChanges } from '../search'
 import { FormulaAutocomplete } from '../formulaAutocomplete'
-import { undoNoScroll, redoNoScroll } from 'prosemirror-history'
+import { undoNoScroll, redoNoScroll, undoDepth, redoDepth } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
-import { copyText } from '../clipboard'
+import { copyText, readText } from '../clipboard'
 import { blockNodeView } from '../blockview'
 import {
   setActiveCellHost,
@@ -56,6 +56,12 @@ interface PointInsert {
 }
 
 const cellKey = (row: number, col: number): string => `${row}:${col}`
+
+/** Live spreadsheet node views, keyed by their `.spreadsheet` block element.
+ *  The app-level right-click menu reaches the grid's (otherwise private)
+ *  editing commands through this, so it needs the node view behind a
+ *  right-clicked cell; a weak map keeps it free of teardown bookkeeping. */
+const spreadsheetViews = new WeakMap<HTMLElement, TableNodeView>()
 
 const MIN_COL_WIDTH = 48
 const MAX_COL_WIDTH = 480
@@ -159,6 +165,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.align = parsePipesAlign(String(node.attrs.value ?? ''))
     this.dom = document.createElement('div')
     this.dom.className = 'spreadsheet'
+    spreadsheetViews.set(this.dom, this)
 
     const pos = getPos()
     if (pos !== undefined) {
@@ -1430,6 +1437,76 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.menu.show(entries, event.clientX, event.clientY)
   }
 
+  /**
+   * Editing commands for a right-click inside the grid. They act on the current
+   * selection: the right-click's own mousedown has already moved it to the
+   * clicked cell (or left a dragged range alone), so nothing here needs to
+   * resolve the target again.
+   *
+   * Clipboard items mirror the grid's own shortcuts — cut leaves the familiar
+   * pending-cut marquee (the cells blank out when the paste lands) and paste
+   * reads through the app's clipboard bridge — so the menu, the keyboard and
+   * the native Edit menu all land on the same state.
+   */
+  buildCellMenuEntries(): ContextMenuEntry[] {
+    const tsv = this.selectionTsv()
+    const active = this.active ?? { row: 0, col: 0 }
+    return [
+      {
+        type: 'item',
+        label: 'Undo',
+        disabled: undoDepth(this.view.state) === 0,
+        onSelect: () => undoNoScroll(this.view.state, this.view.dispatch, this.view),
+      },
+      {
+        type: 'item',
+        label: 'Redo',
+        disabled: redoDepth(this.view.state) === 0,
+        onSelect: () => redoNoScroll(this.view.state, this.view.dispatch, this.view),
+      },
+      { type: 'separator' },
+      { type: 'item', label: 'Cut', disabled: !tsv, onSelect: () => this.cutSelection() },
+      { type: 'item', label: 'Copy', disabled: !tsv, onSelect: () => this.copySelection() },
+      { type: 'item', label: 'Paste', onSelect: () => void this.pasteFromClipboard() },
+      { type: 'item', label: 'Select all', onSelect: () => this.selectAllCells() },
+      { type: 'separator' },
+      { type: 'item', label: 'Clear contents', disabled: !tsv, onSelect: () => this.clearSelected() },
+      // Row 0 is the GFM header, which `insertRowAt` refuses to grow above.
+      { type: 'item', label: 'Insert row above', disabled: active.row < 1, onSelect: () => this.insertRowAt(active.row) },
+      { type: 'item', label: 'Insert column left', onSelect: () => this.insertColumnAt(active.col) },
+    ]
+  }
+
+  /** Ctrl+X without a clipboard event: same TSV, same pending cut. */
+  private cutSelection(): void {
+    const tsv = this.selectionTsv()
+    if (!tsv) return
+    void copyText(tsv)
+    this.cutSource = this.selectionBounds()
+    this.renderSelection()
+  }
+
+  private copySelection(): void {
+    const tsv = this.selectionTsv()
+    if (tsv) void copyText(tsv)
+  }
+
+  private async pasteFromClipboard(): Promise<void> {
+    const text = await readText()
+    if (text) this.pasteTsv(text)
+  }
+
+  private selectAllCells(): void {
+    this.anchor = { row: 0, col: 0 }
+    this.active = {
+      row: Math.max(0, this.rows.length - 1),
+      col: Math.max(0, (this.rows[0]?.length ?? 1) - 1),
+    }
+    this.extra.clear()
+    this.renderSelection()
+    this.grid?.focus()
+  }
+
   private onGridMouseDown(event: MouseEvent): void {
     const grid = this.grid
     if (!grid) return
@@ -1500,6 +1577,13 @@ class TableNodeView implements NodeView, InlineCellHost {
         anchor = this.anchor ?? { row: r, col: c }
         active = this.active ?? { row: r, col: c }
         this.extra = next
+        keepExtra = true
+      } else if (event.button === 2 && this.anchor && this.active && this.selectedHas()(r, c)) {
+        // A right-click inside the current selection keeps it, so the
+        // context menu's cut/copy/clear act on the whole range — the same
+        // courtesy every spreadsheet gives before showing its menu.
+        anchor = this.anchor
+        active = this.active
         keepExtra = true
       } else if (event.shiftKey && this.anchor) {
         anchor = this.anchor
@@ -1576,10 +1660,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     if (mod && key.toLowerCase() === 'a') {
       event.preventDefault()
       event.stopPropagation()
-      this.anchor = { row: 0, col: 0 }
-      this.active = { row: rows - 1, col: cols - 1 }
-      this.extra.clear()
-      this.renderSelection()
+      this.selectAllCells()
       return
     }
 
@@ -2370,6 +2451,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   destroy(): void {
+    spreadsheetViews.delete(this.dom)
     this.dragging = false
     if (this.fillDrag) {
       document.removeEventListener('mousemove', this.onFillMove)
@@ -2939,6 +3021,20 @@ export function enterPlainMode(view: EditorView, pos: number | undefined): void 
   const current = currentSpreadPos(view.state)
   tr.setMeta(TABLE_MODE_KEY, { spreadPos: current === pos ? null : current })
   view.dispatch(tr)
+}
+
+/**
+ * Right-click menu entries for spreadsheet editing, or null when the target
+ * isn't a live spreadsheet block (a plain/read-only table view, a
+ * stand-in element, or anything outside a table). The app-level menu keeps
+ * ownership of that menu so the block actions stay appendable below these; this
+ * only supplies the grid's own editing commands.
+ */
+export function spreadsheetMenuEntries(target: EventTarget | null): ContextMenuEntry[] | null {
+  if (!(target instanceof Element)) return null
+  const block = target.closest<HTMLElement>('.spreadsheet')
+  const view = block ? spreadsheetViews.get(block) : undefined
+  return view ? view.buildCellMenuEntries() : null
 }
 
 /** True when a double-click lands in the empty space beside a table's grid —
