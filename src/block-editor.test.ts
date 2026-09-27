@@ -879,6 +879,137 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
+  it('finishes a label edit in progress when Done is clicked', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    const preview = view.dom.querySelector<HTMLElement>('.mermaid-preview')!
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+
+    preview.querySelector('.mermaid-editables')!.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, button: 0 }),
+    )
+    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    input.value = 'Beta'
+
+    // Done's own mousedown keeps the input focused, so the edit cannot be left
+    // to the input's blur: the toggle has to resolve it. Clicking away from a
+    // field commits, and so does finishing the diagram.
+    const toggle = editToggle(view)
+    toggle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+    toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+
+    expect(editModeOf(view)).toBe(false)
+    expect(proseToMarkdown(view.state.doc)).toContain('A[Beta]')
+    expect(view.dom.querySelector('.mermaid-edit-input')).toBeNull()
+    // The input is a child of the block, not of the container a render
+    // replaces, so it must be gone for good — not resurrected by the re-render
+    // the committed value triggers.
+    expect(await rendered(view, '.mermaid-edit-input', false)).toBe(true)
+    expect(view.dom.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+    expect(editToggle(view).textContent).toBe('Edit')
+
+    view.destroy()
+  })
+
+  it('finishes a label edit in progress when another diagram takes edit mode', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\n```mermaid\ngraph TD\n  B[Beta]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    enterDiagramEditMode(view, allBlockPositions(view)[0]!)
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+    view.dom
+      .querySelectorAll('.mermaid-preview')[0]!
+      .querySelector('.mermaid-editables')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    input.value = 'Gamma'
+
+    enterDiagramEditMode(view, allBlockPositions(view)[1]!)
+
+    // Edit mode is one diagram at a time, so the first one is finished by
+    // handing over — its pending label is not left on screen.
+    expect(proseToMarkdown(view.state.doc)).toContain('A[Gamma]')
+    expect(view.dom.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(view.state.doc.child(1)!.attrs._edit).toBe(true)
+
+    view.destroy()
+  })
+
+  it('leaves edit mode on a double click outside the diagram', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    // Edit mode is a mode of one diagram; the gesture that ends it should not
+    // have to land back on that diagram.
+    // The paragraph after the diagram. The diagram's own labels are `<p>`
+    // elements too, and a double click on one of those is a request about the
+    // diagram, so pick the one that is not inside a `.mermaid` block.
+    const paragraph = Array.from(view.dom.querySelectorAll<HTMLElement>('p')).find(
+      (el) => el.textContent === 'After the diagram' && el.closest('.mermaid') === null,
+    )!
+    paragraph.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(editModeOf(view)).toBe(true)
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+
+    paragraph.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+
+    // ...but the click is not swallowed, so it still does what it was aimed at.
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+    const editor = view.dom.querySelector<HTMLElement>('.mermaid-editing')!
+    editor.querySelector('.mermaid-editables')!.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, button: 0 }),
+    )
+    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    // A double click in the input belongs to the input, not to edit mode.
+    input.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(true)
+
+    view.destroy()
+  })
+
+  it('ignores a double click outside when no diagram is in edit mode', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    // The paragraph after the diagram. The diagram's own labels are `<p>`
+    // elements too, and a double click on one of those is a request about the
+    // diagram, so pick the one that is not inside a `.mermaid` block.
+    const paragraph = Array.from(view.dom.querySelectorAll<HTMLElement>('p')).find(
+      (el) => el.textContent === 'After the diagram' && el.closest('.mermaid') === null,
+    )!
+    paragraph.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+
+    expect(editModeOf(view)).toBe(false)
+    expect(view.dom.querySelector('.mermaid-editables')).toBeNull()
+
+    view.destroy()
+  })
+
   it('syncs the mode class when a transaction changes the source and the mode', async () => {
     mockFlowchart()
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')

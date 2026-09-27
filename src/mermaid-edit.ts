@@ -1280,8 +1280,29 @@ function showNotice(host: HTMLElement, text: string, detail: string): void {
 
 // ── inline label editing ───────────────────────────────────────────────────
 
-/** Disposes the previous editing layer; a container outlives individual renders. */
-const editingLayers = new WeakMap<HTMLElement, () => void>()
+/**
+ * The editing layer of every rendered diagram, keyed by its host block. The
+ * stored resolver finishes an open label editor (`accept`) and takes the layer
+ * down; a block outlives individual renders, so a new render replaces it.
+ */
+const editingLayers = new WeakMap<HTMLElement, (accept: boolean) => void>()
+
+/**
+ * Take a diagram's editing layer down, optionally accepting the label edit in
+ * progress. Leaving edit mode has to do this: the label input is a child of the
+ * block, not of the container a render replaces, so a re-render alone leaves it
+ * floating over a diagram that is no longer editable, still swallowing its own
+ * events — and a value typed into it would patch a source snapshot that has
+ * since moved on. `accept` is true when the user asked to *finish* (the Done
+ * button, a double click, the menu item), so a half-typed label is committed
+ * exactly as a click elsewhere would commit it; a plain re-render, whose source
+ * may already have changed underneath the editor, cancels instead.
+ */
+export function finishMermaidLabelEditing(host: Node | null | undefined, accept = true): void {
+  if (!(host instanceof HTMLElement)) return
+  editingLayers.get(host)?.(accept)
+  editingLayers.delete(host)
+}
 
 /**
  * Make a rendered diagram editable: click a label to retype it, and — for
@@ -1294,7 +1315,10 @@ export function attachMermaidEditing(
   source: string,
   commit: (source: string) => void,
 ): void {
-  editingLayers.get(container)?.()
+  const host = container.closest<HTMLElement>('.mermaid') ?? container.parentElement ?? container
+  // Disposes the previous layer; a block outlives individual renders. Cancels
+  // any open editor: this render was not asked for by the one holding it.
+  editingLayers.get(host)?.(false)
   const dispose: Array<() => void> = []
   const on = (target: EventTarget, type: string, handler: EventListener): void => {
     target.addEventListener(type, handler)
@@ -1305,8 +1329,7 @@ export function attachMermaidEditing(
   const targets = labelTargets(svg, family, source)
   for (const target of targets) target.el.classList.add(EDITABLE_CLASS)
 
-  const host = container.closest<HTMLElement>('.mermaid') ?? container.parentElement ?? container
-  let closeEditor: (() => void) | null = null
+  let closeEditor: ((accept: boolean) => void) | null = null
 
   // Diagram glyphs are never natively draggable, and a press on a label must
   // not start a ProseMirror node selection underneath the click. `mousedown`
@@ -1324,16 +1347,18 @@ export function attachMermaidEditing(
     if (event.button !== 0) return
     const target = labelTargetAt(event, targets)
     if (!target) return
-    closeEditor?.()
+    // Another label, not this one: the value being typed is dropped rather than
+    // committed, the same as pressing Esc.
+    closeEditor?.(false)
     closeEditor = openLabelEditor(host, target, source, family, commit)
   }) as EventListener)
 
   if (family === 'kanban') {
-    dispose.push(attachKanbanDrag(container, svg, source, commit, () => closeEditor?.()))
+    dispose.push(attachKanbanDrag(container, svg, source, commit, () => closeEditor?.(false)))
   }
 
-  editingLayers.set(container, () => {
-    closeEditor?.()
+  editingLayers.set(host, (accept) => {
+    closeEditor?.(accept)
     closeEditor = null
     for (const off of dispose.splice(0)) off()
     for (const target of targets) target.el.classList.remove(EDITABLE_CLASS)
@@ -1391,7 +1416,9 @@ function contains(rect: DOMRect, x: number, y: number): boolean {
  * The in-place editor: one input over the clicked label. `Enter` commits, `Esc`
  * cancels, blur commits — the same conventions as the URL dialogs elsewhere in
  * the app. A commit that cannot be mapped back to the source flashes the input
- * red instead of silently doing nothing.
+ * red instead of silently doing nothing. The returned function resolves it from
+ * outside, with `accept` deciding whether the typed value is kept; the host
+ * calls it when the diagram stops being editable.
  */
 function openLabelEditor(
   host: HTMLElement,
@@ -1399,7 +1426,7 @@ function openLabelEditor(
   source: string,
   family: DiagramFamily,
   commit: (source: string) => void,
-): () => void {
+): (accept: boolean) => void {
   const rect = target.el.getBoundingClientRect()
   const hostRect = host.getBoundingClientRect()
   const input = document.createElement('input')
@@ -1464,7 +1491,7 @@ function openLabelEditor(
   host.appendChild(input)
   input.focus()
   input.select()
-  return close
+  return finish
 }
 
 // ── kanban drag ────────────────────────────────────────────────────────────

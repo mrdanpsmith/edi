@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   attachMermaidEditing,
   detectDiagramType,
+  finishMermaidLabelEditing,
   moveKanbanCard,
   parseKanban,
   patchLabel,
@@ -781,6 +782,59 @@ describe('label editing', () => {
     field.dispatchEvent(new Event('blur'))
 
     expect(commit).toHaveBeenCalledWith('graph TD\n  A[A1]\n  B[Beta]\n  A -->|Yes| B')
+  })
+
+  it('commits a label edit in progress when the diagram stops being edited', async () => {
+    const commit = vi.fn()
+    const { host, preview } = await renderFlowchart(commit)
+
+    click(editables(preview)[0]!)
+    input().value = 'A1'
+    // Leaving edit mode resolves the editor rather than walking away from it:
+    // the input is a child of the block, so a re-render alone would leave it
+    // floating over a diagram that is no longer editable.
+    finishMermaidLabelEditing(host)
+
+    expect(commit).toHaveBeenCalledWith('graph TD\n  A[A1]\n  B[Beta]\n  A -->|Yes| B')
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(editables(preview)).toHaveLength(0)
+    // The layer is gone, not merely marked: a second finish is a no-op.
+    finishMermaidLabelEditing(host)
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards a label edit in progress when told to', async () => {
+    const commit = vi.fn()
+    const { host, preview } = await renderFlowchart(commit)
+
+    click(editables(preview)[0]!)
+    input().value = 'A1'
+    finishMermaidLabelEditing(host, false)
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(editables(preview)).toHaveLength(0)
+  })
+
+  it('cancels an open editor when a re-render replaces the layer', async () => {
+    const commit = vi.fn()
+    const { host, preview } = await renderFlowchart(commit)
+
+    click(editables(preview)[0]!)
+    input().value = 'A1'
+    // The re-render was not asked for by the editor holding a source snapshot
+    // that has since moved on, so its value is dropped rather than committed.
+    await renderDiagram(preview, source, { host, commit })
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+  })
+
+  it('ignores a finish for a block that has no editing layer', () => {
+    const host = document.createElement('div')
+    expect(() => finishMermaidLabelEditing(host)).not.toThrow()
+    expect(() => finishMermaidLabelEditing(null)).not.toThrow()
+    expect(() => finishMermaidLabelEditing(document.createTextNode('x'))).not.toThrow()
   })
 
   it('withholds a label the source could name in more than one way', async () => {

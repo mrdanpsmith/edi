@@ -5,7 +5,7 @@ import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
 import { blockNodeView } from '../blockview'
 import { reinitializeMermaidTheme } from '../mermaid'
-import { EDITING_CLASS, renderDiagram } from '../mermaid-edit'
+import { EDITING_CLASS, finishMermaidLabelEditing, renderDiagram } from '../mermaid-edit'
 import { BLOCK_PLUGIN_KEY } from '../blockplugin'
 import { markdownToProse, serializeBlock } from '../markdown'
 import { createBlockCodeMirror } from '../codemirror-block'
@@ -353,7 +353,8 @@ export function enterDiagramEditMode(view: EditorView, pos: number | undefined):
   if (!node || node.type.name !== MERMAID_TYPE) return
   const tr = view.state.tr
   const open = currentEditPos(view.state)
-  if (open !== null && open !== pos) setEditAttr(tr, tr.mapping.map(open), false)
+  const dropped = open !== null && open !== pos ? tr.mapping.map(open) : null
+  if (dropped !== null) setEditAttr(tr, dropped, false)
   setEditAttr(tr, pos, true)
   const sel = tr.selection
   if (sel instanceof NodeSelection && sel.node.type.name === MERMAID_TYPE) {
@@ -366,6 +367,12 @@ export function enterDiagramEditMode(view: EditorView, pos: number | undefined):
   }
   tr.setMeta(MERMAID_EDIT_KEY, { editPos: pos })
   view.dispatch(tr)
+  // The diagram just dropped out of edit mode, so its label editor (if one was
+  // open) has to go with it. Dispatching first is what makes that safe: the
+  // re-render the mode change triggers already sees `_edit: false`, so the
+  // commit below renders the finished diagram instead of racing an edit-mode
+  // render that would re-mark the labels.
+  if (dropped !== null) finishMermaidLabelEditing(view.nodeDOM(dropped), true)
 }
 
 export function exitDiagramEditMode(view: EditorView, pos: number | undefined): void {
@@ -374,6 +381,7 @@ export function exitDiagramEditMode(view: EditorView, pos: number | undefined): 
   setEditAttr(tr, pos, false)
   tr.setMeta(MERMAID_EDIT_KEY, { editPos: currentEditPos(view.state) === pos ? null : currentEditPos(view.state) })
   view.dispatch(tr)
+  finishMermaidLabelEditing(view.nodeDOM(pos), true)
 }
 
 export function toggleDiagramEditMode(view: EditorView, pos: number | undefined): void {
@@ -387,7 +395,7 @@ export function toggleDiagramEditMode(view: EditorView, pos: number | undefined)
   }
 }
 
-/** The diagram a double click lands on, or null when it should be ignored. */
+/** The diagram a double click lands on, or null when it is not on one. */
 function diagramEditTogglePos(event: MouseEvent): number | null {
   if (!(event.target instanceof Element)) return null
   const block = event.target.closest<HTMLElement>('.mermaid')
@@ -398,6 +406,18 @@ function diagramEditTogglePos(event: MouseEvent): number | null {
   const handle = block.querySelector<HTMLElement>('.block-handle[data-block-pos]')
   const pos = handle ? Number(handle.dataset.blockPos) : Number.NaN
   return Number.isInteger(pos) && pos >= 0 ? pos : null
+}
+
+/**
+ * A double click Chrome already owns: a word to select, a link to open, a
+ * button to press, a caret in an editor. Such a click is left to do its own
+ * job — it merely happens to also end diagram edit mode.
+ */
+function chromeHandlesDoubleClick(event: MouseEvent): boolean {
+  return (
+    event.target instanceof Element &&
+    event.target.closest('a[href], button, input, textarea, select, .cm-editor') !== null
+  )
 }
 
 export const mermaidNodeViewPlugin = new Plugin<MermaidEditState>({
@@ -419,8 +439,19 @@ export const mermaidNodeViewPlugin = new Plugin<MermaidEditState>({
   view(view: EditorView) {
     const onDblClick = (event: MouseEvent): void => {
       const pos = diagramEditTogglePos(event)
-      if (pos === null) return
-      toggleDiagramEditMode(view, pos)
+      if (pos !== null) {
+        toggleDiagramEditMode(view, pos)
+        return
+      }
+      // A double click outside the diagram finishes it too: edit mode belongs to
+      // one diagram, and the gesture that turns it off should not have to land
+      // back on the diagram — on a diagram in source mode, or on one that no
+      // longer shows one. The click is not swallowed, so whatever it meant for
+      // the page below (a word, a caret) still happens.
+      if (chromeHandlesDoubleClick(event)) return
+      const open = currentEditPos(view.state)
+      if (open === null || view.nodeDOM(open) === null) return
+      exitDiagramEditMode(view, open)
     }
     view.dom.addEventListener('dblclick', onDblClick)
     return { destroy: () => view.dom.removeEventListener('dblclick', onDblClick) }

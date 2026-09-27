@@ -202,6 +202,41 @@ def _type_and_confirm(win, value, timeout=15):
     )
 
 
+def _type(win, value):
+    """Type into the open label editor and leave it open -- the half-finished
+    state the toggle button and an outside double click have to resolve."""
+    typed = _dump(
+        win,
+        f"""(() => {{
+          const i = document.querySelector('.mermaid-edit-input');
+          if (!i) return {{ missing: true }};
+          i.value = {json.dumps(value)};
+          i.dispatchEvent(new Event('input', {{ bubbles: true }}));
+          return {{ typed: i.value }};
+        }})()""",
+    )
+    assert not typed.get("missing"), "no label editor was open"
+    return typed
+
+
+def _click_done(win):
+    """Press the hover toolbar's Done button the way a mouse does: the press
+    first, which is what keeps the open label editor focused, and only then the
+    click that turns edit mode off."""
+    pressed = _dump(
+        win,
+        "(() => { const b = document.querySelector('.mermaid-edit-toggle');"
+        " if (!b) return { missing: true };"
+        " const opts = { bubbles: true, button: 0 };"
+        " b.dispatchEvent(new MouseEvent('mousedown', opts));"
+        " b.dispatchEvent(new MouseEvent('mouseup', opts));"
+        " b.dispatchEvent(new MouseEvent('click', opts));"
+        " return { label: b.textContent }; })()",
+    )
+    assert not pressed.get("missing"), "the hover toolbar had no Done button"
+    return pressed
+
+
 LABEL_INVENTORY = (
     "(() => { const svg = document.querySelector('.mermaid .mermaid-preview svg');"
     " if (!svg) return { missing: true };"
@@ -222,6 +257,8 @@ LABEL_STATE = (
     "      .titleText, .sectionTitle, .taskText')].map((e) => e.textContent.trim())"
     "   : [],"
     "  input: !!document.querySelector('.mermaid-edit-input'),"
+    "  editing: !!document.querySelector('.mermaid-editing'),"
+    "  editable: !!document.querySelector('.mermaid-editables'),"
     "  invalid: !!document.querySelector('.mermaid-edit-invalid'),"
     "  notice: !!document.querySelector('.mermaid-edit-notice'),"
     "  error: !!document.querySelector('.mermaid-error'),"

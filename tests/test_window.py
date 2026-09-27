@@ -45,6 +45,7 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     LABEL_STATE,
     SEQUENCE,
     _click_first_offered,
+    _click_done,
     _click_label,
     _dump,
     _enter_edit_mode,
@@ -52,6 +53,7 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _pump_until,
     _render,
     _set_scheme,
+    _type,
     _type_and_confirm,
     _wait,
     _wait_baked,
@@ -1179,6 +1181,65 @@ LABEL_CASES = [
     # source, so it must not be offered (GENERATED_BY_FAMILY in mermaid-edit.ts).
     pytest.param('treemap-beta\n"Root"\n  "Alpha": 40\n  "Beta": 10', None, "withheld", id="treemap-withholds-total"),
 ]
+
+
+def test_leaving_edit_mode_resolves_the_label_being_edited(window):
+    """Finishing a diagram while a label is being retyped has to land, not
+    strand. Real browser only: Done's own press keeps the label input focused,
+    so nothing else (no blur) will resolve it -- the toggle has to. And a double
+    click outside the diagram finishes edit mode the same way, while leaving
+    the click to the page underneath."""
+    md = f"```mermaid\n{FLOW}\n```\n\nAfter the diagram\n"
+    window._web.page().runJavaScript(f"window.ediSetContent({json.dumps(md)}); true")
+    _wait(
+        window,
+        "(() => ({ n: document.querySelectorAll('.mermaid .mermaid-preview svg').length }))()",
+        lambda d: d["n"] > 0,
+        timeout=20,
+    )
+
+    _enter_edit_mode(window)
+    seeded = _click_first_offered(window, "Alpha")
+    assert seeded == "Alpha", seeded
+    _type(window, "Beta")
+
+    # Done, mid-edit.
+    _click_done(window)
+    state = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: not d["input"] and not d["editing"],
+        timeout=20,
+    )
+    assert not state["editable"], "the diagram kept its edit layer after Done"
+    assert not state["error"], state
+    assert state["source"] and "A[Beta]" in state["source"], "Done dropped the pending edit"
+    assert any("Beta" in t for t in state["texts"]), state
+
+    # A double click outside the diagram finishes edit mode too, and a double
+    # click in the label input while editing one does not.
+    _enter_edit_mode(window)
+    _click_first_offered(window, "Beta")
+    _dump(
+        window,
+        "(() => { const i = document.querySelector('.mermaid-edit-input');"
+        " if (!i) return { missing: true };"
+        " i.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }));"
+        " return { in: true }; })()",
+    )
+    assert _dump(window, LABEL_STATE)["editing"], "a double click in the label input left edit mode"
+
+    _dump(
+        window,
+        "(() => { const p = [...document.querySelectorAll('.ProseMirror p')]"
+        " .find((e) => e.textContent === 'After the diagram');"
+        " if (!p) return { missing: true };"
+        " p.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }));"
+        " return { hit: p.textContent }; })()",
+    )
+    state = _wait(window, LABEL_STATE, lambda d: not d["editing"], timeout=20)
+    assert not state["input"], "the outside double click left the label editor open"
+    assert not state["editable"], state
 
 
 @pytest.mark.parametrize("source, needle, expect", LABEL_CASES)
