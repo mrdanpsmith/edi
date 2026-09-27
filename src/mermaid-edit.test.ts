@@ -990,6 +990,28 @@ describe('offered labels', () => {
     expect(offeredLabels).toEqual(['r', 'Risk: High'])
   })
 
+  it('seeds a requirement row with the value it replaces, not the drawn row', () => {
+    const commit = vi.fn()
+    const { host, preview } = harness()
+    preview.innerHTML = `<svg>${nodeLabel('Verification: Test')}</svg>`
+    const svg = preview.querySelector('svg')!
+    const source = 'requirementDiagram\n  requirement r {\n    verifymethod: test\n  }'
+    attachMermaidEditing(preview, svg, source, commit)
+    const row = editables(svg)[0]!
+    row.getBoundingClientRect = () => rect(0, 0, 40, 30)
+    host.getBoundingClientRect = () => rect(0, 0, 800, 600)
+
+    // The patch replaces the value alone, so the input holds the value: an
+    // edit to mermaid's own idea of the key could not be committed.
+    click(row)
+    expect(input().value).toBe('test')
+    typeAndConfirm('review')
+
+    expect(commit).toHaveBeenCalledWith(
+      'requirementDiagram\n  requirement r {\n    verifymethod: review\n  }',
+    )
+  })
+
   it('offers a C4 label, but not its stereotype', () => {
     const source = 'C4Context\n  System(sys, "System", "The system")'
     const offeredLabels = offered(

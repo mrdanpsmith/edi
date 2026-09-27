@@ -41,7 +41,10 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     EDIT_STATE,
     FLOW,
     KANBAN,
+    LABEL_INVENTORY,
+    LABEL_STATE,
     SEQUENCE,
+    _click_first_offered,
     _click_label,
     _dump,
     _enter_edit_mode,
@@ -1121,3 +1124,99 @@ def test_sequence_participant_wrapped_in_a_tspan_is_editable(window):
     assert texts.count("Zoe") == 2, texts
     assert "Alice" not in texts, texts
     _set_scheme(window, False)
+
+
+# One case per distinct patch strategy, so a regression in any of them names
+# itself. The probe (scripts/mermaid-label-probe.py) walks every label of every
+# template; this is the cheap slice that runs on every commit, and it can only
+# afford one rename per diagram. `expect` is which of the app's two documented
+# outcomes the rename must take: "drawn" (mermaid rendered it) or "refused" (it
+# refused the rewritten source and the editor said so, last good diagram up).
+LABEL_CASES = [
+    pytest.param(FLOW, "Alpha", "drawn", id="flowchart-text"),
+    pytest.param(SEQUENCE, "Alice", "drawn", id="sequence-tspan"),
+    pytest.param("classDiagram\n  class Shape {\n    +area()\n  }", "Shape", "drawn", id="class-entity"),
+    pytest.param("stateDiagram-v2\n  [*] --> Idle\n  Idle --> Busy", "Idle", "drawn", id="state-entity"),
+    # `date` is a type here and `placed` its name: whole-word matching is what
+    # keeps the type from also matching inside a name like `order_date`.
+    pytest.param(
+        "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  ORDER {\n"
+        "    string id PK\n    date placed\n  }",
+        "CUSTOMER",
+        "drawn",
+        id="er-entity",
+    ),
+    # Mermaid draws the row under its own idea of the key, so the input holds
+    # the value alone -- exactly the span the patch replaces.
+    pytest.param(
+        "requirementDiagram\n  requirement test_req {\n    id: 1\n"
+        "    text: the test text\n    risk: high\n    verifymethod: test\n  }",
+        "Text: ",
+        "drawn",
+        id="requirement-value-only",
+    ),
+    # A sankey node shares its element with its computed total.
+    pytest.param(
+        "sankey-beta\n\nAgricultural waste,Bio-conversion,124.729\nBio-conversion,Liquid,0.597",
+        "Agricultural waste",
+        "drawn",
+        id="sankey-first-line",
+    ),
+    # `main` is mermaid's implicit first branch: it is named by the `checkout`
+    # alone, so a rename points at a branch that was never declared and mermaid
+    # refuses the source. The patch still has to land, and the notice has to
+    # appear -- that is the whole contract for an invalid value.
+    # Ids on the commits: mermaid draws a bare `commit` as the literal word,
+    # and that word is in the source on every line, so no commit label maps.
+    pytest.param(
+        'gitGraph\n    commit id: "Initial commit"\n    branch develop\n    checkout develop\n'
+        '    commit id: "Feature work"\n    checkout main\n    merge develop\n    commit id: "Release v1.0"',
+        "main",
+        "refused",
+        id="git-branch-refused",
+    ),
+    # Mermaid draws the root's total next to its label; the total is not in the
+    # source, so it must not be offered (GENERATED_BY_FAMILY in mermaid-edit.ts).
+    pytest.param('treemap-beta\n"Root"\n  "Alpha": 40\n  "Beta": 10', None, "withheld", id="treemap-withholds-total"),
+]
+
+
+@pytest.mark.parametrize("source, needle, expect", LABEL_CASES)
+def test_every_offered_label_rename_resolves(window, source, needle, expect):
+    _render(window, source)
+    offered = _enter_edit_mode(window)
+    inv = _dump(window, LABEL_INVENTORY)
+    assert not inv.get("error"), inv
+    assert offered == len(inv["labels"]) and offered > 0, inv
+
+    if expect == "withheld":
+        # Only the withholding claim: the computed total is on screen, and no
+        # label showing it was offered.
+        assert "50" in inv["allText"], inv
+        assert "50" not in inv["labels"], inv
+        assert "Root" in inv["labels"], inv
+        return
+
+    if needle:
+        assert any(lbl.startswith(needle) for lbl in inv["labels"]), (needle, inv["labels"])
+        if "erDiagram" in source:
+            assert "date" in inv["labels"], inv
+    seeded = _click_first_offered(window, needle)
+    assert seeded, "the editor seeded an empty value"
+    value = seeded + "X"
+    _type_and_confirm(window, value)
+    # A drawn value can share its text element with a generated one (a sankey
+    # node shows its total below its name), hence the substring test.
+    drawn = lambda d: any(value in t for t in d["texts"])  # noqa: E731
+    state = _wait(window, LABEL_STATE, lambda d: drawn(d) or d["notice"] or d["error"], timeout=20)
+    assert not state["input"], state
+    assert not state["error"], "a visual edit left an error block behind"
+    assert not state["invalid"], "the label went ambiguous once edited"
+    # The one thing that is never acceptable: the editor closed and the source
+    # never changed, which is what an unmappable patch looks like from here.
+    assert state["source"] and value in state["source"], "the patch never reached the source"
+    if expect == "drawn":
+        assert drawn(state), state
+    else:
+        assert state["notice"], "mermaid refused the source without saying so"
+        assert not drawn(state), state

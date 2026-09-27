@@ -202,6 +202,75 @@ def _type_and_confirm(win, value, timeout=15):
     )
 
 
+LABEL_INVENTORY = (
+    "(() => { const svg = document.querySelector('.mermaid .mermaid-preview svg');"
+    " if (!svg) return { missing: true };"
+    " return { error: !!document.querySelector('.mermaid-error'),"
+    "  labels: [...svg.querySelectorAll('.mermaid-editables')].map((e) => e.textContent.trim()),"
+    "  allText: [...svg.querySelectorAll('text, .nodeLabel, .edgeLabel, .labelText,"
+    "   .loopText, .titleText, .sectionTitle, .taskText')]"
+    "   .map((e) => e.textContent.trim()).filter(Boolean) }; })()"
+)
+
+# The node view instance is private, but the doc view desc always holds the
+# current node, so the patched fenced source is readable from it -- which is how
+# a committed patch is told apart from a no-op when mermaid refuses the result.
+LABEL_STATE = (
+    "(() => { const svg = document.querySelector('.mermaid .mermaid-preview svg');"
+    " return { texts: svg"
+    "   ? [...svg.querySelectorAll('text, .nodeLabel, .edgeLabel, .labelText, .loopText,"
+    "      .titleText, .sectionTitle, .taskText')].map((e) => e.textContent.trim())"
+    "   : [],"
+    "  input: !!document.querySelector('.mermaid-edit-input'),"
+    "  invalid: !!document.querySelector('.mermaid-edit-invalid'),"
+    "  notice: !!document.querySelector('.mermaid-edit-notice'),"
+    "  error: !!document.querySelector('.mermaid-error'),"
+    "  source: (() => { const out = [];"
+    "   const walk = (n) => { if (n.attrs && typeof n.attrs.value === 'string' && n.attrs.value)"
+    "     out.push(n.attrs.value); n.forEach(walk); };"
+    "   const root = document.querySelector('.ProseMirror');"
+    "   if (root && root.pmViewDesc && root.pmViewDesc.node) walk(root.pmViewDesc.node);"
+    "   return out.length ? out.join(' | ') : null; })() }; })()"
+)
+
+
+def _click_first_offered(win, startswith=None, index=None):
+    """Click an offered label -- the first whose text starts with ``startswith``,
+    or the one at ``index`` when the caller is walking the inventory in order --
+    and return the value the editor seeded: the source spelling, which is not
+    always the rendered text (a sankey node shares its element with a generated
+    value, a requirement row is drawn under mermaid's own idea of the key)."""
+    if startswith is not None and index is not None:
+        raise ValueError("pass startswith or index, not both")
+    if startswith is not None:
+        pick = f"all.find((e) => e.textContent.trim().startsWith({json.dumps(startswith)}))"
+    elif index is not None:
+        pick = f"all[{index}]"
+    else:
+        pick = "all[0]"
+    out = _dump(
+        win,
+        f"""(() => {{
+          const all = [...document.querySelectorAll('.mermaid-editables')];
+          const el = {pick};
+          if (!el) return {{ missing: true }};
+          const r = el.getBoundingClientRect();
+          const opts = {{ bubbles: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }};
+          for (const type of ['mousedown', 'mouseup', 'click'])
+            el.dispatchEvent(new MouseEvent(type, opts));
+          return {{ picked: el.textContent.trim() }};
+        }})()""",
+    )
+    assert not out.get("missing"), "no offered label matched"
+    return _wait(
+        win,
+        "(() => { const i = document.querySelector('.mermaid-edit-input');"
+        " return { v: i ? i.value : null }; })()",
+        lambda d: d["v"] is not None,
+        timeout=10,
+    )["v"]
+
+
 TEXTS = (
     "(() => { const s = document.querySelector('.mermaid .mermaid-preview svg');"
     " return { texts: s"

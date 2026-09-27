@@ -99,7 +99,7 @@ jobs:
       - name: Frontend unit tests + coverage
         run: npm run coverage > /tmp/frontend-cov.txt 2>&1
       - name: Bandit (source-security scan)
-        run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py run_edi.py -q
+        run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py scripts/mermaid-label-probe.py run_edi.py -q
       - name: Backend tests + coverage
         run: .venv/bin/pytest tests/ > /tmp/backend-cov.txt 2>&1
       - name: npm audit

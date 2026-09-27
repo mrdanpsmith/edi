@@ -205,11 +205,15 @@ interface LabelRef {
 interface LabelTarget extends LabelRef {
   el: Element
   /**
-   * The label as the source spells it, when that differs from what the DOM
-   * shows. Mermaid wraps a long label across `tspan`s and `textContent` reads
-   * them back with the spaces dropped (`Lack of Training` renders as
-   * `Lack ofTraining`), so this is the text to edit: rewriting what the source
-   * says keeps its spacing instead of baking the rendering's into it.
+   * The label as the source spells it, whenever the DOM shows it wrapped in
+   * something the patch will not touch: mermaid wraps a long label across
+   * `tspan`s and `textContent` reads them back with the spaces dropped
+   * (`Lack of Training` renders as `Lack ofTraining`), a sankey node shares its
+   * element with its computed total, and a requirement row is drawn under
+   * mermaid's own idea of the key (`verifymethod: test` shows as
+   * `Verification: Test`). Editing the source's own spelling keeps its spacing
+   * and replaces exactly the span the mapper resolved — an edit to a drawn
+   * prefix would be dropped on commit.
    */
   sourceText?: string
 }
@@ -307,9 +311,16 @@ function editable(
     if (resolved === null || resolved === 'ambiguous') return false
     const first = resolved.spans[0]
     if (first) {
+      // The source's own spelling of what the patch will replace, whenever
+      // mermaid drew that inside something else: a dropped space, a computed
+      // value, a key (and sometimes a case) of its own invention. Compared
+      // case-blindly, since a drawn row capitalises a value the source
+      // lowercases; equal counts as a suffix, so the wrapped-tspan case needs
+      // no rule of its own.
       const spelled = source.slice(first.start, first.end).trim()
-      if (squeeze(spelled).text === squeeze(target.text).text) {
-        if (spelled !== target.text) target.sourceText = spelled
+      const shown = squeeze(target.text).text.toLowerCase()
+      if (spelled && spelled !== target.text && shown.endsWith(squeeze(spelled).text.toLowerCase())) {
+        target.sourceText = spelled
       }
     }
     return true
@@ -1411,12 +1422,17 @@ function openLabelEditor(
   const finish = (accept: boolean): void => {
     if (closed) return
     const value = input.value.trim()
+    // The input holds the source's spelling of the span being replaced; an
+    // unchanged value is a cancel. The mapper, though, resolves from the label
+    // the user clicked: a requirement row is located by the row mermaid drew
+    // (`Verification: Test`) and only its value is rewritten, so passing the
+    // edited text instead would leave it nothing to find.
     const current = target.sourceText ?? target.text
     if (!accept || value === current) {
       close()
       return
     }
-    const outcome = patchLabel(source, family, current, value, target)
+    const outcome = patchLabel(source, family, target.text, value, target)
     if (outcome.status === 'ok') {
       close()
       commit(outcome.text)
