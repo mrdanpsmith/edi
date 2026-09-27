@@ -614,13 +614,28 @@ describe('mermaid block handles', () => {
 })
 
 describe('mermaid visual mode rendering', () => {
-  const FLOWCHART_SVG = '<svg viewBox="0 0 900 300"><g class="node"><g class="label"><foreignObject width="60" height="20"><div class="labelBkg"><span class="nodeLabel"><p>Alpha</p></span></div></foreignObject></g></g></svg>'
+  // Edit mode only offers a label the source can be patched with, so the mock
+  // draws a node for every `A[Alpha]` in the source it is handed rather than a
+  // fixed one: a diagram whose labels the source never spells out is
+  // deliberately left with nothing to edit.
+  function flowchartSvg(code: string): string {
+    const labels = [...code.matchAll(/\w+\[([^\]]+)\]/g)].map((match) => match[1])
+    const nodes = labels
+      .map(
+        (label) =>
+          `<g class="node"><g class="label"><foreignObject width="60" height="20">` +
+          `<div class="labelBkg"><span class="nodeLabel"><p>${label}</p></span></div>` +
+          `</foreignObject></g></g>`,
+      )
+      .join('')
+    return `<svg viewBox="0 0 900 300">${nodes}</svg>`
+  }
 
   function mockFlowchart(): void {
-    vi.mocked(mermaidModule.default.render).mockResolvedValue({
-      svg: FLOWCHART_SVG,
+    vi.mocked(mermaidModule.default.render).mockImplementation(async (_id, code) => ({
+      svg: flowchartSvg(code),
       diagramType: 'flowchart',
-    })
+    }))
   }
 
   function editToggle(view: EditorView): HTMLButtonElement {

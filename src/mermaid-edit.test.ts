@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  attachMermaidEditing,
   detectDiagramType,
   moveKanbanCard,
   parseKanban,
@@ -44,6 +45,18 @@ const FLOWCHART_SVG = `<svg>
   </g>
   <g class="edgePaths"><path d="M0,0" /></g>
   <g class="edgeLabels">
+    <g class="edgeLabel"><foreignObject width="40" height="20">
+      <div class="labelBkg"><span class="edgeLabel"><p class="edgeLabel">Yes</p></span></div>
+    </foreignObject></g>
+  </g>
+</svg>`
+
+/** Two edge labels that read the same, as a diagram with two `-->|Yes|` edges has. */
+const REPEATED_EDGES_SVG = `<svg>
+  <g class="edgeLabels">
+    <g class="edgeLabel"><foreignObject width="40" height="20">
+      <div class="labelBkg"><span class="edgeLabel"><p class="edgeLabel">Yes</p></span></div>
+    </foreignObject></g>
     <g class="edgeLabel"><foreignObject width="40" height="20">
       <div class="labelBkg"><span class="edgeLabel"><p class="edgeLabel">Yes</p></span></div>
     </foreignObject></g>
@@ -237,6 +250,191 @@ describe('patchLabel: generic diagrams', () => {
   it('reports a label that is not in the source at all', () => {
     expect(patchLabel('pie\n  "A" : 1', family, 'Nope', 'X')).toEqual({ status: 'unmapped' })
     expect(patchLabel('pie\n  "A" : 1', family, '', 'X')).toEqual({ status: 'unmapped' })
+  })
+})
+
+describe('patchLabel: named things', () => {
+  it('renames a state everywhere its transitions refer to it', () => {
+    const family: DiagramFamily = 'state'
+    const source = ['stateDiagram-v2', '  [*] --> Idle', '  Idle --> Busy: start()'].join('\n')
+    expect(
+      patchLabel(source, family, 'Idle', 'Waiting', { role: 'entity' }),
+    ).toEqual(ok(['stateDiagram-v2', '  [*] --> Waiting', '  Waiting --> Busy: start()'].join('\n')))
+  })
+
+  it('patches a transition label without touching the states it joins', () => {
+    const family: DiagramFamily = 'state'
+    const source = 'stateDiagram-v2\n  Idle --> Busy: start()'
+    expect(patchLabel(source, family, 'start()', 'go()')).toEqual(
+      ok('stateDiagram-v2\n  Idle --> Busy: go()'),
+    )
+  })
+
+  it('renames an ER entity in its relationships and its own block', () => {
+    const family: DiagramFamily = 'er'
+    const source = ['erDiagram', '  CUSTOMER ||--o{ ORDER : places', '  CUSTOMER {', '    int id', '  }'].join('\n')
+    expect(patchLabel(source, family, 'CUSTOMER', 'CLIENT', { role: 'entity' })).toEqual(
+      ok(['erDiagram', '  CLIENT ||--o{ ORDER : places', '  CLIENT {', '    int id', '  }'].join('\n')),
+    )
+  })
+
+  it('leaves an ER attribute name and its type to their own labels', () => {
+    const family: DiagramFamily = 'er'
+    const source = 'erDiagram\n  A {\n    int id\n    string name\n  }'
+    expect(patchLabel(source, family, 'name', 'label')).toEqual(
+      ok('erDiagram\n  A {\n    int id\n    string label\n  }'),
+    )
+    // `int` is a type shared by the whole diagram, not a label of its own.
+    expect(
+      patchLabel('erDiagram\n  A {\n    int id\n    int age\n  }', family, 'int', 'integer'),
+    ).toEqual({ status: 'ambiguous' })
+  })
+
+  it('renames a class in its declaration and its relations', () => {
+    const family: DiagramFamily = 'class'
+    const source = ['classDiagram', '  class Animal {', '    +String name', '  }', '  Animal <|-- Dog'].join('\n')
+    expect(patchLabel(source, family, 'Animal', 'Creature', { role: 'entity' })).toEqual(
+      ok(['classDiagram', '  class Creature {', '    +String name', '  }', '  Creature <|-- Dog'].join('\n')),
+    )
+  })
+
+  it('renames a git branch where it is declared and referenced', () => {
+    const family: DiagramFamily = 'git'
+    const source = ['gitGraph', '  branch develop', '  checkout develop', '  commit id: "work"'].join('\n')
+    expect(patchLabel(source, family, 'develop', 'dev', { role: 'entity' })).toEqual(
+      ok(['gitGraph', '  branch dev', '  checkout dev', '  commit id: "work"'].join('\n')),
+    )
+  })
+
+  it('renames a requirement and the relations that point at it', () => {
+    const family: DiagramFamily = 'requirement'
+    const source = [
+      'requirementDiagram',
+      '  requirement api_performance {',
+      '    id: 1',
+      '  }',
+      '  api_service - satisfies -> api_performance',
+    ].join('\n')
+    expect(patchLabel(source, family, 'api_performance', 'latency', { role: 'entity' })).toEqual(
+      ok([
+        'requirementDiagram',
+        '  requirement latency {',
+        '    id: 1',
+        '  }',
+        '  api_service - satisfies -> latency',
+      ].join('\n')),
+    )
+  })
+
+  it('rewrites a requirement row by its value, not by its drawn key', () => {
+    const family: DiagramFamily = 'requirement'
+    const source = 'requirementDiagram\n  requirement r {\n    verifymethod: test\n  }'
+    // Mermaid draws `verifymethod` as "Verification", so the key on screen is
+    // not the key in the source; the value is the only stable part.
+    expect(patchLabel(source, family, 'Verification: Test', 'Verification: Review')).toEqual(
+      ok('requirementDiagram\n  requirement r {\n    verifymethod: Review\n  }'),
+    )
+  })
+
+  it('rewrites a requirement value mermaid shortened on screen', () => {
+    const family: DiagramFamily = 'requirement'
+    const source = 'requirementDiagram\n  requirement r {\n    text: API response time under 100ms\n  }'
+    expect(patchLabel(source, family, 'Text: API response time', 'Text: Under 50ms')).toEqual(
+      ok('requirementDiagram\n  requirement r {\n    text: Under 50ms\n  }'),
+    )
+  })
+
+  it('renames a sankey node in every CSV field that names it', () => {
+    const family: DiagramFamily = 'sankey'
+    const source = ['sankey-beta', '  User,Company,30', '  User,Developer,20'].join('\n')
+    expect(patchLabel(source, family, 'User', 'Visitor', { role: 'entity' })).toEqual(
+      ok(['sankey-beta', '  Visitor,Company,30', '  Visitor,Developer,20'].join('\n')),
+    )
+  })
+
+  it('renames a wardley node in its declaration and its links', () => {
+    const family: DiagramFamily = 'wardley'
+    const source = [
+      'wardley-beta',
+      'anchor Customer [0.95, 0.63]',
+      'component Website [0.80, 0.65]',
+      'Customer -> Website',
+    ].join('\n')
+    expect(patchLabel(source, family, 'Customer', 'Buyer', { role: 'entity' })).toEqual(
+      ok([
+        'wardley-beta',
+        'anchor Buyer [0.95, 0.63]',
+        'component Website [0.80, 0.65]',
+        'Buyer -> Website',
+      ].join('\n')),
+    )
+  })
+
+  it('renames a venn set in its `set` line and the union', () => {
+    const family: DiagramFamily = 'venn'
+    const source = ['venn-beta', '  set Dogs', '  set Cats', '  union Dogs,Cats["Both"]'].join('\n')
+    expect(patchLabel(source, family, 'Dogs', 'Hounds', { role: 'entity' })).toEqual(
+      ok(['venn-beta', '  set Hounds', '  set Cats', '  union Hounds,Cats["Both"]'].join('\n')),
+    )
+  })
+
+  it('renames the journey actor in every task but not in the title', () => {
+    const family: DiagramFamily = 'journey'
+    const source = [
+      'journey',
+      '  title User Onboarding',
+      '  section Sign Up',
+      '    Sign Up: 5: User',
+    ].join('\n')
+    expect(patchLabel(source, family, 'User', 'Me', { role: 'entity' })).toEqual(
+      ok(['journey', '  title User Onboarding', '  section Sign Up', '    Sign Up: 5: Me'].join('\n')),
+    )
+  })
+})
+
+describe('patchLabel: labels mermaid renders differently', () => {
+  const family: DiagramFamily = 'generic'
+
+  it('prefers the quoted spelling of a label over a bare copy of the words', () => {
+    // `System` is both the C4 keyword and the name it is drawn under.
+    const source = 'C4Context\n  System(sys, "System", "The system")'
+    expect(patchLabel(source, family, 'System', 'Core')).toEqual(
+      ok('C4Context\n  System(sys, "Core", "The system")'),
+    )
+  })
+
+  it('matches a label whose whitespace the renderer moved', () => {
+    const source = 'timeline\n  section 2024\n    Q1: Initial concept'
+    expect(patchLabel(source, family, 'Initial   concept', 'First idea')).toEqual(
+      ok('timeline\n  section 2024\n    Q1: First idea'),
+    )
+  })
+
+  it('matches a label mermaid split across tspans', () => {
+    const source = 'ishikawa-beta\n  Root\n    Lack of Training'
+    expect(patchLabel(source, family, 'Lack ofTraining', 'Training gaps')).toEqual(
+      ok('ishikawa-beta\n  Root\n    Training gaps'),
+    )
+  })
+
+  it('will not match a phrase that only spans two lines', () => {
+    expect(patchLabel('graph TD\n  A[Alpha\n  Beta]', family, 'AlphaBeta', 'X')).toEqual({
+      status: 'unmapped',
+    })
+  })
+
+  it('takes the copy the click named when both sides agree on how many there are', () => {
+    const source = 'timeline\n  section 2023\n    Q1: Alpha\n  section 2024\n    Q1: Beta'
+    expect(patchLabel(source, family, 'Q1', 'Q4', { occurrence: 1, count: 2 })).toEqual(
+      ok('timeline\n  section 2023\n    Q1: Alpha\n  section 2024\n    Q4: Beta'),
+    )
+  })
+
+  it('refuses when the two sides disagree on how many copies there are', () => {
+    const source = 'timeline\n  section 2023\n    Q1: Alpha\n  section 2024\n    Q1: Beta'
+    expect(patchLabel(source, family, 'Q1', 'Q4', { occurrence: 0, count: 1 })).toEqual({
+      status: 'ambiguous',
+    })
   })
 })
 
@@ -436,10 +634,25 @@ describe('renderDiagram', () => {
     hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
     const { host, preview } = harness()
 
-    await renderDiagram(preview, 'graph TD\n  A[Alpha]', { host, commit: vi.fn() })
+    await renderDiagram(
+      preview,
+      'graph TD\n  A[Alpha]\n  B[Beta]\n  A -->|Yes| B',
+      { host, commit: vi.fn() },
+    )
 
     expect(preview.querySelector('svg')).not.toBeNull()
     expect(preview.querySelectorAll('.mermaid-editables')).toHaveLength(3)
+  })
+
+  it('offers no label it could not map back to the source', async () => {
+    hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
+    const { host, preview } = harness()
+
+    // The rendered diagram still shows `Beta` and `Yes`, but this source says
+    // nothing about either, so neither may look editable.
+    await renderDiagram(preview, 'graph TD\n  A[Alpha]', { host, commit: vi.fn() })
+
+    expect(editables(preview).map((el) => el.textContent?.trim())).toEqual(['Alpha'])
   })
 
   it('shows the raw source while the first render is in flight', async () => {
@@ -570,20 +783,28 @@ describe('label editing', () => {
     expect(commit).toHaveBeenCalledWith('graph TD\n  A[A1]\n  B[Beta]\n  A -->|Yes| B')
   })
 
-  it('keeps the editor up and flashes it red when the edit cannot be mapped', async () => {
-    const commit = vi.fn()
+  it('withholds a label the source could name in more than one way', async () => {
     hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
     const { host, preview } = harness()
-    await renderDiagram(preview, 'graph TD\n  A -->|Yes| B -->|Yes| C', { host, commit })
+    // `Yes` labels two transitions while the diagram shows one edge label, so
+    // nothing says which copy the click meant: it is not offered at all.
+    await renderDiagram(preview, 'graph TD\n  A -->|Yes| B -->|Yes| C', { host, commit: vi.fn() })
 
-    click(editables(preview)[2]!)
-    const field = input()
-    field.value = 'No'
-    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(editables(preview)).toHaveLength(0)
+  })
 
-    expect(commit).not.toHaveBeenCalled()
-    expect(field.classList.contains('mermaid-edit-invalid')).toBe(true)
-    expect(document.querySelector('.mermaid-edit-input')).not.toBeNull()
+  it('picks the copy a repeated label was clicked for', async () => {
+    const commit = vi.fn()
+    hoisted.render.mockResolvedValue({ svg: REPEATED_EDGES_SVG })
+    const { host, preview } = harness()
+    // Two `Yes` transitions and two `Yes` edge labels: the second label on
+    // screen is the second transition in the source.
+    await renderDiagram(preview, 'graph TD\n  A -->|Yes| B\n  B -->|Yes| C', { host, commit })
+
+    click(editables(preview)[1]!)
+    typeAndConfirm('No')
+
+    expect(commit).toHaveBeenCalledWith('graph TD\n  A -->|Yes| B\n  B -->|No| C')
   })
 
   it('opens only one editor at a time', async () => {
@@ -674,6 +895,215 @@ describe('sequence editing', () => {
 
     typeAndConfirm('Hi there')
     expect(commit).toHaveBeenCalledWith('sequenceDiagram\n  participant Alice\n  Alice->>Alice: Hi there')
+  })
+})
+
+/** A node label as mermaid draws HTML labels by default. */
+function nodeLabel(
+  text: string,
+  labelClass = 'label',
+  groupClass = 'node default',
+): string {
+  return (
+    `<g class="${groupClass}"><g class="${labelClass}"><foreignObject>` +
+    `<div class="labelBkg"><span class="nodeLabel"><p>${text}</p></span></div>` +
+    `</foreignObject></g></g>`
+  )
+}
+
+/** A label mermaid draws as native SVG text. */
+function svgLabel(text: string, cls: string, groupClass = ''): string {
+  return `<g${groupClass ? ` class="${groupClass}"` : ''}><text class="${cls}">${text}</text></g>`
+}
+
+/** The label texts the editing layer offers for a diagram, in document order. */
+function offered(inner: string, source: string): string[] {
+  const preview = document.createElement('div')
+  preview.className = 'mermaid-preview'
+  preview.innerHTML = `<svg>${inner}</svg>`
+  document.body.appendChild(preview)
+  attachMermaidEditing(preview, preview.querySelector('svg')!, source, () => {})
+  return editables(preview).map((el) => el.textContent?.trim() ?? '')
+}
+
+describe('offered labels', () => {
+  it('offers every treemap name but none of its computed totals', () => {
+    const source = ['treemap-beta', '"Budget"', '    "Salaries": 500'].join('\n')
+    const offeredLabels = offered(
+      svgLabel('500', 'treemapSectionValue', 'treemapSection') +
+        svgLabel('Budget', 'treemapSectionLabel', 'treemapSection') +
+        svgLabel('Salaries', 'treemapLabel', 'treemapNode treemapLeafGroup') +
+        svgLabel('500', 'treemapValue', 'treemapNode treemapLeafGroup'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['Budget', 'Salaries'])
+  })
+
+  it('offers xy chart categories and the axis title, but not its tick numbers', () => {
+    const source = ['xychart-beta', '  x-axis [jan, feb]', '  y-axis "Visitors" 0 --> 100'].join('\n')
+    const offeredLabels = offered(
+      svgLabel('Visitors', 'title', 'left-axis') +
+        svgLabel('0', 'label', 'left-axis') +
+        svgLabel('100', 'label', 'left-axis') +
+        svgLabel('jan', 'label', 'bottom-axis') +
+        svgLabel('feb', 'label', 'bottom-axis'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['Visitors', 'jan', 'feb'])
+  })
+
+  it('offers a packet field name but not its bit range', () => {
+    const source = 'packet-beta\n  0-15: "Source Port"'
+    const offeredLabels = offered(
+      svgLabel('0-15', 'packetByte', 'packet') + svgLabel('Source Port', 'packetLabel', 'packet'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['Source Port'])
+  })
+
+  it('offers a wardley note and a node, but not the default axes or stages', () => {
+    const source = [
+      'wardley-beta',
+      'title Shop',
+      'anchor Customer [0.9, 0.6]',
+      'note "Caching helps" [0.4, 0.3]',
+    ].join('\n')
+    const offeredLabels = offered(
+      svgLabel('Evolution', 'wardley-axis-label wardley-axis-label-x', 'wardley-axes') +
+        svgLabel('Genesis', 'wardley-stage-label', 'wardley-stages') +
+        svgLabel('Customer', 'wardley-node-label', 'wardley-node wardley-node--anchor') +
+        svgLabel('Caching helps', '', 'wardley-notes'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['Customer', 'Caching helps'])
+  })
+
+  it('offers a requirement name and its rows, but not the stereotype', () => {
+    const source = 'requirementDiagram\n  requirement r {\n    risk: high\n  }'
+    const offeredLabels = offered(
+      nodeLabel('&lt;&lt;Requirement&gt;&gt;') +
+        nodeLabel('r') +
+        nodeLabel('Risk: High') +
+        nodeLabel('&lt;&lt;satisfies&gt;&gt;', 'label', 'edgeLabel'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['r', 'Risk: High'])
+  })
+
+  it('offers a C4 label, but not its stereotype', () => {
+    const source = 'C4Context\n  System(sys, "System", "The system")'
+    const offeredLabels = offered(
+      svgLabel('&lt;&lt;system&gt;&gt;', '', 'person-man') +
+        svgLabel('System', '', 'person-man') +
+        svgLabel('The system', '', 'person-man'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['System', 'The system'])
+  })
+
+  it('edits a sankey node by its name, not by the total drawn under it', () => {
+    const commit = vi.fn()
+    const { host, preview } = harness()
+    preview.innerHTML = `<svg>${svgLabel('User\n50', '', 'node-labels')}</svg>`
+    const svg = preview.querySelector('svg')!
+    const source = 'sankey-beta\n  User,Company,30'
+    attachMermaidEditing(preview, svg, source, commit)
+    editables(svg)[0]!.getBoundingClientRect = () => rect(0, 0, 40, 30)
+    host.getBoundingClientRect = () => rect(0, 0, 800, 600)
+
+    // The name and the generated total share one text element; only the name
+    // is the label, so only the name goes in the editor.
+    click(editables(svg)[0]!)
+    expect(input().value).toBe('User')
+    typeAndConfirm('Visitor')
+
+    expect(commit).toHaveBeenCalledWith('sankey-beta\n  Visitor,Company,30')
+  })
+
+  it('withholds a label the source does not contain at all', () => {
+    expect(offered(svgLabel('100', 'label', 'tick'), 'pie\n  "A" : 100')).toEqual([])
+    // Not in the source at all: nothing to patch, so nothing to offer.
+    expect(offered(svgLabel('Nope', 'label'), 'pie\n  "A" : 1')).toEqual([])
+  })
+
+  it('offers an ER entity by name even though the source repeats it', () => {
+    const source = [
+      'erDiagram',
+      '    CUSTOMER ||--o{ ORDER : places',
+      '    CUSTOMER {',
+      '        int customer_id',
+      '    }',
+    ].join('\n')
+    const offeredLabels = offered(
+      nodeLabel('CUSTOMER', 'label name', 'node default') +
+        nodeLabel('int', 'label attribute-type', 'node default') +
+        nodeLabel('customer_id', 'label attribute-name', 'node default') +
+        nodeLabel('places', 'label', 'edgeLabel'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['CUSTOMER', 'int', 'customer_id', 'places'])
+  })
+
+  it('offers an ER attribute type that also appears inside another name', () => {
+    // `date` is a substring of `order_date`, so a search anywhere in the source
+    // would find two copies and withhold the label.
+    const source = 'erDiagram\n    ORDER {\n        date order_date\n    }'
+    const offeredLabels = offered(
+      nodeLabel('date', 'label attribute-type', 'node default') +
+        nodeLabel('order_date', 'label attribute-name', 'node default'),
+      source,
+    )
+    expect(offeredLabels).toEqual(['date', 'order_date'])
+  })
+
+  it('renames an ER entity everywhere the source names it', () => {
+    const commit = vi.fn()
+    const source = [
+      'erDiagram',
+      '    CUSTOMER ||--o{ ORDER : places',
+      '    CUSTOMER {',
+      '        int customer_id',
+      '    }',
+    ].join('\n')
+    const { host, preview } = harness()
+    preview.innerHTML = `<svg>${nodeLabel('CUSTOMER', 'label name', 'node default')}</svg>`
+    const svg = preview.querySelector('svg')!
+    attachMermaidEditing(preview, svg, source, commit)
+    editables(svg)[0]!.getBoundingClientRect = () => rect(0, 0, 60, 20)
+    host.getBoundingClientRect = () => rect(0, 0, 800, 600)
+
+    click(editables(svg)[0]!)
+    typeAndConfirm('BUYER')
+
+    // Both the relationship and the attribute block name the entity.
+    expect(commit).toHaveBeenCalledWith(
+      source.replace('CUSTOMER ||--o{ ORDER', 'BUYER ||--o{ ORDER').replace('CUSTOMER {', 'BUYER {'),
+    )
+  })
+
+  it('edits a wrapped label as the source spells it', () => {
+    const commit = vi.fn()
+    const source = ['ishikawa-beta', '    People', '        Lack of Training'].join('\n')
+    const { host, preview } = harness()
+    // Mermaid wraps a long label across tspans, so the DOM reads the two words
+    // with the space dropped where the source has one.
+    preview.innerHTML =
+      '<svg><g class="ishikawa-sub-group">' +
+      '<text class="ishikawa-label align"><tspan>Lack of</tspan><tspan>Training</tspan></text>' +
+      '</g></svg>'
+    const svg = preview.querySelector('svg')!
+    attachMermaidEditing(preview, svg, source, commit)
+    editables(svg)[0]!.getBoundingClientRect = () => rect(0, 0, 90, 20)
+    host.getBoundingClientRect = () => rect(0, 0, 800, 600)
+
+    // The editor offers the source's own spelling, not the rendering's.
+    click(editables(svg)[0]!)
+    expect(input().value).toBe('Lack of Training')
+    typeAndConfirm('Skill gap')
+
+    expect(commit).toHaveBeenCalledWith(
+      'ishikawa-beta\n    People\n        Skill gap',
+    )
   })
 })
 

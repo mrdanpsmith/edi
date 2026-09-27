@@ -59,8 +59,28 @@ const LABEL_SELECTOR = [
  */
 const GENERATED_LABEL_SELECTOR = 'g.tick, g.xAxis, g.yAxis, .slice, defs, marker, symbol, pattern, style'
 
-/** Diagram families whose labels map onto a known source construct. */
-export type DiagramFamily = 'graph' | 'sequence' | 'kanban' | 'generic'
+/**
+ * Diagram families whose labels map onto a known source construct. Everything
+ * else is `generic`, which is enough for a diagram whose labels each occur once
+ * in the source (pie, mindmap, gantt, timeline, quadrant, treemap, …).
+ */
+export type DiagramFamily =
+  | 'graph'
+  | 'sequence'
+  | 'kanban'
+  | 'state'
+  | 'er'
+  | 'class'
+  | 'git'
+  | 'requirement'
+  | 'sankey'
+  | 'wardley'
+  | 'venn'
+  | 'journey'
+  | 'treemap'
+  | 'xychart'
+  | 'packet'
+  | 'generic'
 
 interface Span {
   start: number
@@ -106,6 +126,33 @@ function diagramFamily(type: string): DiagramFamily {
       return 'sequence'
     case 'kanban':
       return 'kanban'
+    case 'statediagram':
+    case 'statediagram-v2':
+      return 'state'
+    case 'erdigram':
+    case 'erdiagram':
+      return 'er'
+    case 'classdiagram':
+    case 'classdiagram-v2':
+      return 'class'
+    case 'gitgraph':
+      return 'git'
+    case 'requirementdiagram':
+      return 'requirement'
+    case 'sankey-beta':
+      return 'sankey'
+    case 'wardley-beta':
+      return 'wardley'
+    case 'venn-beta':
+      return 'venn'
+    case 'journey':
+      return 'journey'
+    case 'treemap-beta':
+      return 'treemap'
+    case 'xychart-beta':
+      return 'xychart'
+    case 'packet-beta':
+      return 'packet'
     default:
       return 'generic'
   }
@@ -137,9 +184,50 @@ function labelTextOf(element: Element): string | null {
   return text.length > 0 ? text : null
 }
 
-interface LabelTarget {
-  el: Element
+/**
+ * How a label relates to the rest of the source. A `text` label is prose that
+ * happens to sit in the source verbatim; an `entity` label *names* something the
+ * source also refers to elsewhere (an ER entity, a state, a git branch), so
+ * renaming it has to rewrite every reference with it.
+ */
+type LabelRole = 'text' | 'entity'
+
+/** Everything a mapper needs about a rendered label, minus the DOM. */
+interface LabelRef {
   text: string
+  role: LabelRole
+  /** Which copy of a repeated label this is, in DOM order. */
+  occurrence: number
+  /** How many labels in this diagram share the same text. */
+  count: number
+}
+
+interface LabelTarget extends LabelRef {
+  el: Element
+  /**
+   * The label as the source spells it, when that differs from what the DOM
+   * shows. Mermaid wraps a long label across `tspan`s and `textContent` reads
+   * them back with the spaces dropped (`Lack of Training` renders as
+   * `Lack ofTraining`), so this is the text to edit: rewriting what the source
+   * says keeps its spacing instead of baking the rendering's into it.
+   */
+  sourceText?: string
+}
+
+/** Label elements that render something the source never spelled out. */
+const STEREO = /^<<.+>>$/
+
+/**
+ * Per-family labels to leave out, because the value on screen is computed from
+ * the source rather than read out of it: a treemap's per-section totals, a
+ * packet field's bit range, an xy chart's y-axis tick numbers. Renaming any of
+ * them would patch an unrelated number or string elsewhere in the source, so
+ * they are not offered at all rather than offered and failed.
+ */
+const GENERATED_BY_FAMILY: Partial<Record<DiagramFamily, string>> = {
+  treemap: '.treemapSectionValue, .treemapValue',
+  xychart: 'g.left-axis .label',
+  packet: '.packetByte',
 }
 
 /**
@@ -147,8 +235,12 @@ interface LabelTarget {
  * Mermaid emits HTML labels inside `foreignObject` (the default) and native
  * `<text>` (sequence, gantt, pie, …); both are elements whose rect the overlay
  * is positioned from, so both are collected.
+ *
+ * A label is only collected when the same mapper that patches it can find a
+ * source range for it right now: a diagram must never show a label as editable
+ * and then fail the edit.
  */
-function labelTargets(svg: SVGSVGElement, family: DiagramFamily): LabelTarget[] {
+function labelTargets(svg: SVGSVGElement, family: DiagramFamily, source: string): LabelTarget[] {
   const targets: LabelTarget[] = []
   if (family === 'kanban') {
     // Kanban renders three label slots per card (title, spacer, assignee) and
@@ -156,22 +248,106 @@ function labelTargets(svg: SVGSVGElement, family: DiagramFamily): LabelTarget[] 
     for (const section of sectionElements(svg)) {
       const label = labelElementIn(section.querySelector('.cluster-label') ?? section)
       const text = label && labelTextOf(label)
-      if (label && text) targets.push({ el: label, text })
+      if (label && text) targets.push({ el: label, text, role: 'text', occurrence: 0, count: 1 })
     }
     for (const card of cardElements(svg)) {
       const label = labelElementIn(card)
       const text = label && labelTextOf(label)
-      if (label && text) targets.push({ el: label, text })
+      if (label && text) targets.push({ el: label, text, role: 'text', occurrence: 0, count: 1 })
     }
-    return targets
+    return editable(indexTargets(targets), family, source)
   }
 
+  const generated = GENERATED_BY_FAMILY[family] ?? ''
   for (const el of Array.from(svg.querySelectorAll(LABEL_SELECTOR))) {
     if (el.closest(GENERATED_LABEL_SELECTOR)) continue
-    const text = labelTextOf(el)
-    if (text) targets.push({ el, text })
+    if (generated && el.closest(generated)) continue
+    const raw = labelTextOf(el)
+    if (!raw) continue
+    // A sankey node draws its name above a generated total in one text element;
+    // only the name line is the label.
+    const text = family === 'sankey' ? (raw.split('\n')[0].trim() ?? '') : raw
+    if (!text || STEREO.test(text)) continue
+    targets.push({ el, text, role: labelRole(family, el, text), occurrence: 0, count: 1 })
   }
-  return outermost(targets)
+  return editable(indexTargets(outermost(targets)), family, source)
+}
+
+/**
+ * Number the labels by how often their text repeats, and drop the ones no
+ * mapper can resolve — the DOM's copy of the label is the only evidence of
+ * which copy of a repeated text was clicked, so it is what tells two identical
+ * labels apart.
+ */
+function indexTargets(targets: LabelTarget[]): LabelTarget[] {
+  const counts = new Map<string, number>()
+  const seen = new Map<string, number>()
+  for (const target of targets) counts.set(target.text, (counts.get(target.text) ?? 0) + 1)
+  for (const target of targets) {
+    target.count = counts.get(target.text) ?? 1
+    target.occurrence = seen.get(target.text) ?? 0
+    seen.set(target.text, target.occurrence + 1)
+  }
+  return targets
+}
+
+/**
+ * Only offer a label the mapper can already resolve. This is what keeps the
+ * promise the editor makes: every label that looks editable really is, and a
+ * label whose text mermaid merely derived — a truncated cell, a default axis
+ * name, an implicit branch — is not offered at all.
+ */
+function editable(
+  targets: LabelTarget[],
+  family: DiagramFamily,
+  source: string,
+): LabelTarget[] {
+  return targets.filter((target) => {
+    const resolved = resolveLabelSpans(source, family, target)
+    if (resolved === null || resolved === 'ambiguous') return false
+    const first = resolved.spans[0]
+    if (first) {
+      const spelled = source.slice(first.start, first.end).trim()
+      if (squeeze(spelled).text === squeeze(target.text).text) {
+        if (spelled !== target.text) target.sourceText = spelled
+      }
+    }
+    return true
+  })
+}
+
+/**
+ * Whether a label names a thing rather than describing one. Only families with
+ * references to rewrite need the distinction; everything else is prose.
+ */
+function labelRole(family: DiagramFamily, el: Element, text: string): LabelRole {
+  const inNode = (selector: string): boolean => el.closest(selector) !== null
+  switch (family) {
+    case 'state':
+      return inNode('.statediagram-state') ? 'entity' : 'text'
+    case 'er':
+      if (inNode('.attribute-type')) return 'text'
+      if (inNode('.attribute-name')) return 'text'
+      return inNode('g.node') ? 'entity' : 'text'
+    case 'class':
+      return inNode('.label-group') ? 'entity' : 'text'
+    case 'git':
+      return inNode('.branchLabel') ? 'entity' : 'text'
+    case 'sankey':
+      return 'entity'
+    case 'wardley':
+      return inNode('.wardley-node-label') ? 'entity' : 'text'
+    case 'venn':
+      return inNode('.venn-circle') ? 'entity' : 'text'
+    case 'journey':
+      return inNode('.legend') ? 'entity' : 'text'
+    case 'requirement':
+      // A requirement's rows are drawn as `Key: value`; what is left names the
+      // requirement, and the relations between them refer to it.
+      return text.includes(':') ? 'text' : 'entity'
+    default:
+      return 'text'
+  }
 }
 
 /**
@@ -231,9 +407,14 @@ interface MapperResult {
    * label is not unique.
    */
   all?: boolean
+  /**
+   * What to write over the spans when the drawn label is not the source text it
+   * stands for — a requirement row is drawn as `Verification: Test` and lives in
+   * the source as `verifymethod: test`, so the key is part of the label on
+   * screen and none of it is part of the text being replaced.
+   */
+  render?: (newLabel: string) => string
 }
-
-const NO_SPANS: MapperResult = { spans: [] }
 
 /**
  * Span of the label inside a flowchart-style node: `A[Old]`, `A"Old"`,
@@ -349,14 +530,25 @@ function messageSpan(line: SourceLine, label: string): Span | null {
   return { start, end: start + label.length }
 }
 
-/** Whole-word occurrences of `word` in the first `limit` characters of a line. */
-function wholeWordSpans(line: SourceLine, word: string, limit: number): Span[] {
+/**
+ * Whole-word occurrences of `word` between `from` and `limit` in a line. The
+ * window is what keeps a rename off syntax: the id after a `branch` keyword, or
+ * the state id before a transition's `:`.
+ */
+function wholeWordSpans(
+  line: SourceLine,
+  word: string,
+  limit: number,
+  from = 0,
+): Span[] {
   const spans: Span[] = []
   // A participant id is delimited by punctuation, so an id followed by an arrow
   // (`Alice->>S`) matches while a hyphenated one (`my-actor`) never matches
   // half of itself.
   const re = new RegExp(`(?<![-\\w])${escapeRe(word)}(?!\\w)(?![-]\\w)`, 'g')
-  for (let match = re.exec(line.text); match && match.index < limit; match = re.exec(line.text)) {
+  for (let match = re.exec(line.text); match; match = re.exec(line.text)) {
+    if (match.index < from) continue
+    if (match.index >= limit) break
     spans.push({ start: line.offset + match.index, end: line.offset + match.index + word.length })
   }
   return spans
@@ -372,6 +564,273 @@ function kanbanSpans(source: string, label: string): MapperResult {
   return { spans }
 }
 
+/** A state id is referenced by every transition that touches it. */
+function stateSpans(source: string, ref: LabelRef): MapperResult | null {
+  const lines = sourceLines(source).filter((line) => !line.comment)
+  if (ref.role === 'text') {
+    // A transition label is the text after the `:` of an edge.
+    const spans = lines
+      .map((line) => messageSpan(line, ref.text))
+      .filter((span): span is Span => span !== null)
+    return spans.length > 0 ? { spans } : null
+  }
+  const spans: Span[] = []
+  for (const line of lines) {
+    const colon = line.text.indexOf(':')
+    spans.push(...wholeWordSpans(line, ref.text, colon < 0 ? line.text.length : colon))
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+const ER_ATTRIBUTE = /^\s*\w+\s+\w+(?:\s+(?:PK|FK|UK))?\s*$/
+const ER_RELATION = /(?:\.\.)|(?:--)/
+const ER_ATTRIBUTE_LINE = /^\s*(\S+)\s+(\S+)\s*$/
+
+/**
+ * An ER attribute is drawn as two labels, its type (`string`) and its name
+ * (`email`), on a line of its own. Matching the tokens rather than the text
+ * anywhere in the source is what keeps `date` from being found inside
+ * `order_date` as well, which would make the label ambiguous and withhold it.
+ */
+function erAttributeSpans(source: string, ref: LabelRef): MapperResult | null {
+  if (ref.role !== 'text') return null
+  const spans: Span[] = []
+  for (const line of sourceLines(source).filter((l) => !l.comment)) {
+    const attribute = ER_ATTRIBUTE_LINE.exec(line.text)
+    if (!attribute) continue
+    const [, type, name] = attribute
+    const typeAt = line.text.indexOf(type)
+    // Search past the type, so an attribute named `date` on a `date` line is
+    // found on the right of it.
+    const nameAt = line.text.indexOf(name, typeAt + type.length)
+    if (type === ref.text && typeAt >= 0) {
+      spans.push({ start: line.offset + typeAt, end: line.offset + typeAt + type.length })
+    }
+    if (name === ref.text && nameAt >= 0) {
+      spans.push({ start: line.offset + nameAt, end: line.offset + nameAt + name.length })
+    }
+  }
+  return spans.length > 0 ? { spans } : null
+}
+
+/**
+ * An ER entity is named by its own attribute block and by every relationship it
+ * takes part in, so a rename rewrites those; the lines declaring an attribute
+ * (`string name`) are a different label and are left out.
+ */
+function erSpans(source: string, ref: LabelRef): MapperResult | null {
+  if (ref.role !== 'entity') return null
+  const spans: Span[] = []
+  for (const line of sourceLines(source).filter((l) => !l.comment)) {
+    if (ER_ATTRIBUTE.test(line.text)) continue
+    if (!ER_RELATION.test(line.text) && !/^\s*\S+\s*\{/.test(line.text)) continue
+    spans.push(...wholeWordSpans(line, ref.text, line.text.length))
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+const CLASS_DECL = /^\s*class\s+(\S+)/
+const CLASS_RELATION = /(?:\.\.)|(?:--)|(?:\*--)|(?:o--)/
+
+/** A class is named by its declaration and by every relation it takes part in. */
+function classSpans(source: string, ref: LabelRef): MapperResult | null {
+  if (ref.role !== 'entity') return null
+  const spans: Span[] = []
+  for (const line of sourceLines(source).filter((l) => !l.comment)) {
+    const decl = CLASS_DECL.exec(line.text)
+    if (decl) {
+      // Group 0 already covers the name, so the window is the tail of the
+      // match: the class id itself, never its `class` keyword.
+      const end = decl[0].length
+      spans.push(...wholeWordSpans(line, ref.text, end, end - decl[1].length))
+    } else if (CLASS_RELATION.test(line.text)) {
+      spans.push(...wholeWordSpans(line, ref.text, line.text.length))
+    }
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+const GIT_REF = /^\s*(?:branch|checkout|switch|merge)\s+/i
+
+/**
+ * A git branch is named by `branch` and referred to by `checkout`, `switch` and
+ * `merge`. Mermaid's implicit `main` is not in the source at all, so it resolves
+ * to nothing and is never offered.
+ */
+function gitSpans(source: string, ref: LabelRef): MapperResult | null {
+  if (ref.role !== 'entity') return null
+  const spans: Span[] = []
+  for (const line of sourceLines(source).filter((l) => !l.comment)) {
+    const keyword = GIT_REF.exec(line.text)
+    if (keyword) spans.push(...wholeWordSpans(line, ref.text, line.text.length, keyword[0].length))
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+const REQUIREMENT_ROW = /^[ \t]*[\w ]+?:[ \t]*(.*?)[ \t]*$/
+
+/**
+ * A requirement is named by its declaration and by the `- satisfies ->` /
+ * `- verifies ->` relations that point at it. Its rows are `key: value` pairs
+ * of which mermaid shows the value alone under its own idea of the key
+ * (`verifymethod` is drawn as "Verification") and sometimes shortened, so a row
+ * is matched on the value and rewritten whole.
+ */
+function requirementSpans(source: string, ref: LabelRef): MapperResult | null {
+  const lines = sourceLines(source).filter((line) => !line.comment)
+  if (ref.role === 'text') {
+    const colon = ref.text.indexOf(':')
+    const shown = colon < 0 ? '' : ref.text.slice(colon + 1).trim()
+    if (!shown) return null
+    const spans: Span[] = []
+    for (const line of lines) {
+      const row = REQUIREMENT_ROW.exec(line.text)
+      if (!row || !shortens(row[1], shown)) continue
+      const start = line.offset + row.index + row[0].length - row[1].length
+      spans.push({ start, end: start + row[1].length })
+    }
+    if (spans.length === 0) return null
+    // The drawn label repeats the key above the value; only the value is text
+    // the source is being asked to change.
+    return { spans, render: (next) => valueOf(next) }
+  }
+  const spans: Span[] = []
+  for (const line of lines) {
+    if (REQUIREMENT_ROW.test(line.text)) continue
+    spans.push(...wholeWordSpans(line, ref.text, line.text.length))
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+/** The value part of a drawn `Key: value` row. */
+function valueOf(label: string): string {
+  const colon = label.indexOf(':')
+  const value = colon < 0 ? label : label.slice(colon + 1)
+  return value.trim()
+}
+
+/**
+ * Whether the rendered value is the whole source value or the start of it,
+ * mermaid having wrapped the rest away. Only a cut at a word boundary counts, so
+ * the drawn `1` of an `id: 10` never matches the drawn `1` of an `id: 1`.
+ */
+function shortens(value: string, shown: string): boolean {
+  const source = value.toLowerCase()
+  const rendered = shown.toLowerCase()
+  if (source === rendered) return true
+  return source.startsWith(rendered) && /^\s/.test(source.slice(rendered.length))
+}
+
+/** A sankey node's name is a field in the CSV the diagram is drawn from. */
+function sankeySpans(source: string, ref: LabelRef): MapperResult | null {
+  const spans: Span[] = []
+  for (const line of sourceLines(source)) {
+    let at = 0
+    for (const field of line.text.split(',')) {
+      const trimmed = field.trim()
+      if (trimmed === ref.text) {
+        const start = line.offset + at + (field.length - field.trimStart().length)
+        spans.push({ start, end: start + trimmed.length })
+      }
+      at += field.length + 1
+    }
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+const WARDLEY_DECL = /^\s*(?:anchor|component)\s+/
+const WARDLEY_LINK = /(?:->)|(?:\bevolve\s)/
+
+/**
+ * A wardley node is named by its `anchor`/`component` declaration and referred
+ * to by the links and `evolve` lines between nodes. The axes and the evolution
+ * stage names are mermaid's own unless the source spells them out, so they
+ * resolve to nothing and stay uneditable.
+ */
+function wardleySpans(source: string, ref: LabelRef): MapperResult | null {
+  if (ref.role !== 'entity') return null
+  const spans: Span[] = []
+  for (const line of sourceLines(source).filter((l) => !l.comment)) {
+    const decl = WARDLEY_DECL.exec(line.text)
+    if (decl) {
+      spans.push(...wholeWordSpans(line, ref.text, line.text.length, decl[0].length))
+    } else if (WARDLEY_LINK.test(line.text)) {
+      spans.push(...wholeWordSpans(line, ref.text, line.text.length))
+    }
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+const VENN_SET = /^\s*set\s+/i
+const VENN_UNION = /^\s*union\s+/i
+
+/** A venn set is named by its `set` line and by the union it appears in. */
+function vennSpans(source: string, ref: LabelRef): MapperResult | null {
+  if (ref.role !== 'entity') return null
+  const spans: Span[] = []
+  for (const line of sourceLines(source).filter((l) => !l.comment)) {
+    const decl = VENN_SET.exec(line.text)
+    if (decl) {
+      spans.push(...wholeWordSpans(line, ref.text, line.text.length, decl[0].length))
+    } else if (VENN_UNION.test(line.text)) {
+      spans.push(...wholeWordSpans(line, ref.text, line.text.length))
+    }
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+const JOURNEY_HEAD = /^\s*(?:title|section)\b/i
+
+/**
+ * The journey legend names the actor every task line scores, so a rename
+ * rewrites the actor in each task and leaves the title and section headers —
+ * which are prose that may well contain the same words — alone.
+ */
+function journeySpans(source: string, ref: LabelRef): MapperResult | null {
+  if (ref.role !== 'entity') return null
+  const spans: Span[] = []
+  for (const line of sourceLines(source).filter((l) => !l.comment)) {
+    if (JOURNEY_HEAD.test(line.text)) continue
+    spans.push(...wholeWordSpans(line, ref.text, line.text.length))
+  }
+  return spans.length > 0 ? { spans, all: true } : null
+}
+
+function familyMapper(
+  family: DiagramFamily,
+  source: string,
+  ref: LabelRef,
+): MapperResult | null {
+  switch (family) {
+    case 'graph':
+      return mergeSpans(graphNodeSpans(source, ref.text), graphEdgeSpans(source, ref.text))
+    case 'sequence':
+      return sequenceSpans(source, ref.text)
+    case 'kanban':
+      return kanbanSpans(source, ref.text)
+    case 'state':
+      return stateSpans(source, ref)
+    case 'er':
+      return erSpans(source, ref) ?? erAttributeSpans(source, ref)
+    case 'class':
+      return classSpans(source, ref)
+    case 'git':
+      return gitSpans(source, ref)
+    case 'requirement':
+      return requirementSpans(source, ref)
+    case 'sankey':
+      return sankeySpans(source, ref)
+    case 'wardley':
+      return wardleySpans(source, ref)
+    case 'venn':
+      return vennSpans(source, ref)
+    case 'journey':
+      return journeySpans(source, ref)
+    default:
+      return null
+  }
+}
+
 /** Every standalone occurrence of the label anywhere in the source. */
 function substringSpans(source: string, label: string): Span[] {
   const spans: Span[] = []
@@ -379,6 +838,94 @@ function substringSpans(source: string, label: string): Span[] {
     spans.push({ start: at, end: at + label.length })
   }
   return spans
+}
+
+/**
+ * The label as the content of a quoted string — how treemap, packet, venn,
+ * wardley and C4 spell their labels. Preferred over a bare occurrence, since
+ * the same words may also appear as syntax or as another label.
+ */
+function quotedSpans(source: string, label: string): Span[] {
+  const spans: Span[] = []
+  const re = new RegExp(`(["'])${escapeRe(label)}\\1`, 'g')
+  for (let match = re.exec(source); match; match = re.exec(source)) {
+    const start = match.index + match[1].length
+    spans.push({ start, end: start + label.length })
+  }
+  return spans
+}
+
+/**
+ * Occurrences of the label with whitespace ignored, which is what a wrapped
+ * label needs: mermaid splits "Lack of Training" across tspans, so the DOM reads
+ * `Lack ofTraining` where the source reads `Lack of Training`. Matches that
+ * would run across a line break are dropped, so a label cannot match a phrase
+ * that merely ends one line and starts the next.
+ */
+function squeezedSpans(source: string, label: string): Span[] {
+  const haystack = squeeze(source)
+  const needle = squeeze(label).text
+  const spans: Span[] = []
+  if (!needle) return spans
+  for (let at = haystack.text.indexOf(needle); at >= 0; at = haystack.text.indexOf(needle, at + needle.length)) {
+    const start = haystack.at[at]
+    const end = haystack.at[at + needle.length - 1] + 1
+    if (lineAt(source, start) !== lineAt(source, end - 1)) continue
+    spans.push({ start, end })
+  }
+  return spans
+}
+
+/** The text with whitespace dropped, plus where each kept character came from. */
+function squeeze(text: string): { text: string; at: number[] } {
+  const chars: string[] = []
+  const at: number[] = []
+  for (let i = 0; i < text.length; i++) {
+    if (/\s/.test(text[i])) continue
+    chars.push(text[i])
+    at.push(i)
+  }
+  return { text: chars.join(''), at }
+}
+
+const GENERIC_STRATEGIES: Array<(source: string, label: string) => Span[]> = [
+  quotedSpans,
+  substringSpans,
+  squeezedSpans,
+]
+
+/** Source ranges a label maps to, or why it cannot be mapped. */
+type Resolution = MapperResult | 'ambiguous' | null
+
+/**
+ * The source ranges a rendered label stands for: the family's own mapper where
+ * there is one, else the first generic strategy that finds the label. A label
+ * that resolves to more than one copy is narrowed to the copy that was clicked
+ * when the diagram shows exactly as many copies as the source has, and is
+ * otherwise reported as ambiguous.
+ */
+function resolveLabelSpans(
+  source: string,
+  family: DiagramFamily,
+  ref: LabelRef,
+): Resolution {
+  const mapped = familyMapper(family, source, ref)
+  if (mapped && mapped.spans.length > 0) return pickCopy(mapped, ref)
+  for (const strategy of GENERIC_STRATEGIES) {
+    const spans = strategy(source, ref.text)
+    if (spans.length > 0) return pickCopy({ spans }, ref)
+  }
+  return null
+}
+
+function pickCopy(result: MapperResult, ref: LabelRef): Resolution {
+  if (result.all || result.spans.length <= 1) return result
+  // The DOM and the source list their copies in the same order, so the k-th of
+  // n labels on screen is the k-th of n occurrences in the source.
+  if (result.spans.length === ref.count) {
+    return { spans: [result.spans[ref.occurrence]], render: result.render }
+  }
+  return 'ambiguous'
 }
 
 export type PatchOutcome =
@@ -389,36 +936,29 @@ export type PatchOutcome =
 
 /**
  * Resolve a label edit to a new mermaid source, or explain why it cannot be
- * applied. A type-aware mapper that recognises the construct produces the exact
- * source range; otherwise the rendered text is replaced where it occurs exactly
- * once, which is what makes pie/er/class/state/gantt labels editable without a
- * mapper each. A label that occurs more than once is never guessed at.
+ * applied. `ref` carries what the editor knew about the clicked label — whether
+ * it names a thing, and which copy of a repeated label it was — so the ranges
+ * found here are the ones that were resolved when the label was offered.
  */
 export function patchLabel(
   source: string,
   family: DiagramFamily,
   oldLabel: string,
   newLabel: string,
+  ref: Partial<LabelRef> = {},
 ): PatchOutcome {
   if (!oldLabel) return { status: 'unmapped' }
-  const mapped =
-    family === 'graph'
-      ? mergeSpans(graphNodeSpans(source, oldLabel), graphEdgeSpans(source, oldLabel))
-      : family === 'sequence'
-        ? sequenceSpans(source, oldLabel)
-        : family === 'kanban'
-          ? kanbanSpans(source, oldLabel)
-          : NO_SPANS
-
-  if (mapped.all || mapped.spans.length === 1) {
-    return { status: 'ok', text: replaceSpans(source, mapped.spans, newLabel) }
-  }
-  if (mapped.spans.length > 1) return { status: 'ambiguous' }
-
-  const spans = substringSpans(source, oldLabel)
-  if (spans.length === 1) return { status: 'ok', text: replaceSpans(source, spans, newLabel) }
-  if (spans.length > 1) return { status: 'ambiguous' }
-  return { status: 'unmapped' }
+  const resolved = resolveLabelSpans(source, family, {
+    role: 'text',
+    occurrence: 0,
+    count: 1,
+    ...ref,
+    text: oldLabel,
+  })
+  if (resolved === 'ambiguous') return { status: 'ambiguous' }
+  if (resolved === null) return { status: 'unmapped' }
+  const next = resolved.render?.(newLabel) ?? newLabel
+  return { status: 'ok', text: replaceSpans(source, resolved.spans, next) }
 }
 
 function mergeSpans(...results: MapperResult[]): MapperResult {
@@ -751,7 +1291,7 @@ export function attachMermaidEditing(
   }
 
   const family = diagramFamily(detectDiagramType(source))
-  const targets = labelTargets(svg, family)
+  const targets = labelTargets(svg, family, source)
   for (const target of targets) target.el.classList.add(EDITABLE_CLASS)
 
   const host = container.closest<HTMLElement>('.mermaid') ?? container.parentElement ?? container
@@ -854,7 +1394,7 @@ function openLabelEditor(
   const input = document.createElement('input')
   input.type = 'text'
   input.className = INPUT_CLASS
-  input.value = target.text
+  input.value = target.sourceText ?? target.text
   input.style.left = `${rect.left - hostRect.left}px`
   input.style.top = `${rect.top - hostRect.top}px`
   input.style.width = `${Math.max(rect.width, 40)}px`
@@ -871,11 +1411,12 @@ function openLabelEditor(
   const finish = (accept: boolean): void => {
     if (closed) return
     const value = input.value.trim()
-    if (!accept || value === target.text) {
+    const current = target.sourceText ?? target.text
+    if (!accept || value === current) {
       close()
       return
     }
-    const outcome = patchLabel(source, family, target.text, value)
+    const outcome = patchLabel(source, family, current, value, target)
     if (outcome.status === 'ok') {
       close()
       commit(outcome.text)

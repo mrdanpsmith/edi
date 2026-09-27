@@ -57,6 +57,12 @@ describe('buildHelpGuideMarkdown', () => {
     expect(guide).toContain('**Run** button')
   })
 
+  it('says which mermaid labels are clickable', () => {
+    expect(guide).toContain('Only labels that can be rewritten are clickable.')
+    expect(guide).toContain('computed')
+    expect(guide).toContain('renames the references with it')
+  })
+
   it('documents the export shortcut', () => {
     expect(guide).toContain('`Ctrl+Shift+E` exports the rendered preview')
   })
