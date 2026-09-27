@@ -95,6 +95,9 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex: none;
+  /* Chrome, not content: dragging across the tabs or titles must not paint a
+     text selection over the document chrome. */
+  user-select: none;
 }
 
 .tabbar-scroll {
@@ -160,6 +163,9 @@ body {
   flex: none;
   overflow-x: auto;
   scrollbar-width: thin;
+  /* Chrome, not content: same as the tab bar, a drag across the buttons is
+     never meant to select their labels. */
+  user-select: none;
 }
 
 #toolbar[hidden] {
