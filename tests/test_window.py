@@ -36,15 +36,24 @@ from backend.window import (
 
 import pytest
 
-
-def _pump_until(condition, timeout=8.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        QApplication.processEvents()
-        if condition():
-            return True
-        time.sleep(0.02)
-    return False
+from tests.mermaid_render import (  # re-exported: the other test modules import these
+    COLUMNS,
+    EDIT_STATE,
+    FLOW,
+    KANBAN,
+    SEQUENCE,
+    _click_label,
+    _dump,
+    _enter_edit_mode,
+    _pointer_drag,
+    _pump_until,
+    _render,
+    _set_scheme,
+    _type_and_confirm,
+    _wait,
+    _wait_baked,
+    _wait_text,
+)
 
 
 @pytest.fixture(scope="session")
@@ -1021,3 +1030,94 @@ def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
 
     assert _pump_until(read_output, timeout=20), "output cell never populated"
     assert result["out"] == "Hello, World!"
+
+
+# --- Mermaid visual editing (src/mermaid-edit.ts) ---------------------------------
+# These stay in this module on purpose: they render in the session window above,
+# after every other test has run. A module of their own would need a second
+# MainWindow -- another WebEngine page -- and the real-engine template sweep
+# already takes two, which is all a small container can bring up.
+
+
+def test_visual_edit_mode_and_label_commit(window):
+    _render(window, FLOW)
+    assert _dump(window, EDIT_STATE)["marked"] == 0, "the preview is not read-only"
+
+    _enter_edit_mode(window)
+    state = _dump(window, EDIT_STATE)
+    assert state["editing"], "the block did not get the editing class"
+    assert state["marked"] >= 3, state  # Alpha, Beta and the Yes edge label
+    assert state["button"] == "Done", state
+
+    assert _click_label(window, "Alpha") == "Alpha"
+    _type_and_confirm(window, "Renamed")
+    # The bug this pins: the source was patched but the SVG kept the old
+    # glyphs, because the node view skipped the re-render.
+    texts = _wait_text(window, ["Renamed"])
+    assert "Alpha" not in texts, texts
+    assert not _dump(
+        window,
+        "(() => ({ notice: !!document.querySelector('.mermaid-edit-notice'),"
+        " error: !!document.querySelector('.mermaid-error') }))()",
+    )["notice"]
+
+
+def test_kanban_label_edit_and_card_drag(window):
+    _render(window, KANBAN)
+    _enter_edit_mode(window)
+
+    # Chromium makes SVG nodes natively draggable, and its own drag swallows
+    # the pointer stream: the card would snap back and nothing would happen.
+    assert _dump(
+        window,
+        "(() => { const c = document.querySelector('.mermaid .items > g.node');"
+        " const e = new Event('dragstart', { bubbles: true, cancelable: true });"
+        " c.dispatchEvent(e); return { prevented: e.defaultPrevented }; })()",
+    )["prevented"], "a native drag would swallow the pointer stream"
+
+    assert _click_label(window, "One") == "One"
+    _type_and_confirm(window, "Renamed")
+    _wait_text(window, ["Renamed"])
+
+    _pointer_drag(window, card=0, section=1)
+    cols = _wait(
+        window,
+        COLUMNS,
+        lambda d: any("Renamed" in cards for cards in d["cols"].values()),
+        timeout=15,
+    )["cols"]
+    # Mermaid lays a column's cards out side by side, so the renamed card is the
+    # right-hand one now: the drag crossed into the second column.
+    assert sorted(cols.values(), key=len)[0] == ["Two"], cols
+    assert ["Renamed", "Three"] in [sorted(c) for c in cols.values()], cols
+
+
+def test_sequence_participant_wrapped_in_a_tspan_is_editable(window):
+    _set_scheme(window, True)
+    _render(window, SEQUENCE)
+    # Sequence diagrams paint light native text, so the view mode bakes them to
+    # a bitmap; edit mode has to unbake, or no label stays clickable.
+    _wait_baked(window, timeout=25)
+    markup = _dump(
+        window,
+        "(() => { const t = document.querySelector('.mermaid-preview svg text.actor');"
+        " return { hasTspan: !!(t && t.querySelector('tspan')),"
+        " text: t ? t.textContent.trim() : '' }; })()",
+    )
+    assert markup["hasTspan"], markup  # the shape this test is really about
+    assert markup["text"] in ("Alice", "Bob"), markup  # mermaid's own order
+
+    _enter_edit_mode(window)
+    assert not _dump(
+        window, "(() => ({ img: !!document.querySelector('.mermaid img.mermaid-img') }))()"
+    )["img"], "edit mode left the diagram baked"
+
+    assert _click_label(window, "Alice") == "Alice"
+    _type_and_confirm(window, "Zoe")
+    # Mermaid draws each participant twice (lifeline head and foot), so one
+    # rename must repaint both: proof the tspan-wrapped label was really the
+    # one that got committed.
+    texts = _wait_text(window, ["Zoe"])
+    assert texts.count("Zoe") == 2, texts
+    assert "Alice" not in texts, texts
+    _set_scheme(window, False)

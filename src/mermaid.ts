@@ -484,14 +484,19 @@ function createToolbarButton(label: string, title: string): HTMLButtonElement {
   return button
 }
 
-export function attachMermaidToolbar(host: HTMLElement, svg: SVGSVGElement, natural: number | null): void {
+export function attachMermaidToolbar(
+  host: HTMLElement,
+  svg: SVGSVGElement,
+  natural: number | null,
+  actions: readonly HTMLButtonElement[] = [],
+): void {
   const zoomOut = createToolbarButton('−', 'Zoom out')
   const zoomIn = createToolbarButton('+', 'Zoom in')
   const reset = createToolbarButton('100%', 'Reset zoom')
 
   const bar = document.createElement('div')
   bar.className = 'mermaid-toolbar'
-  bar.append(zoomOut, zoomIn, reset)
+  bar.append(zoomOut, zoomIn, reset, ...actions)
   host.appendChild(bar)
 
   if (natural === null) {

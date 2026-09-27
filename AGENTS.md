@@ -12,6 +12,19 @@ Edi is a markdown editor. Frontend: ProseMirror (the document editor) + CodeMirr
 
 Document-local functions come from `code_block` nodes with `language === 'edi-formula'`, one `NAME(params) = expression` per line (`#` starts a comment). `src/formulaDsl.ts` parses/compiles them, rejecting builtin-name collisions, duplicate names, and cycles; `src/formulaDefs.ts` is an editor plugin that compiles every such block (document-wide) into a `FormulaEnv` in plugin state, decorates rejected blocks with `.edi-formula-invalid`, and exposes it via `formulaEnvFor(state)` / `documentFunctionsFor(state)`. Builtins are never overridable, and a rejected definition makes cells that call it resolve the usual `#NAME?` error. Function-name autocomplete lives in `src/formulaAutocomplete.ts`, fed by the table node view's `formulaFunctions()` (builtins + document defs).
 
+## Mermaid visual editing
+
+`src/mermaid-edit.ts` is the whole visual-editing layer: `renderDiagram()` (a thin wrapper over mermaid + `responsifySvg`/`adaptDiagramColors`/`pinSvgTextColors`/`attachMermaidToolbar`/`bakeDiagram` from `src/mermaid.ts`, so the node view no longer owns that pipeline), the source patchers, the inline label editor, the kanban drag, and the notice that keeps the last good diagram on screen when the patched source stops parsing. `src/node/mermaid.ts` keeps the node view plus the mode plumbing: the `mermaid_block` `_edit` attr, `MERMAID_EDIT_KEY` (at most one diagram in edit mode, like tables), `enterDiagramEditMode()` / `exitDiagramEditMode()` / `toggleDiagramEditMode()` (wired to the hover toolbar's Edit/Done button, a double click, and the Edit diagram / Done editing context-menu items in `src/main.ts`).
+
+Two rules the rest of the app depends on:
+
+- **The fenced source is the document.** A visual edit is one `setNodeMarkup` transaction (`commitSource`), so undo takes a whole edit back. `commitSource` must NOT pre-set `this.currentCode`: `update()` uses it to spot a changed value, and pre-setting it makes the view skip the re-render, leaving the old diagram on screen (there is a real-engine test pinning this).
+- **View mode may bake, edit mode must not.** A diagram with light native text (sequence diagrams) is baked to a bitmap in view mode, which removes every clickable label; entering edit mode re-renders the vector and marks the labels with `.mermaid-editables`.
+
+Mermaid's own SVG is the DOM to patch, so read it defensively: a label may be a `text` with a `tspan` child (sequence participants are `text.actor > tspan`), which is why the wrapper check upper-cases `child.tagName`. Chromium also makes `.items > .node` natively draggable, and its drag swallows the pointer stream the kanban drag listens on — cancel `dragstart` (`-webkit-user-drag: none` in CSS covers the rest). Do NOT `preventDefault()` on `pointerdown` to fix that: it would suppress label-editor clicks.
+
+The real-engine tests live at the end of `tests/test_window.py` and the shared WebEngine helpers in `tests/mermaid_render.py` (not `test_*.py`, so pytest does not collect it). They render in that module's already-open session window on purpose: a `MainWindow` is a WebEngine page, and the dark-probe plus template sweep already take two, so a module of its own (or a fourth window) turns the suite red for no reason. `QTest` mouse injection never reaches the page, so those tests dispatch JS-synthesised `PointerEvent`s.
+
 ## Key commands
 
 - `npm run check` — typecheck + eslint + frontend unit tests (Vitest) + `jscpd` duplicate-code scan. Run this before backend work.

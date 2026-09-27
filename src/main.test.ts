@@ -1165,6 +1165,46 @@ describe('context menu', () => {
     mermaid.remove()
   })
 
+  it('enters and leaves mermaid edit mode from the block menu', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({
+        doc: markdownToProse('```mermaid\ngraph TD\n  A[Alpha]\n```', schema),
+      }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    const visual = document.createElement('div')
+    visual.className = 'mermaid'
+    visual.innerHTML = '<div class="block-handle" data-block-pos="0"></div><div class="mermaid-preview"></div>'
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(visual)
+
+    const openMenu = (): HTMLButtonElement[] => {
+      visual.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+      return Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+    }
+    const item = (buttons: HTMLButtonElement[], label: string): HTMLButtonElement => {
+      const found = buttons.find((button) => button.textContent === label)
+      expect(found, `menu item ${label}`).toBeDefined()
+      return found!
+    }
+
+    item(openMenu(), 'Edit diagram').click()
+    expect(realView.state.doc.child(0)?.attrs._edit).toBe(true)
+    visual.classList.add('mermaid-editing')
+
+    item(openMenu(), 'Done editing').click()
+    expect(realView.state.doc.child(0)?.attrs._edit).not.toBe(true)
+
+    realView.destroy()
+    host.remove()
+    visual.remove()
+  })
+
   function sheetInput(value: string, selection?: [number, number]): HTMLInputElement {
     const input = document.createElement('input')
     input.className = 'ss-edit-input'

@@ -77,6 +77,12 @@ Document actions live in the native menu bar and, for the four most common ones 
 - **View**: Preview (toggle, default on), Toolbar (toggle, default on).
 - **Help**: Edi Guide, Formula Reference, About Edi.
 
+### Editing diagrams
+
+A Mermaid diagram is edited where you look at it, in an explicit edit mode. Press **Edit** on the diagram's hover toolbar, double-click the diagram, or pick **Edit diagram** from the right-click menu; the button reads **Done** (or the menu entry **Done editing**) while you are in it, and one diagram at a time is editable. Click a label and retype it, and the fenced source behind the block is patched in place. Flowchart node labels, sequence message labels and participant names, and kanban column and card labels are all editable; any other diagram falls back to relabelling the matching text in the source. `Enter` or a click elsewhere commits, `Esc` cancels, and the source stays the document's source of truth — open the block with its handle at any time.
+
+Kanban cards can also be dragged between columns and up and down a column, which reorders the source lines. Leaving edit mode restores the plain preview. A diagram that no longer parses keeps its last good rendering with a short note explaining why, so a half-typed label never leaves a blank block behind.
+
 ### Spreadsheet import
 
 `Insert → Spreadsheet` reads a CSV, TSV, ODS, or XLSX file and inserts it at the cursor as a markdown table. Cell contents, shared strings, repeated rows/columns, and formula results are preserved.

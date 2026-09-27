@@ -8,17 +8,26 @@ native text (the QtWebEngine repaint-bug protection). Light mode is a smoke chec
 render without error. Kept deliberately below tests/test_mermaid_dark_probe.py
 (which asserts precise flipped color values for C4/treeView/wardley).
 
+The render helpers live in tests/mermaid_render.py: the mermaid visual editing
+tests at the end of tests/test_window.py share them, rendering in that module's
+already-open window instead of paying for another WebEngine page.
+
 Requires ``dist/`` (see AGENTS.md) and a headless Qt (conftest handles both).
 """
 
-import json
 import re
 from pathlib import Path
 
 import pytest
 
 from backend.window import DIST_DIR, MainWindow
-from tests.test_window import _pump_until
+from tests.mermaid_render import (
+    _native_text_fills,
+    _pump_until,
+    _render,
+    _set_scheme,
+    _wait_baked,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "mermaid-templates.md"
 
@@ -51,91 +60,6 @@ def win(qapp):
     yield w
     w.close()
     w.deleteLater()
-
-
-def _dump(win, script):
-    js = win._web.page().runJavaScript
-    out = {}
-    js(f"JSON.stringify({script})", lambda v: out.update(json.loads(v) if isinstance(v, str) else {}))
-    _pump_until(lambda: bool(out), timeout=5)
-    return out
-
-
-def _set_scheme(win, dark):
-    win.push_event({"type": "colorScheme", "dark": dark})
-    js = win._web.page().runJavaScript
-    got = {"v": None}
-
-    def read(v):
-        got["v"] = v
-
-    def probe():
-        js("document.documentElement.dataset.colorScheme", read)
-        return got["v"] == ("dark" if dark else "light")
-
-    assert _pump_until(probe, timeout=10), f"scheme never became dark={dark}: {got}"
-
-
-def _render(win, code, timeout=20):
-    """Insert ``code`` and wait for the current render: a freshly-id'd svg or an
-    error block. Renders replace the previous svg with a new id, so an id change
-    distinguishes the new content from a stale previous diagram."""
-    js = win._web.page().runJavaScript
-    prev = {"id": None, "errT": None}
-
-    def snapshot():
-        return _dump(
-            win,
-            "(() => { const s = document.querySelector('.mermaid .mermaid-preview svg');"
-            " const e = document.querySelector('.mermaid-error');"
-            " return { id: s ? s.id : null,"
-            " err: !!e, errT: e ? String(e.textContent).slice(0, 80) : null }; })()",
-        )
-
-    payload = json.dumps(f"```mermaid\n{code}\n```")
-    js(f"window.ediSetContent({payload}); true")
-
-    def probe():
-        nonlocal prev
-        d = snapshot()
-        fresh = (d.get("id") and d.get("id") != prev["id"]) or (
-            d.get("err") and d.get("errT") != prev["errT"]
-        )
-        if fresh or (d.get("err") and not d.get("id")):
-            prev = d
-            return True
-        if d.get("id"):
-            prev = d
-        return False
-
-    assert _pump_until(probe, timeout=timeout), f"diagram never rendered: {prev}"
-    return prev
-
-
-def _native_text_fills(win):
-    return _dump(
-        win,
-        "(() => { const s = document.querySelector('.mermaid .mermaid-preview svg');"
-        " const fills = s ? [...s.querySelectorAll('text, text tspan')]"
-        "  .filter(t => !t.closest('foreignObject'))"
-        "  .map(t => getComputedStyle(t).fill)"
-        "  .filter(f => f && f !== 'none') : [];"
-        " return { fills }; })()",
-    ).get("fills", [])
-
-
-def _wait_baked(win, timeout=30):
-    js = win._web.page().runJavaScript
-    out = {"v": False}
-
-    def read(v):
-        out["v"] = bool(v)
-
-    def probe():
-        js("!!document.querySelector('.mermaid img.mermaid-img')", read)
-        return out["v"]
-
-    return _pump_until(probe, timeout=timeout)
 
 
 def relative_luminance(color: str) -> float:

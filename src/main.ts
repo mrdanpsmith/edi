@@ -44,6 +44,7 @@ import { buildHelpGuideMarkdown } from './helpGuide'
 import { createBlockEditor, type BlockEditor } from './editor'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
+import { enterDiagramEditMode, exitDiagramEditMode } from './node/mermaid'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { HomeScreen } from './home'
 import { addRecentFile, getRecentFiles } from './recents'
@@ -904,6 +905,12 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
         addItem('Table view', () => enterPlainMode(view, pos))
       } else if (visual.classList.contains('ss-plain')) {
         addItem('Spreadsheet mode', () => enterSpreadsheetMode(view, pos))
+      } else if (visual.classList.contains('mermaid')) {
+        if (visual.classList.contains('mermaid-editing')) {
+          addItem('Done editing', () => exitDiagramEditMode(view, pos))
+        } else {
+          addItem('Edit diagram', () => enterDiagramEditMode(view, pos))
+        }
       }
       addItem('Edit source', () => {
         view.dispatch(toggleSourceMode(view.state, pos))

@@ -1,13 +1,13 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { EditorState, TextSelection } from 'prosemirror-state'
+import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Node as ProseNode } from 'prosemirror-model'
 import { setBlockType } from 'prosemirror-commands'
 import { blockPlugin, enterSourceMode, exitSourceMode, toggleSourceMode, getSourceBlockState, BLOCK_PLUGIN_KEY } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
-import { mermaidNodeViewPlugin } from './node/mermaid'
+import { enterDiagramEditMode, exitDiagramEditMode, mermaidNodeViewPlugin } from './node/mermaid'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { tableNodeViewPlugin } from './node/table'
 import { serializeBlock } from './markdown'
@@ -25,7 +25,7 @@ vi.mock('mermaid', () => ({
 
 import * as mermaidModule from 'mermaid'
 
-function createEditor(initialMarkdown: string) {
+function createEditor(initialMarkdown: string, extraPlugins: Plugin[] = []) {
   const doc = markdownToProse(initialMarkdown, schema)
   const nodeViewPlugin = new Plugin({
     props: {
@@ -37,7 +37,7 @@ function createEditor(initialMarkdown: string) {
   const view = new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, codeBlockNodeViewPlugin, nodeViewPlugin, mermaidNodeViewPlugin, tableNodeViewPlugin],
+      plugins: [blockPlugin, codeBlockNodeViewPlugin, nodeViewPlugin, mermaidNodeViewPlugin, tableNodeViewPlugin, ...extraPlugins],
     }),
   })
   return view
@@ -614,6 +614,34 @@ describe('mermaid block handles', () => {
 })
 
 describe('mermaid visual mode rendering', () => {
+  const FLOWCHART_SVG = '<svg viewBox="0 0 900 300"><g class="node"><g class="label"><foreignObject width="60" height="20"><div class="labelBkg"><span class="nodeLabel"><p>Alpha</p></span></div></foreignObject></g></g></svg>'
+
+  function mockFlowchart(): void {
+    vi.mocked(mermaidModule.default.render).mockResolvedValue({
+      svg: FLOWCHART_SVG,
+      diagramType: 'flowchart',
+    })
+  }
+
+  function editToggle(view: EditorView): HTMLButtonElement {
+    const button = view.dom.querySelector<HTMLButtonElement>('.mermaid-edit-toggle')
+    expect(button).not.toBeNull()
+    return button!
+  }
+
+  function editModeOf(view: EditorView): boolean {
+    return view.state.doc.firstChild!.attrs._edit === true
+  }
+
+  /** Mermaid renders asynchronously; wait for the render to land, not a tick. */
+  async function rendered(view: EditorView, selector: string, present = true): Promise<boolean> {
+    for (let i = 0; i < 25; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      if (view.dom.querySelector(selector) !== null === present) return true
+    }
+    return false
+  }
+
   beforeEach(() => {
     vi.mocked(mermaidModule.default.render).mockReset()
     vi.mocked(mermaidModule.default.render).mockResolvedValue({
@@ -659,6 +687,254 @@ describe('mermaid visual mode rendering', () => {
     expect(error).not.toBeNull()
     expect(error!.textContent).toContain('syntax error near line 1')
 
+    view.destroy()
+  })
+
+  it('a visual label edit becomes one transaction and re-renders in place', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    const preview = view.dom.querySelector<HTMLElement>('.mermaid-preview')!
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+
+    const label = preview.querySelector('.mermaid-editables')!
+    label.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+
+    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(input).not.toBeNull()
+    expect(input.value).toBe('Alpha')
+
+    input.value = 'Beta'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await rendered(view, '.mermaid-edit-input')
+
+    expect(proseToMarkdown(view.state.doc)).toContain('A[Beta]')
+    expect(view.dom.querySelector('.mermaid-edit-input')).toBeNull()
+    // Same preview element, so the diagram was updated rather than rebuilt...
+    expect(view.dom.querySelector('.mermaid-preview')).toBe(preview)
+    // ...and it really did re-render: the source and the picture agree again.
+    expect(vi.mocked(mermaidModule.default.render).mock.calls.at(-1)?.[1]).toBe('graph TD\n  A[Beta]')
+
+    view.destroy()
+  })
+
+  it('keeps the label editor out of ProseMirror while it is open', async () => {
+    mockFlowchart()
+    // A plugin prop is only reached when no node view stops the event, so it
+    // records exactly which events ProseMirror handled.
+    const seen: string[] = []
+    const probe = new Plugin({
+      props: {
+        handleDOMEvents: {
+          keydown: (_state, event) => {
+            seen.push(`keydown:${(event.target as Element).className}`)
+            return false
+          },
+        },
+      },
+    })
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```', [probe])
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+
+    const label = view.dom.querySelector<HTMLElement>('.mermaid-editables')!
+    label.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+    expect(seen).toEqual([])
+
+    input.remove()
+    label.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(seen).toEqual(['keydown:nodeLabel mermaid-editables'])
+
+    view.destroy()
+  })
+
+  it('keeps the last good diagram and explains itself when a re-render fails', async () => {
+    vi.mocked(mermaidModule.default.render).mockResolvedValue({
+      svg: '<svg viewBox="0 0 900 300"><rect width="900" height="300"></rect></svg>',
+      diagramType: 'flowchart',
+    })
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+    const preview = view.dom.querySelector<HTMLElement>('.mermaid-preview')!
+    expect(preview.querySelector('svg')).not.toBeNull()
+
+    vi.mocked(mermaidModule.default.render).mockRejectedValue(new Error('Parse error on line 1'))
+    view.dispatch(
+      view.state.tr.setNodeMarkup(firstBlockPos(view), undefined, {
+        value: 'graph TD\n  A[',
+        _source: false,
+      }),
+    )
+    await flush()
+    await flush()
+
+    expect(view.dom.querySelector('.mermaid-preview')).toBe(preview)
+    expect(preview.querySelector('svg')).not.toBeNull()
+    expect(view.dom.querySelector('.mermaid-error')).toBeNull()
+    const notice = view.dom.querySelector<HTMLElement>('.mermaid-edit-notice')!
+    expect(notice).not.toBeNull()
+    expect(notice.title).toContain('Parse error on line 1')
+
+    view.destroy()
+  })
+
+  it('previews read-only until edit mode is asked for', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    const block = view.dom.querySelector<HTMLElement>('.mermaid')!
+    expect(editModeOf(view)).toBe(false)
+    expect(block.classList.contains('mermaid-editing')).toBe(false)
+    expect(view.dom.querySelectorAll('.mermaid-editables')).toHaveLength(0)
+    expect(editToggle(view).textContent).toBe('Edit')
+
+    view.destroy()
+  })
+
+  it('toggles edit mode from the hover toolbar', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    editToggle(view).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(true)
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+    expect(view.dom.querySelector('.mermaid')!.classList.contains('mermaid-editing')).toBe(true)
+    expect(editToggle(view).textContent).toBe('Done')
+    expect(editToggle(view).classList.contains('mermaid-edit-toggle-on')).toBe(true)
+    // The source round-trips through the doc, attrs do not leak into markdown.
+    expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\ngraph TD\n  A[Alpha]\n```\n')
+
+    editToggle(view).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+    expect(editToggle(view).textContent).toBe('Edit')
+    expect(view.dom.querySelector('.mermaid')!.classList.contains('mermaid-editing')).toBe(false)
+
+    view.destroy()
+  })
+
+  it('toggles edit mode on double click, ignoring clicks on the toolbar', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    const preview = view.dom.querySelector<HTMLElement>('.mermaid-preview')!
+    preview.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(true)
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+
+    preview.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+
+    // A double click on a toolbar button is a click on a button, not a
+    // request to leave the toolbar behind.
+    editToggle(view).dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+    editToggle(view).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(true)
+    editToggle(view).dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(true)
+
+    view.destroy()
+  })
+
+  it('syncs the mode class when a transaction changes the source and the mode', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    // Source and mode land in the same step, as an undo of a failed edit can.
+    view.dispatch(
+      view.state.tr.setNodeMarkup(firstBlockPos(view), undefined, {
+        value: 'graph TD\n  A[Gamma]\n  B[Beta]\n  A --> B',
+        _source: false,
+        _edit: true,
+      }),
+    )
+    expect(await rendered(view, '.mermaid-editing')).toBe(true)
+    expect(view.dom.querySelectorAll('.mermaid-editables').length).toBeGreaterThan(0)
+    expect(vi.mocked(mermaidModule.default.render).mock.calls.at(-1)?.[1]).toBe(
+      'graph TD\n  A[Gamma]\n  B[Beta]\n  A --> B',
+    )
+
+    view.destroy()
+  })
+
+  it('keeps edit mode to one diagram at a time', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\n```mermaid\ngraph TD\n  B[Beta]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    enterDiagramEditMode(view, allBlockPositions(view)[1])
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+    expect(view.state.doc.firstChild!.attrs._edit).not.toBe(true)
+    expect(view.state.doc.child(1).attrs._edit).toBe(true)
+
+    exitDiagramEditMode(view, allBlockPositions(view)[1])
+    expect(view.state.doc.child(1).attrs._edit).not.toBe(true)
+    expect(await rendered(view, '.mermaid-editing', false)).toBe(true)
+
+    view.destroy()
+  })
+
+  it('leaves a selected block behind when edit mode starts', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    // Selecting the block is how the user got to the Edit button in the first
+    // place. A selection left in place would let the next keystroke replace the
+    // whole diagram with typed text.
+    const pos = firstBlockPos(view)
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    enterDiagramEditMode(view, pos)
+    expect(view.state.selection).toBeInstanceOf(TextSelection)
+    expect(view.state.selection.empty).toBe(true)
+    // The caret ends up on real text, so the deselect never builds a text
+    // selection on a position that is not one (the document end used to warn
+    // about exactly that, once per session).
+    expect(view.state.selection.$from.parent.inlineContent).toBe(true)
+    expect(view.state.selection.$from.parent).toBe(view.state.doc.lastChild)
+    expect(warn).not.toHaveBeenCalled()
+
+    warn.mockRestore()
     view.destroy()
   })
 })

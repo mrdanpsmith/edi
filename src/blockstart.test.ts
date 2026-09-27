@@ -16,7 +16,10 @@ vi.mock('./mermaid', () => ({
     return el
   },
   responsifySvg: () => null,
+  adaptDiagramColors: () => {},
+  pinSvgTextColors: () => {},
   attachMermaidToolbar: () => {},
+  bakeDiagram: () => Promise.resolve(false),
   collectPendingMermaid: () => [],
 }))
 

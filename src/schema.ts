@@ -214,7 +214,7 @@ const nodes: SchemaSpec['nodes'] = {
     marks: '',
     code: true,
     atom: true,
-    attrs: { value: { default: '' }, _source: { default: false } },
+    attrs: { value: { default: '' }, _source: { default: false }, _edit: { default: false } },
     parseDOM: [{
       tag: '[data-mermaid-block]',
       getAttrs(dom: HTMLElement) {
