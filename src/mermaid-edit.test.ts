@@ -228,6 +228,39 @@ describe('patchLabel: kanban', () => {
     )
   })
 
+  it('renames into a quoted label, and back out of one', () => {
+    // The span is the whole quoted run, so a rename keeps the quoting the
+    // source had and swaps only the text inside it.
+    const plain = 'kanban\n  Todo\n    id1[Plain]'
+    expect(patchLabel(plain, family, 'Plain', 'Fix (the bug)')).toEqual(
+      ok('kanban\n  Todo\n    id1["Fix (the bug)"]'),
+    )
+    const quoted = 'kanban\n  Todo\n    id1["Fix (the bug)"]'
+    expect(patchLabel(quoted, family, 'Fix (the bug)', 'Renamed')).toEqual(
+      ok('kanban\n  Todo\n    id1["Renamed"]'),
+    )
+  })
+
+  it('renames a hand-written quoted label, the one shape our own quoting writes', () => {
+    // A quoted label is the only form mermaid reads a delimiter out of, and it
+    // draws it without the quotes, so the label the user clicked is the text
+    // inside them — which is what has to be replaced.
+    const board = 'kanban\n  Todo\n    ["Ship (v1)"]\n  ["Doing (now)"]'
+    expect(patchLabel(board, family, 'Ship (v1)', 'Ship it')).toEqual(
+      ok('kanban\n  Todo\n    ["Ship it"]\n  ["Doing (now)"]'),
+    )
+    expect(patchLabel(board, family, 'Doing (now)', 'Doing (later)')).toEqual(
+      ok('kanban\n  Todo\n    ["Ship (v1)"]\n  ["Doing (later)"]'),
+    )
+  })
+
+  it('never invents a label for an unterminated quote', () => {
+    // `["Half open` says nothing about where the label ends, so the model
+    // withholds it rather than offering a rename it cannot place.
+    const [card] = parseKanban('kanban\n  Todo\n    ["Half open').cards
+    expect(card?.label).toBeNull()
+  })
+
   it('falls back to the rendered text for a shape mermaid renders verbatim', () => {
     // The mapper reports no label for `id6>Ang Label]`, so the edit goes
     // through the unique-substring rule rather than guessing a shape span.
@@ -646,10 +679,23 @@ describe('addKanbanCard', () => {
     expect(addKanbanCard(source, 0, 0, '   ')).toBeNull()
   })
 
-  it('refuses a label the grammar cannot carry', () => {
-    // These would either break the whole board or stop mapping back to the
-    // source, which withholds the card's label from the editor.
-    for (const label of ['a]b', 'a[b', 'a{b}', '@{ type: bug }', 'one\ntwo']) {
+  it('quotes a label the grammar cannot write bare, and reads it back unquoted', () => {
+    // Mermaid reuses the flowchart *shape* delimiters inside a `[…]`, so these
+    // have to be quoted — and it draws a quoted label without the quotes, which
+    // is what makes the quoted spelling invisible to the user.
+    const next = addKanbanCard(source, 0, 0, 'Fix (the bug)')!
+    expect(next).toContain('    ["Fix (the bug)"]')
+    // The model reads the label the user typed; the span brackets the quoted
+    // run around it, which is what a rename replaces.
+    const added = parseKanban(next).cards.find((card) => card.label === 'Fix (the bug)')!
+    expect(next.slice(added.labelStart, added.labelEnd)).toBe('"Fix (the bug)"')
+  })
+
+  it('refuses a label no quoting can carry', () => {
+    // A `"` would close the label its own quote opened, and a line break is not
+    // text at all. Refused before the source is touched, so a card can never be
+    // committed that mermaid will not render.
+    for (const label of ['a"b', 'one\ntwo', '   ']) {
       expect(addKanbanCard(source, 0, 0, label)).toBeNull()
     }
   })
@@ -680,8 +726,10 @@ describe('addKanbanCard', () => {
 
 describe('buildKanbanSource', () => {
   it('builds a runnable board from the column names', () => {
+    // The de-duplicated name holds parentheses, so it is quoted — mermaid draws
+    // it as `Doing (2)` either way, and the quotes are a source detail.
     expect(buildKanbanSource(['Todo', 'Doing', 'Doing'])).toBe(
-      'kanban\n  col1[Todo]\n  col2[Doing]\n  col3[Doing (2)]',
+      'kanban\n  col1[Todo]\n  col2[Doing]\n  col3["Doing (2)"]',
     )
   })
 
@@ -689,8 +737,8 @@ describe('buildKanbanSource', () => {
     const source = buildKanbanSource(['Doing', 'Doing', 'Doing', 'Done'])
     expect(source.split('\n').slice(1)).toEqual([
       '  col1[Doing]',
-      '  col2[Doing (2)]',
-      '  col3[Doing (3)]',
+      '  col2["Doing (2)"]',
+      '  col3["Doing (3)"]',
       '  col4[Done]',
     ])
   })
@@ -704,16 +752,25 @@ describe('buildKanbanSource', () => {
     expect(parseKanban(buildKanbanSource(['In Progress', 'Done'])).columns).toHaveLength(2)
   })
 
-  it('drops names the grammar cannot carry, so the board still renders', () => {
-    const source = buildKanbanSource(['Todo', 'a]b', 'a{b}', 'x@{ y }', 'Done'])
-    expect(source).toBe('kanban\n  col1[Todo]\n  col2[Done]')
+  it('quotes the names the grammar cannot write bare, and drops what it cannot carry', () => {
+    // A column may be called almost anything: what it cannot hold is a double
+    // quote or a line break, and those are dropped so the board still renders.
+    expect(buildKanbanSource(['Todo', 'Q3 (launch)', 'x@{ y }', 'Done'])).toBe(
+      'kanban\n  col1[Todo]\n  col2["Q3 (launch)"]\n  col3["x@{ y }"]\n  col4[Done]',
+    )
+    expect(buildKanbanSource(['Todo', 'a"b', 'one\ntwo', 'Done'])).toBe(
+      'kanban\n  col1[Todo]\n  col2[Done]',
+    )
   })
 
   it('seeds the first column with a card when asked', () => {
     expect(buildKanbanSource(['Todo', 'Done'], { firstCard: 'Write the spec' })).toBe(
       'kanban\n  col1[Todo]\n    [Write the spec]\n  col2[Done]',
     )
-    expect(buildKanbanSource(['Todo'], { firstCard: 'a]b' })).toBe('kanban\n  col1[Todo]')
+    expect(buildKanbanSource(['Todo'], { firstCard: 'a]b' })).toBe(
+      'kanban\n  col1[Todo]\n    ["a]b"]',
+    )
+    expect(buildKanbanSource(['Todo'], { firstCard: 'a"b' })).toBe('kanban\n  col1[Todo]')
   })
 
   it('ignores blank lines and surrounding space', () => {
@@ -723,7 +780,7 @@ describe('buildKanbanSource', () => {
   it('returns nothing when no column name is usable', () => {
     expect(buildKanbanSource([])).toBe('')
     expect(buildKanbanSource(['', '  '])).toBe('')
-    expect(buildKanbanSource(['a]b'])).toBe('')
+    expect(buildKanbanSource(['a"b'])).toBe('')
   })
 
   it('round-trips through the model: one column per name, labels intact', () => {
@@ -1606,12 +1663,26 @@ describe('kanban add buttons', () => {
     expect(document.querySelector('.mermaid-edit-input')).toBeNull()
   })
 
-  it('refuses a title the grammar cannot carry, and says so', async () => {
+  it('accepts a title holding a delimiter, quoting it in the source', async () => {
     const commit = vi.fn()
     const { preview } = await renderBoard(commit)
 
     click(addButtons(preview)[0]!)
-    typeAndConfirm('a]b')
+    typeAndConfirm('Fix (the bug)')
+
+    // The card lands; the quotes are how the source spells it, not what the
+    // user typed, and mermaid draws it without them.
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(commit.mock.calls[0]![0]).toContain('    ["Fix (the bug)"]')
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+  })
+
+  it('refuses a title no quoting can carry, and says so', async () => {
+    const commit = vi.fn()
+    const { preview } = await renderBoard(commit)
+
+    click(addButtons(preview)[0]!)
+    typeAndConfirm('a"b')
 
     // Flashed, not silently dropped — and the board is untouched.
     expect(input().classList.contains('mermaid-edit-invalid')).toBe(true)

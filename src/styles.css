@@ -1798,6 +1798,11 @@ body {
   flex: none;
   white-space: nowrap;
   overflow: hidden;
+  /* Chrome, not content: same as the tab bar and the toolbar, a drag across the
+     file name or the word count is never meant to select them — and a double
+     click in the space under a short document would otherwise answer itself
+     with the nearest text on the page, which is this. */
+  user-select: none;
 }
 
 #status-right {

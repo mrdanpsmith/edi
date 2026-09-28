@@ -1026,6 +1026,37 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
+  it('leaves edit mode on a double click in the editor space below the document', async () => {
+    mockFlowchart()
+    // A document of one diagram only, so the editor's own box ends just under
+    // it and everything below is the *scroller's* white space -- the area a
+    // double click lands on when it is aimed at the page under the board.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    const space = view.dom.parentElement!
+    expect(space.contains(view.dom)).toBe(true)
+
+    space.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    // Nothing is in edit mode, so the gesture is not ours to answer.
+    expect(editModeOf(view)).toBe(false)
+
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(editModeOf(view)).toBe(true)
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+
+    // The gesture that turns the mode off should not have to land back on the
+    // diagram, and the page below it is not even part of the editor's own box.
+    space.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+
+    view.destroy()
+  })
+
   it('ignores a double click outside when no diagram is in edit mode', async () => {
     mockFlowchart()
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')

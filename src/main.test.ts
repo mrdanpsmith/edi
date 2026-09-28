@@ -1066,13 +1066,29 @@ describe('kanban board insertion', () => {
     const view = attachView('Hello')
     menu('insertKanban')
     await flushAsync()
-    columnField().value = ']]'
+    // A double quote is the one name no quoting can carry: it would close the
+    // label its own quote opened.
+    columnField().value = '"'
     addBoard()
     await flushAsync()
     expect(view.state.doc.childCount).toBe(1)
     expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('kanban column'),
     )
+  })
+
+  it('inserts a column whose name holds a delimiter, quoted in the source', async () => {
+    await loadMain()
+    mainState.showError.mockClear()
+    const view = attachView('Hello')
+    menu('insertKanban')
+    await flushAsync()
+    // `]]` is a perfectly good column name; mermaid just cannot read it bare.
+    columnField().value = 'Q3 (launch)\n]]'
+    addBoard()
+    await flushAsync()
+    expect(mainState.showError).not.toHaveBeenCalled()
+    expect(view.state.doc.child(1)?.attrs.value).toBe('kanban\n  col1["Q3 (launch)"]\n  col2["]]"]')
   })
 })
 
@@ -1116,6 +1132,18 @@ describe('context menu', () => {
     await loadMain()
     window.ediSetContent?.('Hello')
     await flushAsync()
+    // A view of this test's own: whether `ediSetContent` still points at an
+    // earlier test's editor (and how much history that one is holding) is not
+    // what "nothing to undo" is meant to be about.
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({
+        doc: markdownToProse('one two', schema),
+        plugins: [history()],
+      }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
     document.querySelector<HTMLElement>('#editor-container')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 0, clientY: 0 }))
     const findItem = (label: string): HTMLButtonElement =>

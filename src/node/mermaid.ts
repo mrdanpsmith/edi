@@ -518,8 +518,21 @@ export const mermaidNodeViewPlugin = new Plugin<MermaidEditState>({
       if (open === null || view.nodeDOM(open) === null) return
       exitDiagramEditMode(view, open)
     }
-    view.dom.addEventListener('dblclick', onDblClick)
-    return { destroy: () => view.dom.removeEventListener('dblclick', onDblClick) }
+    // The editor's own box is only as tall as its content, so a document that is
+    // one short diagram leaves the rest of the scroller — the white area under
+    // the board — outside `view.dom` entirely, and a double click landed there
+    // never reached this handler: the mode stayed on and the browser went on to
+    // select the nearest text on the page instead, which is the document name in
+    // the status bar. Listen on the scroller, which holds both. It is the
+    // scroller and not `document` (which is what the table plugin can afford)
+    // so that a double click in a dialog sitting on top of the editor cannot
+    // reach through it and end the session behind the dialog.
+    // `Document` is in the union for a mount into a fragment or a shadow root,
+    // which ProseMirror allows and which has no `parentElement`; the union is
+    // what defeats `addEventListener`'s typed overloads.
+    const host = view.dom.parentElement ?? document
+    host.addEventListener('dblclick', onDblClick as EventListener)
+    return { destroy: () => host.removeEventListener('dblclick', onDblClick as EventListener) }
   },
   props: {
     nodeViews: {

@@ -46,6 +46,8 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     KANBAN,
     KANBAN_ADDS,
     KANBAN_EMPTY,
+    KANBAN_LONE,
+    KANBAN_QUOTED,
     LABEL_INVENTORY,
     LABEL_STATE,
     SEQUENCE,
@@ -55,10 +57,12 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _click_done,
     _click_kanban_add,
     _click_label,
+    _dblclick_below_document,
     _dump,
     _enter_edit_mode,
     _open_board_dialog,
     _pointer_drag,
+    _press_enter,
     _pump_until,
     _render,
     _set_document,
@@ -1216,6 +1220,167 @@ def test_kanban_add_button_creates_a_card(window):
     after = _wait(window, LABEL_STATE, lambda d: not d["input"], timeout=10)
     assert "Discarded" not in (after["source"] or ""), after
     assert _dump(window, KANBAN_ADDS)["n"] == 3, "the ＋ did not survive a cancelled card"
+
+
+def test_double_click_below_a_lone_board_ends_its_edit_session(window):
+    """A double click under a board that is the whole document ends its edit
+    session — the gesture that turns the mode off should not have to land back
+    on the diagram.
+
+    Real browser only, and the geometry is the whole point: the editor's box is
+    only as tall as its content, so a document of one board leaves the space
+    below it on the *scroller*. A listener on the editor's own box never sees
+    that click (and the browser answers it by selecting the document name in the
+    status bar instead), which is what this test pins down.
+    """
+    _set_scheme(window, False)
+    _render(window, KANBAN_LONE)
+    _enter_edit_mode(window)
+    assert _dump(window, EDIT_STATE)["editing"], "the board never opened for editing"
+
+    spot = _dblclick_below_document(window)
+    assert not spot["inEditor"], f"the double click landed inside the editor: {spot}"
+
+    after = _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)
+    assert not after["marked"], after
+    # The ＋ are edit mode's, so they go with it.
+    assert _dump(window, KANBAN_ADDS)["n"] == 0, "the ＋ outlived the edit session"
+
+    # ...and the gesture is not the editor's own: a second one is harmless, and
+    # the board can be reopened and ended again.
+    _enter_edit_mode(window)
+    assert _dump(window, EDIT_STATE)["editing"], "the board did not reopen"
+    _dblclick_below_document(window)
+    assert _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)["marked"] == 0
+
+
+def test_every_quoted_kanban_delimiter_renders_and_reads_back(window):
+    """Every character `KANBAN_QUOTE_CHARS` (src/mermaid-edit.ts) quotes renders
+    when quoted, and reads back without the quotes.
+
+    Real browser only. Real mermaid rejects only `]`, `(`, `)` and `}` in a
+    *bare* label -- a 40-diagram sweep, one per character, found `[`, `{`, `<`
+    and a stray `>` all render -- so the set is deliberately wider than the
+    minimum, for two reasons of our own: a bare `@{ … }` is eaten as metadata,
+    and a bare `>` is a shape `kanbanLabelSpan` refuses to map back. This pins
+    the half that could actually break: quoting is *always* writable, so the
+    superset costs invisible quotes and never a board.
+    """
+    _set_scheme(window, False)
+    chars = list("[](){}@>")
+    # One diagram per character: a board that fails to parse takes only itself
+    # down, so all eight verdicts arrive in a single render pass.
+    doc = "".join('```mermaid\nkanban\n  Todo\n    ["Fix ' + ch + ' it"]\n```\n\n' for ch in chars)
+    _set_document(window, doc, expect_text="Fix")
+
+    def drawn(d):
+        return all(f"Fix {ch} it" in " ".join(d["texts"]) for ch in chars)
+
+    state = _wait(
+        window,
+        "(() => { const bs = [...document.querySelectorAll('.mermaid')];"
+        " const labels = (b) => { const s = b.querySelector('.mermaid-preview svg');"
+        "   return s ? [...s.querySelectorAll("
+        "     'text, .nodeLabel, .edgeLabel, .labelText, .loopText, .titleText,"
+        " .sectionTitle, .taskText')].map((t) => t.textContent.trim()) : []; };"
+        " return { n: bs.length,"
+        "   errs: bs.map((b) => { const e = b.querySelector('.mermaid-error');"
+        "     return e ? e.textContent.replace(/\\s+/g, ' ').slice(0, 70) : null; }),"
+        "   texts: bs.flatMap(labels) }; })()",
+        lambda d: d["n"] == len(chars) and (drawn(d) or any(d["errs"])),
+        timeout=25,
+    )
+    assert not any(state["errs"]), state["errs"]
+    assert drawn(state), state["texts"]
+    # Drawn as the text inside the quotes: a board never shows them.
+    assert not any('"' in t for t in state["texts"]), state["texts"]
+
+
+def test_kanban_titles_holding_delimiters_stay_editable(window):
+    """A title holding a delimiter is quoted in the source and drawn without the
+    quotes -- and adding or renaming one keeps working.
+
+    Real browser only: whether ``["Fix (bug)"]`` parses, draws as ``Fix (bug)``
+    and accepts a rename is mermaid's own grammar, which no jsdom test can
+    confirm. This is the path that used to strand a board on its last good
+    render, so it asserts the board is still *editable* throughout, not just
+    that the text is somewhere.
+    """
+    _set_scheme(window, False)
+    _render(window, KANBAN_QUOTED)
+    _enter_edit_mode(window)
+
+    # Drawn as the text inside the quotes: the board never shows them.
+    drawn = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any("Fix (the bug)" in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert not any('"' in t for t in drawn["texts"]), drawn
+
+    # Offered for editing, because the span is the whole quoted run.
+    assert _click_label(window, "Fix (the bug)") == "Fix (the bug)"
+    _type_and_confirm(window, "Ship (v2)")
+    renamed = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any("Ship (v2)" in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert renamed["source"].count('"Ship (v2)"') == 1, renamed
+    assert not renamed["error"] and not renamed["notice"], renamed
+    # The quoted column header, the other shape our own quoting writes.
+    assert _click_label(window, "Doing (now)") == "Doing (now)"
+    _type_and_confirm(window, "Doing (later)")
+    header = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any("Doing (later)" in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert header["source"].count('"Doing (later)"') == 1, header
+
+    # A bare card is renamed into a title that needs quoting, in place.
+    assert _click_label(window, "Plain") == "Plain"
+    _type_and_confirm(window, "Ship (v1)")
+    quoted = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any("Ship (v1)" in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert '["Ship (v1)"]' in quoted["source"], quoted
+    assert not quoted["error"] and not quoted["notice"], quoted
+
+    # The ＋ takes the same kind of title and lands it the same way.
+    _click_kanban_add(window, 0)
+    _type_and_confirm(window, "Add (the log)")
+    added = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any("Add (the log)" in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert '    ["Add (the log)"]' in added["source"], added
+    assert not added["error"] and not added["notice"], added
+
+    # What no quoting can carry -- a double quote would close the label its own
+    # quote opened -- is refused in place: nothing committed, the input still
+    # open, the board still in edit mode, so a second attempt is one edit away.
+    before = added["source"]
+    _click_kanban_add(window, 1)
+    _press_enter(window, 'a"b')
+    refused = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: d["notice"] or d["invalid"],
+        timeout=10,
+    )
+    assert refused["input"], f"the refused title closed the editor anyway: {refused}"
+    assert refused["source"] == before, f"a refused title changed the source: {refused}"
+    assert refused["editing"] and refused["editable"], f"the board stopped being editable: {refused}"
+    assert not refused["error"], f"a refused title was committed anyway: {refused}"
 
 
 def test_kanban_board_command_inserts_a_board_ready_to_fill(window):

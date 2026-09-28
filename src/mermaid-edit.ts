@@ -26,7 +26,8 @@ const EDITABLE_CLASS = 'mermaid-editables'
 const INPUT_CLASS = 'mermaid-edit-input'
 const INVALID_CLASS = 'mermaid-edit-invalid'
 const NOTICE_CLASS = 'mermaid-edit-notice'
-const NOTICE_TEXT = "Couldn't parse diagram — keeping the previous version"
+const NOTICE_TEXT =
+  "Couldn't parse diagram — keeping the previous version. Edit the source to fix it."
 const NOTICE_MS = 3000
 const INVALID_FLASH_MS = 700
 const DRAG_CLONE_CLASS = 'mermaid-drag-card'
@@ -569,12 +570,20 @@ function wholeWordSpans(
 
 function kanbanSpans(source: string, label: string): MapperResult {
   const spans: Span[] = []
+  let quoted = false
   for (const line of parseKanban(source).lines) {
     if (line.kind !== 'column' && line.kind !== 'card') continue
     if (line.label !== label) continue
+    if (source[line.labelStart] === '"' && source[line.labelEnd - 1] === '"') quoted = true
     spans.push({ start: line.labelStart, end: line.labelEnd })
   }
-  return { spans }
+  // A label the source already spells as a quoted run keeps its quotes:
+  // mermaid draws a quoted label exactly as it draws a bare one, so the quotes
+  // are invisible in the board, and stripping them would silently rewrite
+  // source the rename was not asked to change. A bare label is spelled bare
+  // when it can be and quoted when the title needs it, so `Plain` renamed to
+  // `Fix (bug)` writes `["Fix (bug)"]` — a title no bare form can carry.
+  return { spans, render: quoted ? kanbanQuotedLabel : kanbanInnerLabel }
 }
 
 /** A state id is referenced by every transition that touches it. */
@@ -1043,10 +1052,23 @@ const KANBAN_METADATA = /\s*@\s*\{[^@]*\}\s*$/
  * `@{ … }` metadata is not part of the label. Shapes mermaid's kanban grammar
  * rejects (`id6>Ang Label]` renders whole) come back as `null` so they are
  * never patched blind.
+ *
+ * A *quoted* label is mermaid's own escape for text holding the shape
+ * delimiters, and it draws the text inside the quotes and nothing else. The
+ * span therefore covers the **whole quoted run, quotes included**, while the
+ * label itself is the text inside them (`parseKanban` unquotes): a rename
+ * replaces the run, so `kanbanInnerLabel` can quote a title that needs it and
+ * unquote one that no longer does, without knowing which of the two it is
+ * looking at. Recognised before the shape search, or a bare `"Fix (bug)"` finds
+ * its own `(` and gets mapped to `bug`.
  */
 function kanbanLabelSpan(body: string): Span | null {
   const metadata = KANBAN_METADATA.exec(body)
   const head = metadata ? body.slice(0, metadata.index) : body
+  if (head.startsWith('"')) {
+    return head.length > 1 && head.endsWith('"') ? { start: 0, end: head.length } : null
+  }
+
   const open = head.search(new RegExp(`[${KANBAN_OPEN_CHARS}>]`))
   if (open < 0) return { start: 0, end: head.length }
 
@@ -1059,7 +1081,19 @@ function kanbanLabelSpan(body: string): Span | null {
   if (closeRun < openRun) return null
   const start = open + openRun
   const end = head.length - closeRun
+  // `["Fix (bug)"]`: the quoted run ends before the closing `]`, so it is bounded
+  // by the quote and not by the delimiter run. An unterminated quote is never
+  // patched blind.
+  if (head[start] === '"') {
+    const close = head.indexOf('"', start + 1)
+    return close < 0 || close > end ? null : { start, end: close + 1 }
+  }
   return end < start ? null : { start, end }
+}
+
+/** A quoted label is drawn as the text inside its quotes, so that is the label. */
+function unquoteKanbanLabel(text: string): string {
+  return text.length > 1 && text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text
 }
 
 function runForward(text: string, from: number, char: string): number {
@@ -1106,14 +1140,17 @@ export function parseKanban(source: string): KanbanDoc {
     // The label is relative to the trimmed body, so shift the absolute offset
     // past the indent and any space between the indent and the body.
     const start = raw.offset + raw.indent.length + (raw.text.length - body.length) + (span?.start ?? 0)
+    const labelled = span ? body.slice(span.start, span.end) : null
     const line: KanbanLine = {
       text: raw.text,
       indent: raw.indent,
       offset: raw.offset,
       kind: 'card',
-      label: span ? body.slice(span.start, span.end) : null,
+      // A quoted label is *drawn* as the text inside its quotes, so that is the
+      // label — while the span keeps the run whole, for the rename to replace.
+      label: labelled === null ? null : unquoteKanbanLabel(labelled),
       labelStart: span ? start : raw.labelStart,
-      labelEnd: span ? start + body.slice(span.start, span.end).length : raw.labelEnd,
+      labelEnd: span ? start + labelled!.length : raw.labelEnd,
     }
 
     if (raw.indent.length === sectionLevel) {
@@ -1211,18 +1248,62 @@ export function moveKanbanCard(source: string, from: number, column: number, ind
 }
 
 /**
- * Characters mermaid's kanban grammar cannot carry inside a label: it reads a
- * node's text as "everything up to the closing delimiter", so a `]` ends the
- * label, a nested `[…]` is a parse error and `@{` opens metadata. A label
- * holding any of them either fails to parse or stops mapping back to the
- * source, which would silently withhold the card from the label editor.
+ * Characters that make a kanban label worth quoting. A bracketed node is not
+ * "everything up to the closing bracket": the delimiters are the *shape* syntax
+ * mermaid reuses from flowcharts.
+ *
+ * The set is deliberately the whole shape syntax rather than the minimum, which
+ * real mermaid (a 40-diagram sweep, one per character) turned out to be `]`,
+ * `(`, `)` and `}` — `[`, `{`, `<` and a stray `>` all render bare. A superset
+ * costs one pair of invisible quotes and buys two things a minimum cannot: an
+ * unquoted label holding `@{ … }` is *silently eaten as metadata*, and one
+ * holding `>` renders but our own mapper refuses it as a shape with no closer.
+ * Both mean a title the user typed is not the title the board shows. Quoting
+ * the shape syntax is the line that keeps the two in step.
  */
-const UNUSABLE_KANBAN_LABEL = /[[\]{@}\n]/
+const KANBAN_QUOTE_CHARS = /[[\](){}@>]/
+
+/**
+ * The text to write *inside* a `[…]`'s delimiters. Mermaid's kanban grammar
+ * takes a quoted label and draws it without the quotes, so `["Fix (bug)"]` is
+ * the text `Fix (bug)` on the board and in the label editor — the quotes are a
+ * source-level spelling detail, never part of what the user typed. One function
+ * for all three writers (a new card, a new column, a rename) so a label cannot
+ * be writable one way and not the other.
+ */
+function kanbanInnerLabel(text: string): string {
+  return KANBAN_QUOTE_CHARS.test(text) ? `"${text}"` : text
+}
+
+/** A label whose source already carries quotes keeps them across a rename. */
+function kanbanQuotedLabel(text: string): string {
+  return `"${text}"`
+}
+
+/**
+ * What no quoting can carry. A `"` would close the label the quote opened, and a
+ * line break is not text at all. Everything else mermaid refuses in a bare label
+ * is quoted above, so the refusal is about the *representable*, not the
+ * convenient — and a card is refused before it reaches the source, because
+ * committing one that cannot render strands the board on its last good diagram
+ * with the card the user just typed visible nowhere.
+ */
+const UNUSABLE_KANBAN_LABEL = /["\n]/
 
 /** Whether `name` can be written as a kanban column header or card label. */
 export function usableKanbanLabel(name: string): boolean {
   const trimmed = name.trim()
   return trimmed.length > 0 && !UNUSABLE_KANBAN_LABEL.test(trimmed)
+}
+
+/**
+ * Why `name` cannot be a kanban label, or `''` when it can. Names the rule the
+ * user just hit, because "could not parse" says nothing about which of their own
+ * keystrokes to take back.
+ */
+export function kanbanLabelRefusal(name: string): string {
+  if (name.trim().length === 0) return 'A kanban label cannot be empty.'
+  return 'A kanban label can’t contain a double quote — there is no way to write one into a diagram.'
 }
 
 /**
@@ -1256,15 +1337,21 @@ export function addKanbanCard(
   // consistent: one level deeper than the column would mix tabs and spaces.
   const model = siblings[0] ?? doc.cards[0]
   const indent = (model === undefined ? undefined : doc.lines[model.line]?.indent) ?? `${headerLine.indent}  `
+  // The label is what the user typed; the body is how that label is spelled in
+  // the source, which is the same thing for an ordinary title and a quoted one
+  // for a title holding a delimiter.
+  const inner = kanbanInnerLabel(text)
+  // The span is the whole run between the delimiters — quotes included — so a
+  // later rename re-spells it the same way this insert did.
   const start = indent.length + 1
   const card: KanbanLine = {
-    text: `[${text}]`,
+    text: `[${inner}]`,
     indent,
     offset: 0,
     kind: 'card',
     label: text,
     labelStart: start,
-    labelEnd: start + text.length,
+    labelEnd: start + inner.length,
   }
 
   const lines = doc.lines.slice()
@@ -1281,13 +1368,15 @@ export function addKanbanCard(
 /**
  * A runnable kanban diagram for `columns`, or `''` when none of them is usable
  * (the caller reports that rather than inserting a board that cannot render).
- *
- * Headers are always emitted as `id[Name]`: a bare word renders too, but not a
- * name holding `]`, `{` or `@`, and the `id[Name]` shape is the one
- * `kanbanLabelSpan` maps, so every generated column is immediately renamable in
- * the editor. Ids are positional (`col1…`) and labels are de-duplicated with a
- * ` (2)` suffix, so a board asked for two `Doing` columns still renders.
- */
+  *
+  * Headers are always emitted as `id[Name]`: a bare word renders too, but not a
+  * name holding a delimiter, and the `id[Name]` shape is the one
+  * `kanbanLabelSpan` maps, so every generated column is immediately renamable in
+  * the editor. Ids are positional (`col1…`) and labels are de-duplicated with a
+  * ` (2)` suffix, so a board asked for two `Doing` columns still renders. A name
+  * holding a delimiter is quoted by `kanbanInnerLabel` exactly as a card's is,
+  * which is what lets a column be called `Q3 (launch)`.
+  */
 export function buildKanbanSource(columns: string[], opts: { firstCard?: string } = {}): string {
   const names = columns.map((name) => name.trim()).filter(usableKanbanLabel)
   if (names.length === 0) return ''
@@ -1296,11 +1385,11 @@ export function buildKanbanSource(columns: string[], opts: { firstCard?: string 
   const lines = names.map((name, index) => {
     const count = seen.get(name) ?? 0
     seen.set(name, count + 1)
-    return `  col${index + 1}[${count === 0 ? name : `${name} (${count + 1})`}]`
+    return `  col${index + 1}[${kanbanInnerLabel(count === 0 ? name : `${name} (${count + 1})`)}]`
   })
   // The seed card belongs to the first column, the one a board is read from.
   const firstCard = opts.firstCard?.trim() ?? ''
-  if (usableKanbanLabel(firstCard)) lines.splice(1, 0, `    [${firstCard}]`)
+  if (usableKanbanLabel(firstCard)) lines.splice(1, 0, `    [${kanbanInnerLabel(firstCard)}]`)
   return ['kanban', ...lines].join('\n')
 }
 
@@ -1523,11 +1612,15 @@ interface InlineInputSpec {
   value: string
   placeholder?: string
   /**
-   * Enter, or a blur. Return `false` to flash the input red and leave it open —
-   * the way an unmappable value or an unusable card title is refused — and
-   * `true` when the caller is done with the input either way.
+   * Enter, or a blur. Return `true` when the caller is done with the input
+   * either way, `false` to refuse the value quietly, and a string to refuse it
+   * *and* say why in a notice — the way an unusable card title is refused. A
+   * refused value is one the editor knows it cannot write down, so the reason
+   * travels with it: the alternative is a card that silently fails to appear
+   * and a notice about a diagram that refused to parse, neither of which tells
+   * the user which of their own keystrokes to take back.
    */
-  onAccept: (value: string) => boolean
+  onAccept: (value: string) => boolean | string
   /** Esc, or a resolve from outside with `accept: false`. */
   onCancel: () => void
 }
@@ -1575,9 +1668,17 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
       return
     }
     // A refused value flashes red and takes itself off: leaving the input open
-    // would strand one the only way out of is Esc.
-    if (!onAccept(input.value.trim())) {
+    // would strand one the only way out of is Esc. A refusal that came with a
+    // reason also says it, since the red flash alone leaves the user staring at
+    // a card that did not appear.
+    const refusal = onAccept(input.value.trim())
+    if (refusal !== true) {
       input.classList.add(INVALID_CLASS)
+      const why = typeof refusal === 'string' ? refusal : ''
+      if (why) {
+        const block = host.closest<HTMLElement>('.mermaid')
+        if (block) showNotice(block, why, 'The diagram cannot be given that label.')
+      }
       setTimeout(close, INVALID_FLASH_MS)
       return
     }
@@ -1629,6 +1730,13 @@ function openLabelEditor(
     value: current,
     onAccept: (value) => {
       if (value === current) return true
+      // A kanban label that cannot be written at all is refused here rather
+      // than committed: the patch would land, mermaid would refuse the source,
+      // and the board would sit on its last good render with the label the user
+      // just typed on no screen anywhere.
+      if (family === 'kanban' && !usableKanbanLabel(value)) {
+        return kanbanLabelRefusal(value)
+      }
       const outcome = patchLabel(source, family, target.text, value, target)
       if (outcome.status === 'ok') {
         commit(outcome.text)
@@ -1852,7 +1960,7 @@ function attachKanbanAddButtons(
           placeholder: `New card in ${name}`,
           onAccept: (value) => {
             const next = addKanbanCard(source, column, cardsIn(column), value)
-            if (next === null) return false
+            if (next === null) return kanbanLabelRefusal(value)
             commit(next)
             return true
           },

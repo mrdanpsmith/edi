@@ -122,6 +122,21 @@ KANBAN = "kanban\n  Todo\n    id1[One]\n    id2[Two]\n  Doing\n    id3[Three]"
 # A board with an empty middle column: mermaid still draws it, as a shorter
 # band sized to its header, which is what gives a per-column ＋ somewhere to go.
 KANBAN_EMPTY = "kanban\n  Todo\n    id1[One]\n  Doing\n  Done\n    id2[Two]"
+# A document that is nothing but a board, the shape that leaves the scroller's
+# own white space under it: the editor's box ends with the diagram, so a double
+# click below the board is a click on the scroller, not on the editor.
+KANBAN_LONE = (
+    "kanban\n  col1[Todo]\n  col2[In Progress]\n  col3[Done]\n"
+    "    [hi]\n    [how]\n    [are]\n    [you?]"
+)
+# A hand-written board whose titles hold the delimiters a bare `[…]` cannot
+# carry, plus one bare card (`Plain`) for the other direction. Mermaid draws a
+# quoted label as the text inside the quotes, so nothing here shows a quote, and
+# the app quotes a title like these itself when it writes one back out.
+KANBAN_QUOTED = (
+    "kanban\n  col1[Todo]\n    [\"Fix (the bug)\"]\n"
+    "  col2[\"Doing (now)\"]\n    id2[Plain]\n  col3[Done]"
+)
 SEQUENCE = (
     "sequenceDiagram\n  participant Alice\n  participant Bob\n"
     "  Alice->>Bob: Hello Bob\n  Bob-->>Alice: Hi Alice"
@@ -187,7 +202,10 @@ def _click_label(win, text):
     )["v"]
 
 
-def _type_and_confirm(win, value, timeout=15):
+def _press_enter(win, value):
+    """Type a value into the open label editor and press Enter, without waiting
+    for the editor to close: a value the grammar cannot carry is refused *in
+    place*, so the input is still there afterwards and the caller asserts that."""
     typed = _dump(
         win,
         f"""(() => {{
@@ -199,6 +217,11 @@ def _type_and_confirm(win, value, timeout=15):
         }})()""",
     )
     assert not typed.get("missing"), "no label editor was open"
+    return typed
+
+
+def _type_and_confirm(win, value, timeout=15):
+    _press_enter(win, value)
     _wait(
         win,
         "(() => ({ gone: !document.querySelector('.mermaid-edit-input') }))()",
@@ -410,6 +433,44 @@ def _click_kanban_add(win, index):
         lambda d: d["v"] is not None,
         timeout=10,
     )
+
+
+def _dblclick_below_document(win):
+    """Double-click the white space the editor's own box does not reach.
+
+    A document of one short diagram ends the ProseMirror box just under it, and
+    everything below that is the scroller's background — a click there is a click
+    on the scroller, which is why a listener on ``view.dom`` never sees it and
+    the browser goes on to select the nearest text on the page (the document
+    name in the status bar). Reports the element the point really lands on, so a
+    test can show the click was outside the editor rather than assume it.
+    """
+    out = _dump(
+        win,
+        """(() => {
+          const pm = document.querySelector('.ProseMirror');
+          const box = pm.parentElement;
+          if (!pm || !box) return { missing: true };
+          const pmRect = pm.getBoundingClientRect();
+          const boxRect = box.getBoundingClientRect();
+          // Far enough under the board to be past the editor's box, and never
+          // so far that it leaves the scroller.
+          const y = Math.min(pmRect.bottom + 24, boxRect.bottom - 8);
+          const x = boxRect.left + boxRect.width / 2;
+          const el = document.elementFromPoint(x, y);
+          const opts = { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y };
+          for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) {
+            (el || document.body).dispatchEvent(new MouseEvent(type, opts));
+          }
+          return {
+            y: Math.round(y), inEditor: !!(el && el.closest && el.closest('.ProseMirror')),
+            on: el ? (el.id || el.className || el.tagName) : null,
+            selected: String(window.getSelection()),
+          };
+        })()""",
+    )
+    assert not out.get("missing"), "the editor or its scroller is missing"
+    return out
 
 
 def _zoom(win, label):
