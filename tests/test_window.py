@@ -40,11 +40,13 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     BOARD_DIALOG,
     CARDS_AND_BANDS,
     COLUMNS,
+    DELETE_PROMPT,
     DOC_SOURCE,
     EDIT_STATE,
     FLOW,
     KANBAN,
     KANBAN_ADDS,
+    KANBAN_BUTTONS,
     KANBAN_EMPTY,
     KANBAN_LONE,
     KANBAN_QUOTED,
@@ -55,7 +57,9 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _cancel_board_dialog,
     _click_first_offered,
     _click_done,
+    _answer_delete_prompt,
     _click_kanban_add,
+    _click_kanban_button,
     _click_label,
     _dblclick_below_document,
     _dump,
@@ -1251,7 +1255,10 @@ def test_kanban_add_button_creates_a_card(window):
     _zoom(window, "100%")
 
     opened = _click_kanban_add(window, 1)
-    assert opened["v"] == "" and opened["ph"] == "New card in Doing", opened
+    # The field says what it is for in a caption, and leaves the input itself to
+    # the one thing a user types: a short title.
+    assert opened["v"] == "" and opened["ph"] == "Card title", opened
+    assert opened["caption"] == "New card in Doing", opened
     _type_and_confirm(window, "Fresh")
     state = _wait(
         window,
@@ -1288,6 +1295,139 @@ def test_kanban_add_button_creates_a_card(window):
     )
     after = _wait(window, LABEL_STATE, lambda d: not d["input"], timeout=10)
     assert "Discarded" not in (after["source"] or ""), after
+
+
+def _buttons_in(shape, button):
+    """Whether a control's whole box sits inside the card or band it belongs to."""
+    return (
+        shape["box"]["left"] - 0.5 <= button["box"]["left"]
+        and button["box"]["right"] <= shape["box"]["right"] + 0.5
+        and shape["box"]["top"] - 0.5 <= button["box"]["top"]
+        and button["box"]["bottom"] <= shape["box"]["bottom"] + 0.5
+    )
+
+
+def test_kanban_buttons_add_and_delete_cards_and_columns(window):
+    """A board can be authored, not just rearranged: add and delete both of its
+    two things, from a control on the thing itself.
+
+    Real browser only. Every button here is an HTML overlay positioned from a
+    mermaid rect, so what is being tested is the geometry, the prompt, and the
+    round trip back into the source — none of which jsdom can lay out.
+    """
+    _render(window, KANBAN_EMPTY)
+    _enter_edit_mode(window)
+
+    board = _wait(
+        window,
+        KANBAN_BUTTONS,
+        lambda d: len(d["buttons"]) == 11 and len(d["cards"]) == 2 and len(d["bands"]) == 3,
+        timeout=15,
+    )
+    # The card ＋ plus the two header controls per column, and a ✕ per card.
+    kinds = sorted(b["kind"] for b in board["buttons"])
+    assert kinds == (
+        ["mermaid-kanban-add"] * 3
+        + ["mermaid-kanban-card-remove"] * 2
+        + ["mermaid-kanban-column-add"] * 3
+        + ["mermaid-kanban-column-remove"] * 3
+    ), kinds
+    # Each ✕ is inside the card or the band it names. A ✕ that lands on the
+    # neighbouring card is the failure this cannot be eyeballed past.
+    for button in board["buttons"]:
+        if button["kind"] == "mermaid-kanban-card-remove":
+            assert any(_buttons_in(card, button) for card in board["cards"]), (button, board["cards"])
+        else:
+            assert any(_buttons_in(band, button) for band in board["bands"]), (button, board["bands"])
+    # The two column controls share the top-right of their band, side by side:
+    # ＋ where it has always been, ✕ in the space the ＋ left for it.
+    for band in board["bands"]:
+        in_band = [
+            b
+            for b in board["buttons"]
+            if b["kind"] != "mermaid-kanban-card-remove" and _buttons_in(band, b)
+        ]
+        add = [b for b in in_band if b["kind"] == "mermaid-kanban-column-add"]
+        remove = [b for b in in_band if b["kind"] == "mermaid-kanban-column-remove"]
+        assert len(add) == 1 and len(remove) == 1, (band, in_band)
+        assert abs(add[0]["box"]["y"] - remove[0]["box"]["y"]) < 1.0, (add[0], remove[0])
+        assert add[0]["box"]["x"] > remove[0]["box"]["x"], (add[0], remove[0])
+
+    # A card's ✕ asks first, and a Cancel takes nothing away.
+    _click_kanban_button(window, "mermaid-kanban-card-remove", 0)
+    prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
+    assert prompt["title"] == "Delete “One”?" and prompt["danger"], prompt
+    assert prompt["buttons"] == ["Cancel", "Delete"], prompt
+    _answer_delete_prompt(window, "Cancel")
+    _wait(window, DELETE_PROMPT, lambda d: not d["present"], timeout=10)
+    kept = _wait(window, DOC_SOURCE, lambda d: d["n"] == 1, timeout=10)
+    assert "id1[One]" in kept["sources"][0], kept
+
+    # And answering it removes the card, as one source patch.
+    _click_kanban_button(window, "mermaid-kanban-card-remove", 0)
+    prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
+    assert "removed from the Todo column" in prompt["note"], prompt
+    _answer_delete_prompt(window, "Delete")
+    gone = _wait(
+        window,
+        DOC_SOURCE,
+        lambda d: d["n"] == 1 and "id1[One]" not in d["sources"][0],
+        timeout=15,
+    )
+    assert "id2[Two]" in gone["sources"][0], gone
+    # The render rebuilt the board, so the controls are back — now one card.
+    board = _wait(
+        window,
+        KANBAN_BUTTONS,
+        lambda d: len(d["buttons"]) == 10 and len(d["cards"]) == 1,
+        timeout=15,
+    )
+    assert [b["label"] for b in board["buttons"] if b["kind"] == "mermaid-kanban-card-remove"] == [
+        "Delete the card Two"
+    ], board
+
+    # A column's ＋ adds a column after that one, named by its caption.
+    _click_kanban_button(window, "mermaid-kanban-column-add", 0)
+    opened = _wait(
+        window,
+        "(() => { const i = document.querySelector('.mermaid-edit-input');"
+        " return { v: i ? i.value : null, ph: i ? i.placeholder : null,"
+        "   caption: (document.querySelector('.mermaid-edit-caption') || {}).textContent }; })()",
+        lambda d: d["v"] is not None,
+        timeout=10,
+    )
+    assert opened["v"] == "" and opened["ph"] == "Column name", opened
+    assert opened["caption"] == "New column after Todo", opened
+    _type_and_confirm(window, "In review")
+    added = _wait(
+        window,
+        DOC_SOURCE,
+        lambda d: d["n"] == 1 and "In review" in d["sources"][0],
+        timeout=20,
+    )
+    assert "col1[In review]" in added["sources"][0], added
+    _wait(
+        window,
+        SECTIONS,
+        lambda d: d["n"] == 4 and any("In review" in s for s in d["sections"]),
+        timeout=15,
+    )
+
+    # And a column's ✕ says how many cards go with it, then goes.
+    _click_kanban_button(window, "mermaid-kanban-column-remove", 0)
+    prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
+    assert prompt["title"] == "Delete the Todo column?" and prompt["danger"], prompt
+    # Todo is empty by now, so the prompt must not claim it is taking cards.
+    assert "cards go with it" not in prompt["note"], prompt
+    _answer_delete_prompt(window, "Delete")
+    dropped = _wait(
+        window,
+        DOC_SOURCE,
+        lambda d: d["n"] == 1 and "\n  Todo\n" not in "\n" + d["sources"][0] + "\n",
+        timeout=15,
+    )
+    assert "id2[Two]" in dropped["sources"][0], dropped
+    assert dropped["sources"][0].splitlines()[1].strip() == "col1[In review]", dropped
     assert _dump(window, KANBAN_ADDS)["n"] == 3, "the ＋ did not survive a cancelled card"
 
 

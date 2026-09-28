@@ -19,11 +19,17 @@ import {
   pinSvgTextColors,
   responsifySvg,
 } from './mermaid'
+import { promptForKanbanDelete } from './urlDialog'
 
 // ── classes and timings ────────────────────────────────────────────────────
 
 const EDITABLE_CLASS = 'mermaid-editables'
 const INPUT_CLASS = 'mermaid-edit-input'
+/** The box an inline input is placed and sized by, so a caption rides with it. */
+export const FIELD_CLASS = 'mermaid-edit-field'
+const CAPTION_CLASS = 'mermaid-edit-caption'
+/** On the field above an input that is *adding* something, not replacing it. */
+const FIELD_NEW_CLASS = 'mermaid-edit-field-new'
 const INVALID_CLASS = 'mermaid-edit-invalid'
 const NOTICE_CLASS = 'mermaid-edit-notice'
 const NOTICE_TEXT =
@@ -40,12 +46,38 @@ const DROP_TARGET_CLASS = 'kanban-drop-target'
 /** How far a line sits outside the cards bracketing a gap, in px. */
 const DROP_LINE_GAP = 5
 /** How far the line reaches past its column, so it still shows either side of
- * the card that covers it — mermaid draws a card ~15px narrower than its column. */
+ *  the card that covers it — mermaid draws a card ~15px narrower than its column. */
 const DROP_LINE_OVERHANG = 4
 /** How much the lifted card grows while it is held, about its own corner. */
 const DRAG_LIFT_SCALE = 1.04
-/** The per-column ＋ that creates a card; the node view keeps its events. */
+
+/**
+ * The board's own controls in edit mode, all of them this class plus one naming
+ * the thing they do. The node view keys its own event handling off the base
+ * class, so a button added here is excluded from ProseMirror and from the
+ * double-click that ends an edit session without touching any of them.
+ */
+export const KANBAN_BUTTON_CLASS = 'mermaid-kanban-btn'
+/** The per-column ＋ that creates a card. */
 export const ADD_BUTTON_CLASS = 'mermaid-kanban-add'
+const COLUMN_ADD_BUTTON_CLASS = 'mermaid-kanban-column-add'
+const CARD_REMOVE_BUTTON_CLASS = 'mermaid-kanban-card-remove'
+const COLUMN_REMOVE_BUTTON_CLASS = 'mermaid-kanban-column-remove'
+/** Half the board buttons' side, in px: they are placed by their centre. */
+const KANBAN_BUTTON_HALF = 11
+/** Half a card's delete button, which is smaller than a ＋. */
+const REMOVE_BUTTON_HALF = 8
+/** From a card's or column's own corner to the centre of its button. */
+const KANBAN_BUTTON_EDGE = 10
+/** Between a column's two header buttons. */
+const KANBAN_BUTTON_GAP = 5
+/** A field that names a new card or column, wide enough for a real title. */
+const NEW_FIELD_WIDTH = 200
+const NEW_FIELD_HEIGHT = 22
+const NEW_FIELD_LIFT = 8
+/** A field retyping an existing label, in px. */
+const RENAME_FIELD_WIDTH = 140
+
 
 /** Marks a `.mermaid` block that is in edit mode rather than previewing. */
 export const EDITING_CLASS = 'mermaid-editing'
@@ -1404,6 +1436,110 @@ export function buildKanbanSource(columns: string[], opts: { firstCard?: string 
   return ['kanban', ...lines].join('\n')
 }
 
+/**
+ * A node's own id, or `''` for a bare label (which *is* the id). The id is what
+ * ties a card to the column above it, and it is the one thing a new column has
+ * to bring: nothing in mermaid's kanban depends on the ids being consecutive or
+ * ordered, so a fresh one is enough to insert a column anywhere on the board.
+ */
+function kanbanNodeId(text: string): string {
+  return /^(\S*?)\s*(?:[[({>]|")/.exec(text)?.[1] ?? ''
+}
+
+/** An id nothing else on the board already uses, so a new column is its own. */
+function freshKanbanId(lines: readonly KanbanLine[]): string {
+  const taken = new Set(lines.map((line) => kanbanNodeId(line.text)).filter(Boolean))
+  let n = 1
+  while (taken.has(`col${n}`)) n += 1
+  return `col${n}`
+}
+
+/** The last line belonging to `column`: its header, or the card below it. */
+function lastColumnLine(doc: KanbanDoc, column: number): number {
+  const cards = doc.cards.filter((card) => card.column === column)
+  const last = cards.length === 0 ? -1 : cards[cards.length - 1].line
+  return Math.max(doc.columns[column], last)
+}
+
+/**
+ * Remove a card, or `null` when there is no such card or the removal would not
+ * change the source. Like every other edit here it drops a whole line, so a
+ * comment or a blank line the user wrote around the card is left where it was,
+ * and the delete is one transaction the editor can undo.
+ */
+export function removeKanbanCard(source: string, card: number): string | null {
+  const doc = parseKanban(source)
+  const entry = doc.cards[card]
+  if (!entry) return null
+  const lines = doc.lines.filter((_, index) => index !== entry.line)
+  const next = rebuildKanban(lines)
+  return next === source ? null : next
+}
+
+/**
+ * Insert a new column at position `at` among the board's columns, or `null` when
+ * the label is unusable (see `usableKanbanLabel`) or the rebuild would not change
+ * the source. `at` is 0 for before the first column and the column count for
+ * after the last one, so a column can be added in the middle of a board.
+ *
+ * Only the new header line is added: the new column's own id is chosen fresh
+ * (`freshKanbanId`) and nothing in the grammar ties a card to its column by
+ * position, so every other line — including the ids the user gave their own
+ * columns — is left exactly as it was. A renumbered board would be tidier and
+ * would rewrite source the insert was never asked to touch.
+ */
+export function addKanbanColumn(source: string, at: number, label: string): string | null {
+  const doc = parseKanban(source)
+  if (!usableKanbanLabel(label) || doc.columns.length === 0) return null
+  const text = label.trim()
+  const position = Math.max(0, Math.min(at, doc.columns.length))
+  const id = freshKanbanId(doc.lines)
+  // The same indent as the column next to it, so a tab-indented or six-space
+  // board does not gain a level.
+  const indent = doc.lines[doc.columns[Math.min(position, doc.columns.length - 1)]!]?.indent ?? '  '
+  const inner = kanbanInnerLabel(text)
+  const header: KanbanLine = {
+    text: `${id}[${inner}]`,
+    indent,
+    offset: 0,
+    kind: 'column',
+    label: text,
+    labelStart: id.length + 1,
+    labelEnd: id.length + 1 + inner.length,
+  }
+
+  const lines = doc.lines.slice()
+  // Straight after the column it follows, cards and all, so it lands in the gap
+  // the user was looking at rather than after that column's trailing comments.
+  // Ahead of the first column means *before the first column*, never before the
+  // `kanban` header, which is what makes the rest of the source a kanban at all.
+  const insertAt = position === 0 ? doc.columns[0] : lastColumnLine(doc, position - 1) + 1
+  lines.splice(insertAt, 0, header)
+  const next = rebuildKanban(lines)
+  return next === source ? null : next
+}
+
+/**
+ * Remove a column with every card in it, or `null` when there is no such column
+ * or the removal would not change the source. A board keeps at least one column:
+ * with none left there is no board left to show, so the last column is not
+ * offered a delete in the first place and this refuses it too.
+ */
+export function removeKanbanColumn(source: string, column: number): string | null {
+  const doc = parseKanban(source)
+  const header = doc.columns[column]
+  if (header === undefined || doc.columns.length < 2) return null
+  const doomed = new Set([header, ...doc.cards.filter((card) => card.column === column).map((card) => card.line)])
+  const lines = doc.lines.filter((_, index) => !doomed.has(index))
+  const next = rebuildKanban(lines)
+  return next === source ? null : next
+}
+
+/** How many cards a column delete would take with it, for the prompt to say. */
+export function kanbanColumnCardCount(source: string, column: number): number {
+  return parseKanban(source).cards.filter((card) => card.column === column).length
+}
+
 // ── rendering ──────────────────────────────────────────────────────────────
 
 export interface MermaidDiagramOptions {
@@ -1557,7 +1693,7 @@ export function attachMermaidEditing(
 
   if (family === 'kanban') {
     dispose.push(attachKanbanDrag(container, svg, source, commit, () => closeEditor?.(false)))
-    dispose.push(attachKanbanAddButtons(container, svg, source, commit, () => closeEditor?.(false)))
+    dispose.push(attachKanbanButtons(container, svg, source, commit, () => closeEditor?.(false)))
   }
 
   editingLayers.set(host, (accept) => {
@@ -1616,12 +1752,34 @@ function contains(rect: DOMRect, x: number, y: number): boolean {
 }
 
 interface InlineInputSpec {
-  /** The `.mermaid` block the input is appended to and positioned against. */
+  /** The `.mermaid` block the field is appended to and positioned against. */
   host: HTMLElement
   /** Where to put it, in viewport coordinates (`getBoundingClientRect`). */
   rect: DOMRect
   value: string
   placeholder?: string
+  /**
+   * A short heading above the field — `New card in In Progress` for a card being
+   * named, `Card in Todo` for one being renamed. The column name belongs in it
+   * rather than in the placeholder because a placeholder is drawn *inside* the
+   * field and disappears at the first keystroke, and because a title like that is
+   * longer than the title it is asking for: in the field it has the whole width
+   * and truncates in the middle of nothing, whereas in a 120px input it was cut
+   * to `New card in In…` before the user had typed anything.
+   */
+  caption?: string
+  /**
+   * `new` reads as adding something rather than replacing what is there, and is
+   * drawn as such: a dashed accent edge and an accent caption, so a field that is
+   * about to *create* a card cannot be mistaken for one that is about to
+   * overwrite one.
+   */
+  tone?: 'label' | 'new'
+  /**
+   * The field's own width when the box it is anchored to is narrower than a
+   * legible title — a new card is typed from nothing, so it is given room.
+   */
+  minWidth?: number
   /**
    * Enter, or a blur. Return `true` when the caller is done with the input
    * either way, `false` to refuse the value quietly, and a string to refuse it
@@ -1637,9 +1795,9 @@ interface InlineInputSpec {
 }
 
 /**
- * The one-line input the editor edits a label with — and, for a new kanban card,
- * the one it is created with, so both share the Enter/Esc/blur conventions and
- * the focus handling rather than growing two of each.
+ * The one-line input the editor edits a label with — and, for a new kanban card
+ * or column, the one it is created with, so all three share the Enter/Esc/blur
+ * conventions and the focus handling rather than growing three of each.
  *
  * An existing value is selected, so typing replaces it; an empty one is not,
  * since selecting nothing leaves the field looking selected-but-blank. The
@@ -1648,28 +1806,45 @@ interface InlineInputSpec {
  * being editable.
  */
 function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
-  const { host, rect, value, placeholder, onAccept, onCancel } = spec
+  const { host, rect, value, placeholder, caption, tone = 'label', onAccept, onCancel } = spec
   const origin = host.getBoundingClientRect()
+  // A wrapper owns the geometry, so a caption and the input stay one box that can
+  // be placed over a column and clipped to nothing: an absolutely positioned
+  // child of a horizontal scroller is placed from the scrolled content, not from
+  // the visible box, so the preview's own scroll has to be added back (`host` is
+  // the block for a label, which never scrolls).
+  const field = document.createElement('div')
+  field.className = tone === 'new' ? `${FIELD_CLASS} ${FIELD_NEW_CLASS}` : FIELD_CLASS
+
+  if (caption !== undefined) {
+    const label = document.createElement('div')
+    label.className = CAPTION_CLASS
+    label.textContent = caption
+    // The full text stays reachable on hover, so a column too long to show is
+    // truncated rather than lost.
+    label.title = caption
+    field.appendChild(label)
+  }
+
   const input = document.createElement('input')
   input.type = 'text'
   input.className = INPUT_CLASS
   input.value = value
   if (placeholder) input.placeholder = placeholder
-  // An absolutely positioned child of a horizontal scroller is placed from the
-  // scrolled content, not from the visible box, so the preview's own scroll has
-  // to be added back (`host` is the block for a label, which never scrolls).
-  input.style.left = `${rect.left - origin.left + host.scrollLeft}px`
-  input.style.top = `${rect.top - origin.top}px`
-  input.style.width = `${Math.max(rect.width, 40)}px`
   input.style.height = `${rect.height || 20}px`
+
+  const width = Math.max(rect.width, spec.minWidth ?? 0, 40)
+  field.style.left = `${rect.left - origin.left + host.scrollLeft}px`
+  field.style.top = `${rect.top - origin.top}px`
+  field.style.width = `${width}px`
 
   let closed = false
   const close = (): void => {
     if (closed) return
     closed = true
-    // Not `input.remove()`: a blur handler can fire while the input is being
+    // Not `.remove()`: a blur handler can fire while the field is being
     // detached, and `remove()` throws when the node no longer has a parent.
-    input.parentNode?.removeChild(input)
+    field.parentNode?.removeChild(field)
   }
   const finish = (accept: boolean): void => {
     if (closed) return
@@ -1710,8 +1885,15 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
   input.addEventListener('pointerdown', (event) => event.stopPropagation())
   input.addEventListener('mousedown', (event) => event.preventDefault())
   input.addEventListener('blur', () => finish(true))
+  // The field is a box over the diagram, so a click inside it must not be read as
+  // a click on whatever label happens to lie underneath — which is how opening a
+  // field over a card would otherwise close itself and open the card's rename.
+  for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick']) {
+    field.addEventListener(type, (event) => event.stopPropagation())
+  }
 
-  host.appendChild(input)
+  field.appendChild(input)
+  host.appendChild(field)
   input.focus()
   if (value) input.select()
   return finish
@@ -1739,6 +1921,9 @@ function openLabelEditor(
     host,
     rect: target.el.getBoundingClientRect(),
     value: current,
+    // A card's own box is sized for the card, so a short label would otherwise
+    // be retyped in a field too narrow to see it in.
+    minWidth: RENAME_FIELD_WIDTH,
     onAccept: (value) => {
       if (value === current) return true
       // A kanban label that cannot be written at all is refused here rather
@@ -2044,27 +2229,26 @@ function dropIndex(event: PointerEvent, doc: KanbanDoc, cards: SVGElement[], fro
   return index
 }
 
-// ── kanban add buttons ──────────────────────────────────────────────────────
-
-/** Half the button's own size, so a point can be its centre (see the CSS). */
-const ADD_BUTTON_HALF = 11
+// ── kanban board buttons ───────────────────────────────────────────────────
 
 /**
- * One ＋ per column, at the bottom of that column's own band, which is what
- * makes it read as "add a card here" — including for an empty column, since
- * mermaid still draws one (a shorter band, sized to its header).
+ * The board's own controls in edit mode: a ＋ that names a new card at the bottom
+ * of every column, and — in the top-right corner of every card and every column —
+ * a ✕ to delete it and a ＋ to add a column after it. The card ＋ is at the
+ * bottom because that is where a new card will appear, and the corner buttons
+ * are in the corner because a card's own box has no room for a row of them.
  *
- * The buttons are HTML in the preview rather than `foreignObject`s inside
- * mermaid's own layout: a view-mode diagram is a baked bitmap, which cannot
- * host them, and an overlay is rebuilt from the rendered sections on every
- * render anyway. Their geometry is the section rect minus the preview's — the
- * same arithmetic the drag clone uses — recomputed after each render and on
- * every `ResizeObserver` tick, which is what covers the zoom toolbar (it sets
+ * They are HTML in the preview rather than `foreignObject`s inside mermaid's own
+ * layout: a view-mode diagram is a baked bitmap, which cannot host them, and an
+ * overlay is rebuilt from the rendered sections on every render anyway. Their
+ * geometry is the card or section rect minus the preview's — the same arithmetic
+ * the drag's drop line used to need — recomputed after each render and on every
+ * `ResizeObserver` tick, which is what covers the zoom toolbar (it sets
  * `svg.style.width`), a window resize and a theme change in one hook. A
- * `foreignObject` inside the section is the fallback if the overlay ever
- * proves stubborn, but it could only be used in edit mode for the same reason.
+ * `foreignObject` inside the section is the fallback if the overlay ever proves
+ * stubborn, but it could only be used in edit mode for the same reason.
  */
-function attachKanbanAddButtons(
+function attachKanbanButtons(
   container: HTMLElement,
   svg: SVGSVGElement,
   source: string,
@@ -2072,32 +2256,75 @@ function attachKanbanAddButtons(
   openEditor: (finish: (accept: boolean) => void) => void,
 ): () => void {
   const sections = sectionElements(svg)
+  const cards = cardElements(svg)
   const doc = parseKanban(source)
   // A model that does not line up with the DOM would put a card in a column the
-  // user did not press, and there is no rendering to compare against.
-  if (doc.columns.length === 0 || doc.columns.length !== sections.length) return () => undefined
+  // user did not press, or delete a neighbour of the one they pressed, and there
+  // is no rendering to compare against.
+  if (doc.columns.length === 0 || doc.columns.length !== sections.length || doc.cards.length !== cards.length) {
+    return () => undefined
+  }
 
+  const columnName = (column: number): string => doc.lines[doc.columns[column]]?.label ?? 'this column'
   const cardsIn = (column: number): number => doc.cards.filter((card) => card.column === column).length
-  const buttons = sections.map((section, column) => {
-    const name = doc.lines[doc.columns[column]]?.label ?? 'this column'
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = ADD_BUTTON_CLASS
-    button.textContent = '＋'
-    button.title = `Add a card to ${name}`
-    button.setAttribute('aria-label', button.title)
-    button.addEventListener('click', (event) => {
+  const placed: Array<{ button: HTMLButtonElement; point: () => { x: number; y: number } }> = []
+
+  /**
+   * One board button, with the event guards every one of them needs: a press
+   * must not reach ProseMirror (it would start a node selection), the drag (it
+   * hit-tests cards by coordinate and would arm over a card a button sits on) or
+   * the click that opens a label's editor.
+   */
+  const button = (
+    kind: string,
+    glyph: string,
+    label: string,
+    point: () => { x: number; y: number },
+    onClick: () => void,
+  ): void => {
+    const element = document.createElement('button')
+    element.type = 'button'
+    element.className = `${KANBAN_BUTTON_CLASS} ${kind}`
+    element.textContent = glyph
+    element.title = label
+    element.setAttribute('aria-label', label)
+    element.addEventListener('click', (event) => {
       event.stopPropagation()
-      // Card identity here is positional: the new card goes on the end of its
-      // column, and every later edit re-derives the model from the source.
-      // Registered with the layer, so Done (or a re-render) resolves it exactly
-      // as it resolves a label being retyped.
+      onClick()
+    })
+    element.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    element.addEventListener('pointerdown', (event) => event.stopPropagation())
+    container.appendChild(element)
+    placed.push({ button: element, point })
+  }
+
+  // A delete is confirmed before it is applied, so the source is patched only
+  // once the answer comes back — and the answer is what a dialog is for, since a
+  // card is one keystroke from a rename and the board is the user's document.
+  const confirmDelete = (next: string | null, subject: string, consequence: string): void => {
+    void promptForKanbanDelete(subject, consequence).then((confirmed) => {
+      if (confirmed && next !== null) commit(next)
+    })
+  }
+
+  sections.forEach((section, column) => {
+    const name = columnName(column)
+    // Card identity here is positional: a new card goes on the end of its
+    // column, and every later edit re-derives the model from the source.
+    // Registered with the layer, so Done (or a re-render) resolves it exactly as
+    // it resolves a label being retyped.
+    button(ADD_BUTTON_CLASS, '＋', `Add a card to ${name}`, () => addButtonPoint(section), () =>
       openEditor(
         openInlineInput({
           host: container,
           rect: cardTitleRect(section),
           value: '',
-          placeholder: `New card in ${name}`,
+          caption: `New card in ${name}`,
+          placeholder: 'Card title',
+          tone: 'new',
           onAccept: (value) => {
             const next = addKanbanCard(source, column, cardsIn(column), value)
             if (next === null) return kanbanLabelRefusal(value)
@@ -2106,28 +2333,79 @@ function attachKanbanAddButtons(
           },
           onCancel: () => undefined,
         }),
+      ),
+    )
+    button(
+      COLUMN_ADD_BUTTON_CLASS,
+      '＋',
+      `Add a column after ${name}`,
+      () => cornerPoint(sectionRect(section), KANBAN_BUTTON_HALF * 2),
+      () =>
+        openEditor(
+          openInlineInput({
+            host: container,
+            rect: columnTitleRect(section),
+            value: '',
+            caption: `New column after ${name}`,
+            placeholder: 'Column name',
+            tone: 'new',
+            onAccept: (value) => {
+              const next = addKanbanColumn(source, column + 1, value)
+              if (next === null) return kanbanLabelRefusal(value)
+              commit(next)
+              return true
+            },
+            onCancel: () => undefined,
+          }),
+        ),
+    )
+    // A board keeps at least one column, so a board of one is not offered the
+    // delete that would leave nothing behind: what cannot be done is not on the
+    // board. `removeKanbanColumn` refuses it as well.
+    if (doc.columns.length > 1) {
+      const taken = cardsIn(column)
+      button(
+        COLUMN_REMOVE_BUTTON_CLASS,
+        '✕',
+        `Delete the ${name} column`,
+        () => cornerPoint(sectionRect(section), KANBAN_BUTTON_HALF * 2, KANBAN_BUTTON_HALF * 2 + KANBAN_BUTTON_GAP),
+        () =>
+          confirmDelete(
+            removeKanbanColumn(source, column),
+            `the ${name} column`,
+            taken === 0 ? 'The column is removed from the board.' : `Its ${taken} card${taken === 1 ? '' : 's'} go with it.`,
+          ),
       )
-    })
-    // The press must not reach ProseMirror (it would start a node selection)
-    // nor the drag, which hit-tests cards by coordinate and would otherwise arm
-    // over a card the button happens to sit on.
-    button.addEventListener('mousedown', (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-    })
-    button.addEventListener('pointerdown', (event) => event.stopPropagation())
-    container.appendChild(button)
-    return { button, section }
+    }
+  })
+
+  cards.forEach((_, index) => {
+    const entry = doc.cards[index]
+    if (entry.column < 0) return
+    const name = entry.label ?? 'this card'
+    const column = columnName(entry.column)
+    button(
+      CARD_REMOVE_BUTTON_CLASS,
+      '✕',
+      `Delete the card ${name}`,
+      () => cornerPoint(cards[index].getBoundingClientRect(), REMOVE_BUTTON_HALF * 2),
+      () =>
+        confirmDelete(
+          removeKanbanCard(source, index),
+          `“${name}”`,
+          `It is removed from the ${column} column.`,
+        ),
+    )
   })
 
   const place = (): void => {
     const base = container.getBoundingClientRect()
-    for (const { button, section } of buttons) {
-      const point = addButtonPoint(section)
+    for (const { button: element, point } of placed) {
+      const at = point()
       // `scrollLeft` because the preview is a horizontal scroller: an absolute
-      // child is placed from the scrolled content, not the visible box.
-      button.style.left = `${point.x - base.left + container.scrollLeft}px`
-      button.style.top = `${point.y - base.top}px`
+      // child is placed from the scrolled content, not from the visible box.
+      element.style.left = `${at.x - base.left + container.scrollLeft}px`
+      element.style.top = `${at.y - base.top}px`
     }
   }
   place()
@@ -2136,19 +2414,40 @@ function attachKanbanAddButtons(
 
   return () => {
     observer.disconnect()
-    for (const { button } of buttons) button.remove()
+    for (const { button: element } of placed) element.remove()
   }
 }
 
 /** The ＋'s centre: the bottom of the column band, horizontally centred. */
 function addButtonPoint(section: SVGElement): { x: number; y: number } {
   const rect = sectionRect(section)
-  return { x: rect.left + rect.width / 2, y: rect.bottom - ADD_BUTTON_HALF }
+  return { x: rect.left + rect.width / 2, y: rect.bottom - KANBAN_BUTTON_HALF }
 }
 
-/** Where the new card's title is typed: over the ＋, where the user pressed. */
+/**
+ * The centre of a `size`-wide button in the top-right corner of `rect`, or that
+ * same corner `shift` px further along — which is how a column's two header
+ * buttons sit side by side instead of on top of each other.
+ */
+function cornerPoint(rect: DOMRect, size: number, shift = 0): { x: number; y: number } {
+  const inset = size / 2
+  return { x: rect.right - KANBAN_BUTTON_EDGE - inset - shift, y: rect.top + KANBAN_BUTTON_EDGE + inset }
+}
+
+/** Where a new card's title is typed: over its column, just above the ＋. */
 function cardTitleRect(section: SVGElement): DOMRect {
   const point = addButtonPoint(section)
-  return new DOMRect(point.x - 60, point.y - 10, 120, 20)
+  const top = point.y - KANBAN_BUTTON_HALF - NEW_FIELD_LIFT - NEW_FIELD_HEIGHT
+  return new DOMRect(point.x - NEW_FIELD_WIDTH / 2, top, NEW_FIELD_WIDTH, NEW_FIELD_HEIGHT)
 }
 
+/** Where a new column's name is typed: over the middle of the band it joins. */
+function columnTitleRect(section: SVGElement): DOMRect {
+  const rect = sectionRect(section)
+  return new DOMRect(
+    rect.left + rect.width / 2 - NEW_FIELD_WIDTH / 2,
+    rect.top + rect.height / 2 - NEW_FIELD_HEIGHT / 2,
+    NEW_FIELD_WIDTH,
+    NEW_FIELD_HEIGHT,
+  )
+}

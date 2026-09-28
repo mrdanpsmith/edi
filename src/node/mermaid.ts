@@ -6,8 +6,9 @@ import { visit } from 'unist-util-visit'
 import { blockNodeView } from '../blockview'
 import { reinitializeMermaidTheme } from '../mermaid'
 import {
-  ADD_BUTTON_CLASS,
   EDITING_CLASS,
+  FIELD_CLASS,
+  KANBAN_BUTTON_CLASS,
   buildKanbanSource,
   finishMermaidLabelEditing,
   renderDiagram,
@@ -307,11 +308,11 @@ class MermaidNodeView implements NodeView {
     if (this.cm !== null) return true
     const target = event.target
     if (!(target instanceof Element)) return false
-    // The label editor and the kanban ＋ are real controls inside the block:
-    // every keystroke and mouse event in them belongs to the editor, not to
-    // ProseMirror. The rest of the diagram keeps its normal behaviour — clicking
-    // it still selects the block and reveals its handle.
-    return target.closest(`.mermaid-edit-input, .${ADD_BUTTON_CLASS}`) !== null
+    // The label editor and the board's own buttons are real controls inside the
+    // block: every keystroke and mouse event in them belongs to the editor, not
+    // to ProseMirror. The rest of the diagram keeps its normal behaviour —
+    // clicking it still selects the block and reveals its handle.
+    return target.closest(`.${FIELD_CLASS}, .${KANBAN_BUTTON_CLASS}`) !== null
   }
 
   ignoreMutation(): boolean {
@@ -464,10 +465,10 @@ function diagramEditTogglePos(event: MouseEvent): number | null {
   const block = event.target.closest<HTMLElement>('.mermaid')
   if (!block) return null
   // Chrome and an open label editor handle their own double clicks, and so does
-  // a kanban ＋: a double click on a button is a click on a button, not a
+  // a board button: a double click on a button is a click on a button, not a
   // request to toggle this diagram.
-  if (event.target.closest(`.mermaid-toolbar, .mermaid-edit-input, .${ADD_BUTTON_CLASS}`) !== null) return null
-  if (block.querySelector('.mermaid-edit-input') !== null) return null
+  if (event.target.closest(`.mermaid-toolbar, .${FIELD_CLASS}, .${KANBAN_BUTTON_CLASS}`) !== null) return null
+  if (block.querySelector(`.${FIELD_CLASS}`) !== null) return null
   const handle = block.querySelector<HTMLElement>('.block-handle[data-block-pos]')
   const pos = handle ? Number(handle.dataset.blockPos) : Number.NaN
   return Number.isInteger(pos) && pos >= 0 ? pos : null

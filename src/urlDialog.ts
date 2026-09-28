@@ -1,3 +1,103 @@
+export interface LinkPrompt {
+  text: string
+  url: string
+}
+
+/** How a dialog's Enter key behaves, which is the one key it cannot share. */
+type EnterKey = 'confirm' | 'ctrl'
+
+/**
+ * The modal every dialog in this file is: an overlay, a titled box, `Cancel` and
+ * one confirming action, and the two ways out that are not a button — Escape
+ * anywhere in the box, and a click on the backdrop. Both resolve `cancelValue`, so
+ * dismissing a dialog is never the answer that acts.
+ *
+ * `build` fills the box between the title and the actions and returns what
+ * confirming means; that is the only part each dialog has to write itself. It may
+ * return ``undefined`` to refuse, which leaves the dialog open and untouched — a
+ * board with no columns is a report, not an answer. Everything else, including the
+ * exact buttons, the DOM order and the dismissal keys, is the same in all three.
+ */
+function openDialogShell<T>(
+  options: {
+    title: string
+    confirm: string
+    tone: string
+    cancelValue: T
+    enter: EnterKey
+    build: (box: HTMLDivElement) => () => T | undefined
+    onSettle: (value: T) => void
+  },
+): { box: HTMLDivElement; confirmButton: HTMLButtonElement; accept: () => T | undefined } {
+  const overlay = document.createElement('div')
+  overlay.className = 'edi-dialog-overlay'
+
+  const box = document.createElement('div')
+  box.className = 'edi-dialog'
+  box.setAttribute('role', 'dialog')
+  box.setAttribute('aria-modal', 'true')
+
+  const title = document.createElement('div')
+  title.className = 'edi-dialog-title'
+  title.textContent = options.title
+  box.append(title)
+
+  const accept = options.build(box)
+
+  const actions = document.createElement('div')
+  actions.className = 'edi-dialog-actions'
+
+  const cancel = document.createElement('button')
+  cancel.type = 'button'
+  cancel.className = 'toolbar-btn'
+  cancel.textContent = 'Cancel'
+  actions.append(cancel)
+
+  const confirmButton = document.createElement('button')
+  confirmButton.type = 'button'
+  confirmButton.className = `toolbar-btn ${options.tone}`
+  confirmButton.textContent = options.confirm
+  actions.append(confirmButton)
+
+  box.append(actions)
+  overlay.append(box)
+  document.body.append(overlay)
+
+  const settle = (value: T | undefined): void => {
+    if (value === undefined) return
+    overlay.remove()
+    options.onSettle(value)
+  }
+
+  cancel.addEventListener('click', () => settle(options.cancelValue))
+  confirmButton.addEventListener('click', () => settle(accept()))
+  box.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      settle(options.cancelValue)
+    } else if (event.key === 'Enter' && !(event.target instanceof HTMLButtonElement)) {
+      // A focused button answers Enter itself; the field around it does not, and
+      // a board dialog is a textarea, where Enter is a newline and Ctrl+Enter
+      // is the board.
+      if (options.enter === 'confirm' || event.ctrlKey || event.metaKey) {
+        event.preventDefault()
+        settle(accept())
+      }
+    }
+  })
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      settle(options.cancelValue)
+    }
+  })
+  overlay.addEventListener('mousedown', (event) => {
+    if (event.target === overlay) settle(options.cancelValue)
+  })
+
+  return { box, confirmButton, accept }
+}
+
 /**
  * A small centered modal dialog prompting for a link's URL and, when nothing is
  * selected to provide the link text, an optional link text defaulted to the
@@ -9,104 +109,87 @@
  * then asks for link text). Resolves with the entered text/url pair (``text``
  * is '' when the field was hidden), or ``null`` if the user cancels.
  */
-export interface LinkPrompt {
-  text: string
-  url: string
-}
-
 export function promptForLink(existingText: string, existingUrl: string): Promise<LinkPrompt | null> {
   return new Promise((resolve) => {
-    const overlay = document.createElement('div')
-    overlay.className = 'edi-dialog-overlay'
+    let urlInput!: HTMLInputElement
+    openDialogShell<LinkPrompt | null>({
+      title: 'Insert link',
+      confirm: 'Insert',
+      tone: 'toolbar-primary',
+      cancelValue: null,
+      enter: 'confirm',
+      onSettle: resolve,
+      build: (box) => {
+        const urlLabel = document.createElement('label')
+        urlLabel.className = 'edi-dialog-label'
+        urlLabel.textContent = 'URL'
+        box.append(urlLabel)
 
-    const box = document.createElement('div')
-    box.className = 'edi-dialog'
-    box.setAttribute('role', 'dialog')
-    box.setAttribute('aria-modal', 'true')
+        urlInput = document.createElement('input')
+        urlInput.className = 'edi-dialog-input'
+        urlInput.type = 'url'
+        urlInput.placeholder = 'https://'
+        urlInput.value = existingUrl
+        box.append(urlInput)
 
-    const title = document.createElement('div')
-    title.className = 'edi-dialog-title'
-    title.textContent = 'Insert link'
-    box.append(title)
+        let textInput: HTMLInputElement | null = null
+        if (!existingText) {
+          const textLabel = document.createElement('label')
+          textLabel.className = 'edi-dialog-label'
+          textLabel.textContent = 'Link text'
+          box.append(textLabel)
 
-    const urlLabel = document.createElement('label')
-    urlLabel.className = 'edi-dialog-label'
-    urlLabel.textContent = 'URL'
-    box.append(urlLabel)
-
-    const urlInput = document.createElement('input')
-    urlInput.className = 'edi-dialog-input'
-    urlInput.type = 'url'
-    urlInput.placeholder = 'https://'
-    urlInput.value = existingUrl
-    box.append(urlInput)
-
-    let textInput: HTMLInputElement | null = null
-    if (!existingText) {
-      const textLabel = document.createElement('label')
-      textLabel.className = 'edi-dialog-label'
-      textLabel.textContent = 'Link text'
-      box.append(textLabel)
-
-      textInput = document.createElement('input')
-      textInput.className = 'edi-dialog-input'
-      textInput.type = 'text'
-      textInput.placeholder = 'https://'
-      textInput.value = existingUrl
-      box.append(textInput)
-    }
-
-    const actions = document.createElement('div')
-    actions.className = 'edi-dialog-actions'
-
-    const cancel = document.createElement('button')
-    cancel.type = 'button'
-    cancel.className = 'toolbar-btn'
-    cancel.textContent = 'Cancel'
-    actions.append(cancel)
-
-    const ok = document.createElement('button')
-    ok.type = 'button'
-    ok.className = 'toolbar-btn toolbar-primary'
-    ok.textContent = 'Insert'
-    actions.append(ok)
-
-    box.append(actions)
-    overlay.append(box)
-    document.body.append(overlay)
-
-    function close(): void {
-      overlay.remove()
-    }
-
-    function finish(value: LinkPrompt | null): void {
-      close()
-      resolve(value)
-    }
-
-    function collect(): LinkPrompt {
-      return { text: textInput ? textInput.value : '', url: urlInput.value }
-    }
-
-    cancel.addEventListener('click', () => finish(null))
-    ok.addEventListener('click', () => finish(collect()))
-    for (const input of [urlInput, ...(textInput ? [textInput] : [])]) {
-      input.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault()
-          finish(collect())
-        } else if (event.key === 'Escape') {
-          event.preventDefault()
-          finish(null)
+          textInput = document.createElement('input')
+          textInput.className = 'edi-dialog-input'
+          textInput.type = 'text'
+          textInput.placeholder = 'https://'
+          textInput.value = existingUrl
+          box.append(textInput)
         }
-      })
-    }
-    overlay.addEventListener('mousedown', (event) => {
-      if (event.target === overlay) finish(null)
+
+        return (): LinkPrompt => ({ text: textInput ? textInput.value : '', url: urlInput.value })
+      },
     })
 
     urlInput.focus()
     urlInput.select()
+  })
+}
+
+/**
+ * Ask before removing a card or a column from a kanban board, and resolve `true`
+ * only when the user confirms. `subject` is the thing being removed, already
+ * quoted (`“Fix the bug”`), and `consequence` is what goes with it — the cards a
+ * column delete takes down — left as `''` when there is nothing to add.
+ *
+ * A delete is one keystroke away from a rename and cannot be undone by the reader
+ * of the board, so it is confirmed rather than applied; the note says the edit is
+ * one step, because undo is how a wrong confirmation comes back.
+ */
+export function promptForKanbanDelete(subject: string, consequence = ''): Promise<boolean> {
+  return new Promise((resolve) => {
+    const { confirmButton } = openDialogShell<boolean>({
+      title: `Delete ${subject}?`,
+      confirm: 'Delete',
+      tone: 'toolbar-danger',
+      cancelValue: false,
+      enter: 'confirm',
+      onSettle: resolve,
+      build: (box) => {
+        const note = document.createElement('div')
+        note.className = 'edi-dialog-note'
+        note.textContent = consequence
+          ? `${consequence} The diagram is one edit, so undo brings it back.`
+          : 'The diagram is one edit, so undo brings it back.'
+        box.append(note)
+        return (): boolean => true
+      },
+    })
+
+    // Delete is the answer Enter gives, so it is the button that holds the focus
+    // ring; cancelling stays the safe way out, which is what Escape and the
+    // backdrop already are.
+    confirmButton.focus()
   })
 }
 
@@ -127,92 +210,51 @@ export const DEFAULT_KANBAN_COLUMNS = 'Todo\nIn Progress\nReview\nDone'
  */
 export function promptForKanbanColumns(): Promise<string[] | null> {
   return new Promise((resolve) => {
-    const overlay = document.createElement('div')
-    overlay.className = 'edi-dialog-overlay'
+    let field!: HTMLTextAreaElement
+    openDialogShell<string[] | null>({
+      title: 'New kanban board',
+      confirm: 'Add',
+      tone: 'toolbar-primary',
+      cancelValue: null,
+      enter: 'ctrl',
+      onSettle: resolve,
+      build: (box) => {
+        const label = document.createElement('label')
+        label.className = 'edi-dialog-label'
+        label.textContent = 'Columns, one per line (Ctrl+Enter to add the board)'
+        box.append(label)
 
-    const box = document.createElement('div')
-    box.className = 'edi-dialog'
-    box.setAttribute('role', 'dialog')
-    box.setAttribute('aria-modal', 'true')
+        field = document.createElement('textarea')
+        field.className = 'edi-dialog-input'
+        field.rows = 6
+        field.spellcheck = false
+        field.value = DEFAULT_KANBAN_COLUMNS
+        box.append(field)
 
-    const title = document.createElement('div')
-    title.className = 'edi-dialog-title'
-    title.textContent = 'New kanban board'
-    box.append(title)
+        const error = document.createElement('div')
+        error.className = 'edi-dialog-error'
+        error.hidden = true
+        box.append(error)
 
-    const label = document.createElement('label')
-    label.className = 'edi-dialog-label'
-    label.textContent = 'Columns, one per line (Ctrl+Enter to add the board)'
-    box.append(label)
-
-    const input = document.createElement('textarea')
-    input.className = 'edi-dialog-input'
-    input.rows = 6
-    input.spellcheck = false
-    input.value = DEFAULT_KANBAN_COLUMNS
-    box.append(input)
-
-    const error = document.createElement('div')
-    error.className = 'edi-dialog-error'
-    error.hidden = true
-    box.append(error)
-
-    const actions = document.createElement('div')
-    actions.className = 'edi-dialog-actions'
-
-    const cancel = document.createElement('button')
-    cancel.type = 'button'
-    cancel.className = 'toolbar-btn'
-    cancel.textContent = 'Cancel'
-    actions.append(cancel)
-
-    const ok = document.createElement('button')
-    ok.type = 'button'
-    ok.className = 'toolbar-btn toolbar-primary'
-    ok.textContent = 'Add'
-    actions.append(ok)
-
-    box.append(actions)
-    overlay.append(box)
-    document.body.append(overlay)
-
-    function finish(value: string[] | null): void {
-      overlay.remove()
-      resolve(value)
-    }
-
-    function submit(): void {
-      const columns = input.value
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-      if (columns.length === 0) {
-        error.textContent = 'A board needs at least one column'
-        error.hidden = false
-        input.focus()
-        return
-      }
-      finish(columns)
-    }
-
-    cancel.addEventListener('click', () => finish(null))
-    ok.addEventListener('click', submit)
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        finish(null)
-      } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-        event.preventDefault()
-        submit()
-      }
-    })
-    overlay.addEventListener('mousedown', (event) => {
-      if (event.target === overlay) finish(null)
+        return (): string[] | undefined => {
+          const columns = field.value
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+          if (columns.length === 0) {
+            error.textContent = 'A board needs at least one column'
+            error.hidden = false
+            field.focus()
+            return undefined
+          }
+          return columns
+        }
+      },
     })
 
-    input.focus()
     // The defaults are a starting point to edit, not the board itself: put the
     // caret at the end of the first column rather than selecting them all.
-    input.setSelectionRange(0, 0)
+    field.setSelectionRange(0, 0)
+    field.focus()
   })
 }

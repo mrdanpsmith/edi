@@ -1422,11 +1422,53 @@ body {
   cursor: text;
 }
 
-.ProseMirror .mermaid .mermaid-edit-input {
+/* The one-line field an inline edit is made in. It owns the geometry — a caption
+   and the input ride together as one box, so a prompt can be as long as it needs
+   to be and the input below it still has room for a real title. */
+.ProseMirror .mermaid .mermaid-edit-field {
   position: absolute;
   z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* What the field is for, above the value. Truncates rather than being clipped
+   mid-glyph, and keeps the whole of itself in `title`. */
+.ProseMirror .mermaid .mermaid-edit-caption {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* A field that is about to *add* something is drawn as one: a dashed accent edge
+   and an accent caption, so it cannot be mistaken for a field that is about to
+   overwrite a label. */
+.ProseMirror .mermaid .mermaid-edit-field-new .mermaid-edit-caption {
+  border-color: var(--accent);
+  border-style: dashed;
+  color: var(--accent);
+}
+
+.ProseMirror .mermaid .mermaid-edit-field-new .mermaid-edit-input {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+
+.ProseMirror .mermaid .mermaid-edit-input {
   font: inherit;
   font-size: 0.95em;
+  width: 100%;
   color: var(--text-primary);
   background: var(--bg);
   border: 1px solid var(--accent);
@@ -1435,6 +1477,11 @@ body {
   margin: 0;
   outline: none;
   box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
+}
+
+/* A field with a caption closes the box it opened, so the two read as one. */
+.ProseMirror .mermaid .mermaid-edit-field:has(.mermaid-edit-caption) .mermaid-edit-input {
+  border-radius: 0 0 3px 3px;
 }
 
 .ProseMirror .mermaid .mermaid-edit-input.mermaid-edit-invalid {
@@ -1501,10 +1548,12 @@ body {
   outline-offset: 2px;
 }
 
-/* The per-column ＋ that creates a card. It is an HTML overlay positioned from
-   the section's own rect, so its `left`/`top` are its centre; the layer only
-   ever exists in edit mode, and this keeps it out of a preview regardless. */
-.ProseMirror .mermaid .mermaid-kanban-add {
+/* The board's own controls in edit mode. They are HTML overlays positioned from
+   the card or column they belong to, so their `left`/`top` are their centre; the
+   layer only ever exists in edit mode, and this keeps them out of a preview
+   regardless. Every one is a `button`, so the double click that ends an edit
+   session leaves them alone too. */
+.ProseMirror .mermaid .mermaid-kanban-btn {
   position: absolute;
   z-index: 4;
   transform: translate(-50%, -50%);
@@ -1525,15 +1574,39 @@ body {
   transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
-.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-add:hover {
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
   border-style: solid;
 }
 
-.ProseMirror .mermaid .mermaid-preview:hover .mermaid-kanban-add,
-.ProseMirror .mermaid .mermaid-kanban-add:focus-visible {
+/* A delete asks before it acts, so it is a ✕ and it is the one button that goes
+   red: the board is the user's document, and this one takes something away. */
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-card-remove:hover,
+.ProseMirror .mermaid.mermaid-kanban-column-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* A card's ✕ is smaller than a ＋ and hugs its corner, so it covers as little of
+   the card's own title as a pressable target can. */
+.ProseMirror .mermaid .mermaid-kanban-card-remove {
+  width: 16px;
+  height: 16px;
+  font-size: 0.75em;
+  border-radius: 3px;
+}
+
+.ProseMirror .mermaid .mermaid-preview:hover .mermaid-kanban-btn,
+.ProseMirror .mermaid .mermaid-kanban-btn:focus-visible {
   opacity: 1;
+}
+
+/* A card's delete belongs to the card, and a card in flight is not where it was:
+   its ✕ would sit in the gap it left, offering to delete a slot. Hidden for the
+   length of the drag, and back with the render that follows the drop. */
+.ProseMirror .mermaid-preview.kanban-dragging .mermaid-kanban-card-remove {
+  visibility: hidden;
 }
 
 /* ── Runnable code blocks ── */
@@ -2138,6 +2211,27 @@ body {
 .edi-dialog-error {
   font-size: 12px;
   color: var(--danger);
+}
+
+/* What a confirmation is about to do, below its title and above the buttons. */
+.edi-dialog-note {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* The one button in a confirmation that acts. It is red, because it is the one
+   that takes something away. */
+.toolbar-btn.toolbar-danger {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.toolbar-btn.toolbar-danger:hover {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  filter: brightness(1.1);
 }
 
 .edi-dialog-reveal-toggle {

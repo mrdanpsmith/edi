@@ -1187,7 +1187,8 @@ describe('mermaid visual mode rendering', () => {
     addButtons(view)[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
     expect(input.value).toBe('')
-    expect(input.placeholder).toBe('New card in Doing')
+    expect(input.placeholder).toBe('Card title')
+    expect(view.dom.querySelector('.mermaid-edit-caption')!.textContent).toBe('New card in Doing')
 
     transactions = 0
     input.value = 'Fresh'

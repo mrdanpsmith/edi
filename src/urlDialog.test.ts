@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { promptForKanbanColumns, promptForLink } from './urlDialog'
+import { promptForKanbanColumns, promptForKanbanDelete, promptForLink } from './urlDialog'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -157,6 +157,56 @@ describe('promptForKanbanColumns', () => {
       new MouseEvent('mousedown', { bubbles: true }),
     )
     await expect(byBackdrop).resolves.toBeNull()
+    expect(document.querySelector('.edi-dialog-overlay')).toBeNull()
+  })
+})
+
+describe('promptForKanbanDelete', () => {
+  function actions(): HTMLButtonElement[] {
+    return Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-dialog-actions button'))
+  }
+
+  it('names what goes, and what goes with it', () => {
+    const promise = promptForKanbanDelete('the In review column', 'Its 2 cards go with it.')
+    expect(document.querySelector('.edi-dialog-title')?.textContent).toBe('Delete the In review column?')
+    const note = document.querySelector('.edi-dialog-note')?.textContent
+    expect(note).toContain('Its 2 cards go with it.')
+    // Undo is the way back from the wrong answer, so the prompt says so.
+    expect(note).toContain('undo')
+    void promise
+  })
+
+  it('leaves out the consequence when there is none to add', () => {
+    const promise = promptForKanbanDelete('“Fix the bug”')
+    expect(document.querySelector('.edi-dialog-note')?.textContent).toBe(
+      'The diagram is one edit, so undo brings it back.',
+    )
+    void promise
+  })
+
+  it('resolves true only on Delete', async () => {
+    const confirmed = promptForKanbanDelete('“One”')
+    actions()[1]!.click()
+    await expect(confirmed).resolves.toBe(true)
+    expect(document.querySelector('.edi-dialog-overlay')).toBeNull()
+  })
+
+  it('resolves false on Cancel, on Escape and on a backdrop click', async () => {
+    const byCancel = promptForKanbanDelete('“One”')
+    actions()[0]!.click()
+    await expect(byCancel).resolves.toBe(false)
+
+    const byEscape = promptForKanbanDelete('“One”')
+    document.querySelector<HTMLElement>('.edi-dialog')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    await expect(byEscape).resolves.toBe(false)
+
+    const byBackdrop = promptForKanbanDelete('“One”')
+    document.querySelector<HTMLElement>('.edi-dialog-overlay')!.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true }),
+    )
+    await expect(byBackdrop).resolves.toBe(false)
     expect(document.querySelector('.edi-dialog-overlay')).toBeNull()
   })
 })

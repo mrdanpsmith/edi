@@ -514,6 +514,78 @@ KANBAN_ADDS = (
 )
 
 
+# Every board control in edit mode, with the shape it belongs to. A ✕ that is
+# not inside the card (or the band) it names is the one thing worth catching: the
+# buttons are HTML positioned from those rects, so a stale or mis-scaled rect
+# puts one somewhere else entirely, and the user has no way to tell which card it
+# would take.
+KANBAN_BUTTONS = (
+    "(() => { const box = (el) => { const r = el.getBoundingClientRect();"
+    "   return { x: r.left + r.width / 2, y: r.top + r.height / 2,"
+    "     left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };"
+    " const cards = [...document.querySelectorAll('.mermaid .items > g.node')]"
+    "   .map((c) => ({ text: (c.textContent || '').trim(), box: box(c) }));"
+    " const bands = [...document.querySelectorAll('.mermaid .sections > g')]"
+    "   .map((g) => ({ text: (g.textContent || '').replace(/\\s+/g, ' ').trim(),"
+    "     box: box(g.querySelector('rect') || g) }));"
+    " const buttons = [...document.querySelectorAll('.mermaid .mermaid-kanban-btn')].map((el) => ({"
+    "   kind: [...el.classList].find((c) => c.startsWith('mermaid-kanban-')"
+    "     && !c.endsWith('btn')) || '',"
+    "   label: el.getAttribute('aria-label'), text: (el.textContent || '').trim(),"
+    "   visible: getComputedStyle(el).opacity !== '0', box: box(el) }));"
+    " return { cards, bands, buttons }; })()"
+)
+
+# The delete prompt, with its answer: the title names what goes and the note says
+# what goes with it, so a click on the wrong ✕ is still catchable here.
+DELETE_PROMPT = (
+    "(() => { const d = document.querySelector('.edi-dialog');"
+    " const buttons = d ? [...d.querySelectorAll('.edi-dialog-actions button')]"
+    "   .map((b) => (b.textContent || '').trim()) : [];"
+    " return { present: !!d, title: d ? (d.querySelector('.edi-dialog-title') || {}).textContent : null,"
+    "   note: d ? (d.querySelector('.edi-dialog-note') || {}).textContent : null,"
+    "   buttons, danger: !!(d && d.querySelector('.toolbar-danger')) }; })()"
+)
+
+
+def _click_kanban_button(win, kind, index, timeout=10):
+    """Press the ``index``-th button of class ``kind`` the way a mouse does."""
+    out = _dump(
+        win,
+        f"""(() => {{
+          const b = document.querySelectorAll('.mermaid .{kind}')[{index}];
+          if (!b) return {{ missing: true }};
+          const r = b.getBoundingClientRect();
+          const opts = {{ bubbles: true, button: 0, clientX: r.left + r.width / 2,
+                         clientY: r.top + r.height / 2 }};
+          for (const type of ['mousedown', 'mouseup', 'click']) b.dispatchEvent(new MouseEvent(type, opts));
+          return {{ label: b.getAttribute('aria-label') }};
+        }})()""",
+    )
+    assert not out.get("missing"), f"the board had no {kind}"
+    return out
+
+
+def _answer_delete_prompt(win, answer, timeout=10):
+    """Answer the delete prompt by pressing its own ``Cancel``/``Delete`` button.
+
+    The button, not a synthetic Escape: a confirmation is a decision with two
+    answers, and the two are deliberately not symmetric — one is inert and the
+    other removes something.
+    """
+    _wait(win, DELETE_PROMPT, lambda d: d["present"], timeout=timeout)
+    _dump(
+        win,
+        f"""(() => {{
+          const b = [...document.querySelectorAll('.edi-dialog-actions button')]
+            .find((x) => (x.textContent || '').trim() === {json.dumps(answer)});
+          if (!b) return {{ missing: true }};
+          b.click();
+          return {{ answered: true }};
+        }})()""",
+    )
+
+
 def _click_kanban_add(win, index):
     """Press the ＋ of column ``index`` the way a mouse does, and report what the
     editor it opened says it is about to create."""
@@ -533,7 +605,8 @@ def _click_kanban_add(win, index):
     return _wait(
         win,
         "(() => { const i = document.querySelector('.mermaid-edit-input');"
-        " return { v: i ? i.value : null, ph: i ? i.placeholder : null }; })()",
+        " return { v: i ? i.value : null, ph: i ? i.placeholder : null,"
+        "   caption: (document.querySelector('.mermaid-edit-caption') || {}).textContent }; })()",
         lambda d: d["v"] is not None,
         timeout=10,
     )
