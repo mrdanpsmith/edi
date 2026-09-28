@@ -5,6 +5,7 @@ import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Node as ProseNode } from 'prosemirror-model'
 import { setBlockType } from 'prosemirror-commands'
+import { history, undo } from 'prosemirror-history'
 import { blockPlugin, enterSourceMode, exitSourceMode, toggleSourceMode, getSourceBlockState, BLOCK_PLUGIN_KEY } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { enterDiagramEditMode, exitDiagramEditMode, mermaidNodeViewPlugin } from './node/mermaid'
@@ -638,6 +639,43 @@ describe('mermaid visual mode rendering', () => {
     }))
   }
 
+  // A kanban board, drawn the way mermaid draws one: one section per column and
+  // the cards inside `.items`, in source order, so the model and the DOM agree
+  // the way the layer requires before it offers a ＋ or arms a drag. An empty
+  // column still gets its section — a shorter band, which is what makes a
+  // per-column ＋ possible at all.
+  function kanbanSvg(code: string): string {
+    const rows = code
+      .split('\n')
+      .slice(1)
+      .map((raw) => ({ indent: /^[ \t]*/.exec(raw)?.[0].length ?? 0, text: raw.trim() }))
+      .filter((row) => row.text && !row.text.startsWith('%%'))
+    const level = Math.min(...rows.map((row) => row.indent))
+    const label = (text: string): string => /\[([^\]]*)\]/.exec(text)?.[1] ?? text
+    const section = (name: string): string =>
+      `<g class="cluster section-x"><rect /><g class="cluster-label"><foreignObject width="60" height="20">` +
+      `<div class="labelBkg"><span class="nodeLabel"><p>${name}</p></span></div></foreignObject></g></g>`
+    const card = (name: string): string =>
+      `<g class="node"><g class="label"><foreignObject width="60" height="20">` +
+      `<div class="labelBkg"><span class="nodeLabel"><p>${name}</p></span></div></foreignObject></g></g>`
+    const columns = rows.filter((row) => row.indent === level)
+    const cards = rows.filter((row) => row.indent > level)
+    return (
+      `<svg viewBox="0 0 900 300"><g class="sections">` +
+      columns.map((row) => section(label(row.text))).join('') +
+      `</g><g class="items">` +
+      cards.map((row) => card(label(row.text))).join('') +
+      `</g></svg>`
+    )
+  }
+
+  function mockKanban(): void {
+    vi.mocked(mermaidModule.default.render).mockImplementation(async (_id, code) => ({
+      svg: kanbanSvg(code),
+      diagramType: 'kanban',
+    }))
+  }
+
   function editToggle(view: EditorView): HTMLButtonElement {
     const button = view.dom.querySelector<HTMLButtonElement>('.mermaid-edit-toggle')
     expect(button).not.toBeNull()
@@ -1081,6 +1119,141 @@ describe('mermaid visual mode rendering', () => {
     expect(warn).not.toHaveBeenCalled()
 
     warn.mockRestore()
+    view.destroy()
+  })
+
+  // A board with an empty middle column: mermaid still draws that column, as a
+  // shorter band, so a per-column ＋ has somewhere to go for it too.
+  const KANBAN_BOARD = ['kanban', '  Todo', '    id1[One]', '  Doing', '  Done', '    id2[Two]'].join('\n')
+
+  function addButtons(view: EditorView): HTMLButtonElement[] {
+    return Array.from(view.dom.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-add'))
+  }
+
+  it('adds a card to the column whose ＋ was pressed, in one transaction', async () => {
+    mockKanban()
+    let transactions = 0
+    const counted = new Plugin({
+      appendTransaction: (trs) => {
+        transactions += trs.length
+        return null
+      },
+    })
+    const view = createEditor('```mermaid\n' + KANBAN_BOARD + '\n```', [history(), counted])
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
+    expect(addButtons(view).map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Add a card to Todo',
+      'Add a card to Doing',
+      'Add a card to Done',
+    ])
+
+    addButtons(view)[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(input.value).toBe('')
+    expect(input.placeholder).toBe('New card in Doing')
+
+    transactions = 0
+    input.value = 'Fresh'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+
+    const patched = [
+      'kanban',
+      '  Todo',
+      '    id1[One]',
+      '  Doing',
+      '    [Fresh]',
+      '  Done',
+      '    id2[Two]',
+    ].join('\n')
+    expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + patched + '\n```\n')
+    expect(view.dom.querySelector('.mermaid-edit-input')).toBeNull()
+    // One transaction for the whole insert, so undo takes it back in one step.
+    expect(transactions).toBe(1)
+    await flush()
+    await flush()
+    expect(vi.mocked(mermaidModule.default.render).mock.calls.at(-1)?.[1]).toBe(patched)
+    // The render replaced the SVG, and with it the layer: a ＋ per column still.
+    expect(addButtons(view)).toHaveLength(3)
+
+    expect(undo(view.state, view.dispatch)).toBe(true)
+    expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + KANBAN_BOARD + '\n```\n')
+
+    view.destroy()
+  })
+
+  it('leaves the board alone when a new card is abandoned', async () => {
+    mockKanban()
+    const view = createEditor('```mermaid\n' + KANBAN_BOARD + '\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
+
+    addButtons(view)[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    input.value = 'Discarded'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+
+    expect(await rendered(view, '.mermaid-edit-input', false)).toBe(true)
+    expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + KANBAN_BOARD + '\n```\n')
+    expect(addButtons(view)).toHaveLength(3)
+
+    view.destroy()
+  })
+
+  it('takes the ＋ away with the editing layer, and offers them again after', async () => {
+    mockKanban()
+    const view = createEditor('```mermaid\n' + KANBAN_BOARD + '\n```\n\nAfter the board')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
+    expect(addButtons(view)).toHaveLength(3)
+
+    editToggle(view).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+    // They are the layer's, so Done removes them like it removes the labels.
+    expect(await rendered(view, '.mermaid-kanban-add', false)).toBe(true)
+    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+
+    // ...and so does a double click outside the diagram, which ends the mode
+    // from a gesture that never lands on it.
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
+    const paragraph = Array.from(view.dom.querySelectorAll<HTMLElement>('p')).find(
+      (el) => el.textContent === 'After the board' && el.closest('.mermaid') === null,
+    )!
+    paragraph.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
+    expect(editModeOf(view)).toBe(false)
+    expect(await rendered(view, '.mermaid-kanban-add', false)).toBe(true)
+
+    view.destroy()
+  })
+
+  it('offers no ＋ on a diagram that is not a board', async () => {
+    mockFlowchart()
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
+    await flush()
+
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+    expect(addButtons(view)).toHaveLength(0)
+
     view.destroy()
   })
 })

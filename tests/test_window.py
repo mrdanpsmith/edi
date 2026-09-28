@@ -37,27 +37,38 @@ from backend.window import (
 import pytest
 
 from tests.mermaid_render import (  # re-exported: the other test modules import these
+    BOARD_DIALOG,
+    CARDS_AND_BANDS,
     COLUMNS,
+    DOC_SOURCE,
     EDIT_STATE,
     FLOW,
     KANBAN,
+    KANBAN_ADDS,
+    KANBAN_EMPTY,
     LABEL_INVENTORY,
     LABEL_STATE,
     SEQUENCE,
+    SECTIONS,
+    _cancel_board_dialog,
     _click_first_offered,
     _click_done,
+    _click_kanban_add,
     _click_label,
     _dump,
     _enter_edit_mode,
+    _open_board_dialog,
     _pointer_drag,
     _pump_until,
     _render,
+    _set_document,
     _set_scheme,
     _type,
     _type_and_confirm,
     _wait,
     _wait_baked,
     _wait_text,
+    _zoom,
 )
 
 
@@ -426,7 +437,13 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert file_labels.index("Open &Recent") == file_labels.index("&Open…\tCtrl+O") + 1
 
     insert_labels = [action.text() for action in window._insert_menu.actions()]
-    assert insert_labels == ["&Table…", "&Spreadsheet…", "&Text File…", "&Image…"]
+    assert insert_labels == [
+        "&Table…",
+        "&Kanban Board…",
+        "&Spreadsheet…",
+        "&Text File…",
+        "&Image…",
+    ]
 
     edit_labels = [action.text() for action in window._edit_menu.actions()]
     assert "&Undo\tCtrl+Z" in edit_labels
@@ -480,19 +497,39 @@ def _menu_action(menu, prefix):
     return next(action for action in menu.actions() if action.text().startswith(prefix))
 
 
+def _swap_menu_command(window, body):
+    """Record what the menu sends instead of acting on it.
+
+    The real dispatcher is kept in ``window.__realMenuCommand``: these tests
+    replace a page global, and the session window is shared with the real-engine
+    mermaid tests, so a stub left behind would silently no-op every later
+    command (``_restore_menu_command`` puts it back).
+    """
+    window._web.page().runJavaScript(
+        "window.__menuCmd = null; window.__menuArgs = null;"
+        "window.__realMenuCommand = window.ediMenuCommand;"
+        "window.ediMenuCommand = function (cmd, arg) { " + body + " };"
+        "true",
+        lambda _v: None,
+    )
+
+
+def _restore_menu_command(window):
+    window._web.page().runJavaScript(
+        "if (window.__realMenuCommand) window.ediMenuCommand = window.__realMenuCommand;"
+        "true",
+        lambda _v: None,
+    )
+
+
 def _assert_menu_action_sends_command(visible, qtbot, action, expected):
     """Trigger ``action`` and assert the page's dispatcher received ``expected``."""
     window = visible
     result = {}
 
-    window._web.page().runJavaScript(
-        "window.__menuCmd = null;"
-        "window.ediMenuCommand = function (cmd) { window.__menuCmd = cmd; };"
-        "true",
-        lambda _v: None,
-    )
-
+    _swap_menu_command(window, "window.__menuCmd = cmd;")
     action.trigger()
+    _restore_menu_command(window)
 
     def fetched():
         window._web.page().runJavaScript(
@@ -783,17 +820,11 @@ def test_open_recent_action_invokes_js_command_with_path(
     stored_recents.setValue("recentFiles", ["/docs/a.md"])
     result = {}
 
-    window._web.page().runJavaScript(
-        "window.__menuArgs = null;"
-        "window.ediMenuCommand = function (cmd, arg) {"
-        "  window.__menuArgs = cmd + ':' + (arg || '');"
-        "};"
-        "true",
-        lambda _v: None,
-    )
+    _swap_menu_command(window, "window.__menuArgs = cmd + ':' + (arg || '');")
 
     window._refresh_recent_menu()
     window._recent_menu.actions()[0].trigger()
+    _restore_menu_command(window)
 
     def fetched():
         window._web.page().runJavaScript(
@@ -1095,6 +1126,159 @@ def test_kanban_label_edit_and_card_drag(window):
     # right-hand one now: the drag crossed into the second column.
     assert sorted(cols.values(), key=len)[0] == ["Two"], cols
     assert ["Renamed", "Three"] in [sorted(c) for c in cols.values()], cols
+
+
+def _add_sits_in_its_band(add):
+    """A ＋ is only ever offered centred in its own column and in the bottom of
+    it, so that is what both a zoom and the re-render have to preserve."""
+    band = add["band"]
+    return (
+        abs(add["x"] - band["x"]) <= 1.0
+        and add["y"] > (band["top"] + band["bottom"]) / 2
+        and add["y"] <= band["bottom"] + 1.0
+    )
+
+
+
+def test_kanban_add_button_creates_a_card(window):
+    """The per-column ＋ creates a card in that column, as one source patch.
+
+    Real browser only, because the whole feature is geometry: a button placed
+    from the section rect, repositioned when the zoom toolbar rescales it, and
+    rebuilt by the re-render the commit triggers.
+    """
+    _render(window, KANBAN_EMPTY)
+    _enter_edit_mode(window)
+
+    adds = _wait(window, KANBAN_ADDS, lambda d: d["n"] == 3, timeout=15)
+    assert [a["label"] for a in adds["adds"]] == [
+        "Add a card to Todo",
+        "Add a card to Doing",
+        "Add a card to Done",
+    ], adds
+    assert all(_add_sits_in_its_band(add) for add in adds["adds"]), adds
+    # The empty column is the one worth checking: mermaid sizes its band to the
+    # header alone, so the band (and the ＋ in it) is much shorter (50px against
+    # 79px for a column holding a card).
+    empty = adds["adds"][1]
+    assert empty["band"]["height"] * 1.5 < adds["adds"][0]["band"]["height"], adds
+
+    # A zoom rescales every section rect, so the overlay has to follow it. The
+    # whole diagram is re-centred as it widens, so "followed" means the ＋ is
+    # still in its own band, not that it moved right.
+    _zoom(window, "+")
+    zoomed = _wait(
+        window,
+        KANBAN_ADDS,
+        lambda d: d["n"] == 3
+        and d["adds"][0]["band"]["width"] > adds["adds"][0]["band"]["width"]
+        and all(_add_sits_in_its_band(a) for a in d["adds"]),
+        timeout=15,
+    )
+    _zoom(window, "100%")
+
+    opened = _click_kanban_add(window, 1)
+    assert opened["v"] == "" and opened["ph"] == "New card in Doing", opened
+    _type_and_confirm(window, "Fresh")
+    state = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any("Fresh" in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert not state["input"] and not state["error"] and not state["notice"], state
+    assert state["source"] and "    [Fresh]" in state["source"], state
+    # Into the column that was pressed: the empty one, so its band grew.
+    cols = _wait(
+        window,
+        COLUMNS,
+        lambda d: any("Fresh" in cards for cards in d["cols"].values()),
+        timeout=15,
+    )["cols"]
+    assert ["Fresh"] in [sorted(cards) for cards in cols.values()], cols
+
+    # The render replaced the SVG and with it the overlay, so the ＋ are back --
+    # still one per column, and still in their own bands.
+    adds = _wait(window, KANBAN_ADDS, lambda d: d["n"] == 3, timeout=15)
+    assert all(_add_sits_in_its_band(add) for add in adds["adds"]), adds
+    assert adds["adds"][1]["band"]["height"] > empty["band"]["height"], adds
+
+    # ...and the input it opens is the same one a label edit uses, so Esc is
+    # the same way out of it.
+    _click_kanban_add(window, 0)
+    _type(window, "Discarded")
+    _dump(
+        window,
+        "(() => { const i = document.querySelector('.mermaid-edit-input');"
+        " i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));"
+        " return { closed: true }; })()",
+    )
+    after = _wait(window, LABEL_STATE, lambda d: not d["input"], timeout=10)
+    assert "Discarded" not in (after["source"] or ""), after
+    assert _dump(window, KANBAN_ADDS)["n"] == 3, "the ＋ did not survive a cancelled card"
+
+
+def test_kanban_board_command_inserts_a_board_ready_to_fill(window):
+    """Insert → Kanban Board… asks for columns and drops in a board that is
+    already open for editing, so its per-column ＋ can be pressed straight away.
+
+    Real browser only: it is the built source that has to satisfy real mermaid
+    (``col1[…]`` columns and all) and the round-trip back out to markdown.
+    """
+    _set_scheme(window, False)
+    # A document to insert into, so the editor is real before the command runs.
+    _set_document(window, "# Tasks\n", "Tasks")
+    _open_board_dialog(window, ["Todo", "Doing", "Done"])
+    adds = _wait(window, KANBAN_ADDS, lambda d: d["n"] == 3, timeout=20)
+    assert [add["label"] for add in adds["adds"]] == [
+        "Add a card to Todo",
+        "Add a card to Doing",
+        "Add a card to Done",
+    ], adds
+
+    # Real mermaid accepted the built source (col1[…] columns and all), and the
+    # board came up already open for editing — the ＋ above are its own.
+    assert _dump(window, EDIT_STATE)["editing"], "the new board is not in edit mode"
+    sections = _wait(window, SECTIONS, lambda d: d["n"] == 3, timeout=15)
+    joined = " ".join(sections["sections"])
+    assert all(name in joined for name in ("Todo", "Doing", "Done")), sections
+    # The board round-trips: what the document holds is what mermaid rendered.
+    assert _dump(window, DOC_SOURCE)["sources"] == [
+        "kanban\n  col1[Todo]\n  col2[Doing]\n  col3[Done]"
+    ]
+
+    # And it behaves like any other board from here: a ＋ creates a card, in the
+    # column it was pressed in.
+    _click_kanban_add(window, 1)
+    _type_and_confirm(window, "Write the spec")
+    state = _wait(
+        window, LABEL_STATE, lambda d: any("Write the spec" in t for t in d["texts"]), timeout=20
+    )
+    assert not state["notice"], state
+    filled = _wait(
+        window,
+        CARDS_AND_BANDS,
+        lambda d: any(c["text"] == "Write the spec" for c in d["cards"]),
+        timeout=15,
+    )
+    card = next(c for c in filled["cards"] if c["text"] == "Write the spec")
+    landed = min(range(len(filled["bands"])), key=lambda k: abs(card["x"] - filled["bands"][k]))
+    assert sections["sections"][landed] == "Doing", (card, filled, sections)
+    _wait(
+        window,
+        DOC_SOURCE,
+        lambda d: d["sources"]
+        == ["kanban\n  col1[Todo]\n  col2[Doing]\n    [Write the spec]\n  col3[Done]"],
+        timeout=10,
+    )
+
+    # A cancelled dialog inserts nothing at all.
+    _open_board_dialog(window)
+    _cancel_board_dialog(window)
+    _wait(window, BOARD_DIALOG, lambda d: not d["present"], timeout=10)
+    assert _dump(window, DOC_SOURCE)["sources"] == [
+        "kanban\n  col1[Todo]\n  col2[Doing]\n    [Write the spec]\n  col3[Done]"
+    ]
 
 
 def test_sequence_participant_wrapped_in_a_tspan_is_editable(window):

@@ -5,11 +5,19 @@ import type { NodeView, EditorView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
 import { blockNodeView } from '../blockview'
 import { reinitializeMermaidTheme } from '../mermaid'
-import { EDITING_CLASS, finishMermaidLabelEditing, renderDiagram } from '../mermaid-edit'
+import {
+  ADD_BUTTON_CLASS,
+  EDITING_CLASS,
+  buildKanbanSource,
+  finishMermaidLabelEditing,
+  renderDiagram,
+} from '../mermaid-edit'
 import { BLOCK_PLUGIN_KEY } from '../blockplugin'
 import { markdownToProse, serializeBlock } from '../markdown'
 import { createBlockCodeMirror } from '../codemirror-block'
 import type { BlockCodeMirror } from '../codemirror-block'
+import { showError } from '../bridge'
+import { promptForKanbanColumns } from '../urlDialog'
 
 export const MERMAID_TYPE = 'mermaid_block'
 
@@ -299,11 +307,11 @@ class MermaidNodeView implements NodeView {
     if (this.cm !== null) return true
     const target = event.target
     if (!(target instanceof Element)) return false
-    // The label editor is a real input inside the block: every keystroke and
-    // mouse event in it belongs to the editor, not to ProseMirror. The rest of
-    // the diagram keeps its normal behaviour — clicking it still selects the
-    // block and reveals its handle.
-    return target.closest('.mermaid-edit-input') !== null
+    // The label editor and the kanban ＋ are real controls inside the block:
+    // every keystroke and mouse event in them belongs to the editor, not to
+    // ProseMirror. The rest of the diagram keeps its normal behaviour — clicking
+    // it still selects the block and reveals its handle.
+    return target.closest(`.mermaid-edit-input, .${ADD_BUTTON_CLASS}`) !== null
   }
 
   ignoreMutation(): boolean {
@@ -343,6 +351,22 @@ function setEditAttr(tr: Transaction, pos: number, editing: boolean): void {
 }
 
 /**
+ * Open the diagram at `pos` for editing inside `tr`, dropping whichever other
+ * diagram was in edit mode, and return that dropped diagram's new position (or
+ * null). Everything entering edit mode needs in the *document* lives here, so a
+ * board inserted with the edit already on is one transaction — and one undo —
+ * rather than an insert followed by a second mode change.
+ */
+function openDiagramEditIn(state: EditorState, tr: Transaction, pos: number): number | null {
+  const open = currentEditPos(state)
+  const dropped = open !== null && open !== pos ? tr.mapping.map(open) : null
+  if (dropped !== null) setEditAttr(tr, dropped, false)
+  setEditAttr(tr, pos, true)
+  tr.setMeta(MERMAID_EDIT_KEY, { editPos: pos })
+  return dropped
+}
+
+/**
  * Enter edit mode on the diagram at `pos`, dropping whichever other diagram was
  * in it. The block is deselected on the way in: a node selection left in place
  * would let a stray keystroke replace the whole diagram with typed text.
@@ -352,10 +376,7 @@ export function enterDiagramEditMode(view: EditorView, pos: number | undefined):
   const node = view.state.doc.nodeAt(pos)
   if (!node || node.type.name !== MERMAID_TYPE) return
   const tr = view.state.tr
-  const open = currentEditPos(view.state)
-  const dropped = open !== null && open !== pos ? tr.mapping.map(open) : null
-  if (dropped !== null) setEditAttr(tr, dropped, false)
-  setEditAttr(tr, pos, true)
+  const dropped = openDiagramEditIn(view.state, tr, pos)
   const sel = tr.selection
   if (sel instanceof NodeSelection && sel.node.type.name === MERMAID_TYPE) {
     // `between` lands on the nearest real text position (or a selection over a
@@ -365,7 +386,6 @@ export function enterDiagramEditMode(view: EditorView, pos: number | undefined):
     const $end = tr.doc.resolve(Math.min(pos + sel.node.nodeSize, tr.doc.content.size))
     tr.setSelection(TextSelection.between($end, $end, 1))
   }
-  tr.setMeta(MERMAID_EDIT_KEY, { editPos: pos })
   view.dispatch(tr)
   // The diagram just dropped out of edit mode, so its label editor (if one was
   // open) has to go with it. Dispatching first is what makes that safe: the
@@ -395,13 +415,58 @@ export function toggleDiagramEditMode(view: EditorView, pos: number | undefined)
   }
 }
 
+/**
+ * Insert a new, empty kanban board from `source` (a `buildKanbanSource` result)
+ * and open it straight in edit mode, so the per-column ＋ can fill it: a board
+ * with no cards has nothing else to edit. The insert mirrors `insertTable`'s two
+ * branches — an empty paragraph is replaced, otherwise the board goes after the
+ * top-level block the selection is in — and the mode rides along in the same
+ * transaction, so one undo takes the whole board away.
+ */
+export function insertKanbanSource(view: EditorView, source: string): boolean {
+  if (!source) return false
+  const node = view.state.schema.nodes[MERMAID_TYPE].create({ value: source })
+  const { $from } = view.state.selection
+  const tr = view.state.tr
+  let boardPos: number
+  if ($from.parent.isTextblock && $from.parent.content.size === 0) {
+    boardPos = $from.before($from.depth)
+    tr.replaceWith(boardPos, $from.after($from.depth), node)
+  } else {
+    boardPos = $from.depth > 0 ? $from.after(1) : $from.pos
+    tr.insert(boardPos, node)
+  }
+  const dropped = openDiagramEditIn(view.state, tr, boardPos)
+  view.dispatch(tr)
+  if (dropped !== null) finishMermaidLabelEditing(view.nodeDOM(dropped), true)
+  return true
+}
+
+/**
+ * Ask for a board's columns and insert it. Resolves false if the user cancelled
+ * the dialog or every name they typed is one the kanban grammar cannot carry —
+ * a column is delimited by `]`, so `]` and a few friends are not names.
+ */
+export async function insertKanbanBoard(view: EditorView): Promise<boolean> {
+  const columns = await promptForKanbanColumns()
+  if (columns === null) return false
+  const source = buildKanbanSource(columns)
+  if (!source) {
+    await showError('None of those column names can be used in a kanban column')
+    return false
+  }
+  return insertKanbanSource(view, source)
+}
+
 /** The diagram a double click lands on, or null when it is not on one. */
 function diagramEditTogglePos(event: MouseEvent): number | null {
   if (!(event.target instanceof Element)) return null
   const block = event.target.closest<HTMLElement>('.mermaid')
   if (!block) return null
-  // Chrome and an open label editor handle their own double clicks.
-  if (event.target.closest('.mermaid-toolbar, .mermaid-edit-input') !== null) return null
+  // Chrome and an open label editor handle their own double clicks, and so does
+  // a kanban ＋: a double click on a button is a click on a button, not a
+  // request to toggle this diagram.
+  if (event.target.closest(`.mermaid-toolbar, .mermaid-edit-input, .${ADD_BUTTON_CLASS}`) !== null) return null
   if (block.querySelector('.mermaid-edit-input') !== null) return null
   const handle = block.querySelector<HTMLElement>('.block-handle[data-block-pos]')
   const pos = handle ? Number(handle.dataset.blockPos) : Number.NaN

@@ -32,6 +32,8 @@ const INVALID_FLASH_MS = 700
 const DRAG_CLONE_CLASS = 'mermaid-drag-card'
 const DRAG_SOURCE_CLASS = 'mermaid-drag-source'
 const DROP_TARGET_CLASS = 'kanban-drop-target'
+/** The per-column ＋ that creates a card; the node view keeps its events. */
+export const ADD_BUTTON_CLASS = 'mermaid-kanban-add'
 
 /** Marks a `.mermaid` block that is in edit mode rather than previewing. */
 export const EDITING_CLASS = 'mermaid-editing'
@@ -1208,6 +1210,100 @@ export function moveKanbanCard(source: string, from: number, column: number, ind
   return text === source ? null : text
 }
 
+/**
+ * Characters mermaid's kanban grammar cannot carry inside a label: it reads a
+ * node's text as "everything up to the closing delimiter", so a `]` ends the
+ * label, a nested `[…]` is a parse error and `@{` opens metadata. A label
+ * holding any of them either fails to parse or stops mapping back to the
+ * source, which would silently withhold the card from the label editor.
+ */
+const UNUSABLE_KANBAN_LABEL = /[[\]{@}\n]/
+
+/** Whether `name` can be written as a kanban column header or card label. */
+export function usableKanbanLabel(name: string): boolean {
+  const trimmed = name.trim()
+  return trimmed.length > 0 && !UNUSABLE_KANBAN_LABEL.test(trimmed)
+}
+
+/**
+ * Insert a new card into `column` at `index` (among that column's cards), or
+ * `null` when there is nothing to insert: no such column, an empty or unusable
+ * label (see `usableKanbanLabel`), or a rebuild that would not change the
+ * source. `null` is the caller's cue to flash `mermaid-edit-invalid` rather
+ * than commit a no-op.
+ *
+ * The insertion point is `moveKanbanCard`'s, so a card lands in the same place
+ * a drop would put it and comments, blank lines and `@{ … }` metadata keep
+ * their position. Card identity here is purely positional — the label is the
+ * only thing a new card brings, and every later edit re-derives the model from
+ * the patched source.
+ */
+export function addKanbanCard(
+  source: string,
+  column: number,
+  index: number,
+  label: string,
+): string | null {
+  const doc = parseKanban(source)
+  const header = doc.columns[column]
+  const headerLine = header === undefined ? undefined : doc.lines[header]
+  if (!headerLine || !usableKanbanLabel(label)) return null
+  const text = label.trim()
+
+  const siblings = doc.cards.filter((entry) => entry.column === column)
+  const at = Math.max(0, Math.min(index, siblings.length))
+  // Reusing an existing card's indent keeps a tab-indented or six-space board
+  // consistent: one level deeper than the column would mix tabs and spaces.
+  const model = siblings[0] ?? doc.cards[0]
+  const indent = (model === undefined ? undefined : doc.lines[model.line]?.indent) ?? `${headerLine.indent}  `
+  const start = indent.length + 1
+  const card: KanbanLine = {
+    text: `[${text}]`,
+    indent,
+    offset: 0,
+    kind: 'card',
+    label: text,
+    labelStart: start,
+    labelEnd: start + text.length,
+  }
+
+  const lines = doc.lines.slice()
+  let insertAt: number
+  if (siblings.length === 0) insertAt = header + 1
+  else if (at >= siblings.length) insertAt = siblings[at - 1].line + 1
+  else insertAt = siblings[at].line
+  lines.splice(insertAt, 0, card)
+
+  const next = rebuildKanban(lines)
+  return next === source ? null : next
+}
+
+/**
+ * A runnable kanban diagram for `columns`, or `''` when none of them is usable
+ * (the caller reports that rather than inserting a board that cannot render).
+ *
+ * Headers are always emitted as `id[Name]`: a bare word renders too, but not a
+ * name holding `]`, `{` or `@`, and the `id[Name]` shape is the one
+ * `kanbanLabelSpan` maps, so every generated column is immediately renamable in
+ * the editor. Ids are positional (`col1…`) and labels are de-duplicated with a
+ * ` (2)` suffix, so a board asked for two `Doing` columns still renders.
+ */
+export function buildKanbanSource(columns: string[], opts: { firstCard?: string } = {}): string {
+  const names = columns.map((name) => name.trim()).filter(usableKanbanLabel)
+  if (names.length === 0) return ''
+
+  const seen = new Map<string, number>()
+  const lines = names.map((name, index) => {
+    const count = seen.get(name) ?? 0
+    seen.set(name, count + 1)
+    return `  col${index + 1}[${count === 0 ? name : `${name} (${count + 1})`}]`
+  })
+  // The seed card belongs to the first column, the one a board is read from.
+  const firstCard = opts.firstCard?.trim() ?? ''
+  if (usableKanbanLabel(firstCard)) lines.splice(1, 0, `    [${firstCard}]`)
+  return ['kanban', ...lines].join('\n')
+}
+
 // ── rendering ──────────────────────────────────────────────────────────────
 
 export interface MermaidDiagramOptions {
@@ -1329,7 +1425,16 @@ export function attachMermaidEditing(
   const targets = labelTargets(svg, family, source)
   for (const target of targets) target.el.classList.add(EDITABLE_CLASS)
 
+  // One inline editor at a time. Opening another — a different label, a card
+  // being dragged, a new card being named — drops the value being typed, the
+  // same as Esc; the layer's own resolver hands the open one back when the
+  // diagram stops being editable, so a new card's title commits or cancels with
+  // every other edit.
   let closeEditor: ((accept: boolean) => void) | null = null
+  const openEditor = (finish: (accept: boolean) => void): void => {
+    closeEditor?.(false)
+    closeEditor = finish
+  }
 
   // Diagram glyphs are never natively draggable, and a press on a label must
   // not start a ProseMirror node selection underneath the click. `mousedown`
@@ -1347,14 +1452,12 @@ export function attachMermaidEditing(
     if (event.button !== 0) return
     const target = labelTargetAt(event, targets)
     if (!target) return
-    // Another label, not this one: the value being typed is dropped rather than
-    // committed, the same as pressing Esc.
-    closeEditor?.(false)
-    closeEditor = openLabelEditor(host, target, source, family, commit)
+    openEditor(openLabelEditor(host, target, source, family, commit))
   }) as EventListener)
 
   if (family === 'kanban') {
     dispose.push(attachKanbanDrag(container, svg, source, commit, () => closeEditor?.(false)))
+    dispose.push(attachKanbanAddButtons(container, svg, source, commit, () => closeEditor?.(false)))
   }
 
   editingLayers.set(host, (accept) => {
@@ -1412,29 +1515,47 @@ function contains(rect: DOMRect, x: number, y: number): boolean {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
 }
 
+interface InlineInputSpec {
+  /** The `.mermaid` block the input is appended to and positioned against. */
+  host: HTMLElement
+  /** Where to put it, in viewport coordinates (`getBoundingClientRect`). */
+  rect: DOMRect
+  value: string
+  placeholder?: string
+  /**
+   * Enter, or a blur. Return `false` to flash the input red and leave it open —
+   * the way an unmappable value or an unusable card title is refused — and
+   * `true` when the caller is done with the input either way.
+   */
+  onAccept: (value: string) => boolean
+  /** Esc, or a resolve from outside with `accept: false`. */
+  onCancel: () => void
+}
+
 /**
- * The in-place editor: one input over the clicked label. `Enter` commits, `Esc`
- * cancels, blur commits — the same conventions as the URL dialogs elsewhere in
- * the app. A commit that cannot be mapped back to the source flashes the input
- * red instead of silently doing nothing. The returned function resolves it from
- * outside, with `accept` deciding whether the typed value is kept; the host
- * calls it when the diagram stops being editable.
+ * The one-line input the editor edits a label with — and, for a new kanban card,
+ * the one it is created with, so both share the Enter/Esc/blur conventions and
+ * the focus handling rather than growing two of each.
+ *
+ * An existing value is selected, so typing replaces it; an empty one is not,
+ * since selecting nothing leaves the field looking selected-but-blank. The
+ * returned function resolves the input from outside with `accept` deciding
+ * whether the typed value is kept; the host calls it when the diagram stops
+ * being editable.
  */
-function openLabelEditor(
-  host: HTMLElement,
-  target: LabelTarget,
-  source: string,
-  family: DiagramFamily,
-  commit: (source: string) => void,
-): (accept: boolean) => void {
-  const rect = target.el.getBoundingClientRect()
-  const hostRect = host.getBoundingClientRect()
+function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
+  const { host, rect, value, placeholder, onAccept, onCancel } = spec
+  const origin = host.getBoundingClientRect()
   const input = document.createElement('input')
   input.type = 'text'
   input.className = INPUT_CLASS
-  input.value = target.sourceText ?? target.text
-  input.style.left = `${rect.left - hostRect.left}px`
-  input.style.top = `${rect.top - hostRect.top}px`
+  input.value = value
+  if (placeholder) input.placeholder = placeholder
+  // An absolutely positioned child of a horizontal scroller is placed from the
+  // scrolled content, not from the visible box, so the preview's own scroll has
+  // to be added back (`host` is the block for a label, which never scrolls).
+  input.style.left = `${rect.left - origin.left + host.scrollLeft}px`
+  input.style.top = `${rect.top - origin.top}px`
   input.style.width = `${Math.max(rect.width, 40)}px`
   input.style.height = `${rect.height || 20}px`
 
@@ -1448,24 +1569,14 @@ function openLabelEditor(
   }
   const finish = (accept: boolean): void => {
     if (closed) return
-    const value = input.value.trim()
-    // The input holds the source's spelling of the span being replaced; an
-    // unchanged value is a cancel. The mapper, though, resolves from the label
-    // the user clicked: a requirement row is located by the row mermaid drew
-    // (`Verification: Test`) and only its value is rewritten, so passing the
-    // edited text instead would leave it nothing to find.
-    const current = target.sourceText ?? target.text
-    if (!accept || value === current) {
+    if (!accept) {
+      onCancel()
       close()
       return
     }
-    const outcome = patchLabel(source, family, target.text, value, target)
-    if (outcome.status === 'ok') {
-      close()
-      commit(outcome.text)
-      return
-    }
-    if (outcome.status === 'ambiguous') {
+    // A refused value flashes red and takes itself off: leaving the input open
+    // would strand one the only way out of is Esc.
+    if (!onAccept(input.value.trim())) {
       input.classList.add(INVALID_CLASS)
       setTimeout(close, INVALID_FLASH_MS)
       return
@@ -1490,8 +1601,43 @@ function openLabelEditor(
 
   host.appendChild(input)
   input.focus()
-  input.select()
+  if (value) input.select()
   return finish
+}
+
+/**
+ * The label editor: `openInlineInput` seeded with the label being replaced. A
+ * commit that cannot be mapped back to the source flashes the input red instead
+ * of silently doing nothing.
+ */
+function openLabelEditor(
+  host: HTMLElement,
+  target: LabelTarget,
+  source: string,
+  family: DiagramFamily,
+  commit: (source: string) => void,
+): (accept: boolean) => void {
+  // The input holds the source's spelling of the span being replaced, and an
+  // unchanged value is a cancel. The mapper, though, resolves from the label
+  // the user clicked: a requirement row is located by the row mermaid drew
+  // (`Verification: Test`) and only its value is rewritten, so passing the
+  // edited text instead would leave it nothing to find.
+  const current = target.sourceText ?? target.text
+  return openInlineInput({
+    host,
+    rect: target.el.getBoundingClientRect(),
+    value: current,
+    onAccept: (value) => {
+      if (value === current) return true
+      const outcome = patchLabel(source, family, target.text, value, target)
+      if (outcome.status === 'ok') {
+        commit(outcome.text)
+        return true
+      }
+      return outcome.status === 'ambiguous'
+    },
+    onCancel: () => undefined,
+  })
 }
 
 // ── kanban drag ────────────────────────────────────────────────────────────
@@ -1649,3 +1795,112 @@ function dropIndex(event: PointerEvent, doc: KanbanDoc, cards: SVGElement[], fro
   })
   return index
 }
+
+// ── kanban add buttons ──────────────────────────────────────────────────────
+
+/** Half the button's own size, so a point can be its centre (see the CSS). */
+const ADD_BUTTON_HALF = 11
+
+/**
+ * One ＋ per column, at the bottom of that column's own band, which is what
+ * makes it read as "add a card here" — including for an empty column, since
+ * mermaid still draws one (a shorter band, sized to its header).
+ *
+ * The buttons are HTML in the preview rather than `foreignObject`s inside
+ * mermaid's own layout: a view-mode diagram is a baked bitmap, which cannot
+ * host them, and an overlay is rebuilt from the rendered sections on every
+ * render anyway. Their geometry is the section rect minus the preview's — the
+ * same arithmetic the drag clone uses — recomputed after each render and on
+ * every `ResizeObserver` tick, which is what covers the zoom toolbar (it sets
+ * `svg.style.width`), a window resize and a theme change in one hook. A
+ * `foreignObject` inside the section is the fallback if the overlay ever
+ * proves stubborn, but it could only be used in edit mode for the same reason.
+ */
+function attachKanbanAddButtons(
+  container: HTMLElement,
+  svg: SVGSVGElement,
+  source: string,
+  commit: (source: string) => void,
+  openEditor: (finish: (accept: boolean) => void) => void,
+): () => void {
+  const sections = sectionElements(svg)
+  const doc = parseKanban(source)
+  // A model that does not line up with the DOM would put a card in a column the
+  // user did not press, and there is no rendering to compare against.
+  if (doc.columns.length === 0 || doc.columns.length !== sections.length) return () => undefined
+
+  const cardsIn = (column: number): number => doc.cards.filter((card) => card.column === column).length
+  const buttons = sections.map((section, column) => {
+    const name = doc.lines[doc.columns[column]]?.label ?? 'this column'
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = ADD_BUTTON_CLASS
+    button.textContent = '＋'
+    button.title = `Add a card to ${name}`
+    button.setAttribute('aria-label', button.title)
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      // Card identity here is positional: the new card goes on the end of its
+      // column, and every later edit re-derives the model from the source.
+      // Registered with the layer, so Done (or a re-render) resolves it exactly
+      // as it resolves a label being retyped.
+      openEditor(
+        openInlineInput({
+          host: container,
+          rect: cardTitleRect(section),
+          value: '',
+          placeholder: `New card in ${name}`,
+          onAccept: (value) => {
+            const next = addKanbanCard(source, column, cardsIn(column), value)
+            if (next === null) return false
+            commit(next)
+            return true
+          },
+          onCancel: () => undefined,
+        }),
+      )
+    })
+    // The press must not reach ProseMirror (it would start a node selection)
+    // nor the drag, which hit-tests cards by coordinate and would otherwise arm
+    // over a card the button happens to sit on.
+    button.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    button.addEventListener('pointerdown', (event) => event.stopPropagation())
+    container.appendChild(button)
+    return { button, section }
+  })
+
+  const place = (): void => {
+    const base = container.getBoundingClientRect()
+    for (const { button, section } of buttons) {
+      const point = addButtonPoint(section)
+      // `scrollLeft` because the preview is a horizontal scroller: an absolute
+      // child is placed from the scrolled content, not the visible box.
+      button.style.left = `${point.x - base.left + container.scrollLeft}px`
+      button.style.top = `${point.y - base.top}px`
+    }
+  }
+  place()
+  const observer = new ResizeObserver(place)
+  observer.observe(svg)
+
+  return () => {
+    observer.disconnect()
+    for (const { button } of buttons) button.remove()
+  }
+}
+
+/** The ＋'s centre: the bottom of the column band, horizontally centred. */
+function addButtonPoint(section: SVGElement): { x: number; y: number } {
+  const rect = sectionRect(section)
+  return { x: rect.left + rect.width / 2, y: rect.bottom - ADD_BUTTON_HALF }
+}
+
+/** Where the new card's title is typed: over the ＋, where the user pressed. */
+function cardTitleRect(section: SVGElement): DOMRect {
+  const point = addButtonPoint(section)
+  return new DOMRect(point.x - 60, point.y - 10, 120, 20)
+}
+

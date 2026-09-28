@@ -8,6 +8,7 @@ export interface MenuCommands {
   importText: () => void
   insertImage: () => void
   insertTableDefault: () => void
+  insertKanban: () => void
   export: () => void
   toggleToolbar: () => void
   formulaReference: () => void

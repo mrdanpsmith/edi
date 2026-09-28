@@ -73,7 +73,7 @@ Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Eac
 Document actions live in the native menu bar and, for the four most common ones (New, Open, Save, Save As), as toolbar buttons:
 
 - **File**: New, Open, Open Recent (the last 8 documents, same list as the home screen), Save, Save As, Revert (enabled once the document has a path), Copy File Path (`Ctrl+Shift+C`, likewise enabled once the document has a path), Export HTML, Quit.
-- **Insert**: Spreadsheet, Text File, Image.
+- **Insert**: Table, Kanban Board, Spreadsheet, Text File, Image.
 - **View**: Preview (toggle, default on), Toolbar (toggle, default on).
 - **Help**: Edi Guide, Formula Reference, About Edi.
 
@@ -85,7 +85,7 @@ Only labels the editor can genuinely rewrite are offered: a label you cannot cli
 
 Renaming something the diagram refers to more than once renames the references with it: an ER entity, a state, a class, a git branch, a requirement, a Sankey node, a Wardley node, a Venn set, a journey actor. Diagrams without references of their own — flowchart, pie, mindmap, gantt, timeline, quadrant, treemap, tree, and the rest — relabel the matching text in the source.
 
-Kanban cards can also be dragged between columns and up and down a column, which reorders the source lines. Leaving edit mode restores the plain preview. A diagram that no longer parses keeps its last good rendering with a short note explaining why, so a half-typed label never leaves a blank block behind.
+In a kanban board, every column carries a **+** in edit mode — including an empty one — which adds a card to that column (`Enter` commits, `Esc` cancels). A new board comes from `Insert → Kanban Board…` (or the toolbar's Kanban button): name the columns, one per line, and the board is inserted already open for editing so the **+** can fill it. Kanban cards can also be dragged between columns and up and down a column, which reorders the source lines. Leaving edit mode restores the plain preview. A diagram that no longer parses keeps its last good rendering with a short note explaining why, so a half-typed label never leaves a blank block behind.
 
 ### Spreadsheet import
 

@@ -416,6 +416,11 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("insertTableDefault")
         )
         insert_menu.addAction(table_action)
+        kanban_action = QAction("&Kanban Board…", self)
+        kanban_action.triggered.connect(
+            lambda _checked=False: self._menu_command("insertKanban")
+        )
+        insert_menu.addAction(kanban_action)
         import_action = QAction("&Spreadsheet…", self)
         import_action.triggered.connect(
             lambda _checked=False: self._menu_command("importTable")
@@ -431,7 +436,7 @@ class MainWindow(QMainWindow):
             lambda _checked=False: self._menu_command("insertImage")
         )
         insert_menu.addAction(image_action)
-        self._insert_actions = (table_action, import_action, text_action, image_action)
+        self._insert_actions = (table_action, kanban_action, import_action, text_action, image_action)
 
         self._view_menu = menubar.addMenu("&View")
         view_menu = self._view_menu

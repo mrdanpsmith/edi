@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
-import { history } from 'prosemirror-history'
+import { history, undo } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { type ContextMenuEntry } from './contextmenu'
@@ -987,6 +987,92 @@ describe('import', () => {
     await loadMain()
     menu('insertImage')
     await flushAsync()
+  })
+})
+
+describe('kanban board insertion', () => {
+  function attachView(markdown: string): EditorView {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({
+        doc: markdownToProse(markdown, schema),
+        plugins: [history()],
+      }),
+    })
+    mainState.editorView = view as unknown as typeof mainState.editorView
+    return view
+  }
+
+  function columnField(): HTMLTextAreaElement {
+    return document.querySelector<HTMLTextAreaElement>('.edi-dialog-input')!
+  }
+
+  function addBoard(): void {
+    document.querySelector<HTMLButtonElement>('.toolbar-primary')!.click()
+  }
+
+  it('inserts a board built from the dialog and opens it in edit mode', async () => {
+    await loadMain()
+    const view = attachView('Hello')
+    menu('insertKanban')
+    await flushAsync()
+    expect(document.querySelector('.edi-dialog-title')?.textContent).toBe('New kanban board')
+    expect(columnField().value.split('\n')).toEqual(['Todo', 'In Progress', 'Review', 'Done'])
+
+    columnField().value = 'Backlog\nDoing'
+    addBoard()
+    await flushAsync()
+
+    // Inserted after the paragraph the caret was in, as one transaction, so a
+    // single undo takes the whole board away.
+    const board = view.state.doc.child(1)
+    expect(board?.type.name).toBe('mermaid_block')
+    expect(board?.attrs.value).toBe('kanban\n  col1[Backlog]\n  col2[Doing]')
+    expect(board?.attrs._edit).toBe(true)
+    expect(proseToMarkdown(view.state.doc)).toContain('```mermaid\nkanban\n  col1[Backlog]\n  col2[Doing]\n```')
+
+    undo(view.state, view.dispatch)
+    expect(view.state.doc.childCount).toBe(1)
+    expect(view.state.doc.child(0)?.type.name).toBe('paragraph')
+  })
+
+  it('replaces an empty paragraph with the board', async () => {
+    await loadMain()
+    const view = attachView('')
+    menu('insertKanban')
+    await flushAsync()
+    columnField().value = 'Todo'
+    addBoard()
+    await flushAsync()
+    expect(view.state.doc.childCount).toBe(1)
+    expect(view.state.doc.child(0)?.type.name).toBe('mermaid_block')
+  })
+
+  it('inserts nothing when the dialog is cancelled', async () => {
+    await loadMain()
+    mainState.showError.mockClear()
+    const view = attachView('Hello')
+    menu('insertKanban')
+    await flushAsync()
+    columnField().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushAsync()
+    expect(view.state.doc.childCount).toBe(1)
+    expect(mainState.showError).not.toHaveBeenCalled()
+  })
+
+  it('reports names the kanban grammar cannot carry and inserts nothing', async () => {
+    await loadMain()
+    const view = attachView('Hello')
+    menu('insertKanban')
+    await flushAsync()
+    columnField().value = ']]'
+    addBoard()
+    await flushAsync()
+    expect(view.state.doc.childCount).toBe(1)
+    expect(mainState.showError).toHaveBeenCalledWith(
+      expect.stringContaining('kanban column'),
+    )
   })
 })
 

@@ -6,6 +6,7 @@ import { TextSelection, Plugin } from 'prosemirror-state'
 import { promptForLink } from './urlDialog'
 import { insertMaskedFieldCommand } from './node/masked'
 import { insertTable } from './node/table'
+import { insertKanbanBoard } from './node/mermaid'
 import { getActiveCellHost, type InlineCellHost, type InlineCellKind } from './inline-format'
 
 const TOOLBAR_VISIBLE_KEY = 'edi.toolbarVisible'
@@ -499,6 +500,15 @@ export function getFormattingButtons(_ctx: ToolbarContext): ButtonSpec[] {
         '<path d="M2 6h12M2 10h12M6 2v12M10 2v12"/>',
       ),
       run: () => false,
+    },
+    {
+      label: 'Kanban board', title: 'Insert kanban board…',
+      markup: icon(
+        '<rect x="2" y="3" width="4" height="10" rx="1"/>' +
+        '<rect x="7" y="3" width="4" height="7" rx="1"/>' +
+        '<rect x="12" y="3" width="3" height="5" rx="1"/>',
+      ),
+      run: (view) => insertKanbanBoard(view),
     },
   ]
 }

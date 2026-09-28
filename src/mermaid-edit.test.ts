@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { fireResizeCallbacks } from './test-setup'
 import {
+  addKanbanCard,
   attachMermaidEditing,
+  buildKanbanSource,
   detectDiagramType,
   finishMermaidLabelEditing,
   moveKanbanCard,
@@ -574,6 +577,167 @@ describe('moveKanbanCard', () => {
   it('ignores an out-of-range card or column', () => {
     expect(moveKanbanCard(source, 9, 0, 0)).toBeNull()
     expect(moveKanbanCard(source, 0, 9, 0)).toBeNull()
+  })
+})
+
+describe('addKanbanCard', () => {
+  const source = [
+    'kanban',
+    '  Todo',
+    '    id1[One]',
+    '    id2[Two]',
+    '  Doing',
+    '    id3[Three]',
+  ].join('\n')
+
+  it('appends to a populated column, at the end by default', () => {
+    expect(addKanbanCard(source, 0, 99, 'Fresh')).toEqual(
+      ['kanban', '  Todo', '    id1[One]', '    id2[Two]', '    [Fresh]', '  Doing', '    id3[Three]'].join(
+        '\n',
+      ),
+    )
+  })
+
+  it('inserts at the head and the middle of a column', () => {
+    expect(addKanbanCard(source, 0, 0, 'First')).toEqual(
+      ['kanban', '  Todo', '    [First]', '    id1[One]', '    id2[Two]', '  Doing', '    id3[Three]'].join(
+        '\n',
+      ),
+    )
+    expect(addKanbanCard(source, 0, 1, 'Middle')).toEqual(
+      ['kanban', '  Todo', '    id1[One]', '    [Middle]', '    id2[Two]', '  Doing', '    id3[Three]'].join(
+        '\n',
+      ),
+    )
+  })
+
+  it('clamps the index at both ends', () => {
+    expect(addKanbanCard(source, 1, -5, 'Low')).toBe(addKanbanCard(source, 1, 0, 'Low'))
+    expect(addKanbanCard(source, 1, 99, 'Low')).toBe(
+      ['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '    id3[Three]', '    [Low]'].join(
+        '\n',
+      ),
+    )
+  })
+
+  it('puts the first card of an empty column directly under its header', () => {
+    const board = ['kanban', '  Todo', '  Doing', '  Done'].join('\n')
+    expect(addKanbanCard(board, 2, 0, 'Shipped')).toEqual(
+      ['kanban', '  Todo', '  Doing', '  Done', '    [Shipped]'].join('\n'),
+    )
+  })
+
+  it('reuses the indent the board already uses for cards', () => {
+    const board = 'kanban\n\tTodo\n\t\tid1[One]\n\tDoing'
+    // An empty column in a tab-indented board, so there is no sibling to copy.
+    expect(addKanbanCard(board, 1, 0, 'Fresh')).toBe('kanban\n\tTodo\n\t\tid1[One]\n\tDoing\n\t\t[Fresh]')
+    expect(addKanbanCard(board, 0, 99, 'More')).toBe('kanban\n\tTodo\n\t\tid1[One]\n\t\t[More]\n\tDoing')
+  })
+
+  it('keeps comments, blank lines and metadata where they were', () => {
+    const board = ['kanban', '  Todo', '    id1[One]@{ shape: rect }', '  %% note', '  Doing'].join('\n')
+    expect(addKanbanCard(board, 0, 0, 'Fresh')).toBe(
+      ['kanban', '  Todo', '    [Fresh]', '    id1[One]@{ shape: rect }', '  %% note', '  Doing'].join('\n'),
+    )
+  })
+
+  it('refuses an empty label', () => {
+    expect(addKanbanCard(source, 0, 0, '')).toBeNull()
+    expect(addKanbanCard(source, 0, 0, '   ')).toBeNull()
+  })
+
+  it('refuses a label the grammar cannot carry', () => {
+    // These would either break the whole board or stop mapping back to the
+    // source, which withholds the card's label from the editor.
+    for (const label of ['a]b', 'a[b', 'a{b}', '@{ type: bug }', 'one\ntwo']) {
+      expect(addKanbanCard(source, 0, 0, label)).toBeNull()
+    }
+  })
+
+  it('reports an unknown column as null', () => {
+    expect(addKanbanCard(source, 9, 0, 'Fresh')).toBeNull()
+    expect(addKanbanCard(source, -1, 0, 'Fresh')).toBeNull()
+  })
+
+  it('round-trips: the model reports one more card, in the right place', () => {
+    for (const [column, index] of [
+      [0, 0],
+      [0, 1],
+      [0, 2],
+      [1, 0],
+    ] as const) {
+      const next = addKanbanCard(source, column, index, 'Fresh')!
+      expect(next).not.toBeNull()
+      const doc = parseKanban(next)
+      const at = doc.cards.findIndex((card) => card.label === 'Fresh')
+      expect(at).toBeGreaterThanOrEqual(0)
+      const card = doc.cards[at]!
+      expect([card.column, card.index]).toEqual([column, index])
+      expect(doc.cards).toHaveLength(4)
+    }
+  })
+})
+
+describe('buildKanbanSource', () => {
+  it('builds a runnable board from the column names', () => {
+    expect(buildKanbanSource(['Todo', 'Doing', 'Doing'])).toBe(
+      'kanban\n  col1[Todo]\n  col2[Doing]\n  col3[Doing (2)]',
+    )
+  })
+
+  it('de-duplicates repeated names, since mermaid rejects a repeated node id', () => {
+    const source = buildKanbanSource(['Doing', 'Doing', 'Doing', 'Done'])
+    expect(source.split('\n').slice(1)).toEqual([
+      '  col1[Doing]',
+      '  col2[Doing (2)]',
+      '  col3[Doing (3)]',
+      '  col4[Done]',
+    ])
+  })
+
+  it('emits the id[Name] shape every generated column can be renamed in', () => {
+    // A bare word renders, but a name holding `]` does not — and `id[Name]` is
+    // the shape `kanbanLabelSpan` maps.
+    expect(buildKanbanSource(['In Progress', 'Done'])).toBe(
+      'kanban\n  col1[In Progress]\n  col2[Done]',
+    )
+    expect(parseKanban(buildKanbanSource(['In Progress', 'Done'])).columns).toHaveLength(2)
+  })
+
+  it('drops names the grammar cannot carry, so the board still renders', () => {
+    const source = buildKanbanSource(['Todo', 'a]b', 'a{b}', 'x@{ y }', 'Done'])
+    expect(source).toBe('kanban\n  col1[Todo]\n  col2[Done]')
+  })
+
+  it('seeds the first column with a card when asked', () => {
+    expect(buildKanbanSource(['Todo', 'Done'], { firstCard: 'Write the spec' })).toBe(
+      'kanban\n  col1[Todo]\n    [Write the spec]\n  col2[Done]',
+    )
+    expect(buildKanbanSource(['Todo'], { firstCard: 'a]b' })).toBe('kanban\n  col1[Todo]')
+  })
+
+  it('ignores blank lines and surrounding space', () => {
+    expect(buildKanbanSource(['  Todo ', '', '   ', 'Done'])).toBe('kanban\n  col1[Todo]\n  col2[Done]')
+  })
+
+  it('returns nothing when no column name is usable', () => {
+    expect(buildKanbanSource([])).toBe('')
+    expect(buildKanbanSource(['', '  '])).toBe('')
+    expect(buildKanbanSource(['a]b'])).toBe('')
+  })
+
+  it('round-trips through the model: one column per name, labels intact', () => {
+    const names = ['Todo', 'In Progress', 'Doing', 'Doing', 'Done']
+    const doc = parseKanban(buildKanbanSource(names))
+    expect(doc.columns).toHaveLength(names.length)
+    expect(doc.lines.filter((line) => line.kind === 'column').map((line) => line.label)).toEqual([
+      'Todo',
+      'In Progress',
+      'Doing',
+      'Doing (2)',
+      'Done',
+    ])
+    expect(doc.cards).toEqual([])
   })
 })
 
@@ -1316,5 +1480,184 @@ describe('kanban drag', () => {
     expect(commit).toHaveBeenCalledWith(
       ['kanban', '  Todo', '    id1[Renamed]', '    id2[Two]', '  Doing', '    id3[Three]'].join('\n'),
     )
+  })
+})
+
+describe('kanban add buttons', () => {
+  // A board with an empty middle column: mermaid still draws one, as a shorter
+  // band, which is what makes a per-column ＋ work for it.
+  const source = [
+    'kanban',
+    '  Todo',
+    '    id1[One]',
+    '    id2[Two]',
+    '  Doing',
+    '  Done',
+    '    id3[Three]',
+  ].join('\n')
+
+  const bands: DOMRect[] = [
+    rect(0, 20, 140, 100),
+    rect(200, 20, 140, 50),
+    rect(400, 20, 140, 50),
+  ]
+
+  function card(label: string): string {
+    return `<g class="node default"><rect /><g class="label"><foreignObject><div class="labelBkg">` +
+      `<span class="nodeLabel"><p>${label}</p></span></div></foreignObject></g></g>`
+  }
+
+  function section(name: string): string {
+    return `<g class="cluster section-x"><rect /><g class="cluster-label"><foreignObject><div class="labelBkg">` +
+      `<span class="nodeLabel"><p>${name}</p></span></div></foreignObject></g></g>`
+  }
+
+  const BOARD_SVG = `<svg><g class="sections">${section('Todo')}${section('Doing')}${section('Done')}</g>` +
+    `<g class="items">${card('One')}${card('Two')}${card('Three')}</g></svg>`
+
+  async function renderBoard(commit: (next: string) => void): Promise<{
+    host: HTMLElement
+    preview: HTMLElement
+    svg: SVGSVGElement
+  }> {
+    hoisted.render.mockResolvedValue({ svg: BOARD_SVG })
+    const { host, preview } = harness()
+    await renderDiagram(preview, source, { host, commit })
+    const svg = preview.querySelector('svg')!
+    svg.querySelectorAll<SVGElement>('.sections > g').forEach((band, index) => {
+      const bounds = bands[index]!
+      band.querySelector('rect')!.getBoundingClientRect = () => bounds
+      ;(band as unknown as { _bounds: DOMRect })._bounds = bounds
+    })
+    preview.getBoundingClientRect = () => rect(0, 10, 800, 600)
+    // jsdom computes no layout, so the layer is attached again once the section
+    // rects are known — which is the order a real render already has them in.
+    attachMermaidEditing(preview, svg, source, commit)
+    return { host, preview, svg }
+  }
+
+  function addButtons(scope: ParentNode): HTMLButtonElement[] {
+    return Array.from(scope.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-add'))
+  }
+
+  it('offers a ＋ for every column, the empty one included', async () => {
+    const { preview } = await renderBoard(vi.fn())
+    const buttons = addButtons(preview)
+
+    expect(buttons).toHaveLength(3)
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Add a card to Todo',
+      'Add a card to Doing',
+      'Add a card to Done',
+    ])
+  })
+
+  it('centres each ＋ in the bottom of its own column band', async () => {
+    const { preview } = await renderBoard(vi.fn())
+    const [todo, doing] = addButtons(preview)
+    // The preview sits 10px down the block, so a band at y=20 is y=10 in it.
+    expect(todo!.style.left).toBe('70px')
+    expect(todo!.style.top).toBe('99px')
+    // The empty column's band is half as tall, and its ＋ follows it up.
+    expect(doing!.style.left).toBe('270px')
+    expect(doing!.style.top).toBe('49px')
+  })
+
+  it('follows the diagram when it is resized, as a zoom makes it', async () => {
+    const { preview, svg } = await renderBoard(vi.fn())
+    const button = addButtons(preview)[0]!
+    // What the zoom toolbar does: the whole diagram gets wider, so the first
+    // column's band grows with it and the ＋ has to move.
+    const band = svg.querySelectorAll<SVGElement>('.sections > g')[0]!
+    band.querySelector('rect')!.getBoundingClientRect = () => rect(0, 20, 280, 200)
+    fireResizeCallbacks()
+
+    expect(button.style.left).toBe('140px')
+    expect(button.style.top).toBe('199px')
+  })
+
+  it('creates a card in the column that was pressed, as one source patch', async () => {
+    const commit = vi.fn()
+    const { preview } = await renderBoard(commit)
+
+    click(addButtons(preview)[1]!)
+    const field = input()
+    expect(field.value).toBe('')
+    expect(field.placeholder).toBe('New card in Doing')
+    typeAndConfirm('Fresh')
+
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(commit).toHaveBeenCalledWith(
+      ['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '    [Fresh]', '  Done', '    id3[Three]'].join(
+        '\n',
+      ),
+    )
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+  })
+
+  it('leaves the board alone on Esc', async () => {
+    const commit = vi.fn()
+    const { preview } = await renderBoard(commit)
+
+    click(addButtons(preview)[0]!)
+    typeAndConfirm('Discarded', 'Escape')
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+  })
+
+  it('refuses a title the grammar cannot carry, and says so', async () => {
+    const commit = vi.fn()
+    const { preview } = await renderBoard(commit)
+
+    click(addButtons(preview)[0]!)
+    typeAndConfirm('a]b')
+
+    // Flashed, not silently dropped — and the board is untouched.
+    expect(input().classList.contains('mermaid-edit-invalid')).toBe(true)
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('never arms the card drag on a press', async () => {
+    const commit = vi.fn()
+    const { preview } = await renderBoard(commit)
+    const button = addButtons(preview)[0]!
+    const down = new Event('pointerdown', { bubbles: true, cancelable: true })
+    Object.assign(down, { clientX: 70, clientY: 99, button: 0 })
+
+    button.dispatchEvent(down)
+    window.dispatchEvent(
+      Object.assign(new Event('pointermove', { bubbles: true }), { clientX: 20, clientY: 45, button: 0 }),
+    )
+
+    // The ＋ sits over a card, and the drag hit-tests by coordinate.
+    expect(document.querySelector('.mermaid-drag-card')).toBeNull()
+  })
+
+  it('is not a label, so it is never offered for renaming', async () => {
+    const { preview, svg } = await renderBoard(vi.fn())
+    // It is HTML in the preview, not an SVG label: nothing walks it.
+    expect(editables(svg).map((el) => el.textContent?.trim())).toEqual(['Todo', 'Doing', 'Done', 'One', 'Two', 'Three'])
+    expect(addButtons(preview).some((button) => button.classList.contains('mermaid-editables'))).toBe(false)
+  })
+
+  it('goes away with the layer, and comes back with the next render', async () => {
+    const commit = vi.fn()
+    const { host, preview } = await renderBoard(commit)
+    expect(addButtons(preview)).toHaveLength(3)
+
+    finishMermaidLabelEditing(host, false)
+    expect(addButtons(preview)).toHaveLength(0)
+
+    await renderDiagram(preview, source, { host, commit })
+    expect(addButtons(preview)).toHaveLength(3)
+  })
+
+  it('offers none on a diagram that is not a board', async () => {
+    hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
+    const { host, preview } = harness()
+    await renderDiagram(preview, 'graph TD\n  A[Alpha]\n  B[Beta]', { host, commit: vi.fn() })
+
+    expect(addButtons(preview)).toHaveLength(0)
   })
 })

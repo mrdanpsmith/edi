@@ -44,7 +44,7 @@ import { buildHelpGuideMarkdown } from './helpGuide'
 import { createBlockEditor, type BlockEditor } from './editor'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
-import { enterDiagramEditMode, exitDiagramEditMode } from './node/mermaid'
+import { enterDiagramEditMode, exitDiagramEditMode, insertKanbanBoard } from './node/mermaid'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { HomeScreen } from './home'
 import { addRecentFile, getRecentFiles } from './recents'
@@ -228,6 +228,12 @@ function insertTableDefault(): void {
   if (!view) return
   insertSpreadsheetTable(view, 3, 3)
   setActiveDirty(true)
+}
+
+async function insertKanban(): Promise<void> {
+  const view = blockEditor?.getView()
+  if (!view) return
+  if (await insertKanbanBoard(view)) setActiveDirty(true)
 }
 
 function flashStatus(message: string): void {
@@ -973,6 +979,7 @@ function init(): void {
     importText: () => void importTextFile(),
     insertImage: () => void insertImage(),
     insertTableDefault: () => void insertTableDefault(),
+    insertKanban: () => void insertKanban(),
     export: () => void exportHtml(),
     toggleToolbar: () => toggleToolbar(),
     formulaReference: () => openFunctionReference(),
