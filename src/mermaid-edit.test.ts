@@ -1416,6 +1416,7 @@ describe('kanban drag', () => {
     const { host, preview } = harness()
     await renderDiagram(preview, source, { host, commit })
     const svg = preview.querySelector('svg')!
+    stubSvgFrame(svg)
     const cards = svg.querySelectorAll<SVGElement>('.items > .node')
     cards[0]!.getBoundingClientRect = () => rect(10, 40, 120, 20)
     cards[1]!.getBoundingClientRect = () => rect(10, 70, 120, 20)
@@ -1434,23 +1435,138 @@ describe('kanban drag', () => {
     return event
   }
 
-  it('moves a card into another column', async () => {
+  function dropLine(): SVGLineElement | null {
+    return document.querySelector('.mermaid .kanban-drop-line')
+  }
+
+  /** The line's ends in the drawing's own units, which at 1:1 are its pixels. */
+  function lineSpan(): { from: number; to: number; y: number } {
+    const line = dropLine()!
+    return {
+      from: Number(line.getAttribute('x1')),
+      to: Number(line.getAttribute('x2')),
+      y: Number(line.getAttribute('y1')),
+    }
+  }
+
+  /** The svg is drawn at 1:1 in this fixture, so its frame is the origin. */
+  function stubSvgFrame(svg: SVGSVGElement): void {
+    svg.getBoundingClientRect = () => rect(0, 0, 800, 600)
+  }
+
+  it('moves the real card under the pointer, with no second copy on screen', async () => {
     const commit = vi.fn()
     const { preview, svg } = await renderKanban(commit)
     const card = svg.querySelectorAll('.items > .node')[0]!
+    const base = card.getAttribute('transform')
 
     card.dispatchEvent(pointer('pointerdown', 20, 45))
     window.dispatchEvent(pointer('pointermove', 260, 50))
-    expect(document.querySelector('.mermaid-drag-card')).not.toBeNull()
+
+    // The card that is under the pointer *is* the card, moved: no clone, and
+    // the drag is on the original element rather than on a copy of its text.
+    expect(document.querySelectorAll('.mermaid-drag-card')).toHaveLength(0)
+    expect(card.classList.contains('kanban-dragging-card')).toBe(true)
+    expect(card.getAttribute('transform')).toBe('translate(240, 5) scale(1.04)')
+    expect(card.querySelector('.mermaid-editables')?.textContent).toBe('One')
+    // It paints last, so it is on top of the board it is passing over.
+    expect(card.parentElement?.lastElementChild).toBe(card)
+
+    // The release acts on the pointer's column, which is the one that is marked,
+    // and the line is inside the svg ahead of the cards, so the dragged card
+    // paints over the indicator rather than the other way round.
     expect(svg.querySelectorAll('.sections > g')[1]!.classList.contains('kanban-drop-target')).toBe(true)
+    expect(dropLine()!.parentElement).toBe(svg)
+    expect(dropLine()!.nextElementSibling?.classList.contains('items')).toBe(true)
+
     window.dispatchEvent(pointer('pointerup', 240, 40))
 
     // Dropped above `id3`, so the card lands first in the column.
     expect(commit).toHaveBeenCalledWith(
       ['kanban', '  Todo', '    id2[Two]', '  Doing', '    id1[One]', '    id3[Three]'].join('\n'),
     )
-    expect(document.querySelector('.mermaid-drag-card')).toBeNull()
-    expect(preview.querySelectorAll('.mermaid-drag-source')).toHaveLength(0)
+    // Nothing of the drag survives it: the line, the lift, the class on the
+    // preview that un-clips the board, and the card's own transform and order.
+    expect(dropLine()).toBeNull()
+    expect(card.classList.contains('kanban-dragging-card')).toBe(false)
+    expect(card.getAttribute('transform')).toBe(base)
+    expect(preview.classList.contains('kanban-dragging')).toBe(false)
+    expect(svg.querySelectorAll('.items > .node')[0]).toBe(card)
+    expect(svg.querySelectorAll('.sections > g')[1]!.classList.contains('kanban-drop-target')).toBe(false)
+  })
+
+  it('scales the card offset back into the viewBox so it tracks the pointer', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanban(commit)
+    // Mermaid scales the board down to fit its container, so the svg is drawn
+    // smaller than the viewBox it was laid out in.
+    svg.setAttribute('viewBox', '0 0 200 120')
+    svg.getBoundingClientRect = () => rect(0, 0, 400, 240)
+    const card = svg.querySelectorAll('.items > .node')[0]!
+
+    card.dispatchEvent(pointer('pointerdown', 20, 45))
+    window.dispatchEvent(pointer('pointermove', 140, 65))
+
+    // 120 screen pixels is 60 user units, not 120: the card lands under the
+    // pointer instead of running off twice as far.
+    expect(card.getAttribute('transform')).toBe('translate(60, 10) scale(1.04)')
+  })
+
+  it('draws the line in the gap the card will drop into', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanban(commit)
+    const card = svg.querySelectorAll('.items > .node')[0]!
+    // Cards 0 and 1 sit at y 40..60 and 70..90, and their column's band is
+    // y 20..120, x 0..140. The line overhangs the band by a little on each side,
+    // so it still shows either side of the card that covers it.
+    const band = { from: -4, to: 144 }
+
+    card.dispatchEvent(pointer('pointerdown', 20, 45))
+
+    // Over the top of the column: the first gap, above the card left behind.
+    window.dispatchEvent(pointer('pointermove', 20, 30))
+    expect(lineSpan()).toEqual({ ...band, y: 65 })
+    expect(dropLine()!.style.display).not.toBe('none')
+
+    // Past the middle of the other card: the gap below it.
+    window.dispatchEvent(pointer('pointermove', 20, 95))
+    expect(lineSpan().y).toBe(95)
+
+    // Into the other column, above its single card: that column's own first gap,
+    // so the line moves across with the target rather than stretching to fit.
+    window.dispatchEvent(pointer('pointermove', 260, 35))
+    expect(lineSpan()).toEqual({ from: 196, to: 344, y: 35 })
+
+    // Off the board entirely there is nowhere to land, so nothing is promised.
+    window.dispatchEvent(pointer('pointermove', 700, 500))
+    expect(dropLine()!.style.display).toBe('none')
+  })
+
+  it('centres the line in an empty column, which has no gap to slot into', async () => {
+    const commit = vi.fn()
+    // An empty column is drawn as a band sized to its header alone, which is
+    // what leaves it with no card to measure a gap against.
+    const emptyColumnSource = ['kanban', '  Todo', '    id1[One]', '  Done'].join('\n')
+    const card = '<g class="node default"><rect /><g class="label"></g></g>'
+    const section = '<g class="cluster section-x"><rect /><g class="cluster-label"></g></g>'
+    hoisted.render.mockResolvedValue({ svg: `<svg><g class="sections">${section}${section}</g>` +
+      `<g class="items">${card}</g></svg>` })
+    const { host, preview } = harness()
+    await renderDiagram(preview, emptyColumnSource, { host, commit })
+    const svg = preview.querySelector('svg')!
+    stubSvgFrame(svg)
+    svg.querySelectorAll<SVGElement>('.sections > g').forEach((band, index) => {
+      band.querySelector('rect')!.getBoundingClientRect = () => (index === 0 ? rect(0, 20, 140, 100) : rect(400, 20, 140, 50))
+    })
+    const dragged = svg.querySelector('.items > .node')!
+    dragged.getBoundingClientRect = () => rect(10, 40, 120, 20)
+    host.getBoundingClientRect = () => rect(0, 0, 800, 600)
+
+    dragged.dispatchEvent(pointer('pointerdown', 20, 45))
+    window.dispatchEvent(pointer('pointermove', 460, 45))
+
+    // The middle of the band is where a card dropped here would appear.
+    expect(lineSpan()).toEqual({ from: 396, to: 544, y: 45 })
   })
 
   it('cancels the browser\'s own drag so it cannot swallow the pointer', async () => {
@@ -1499,7 +1615,8 @@ describe('kanban drag', () => {
     window.dispatchEvent(pointer('pointerup', 21, 45))
 
     expect(commit).not.toHaveBeenCalled()
-    expect(document.querySelector('.mermaid-drag-card')).toBeNull()
+    expect(dropLine()).toBeNull()
+    expect(card.classList.contains('kanban-dragging-card')).toBe(false)
   })
 
   it('ignores a drop outside every column', async () => {
@@ -1516,15 +1633,22 @@ describe('kanban drag', () => {
 
   it('does not start a drag when the pointer is cancelled', async () => {
     const commit = vi.fn()
-    const { svg } = await renderKanban(commit)
+    const { preview, svg } = await renderKanban(commit)
     const card = svg.querySelectorAll('.items > .node')[0]!
+    const base = card.getAttribute('transform')
 
     card.dispatchEvent(pointer('pointerdown', 20, 45))
     window.dispatchEvent(pointer('pointermove', 300, 300))
     window.dispatchEvent(pointer('pointercancel', 300, 300))
 
     expect(commit).not.toHaveBeenCalled()
-    expect(document.querySelector('.mermaid-drag-card')).toBeNull()
+    expect(dropLine()).toBeNull()
+    expect(card.classList.contains('kanban-dragging-card')).toBe(false)
+    expect(card.getAttribute('transform')).toBe(base)
+    expect(preview.classList.contains('kanban-dragging')).toBe(false)
+    // Its place in the sibling list is back too: a card left painted last would
+    // be the wrong one for the next drag, whose index→element mapping is a walk.
+    expect(svg.querySelectorAll('.items > .node')[0]).toBe(card)
     expect(svg.querySelectorAll('.sections > g')[0]!.classList.contains('kanban-drop-target')).toBe(false)
   })
 
@@ -1702,7 +1826,7 @@ describe('kanban add buttons', () => {
     )
 
     // The ＋ sits over a card, and the drag hit-tests by coordinate.
-    expect(document.querySelector('.mermaid-drag-card')).toBeNull()
+    expect(document.querySelector('.kanban-drop-line')).toBeNull()
   })
 
   it('is not a label, so it is never offered for renaming', async () => {

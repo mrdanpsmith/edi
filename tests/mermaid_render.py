@@ -353,8 +353,18 @@ def _wait_text(win, wanted, timeout=15):
     )["texts"]
 
 
-def _pointer_drag(win, card, section):
-    """Drag kanban card ``card`` onto section ``section`` with real pointer events."""
+def _pointer_drag(win, card, section, aim=None):
+    """Drag kanban card ``card`` onto section ``section`` with real pointer events.
+
+    ``aim`` picks the slot the pointer is released over. The default is the top
+    of the band, i.e. the first slot; ``"last"`` is just below the middle of the
+    column's last card, i.e. the last slot — which is the one that moves a card
+    within its own column, since a drop above the first card is no move at all.
+
+    Reports what the drag looked like *mid-flight*, before the release, since the
+    whole point of it is the preview: a clone must not exist, the real card must
+    be under the pointer, and the drop line must sit in the target column.
+    """
     out = _dump(
         win,
         f"""(() => {{
@@ -366,20 +376,114 @@ def _pointer_drag(win, card, section):
           const cr = card.getBoundingClientRect();
           const sr = (section.querySelector('rect') || section).getBoundingClientRect();
           const from = {{ x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 }};
-          const to = {{ x: sr.left + sr.width / 2, y: sr.top + 30 }};
+          // A slot is where the pointer is released, so it is aimed inside the
+          // board rather than at a band edge: the ＋ owns the bottom of a band.
+          const resting = cards.filter((c) => {{
+            const r = c.getBoundingClientRect();
+            return r.left >= sr.left - 1 && r.right <= sr.right + 1;
+          }});
+          const last = resting.length ? resting[resting.length - 1].getBoundingClientRect() : null;
+          const aimY = {json.dumps(aim)} === 'last' && last
+            ? last.top + last.height / 2 + 6
+            : sr.top + 30;
+          const to = {{ x: sr.left + sr.width / 2, y: aimY }};
           const send = (target, type, x, y) => target.dispatchEvent(new PointerEvent(type, {{
             bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse',
             isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
           }}));
           send(card, 'pointerdown', from.x, from.y);
+          const centre = () => {{
+            const r = card.getBoundingClientRect();
+            return {{ x: r.left + r.width / 2, y: r.top + r.height / 2 }};
+          }};
+          let half = null;
           for (let i = 1; i <= 8; i++) {{
             send(window, 'pointermove',
                  from.x + (to.x - from.x) * i / 8,
                  from.y + (to.y - from.y) * i / 8);
+            if (i === 4) half = {{ at: centre(), pointer: {{ x: from.x + (to.x - from.x) * 4 / 8,
+                                                           y: from.y + (to.y - from.y) * 4 / 8 }} }};
           }}
-          const clone = document.querySelector('.mermaid-drag-card') !== null;
+          // Read the preview before the release takes it away.
+          const preview = card.closest('.mermaid-preview');
+          const svg = preview.querySelector('svg');
+          const line = document.querySelector('.mermaid .kanban-drop-line');
+          const end = centre();
+          // What is painted on top where the user is looking. Both the card and
+          // the line are deliberately pointer-transparent, so each is made
+          // hit-testable for the probe: what answers at those pixels is the
+          // top of the paint order, which is the only thing a screenshot of a
+          // just-mutated DOM cannot be trusted to tell us.
+          const inside = (node) => {{
+            for (let n = node; n && n !== document; n = n.parentNode) if (n === card) return true;
+            return false;
+          }};
+          const atPointer = (() => {{
+            card.style.pointerEvents = 'auto';
+            const hit = document.elementFromPoint(to.x, to.y);
+            card.style.pointerEvents = '';
+            return inside(hit);
+          }})();
+          // What answers along the line's own pixels. The line sits inside the
+          // svg ahead of the cards, so it is over the column's own background
+          // but under every card — and under the ＋, which is a positioned
+          // sibling of the svg and so paints over the whole drawing, narrow as
+          // it is. Sampled rather than probed once, because whether any one
+          // point is covered depends on where the drag happened to be.
+          const overLine = (() => {{
+            if (!line) return null;
+            const r = line.getBoundingClientRect();
+            const y = r.top + r.height / 2;
+            const answers = [];
+            line.style.pointerEvents = 'auto';
+            for (let i = 0; i <= 10; i++) {{
+              const hit = document.elementFromPoint(r.left + r.width * i / 10, y);
+              if (hit === line) answers.push('line');
+              else if (inside(hit)) answers.push('card');
+              else if (hit) answers.push((hit.getAttribute && hit.getAttribute('class')) || hit.tagName);
+              else answers.push('null');
+            }}
+            line.style.pointerEvents = '';
+            return [...new Set(answers)];
+          }})();
+          const mid = {{
+            clone: document.querySelector('.mermaid-drag-card') !== null,
+            lifted: card.classList.contains('kanban-dragging-card'),
+            last: card.parentElement.lastElementChild === card,
+            atPointer,
+            overLine,
+            // Tracking, measured as a delta between two points of the drag: the
+            // grab offset and the lift's scaling are both constant across the
+            // drag, so a card under the pointer moves exactly as the pointer
+            // does, whatever the board is scaled to.
+            travel: {{ dx: end.x - half.at.x, dy: end.y - half.at.y,
+                       px: to.x - half.pointer.x, py: to.y - half.pointer.y }},
+            target: sections[{section}].classList.contains('kanban-drop-target'),
+            // Read the line as it is drawn, in the same viewport space as the
+            // band, so this is about what the user sees and not about the
+            // inline style that put it there.
+            line: line ? {{
+              x: line.getBoundingClientRect().left,
+              y: line.getBoundingClientRect().top + line.getBoundingClientRect().height / 2,
+              w: line.getBoundingClientRect().width,
+              shown: line.style.display !== 'none',
+            }} : null,
+            // An svg child ahead of the cards is what puts the line under them;
+            // a positioned overlay in the preview could not, since it paints
+            // above the whole drawing.
+            lineUnder: line
+              ? line.parentElement === svg
+                && line.nextElementSibling === svg.querySelector('.items')
+              : null,
+            // A card that travels off the board is clipped by both of these
+            // unless the drag switches them off, and then it would vanish
+            // under the pointer instead of following it.
+            unclipped: getComputedStyle(svg).overflow === 'visible'
+              && getComputedStyle(preview).overflow === 'visible',
+            scrolled: preview.scrollWidth > preview.clientWidth + 1,
+          }};
           send(window, 'pointerup', to.x, to.y);
-          return {{ clone, from, to }};
+          return {{ mid, from, to, sr: {{ x: sr.left, y: sr.top, w: sr.width, h: sr.height }} }};
         }})()""",
     )
     assert not out.get("missing"), "kanban card or section missing"

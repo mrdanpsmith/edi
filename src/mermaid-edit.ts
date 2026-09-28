@@ -30,9 +30,20 @@ const NOTICE_TEXT =
   "Couldn't parse diagram — keeping the previous version. Edit the source to fix it."
 const NOTICE_MS = 3000
 const INVALID_FLASH_MS = 700
-const DRAG_CLONE_CLASS = 'mermaid-drag-card'
-const DRAG_SOURCE_CLASS = 'mermaid-drag-source'
+/** The card being dragged: the real one, lifted out of the board to follow the pointer. */
+const DRAG_CARD_CLASS = 'kanban-dragging-card'
+/** On the preview while a card is in flight, so the board stops clipping it. */
+const DRAG_CONTAINER_CLASS = 'kanban-dragging'
+/** The line drawn in the gap the card will drop into. */
+const DROP_LINE_CLASS = 'kanban-drop-line'
 const DROP_TARGET_CLASS = 'kanban-drop-target'
+/** How far a line sits outside the cards bracketing a gap, in px. */
+const DROP_LINE_GAP = 5
+/** How far the line reaches past its column, so it still shows either side of
+ * the card that covers it — mermaid draws a card ~15px narrower than its column. */
+const DROP_LINE_OVERHANG = 4
+/** How much the lifted card grows while it is held, about its own corner. */
+const DRAG_LIFT_SCALE = 1.04
 /** The per-column ＋ that creates a card; the node view keeps its events. */
 export const ADD_BUTTON_CLASS = 'mermaid-kanban-add'
 
@@ -1778,7 +1789,7 @@ function attachKanbanDrag(
     // A model that does not line up with the DOM would mis-attribute the move.
     if (doc.cards.length !== cards.length || doc.columns.length !== sections.length) return
     closeEditor()
-    armDrag({ container, source, doc, cards, sections, from: cards.indexOf(card), down, commit })
+    armDrag({ container, svg, source, doc, cards, sections, from: cards.indexOf(card), down, commit })
   }
   // Cancelling dragstart keeps the browser's own SVG drag (which swallows the
   // pointer stream) from ever starting; preventing pointerdown instead would
@@ -1794,6 +1805,7 @@ function attachKanbanDrag(
 
 interface ArmedDrag {
   container: HTMLElement
+  svg: SVGSVGElement
   source: string
   doc: KanbanDoc
   cards: SVGElement[]
@@ -1818,55 +1830,83 @@ function kanbanCardAt(event: MouseEvent, svg: SVGSVGElement, family: DiagramFami
 }
 
 function armDrag(drag: ArmedDrag): void {
-  const { container, source, doc, cards, sections, from, down, commit } = drag
+  const { container, svg, source, doc, cards, sections, from, down, commit } = drag
   const card = cards[from]
-  const host = container.closest<HTMLElement>('.mermaid') ?? container.parentElement ?? container
-  const cardRect = card.getBoundingClientRect()
-  const hostRect = host.getBoundingClientRect()
+  // The drag only ever *appends* to the transform mermaid gave the card, so
+  // putting it back is restoring a string rather than recomputing a position.
+  const baseTransform = card.getAttribute('transform')
+  const map = svgMapping(svg)
   const sectionAt = (event: MouseEvent): SVGElement | null => hitTest(event, sections, sectionRect)
 
-  let clone: HTMLElement | null = null
+  let lifted = false
+  let line: SVGLineElement | null = null
   let over: SVGElement | null = null
+  // Where the card sat in `.items`, so the paint order can be undone too: SVG
+  // paints in document order, and every card is one long list of siblings, so
+  // the dragged card has to become the last of them to be *on top* of the board
+  // it is passing over. The model→element mapping is the captured `cards` array,
+  // which re-appending does not disturb — but a fresh `cardElements()` walk
+  // would, so the original order is restored on the way out.
+  const parent = card.parentNode
+  const follower = card.nextSibling
 
   const stop = (): void => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onCancel)
-    clone?.remove()
-    clone = null
+    if (lifted) {
+      if (baseTransform === null) card.removeAttribute('transform')
+      else card.setAttribute('transform', baseTransform)
+      card.classList.remove(DRAG_CARD_CLASS)
+      container.classList.remove(DRAG_CONTAINER_CLASS)
+      if (parent) parent.insertBefore(card, follower)
+    }
+    line?.remove()
+    line = null
     over?.classList.remove(DROP_TARGET_CLASS)
     over = null
-    card.classList.remove(DRAG_SOURCE_CLASS)
-    container.classList.remove(DRAG_SOURCE_CLASS)
   }
 
   const onMove = (event: Event): void => {
     const pointer = event as PointerEvent
-    if (!clone) {
+    if (!lifted) {
       if (Math.hypot(pointer.clientX - down.clientX, pointer.clientY - down.clientY) < DRAG_THRESHOLD) return
-      clone = document.createElement('div')
-      clone.className = DRAG_CLONE_CLASS
-      clone.style.width = `${cardRect.width}px`
-      clone.style.height = `${cardRect.height}px`
-      clone.textContent = doc.cards[from]?.label ?? ''
-      host.appendChild(clone)
-      card.classList.add(DRAG_SOURCE_CLASS)
-      container.classList.add(DRAG_SOURCE_CLASS)
+      lifted = true
+      card.classList.add(DRAG_CARD_CLASS)
+      container.classList.add(DRAG_CONTAINER_CLASS)
+      parent?.appendChild(card)
+      line = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line')
+      line.setAttribute('class', DROP_LINE_CLASS)
+      // Into the svg, ahead of the cards: the indicator is a hint about the slot
+      // the card will drop into, and the card being dragged is the subject, so
+      // every card paints over the line. An overlay in the preview cannot do
+      // this — a positioned child of the preview paints above the whole svg.
+      svg.insertBefore(line, svg.querySelector('.items'))
     }
     // The drag is ours now, so no text selection or native drag should follow.
     pointer.preventDefault()
-    clone.style.left = `${cardRect.left - hostRect.left + (pointer.clientX - down.clientX)}px`
-    clone.style.top = `${cardRect.top - hostRect.top + (pointer.clientY - down.clientY)}px`
+    // The card *is* the thing under the pointer: no clone, no second copy of
+    // it on screen, and the gap it leaves behind is the only record of where
+    // it came from. The offset is divided back into the viewBox's own units, so
+    // it tracks the pointer by a pixel whatever the board is scaled to.
+    const dx = (pointer.clientX - down.clientX) / map.scaleX
+    const dy = (pointer.clientY - down.clientY) / map.scaleY
+    card.setAttribute(
+      'transform',
+      `${baseTransform ?? ''} translate(${dx}, ${dy}) scale(${DRAG_LIFT_SCALE})`.trim(),
+    )
     const next = sectionAt(pointer)
-    if (next === over) return
-    over?.classList.remove(DROP_TARGET_CLASS)
-    over = next
-    over?.classList.add(DROP_TARGET_CLASS)
+    if (next !== over) {
+      over?.classList.remove(DROP_TARGET_CLASS)
+      over = next
+      over?.classList.add(DROP_TARGET_CLASS)
+    }
+    placeDropLine(pointer, next)
   }
 
   const onUp = (event: Event): void => {
     const pointer = event as PointerEvent
-    const dragged = clone !== null
+    const dragged = lifted
     const target = dragged ? sectionAt(pointer) : null
     const column = target ? sections.indexOf(target) : -1
     const index = dragged && column >= 0 ? dropIndex(pointer, doc, cards, from, column) : -1
@@ -1878,6 +1918,43 @@ function armDrag(drag: ArmedDrag): void {
 
   const onCancel = (): void => stop()
 
+  /**
+   * Put the line where a release would drop the card. It is placed on every
+   * move rather than only on the target changing, because the *index* changes
+   * within one column all the time, and that index is the thing the user cannot
+   * see: a card over a three-card column is going to the first, second or third
+   * slot, and nothing about the column outline says which.
+   */
+  const placeDropLine = (pointer: PointerEvent, target: SVGElement | null): void => {
+    if (!line) return
+    if (!target) {
+      // Off every column there is nowhere to land, so nothing is promised: the
+      // line going away is the answer, and a release here does nothing.
+      line.style.display = 'none'
+      return
+    }
+    const column = sections.indexOf(target)
+    const siblings = doc.cards.flatMap((card, position) =>
+      card.column === column && position !== from ? [cards[position].getBoundingClientRect()] : [],
+    )
+    const at = dropLineAt(siblings, dropIndex(pointer, doc, cards, from, column), sectionRect(target))
+    // The line is an svg child, so it is placed in the drawing's own units —
+    // which also means a scrolled or zoomed preview needs no correction here.
+    const start = user(at.x, at.y)
+    const end = user(at.x + at.width, at.y)
+    line.style.display = ''
+    line.setAttribute('x1', `${start.x}`)
+    line.setAttribute('y1', `${start.y}`)
+    line.setAttribute('x2', `${end.x}`)
+    line.setAttribute('y2', `${end.y}`)
+  }
+
+  /** A point of the board in viewport px, in the drawing's own user units. */
+  const user = (x: number, y: number): { x: number; y: number } => ({
+    x: map.x + (x - map.rect.left) / map.scaleX,
+    y: map.y + (y - map.rect.top) / map.scaleY,
+  })
+
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
   window.addEventListener('pointercancel', onCancel)
@@ -1887,6 +1964,69 @@ function armDrag(drag: ArmedDrag): void {
 function sectionRect(section: SVGElement): DOMRect {
   const rect = section.querySelector('rect')
   return rect ? rect.getBoundingClientRect() : section.getBoundingClientRect()
+}
+
+/**
+ * How the svg's own user units line up with the screen, which a drag has to
+ * reconcile twice: a press is measured in screen pixels while the card is moved
+ * by an SVG transform inside a viewBox mermaid has scaled to fit, so without
+ * this the card drifts away from the pointer as soon as the board is not drawn at
+ * 1:1. The two axes are read separately rather than assumed equal, since a
+ * container that squashes the drawing letterboxes it.
+ */
+function svgMapping(svg: SVGSVGElement): SvgMapping {
+  const viewBox = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number)
+  const rect = svg.getBoundingClientRect()
+  const [x = 0, y = 0, unitsX = 0, unitsY = 0] = viewBox?.length === 4 ? viewBox : []
+  return {
+    x,
+    y,
+    scaleX: unitsX > 0 && rect.width > 0 ? rect.width / unitsX : 1,
+    scaleY: unitsY > 0 && rect.height > 0 ? rect.height / unitsY : 1,
+    rect,
+  }
+}
+
+interface SvgMapping {
+  /** The viewBox origin: where its top-left corner sits in user units. */
+  x: number
+  y: number
+  scaleX: number
+  scaleY: number
+  rect: DOMRect
+}
+
+interface DropLine {
+  x: number
+  y: number
+  width: number
+}
+
+/**
+ * Where the line goes: the gap the card will drop into, in viewport
+ * coordinates, spanning the column. A column of n cards offers n+1 gaps
+ * and the dragged card's own place is one of them, so this is the whole answer
+ * to "where does this land" — the line, not the card, is what the release acts
+ * on. `siblings` are the target column's *other* cards, in board order, which is
+ * what makes the dragged card's own slot count as a gap rather than a neighbour.
+ */
+function dropLineAt(siblings: DOMRect[], index: number, section: DOMRect): DropLine {
+  const x = section.left - DROP_LINE_OVERHANG
+  const width = section.width + DROP_LINE_OVERHANG * 2
+  if (siblings.length === 0) {
+    // Nothing to slot between, and an empty column's band is sized to its
+    // header alone, so the middle of the band is where the card will appear.
+    return { x, y: section.top + section.height / 2, width }
+  }
+  const first = siblings[0]
+  const last = siblings[siblings.length - 1]
+  const y =
+    index <= 0
+      ? first.top - DROP_LINE_GAP
+      : index >= siblings.length
+        ? last.bottom + DROP_LINE_GAP
+        : (siblings[index - 1].bottom + siblings[index].top) / 2
+  return { x, y, width }
 }
 
 /**

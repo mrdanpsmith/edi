@@ -1119,7 +1119,12 @@ def test_kanban_label_edit_and_card_drag(window):
     _type_and_confirm(window, "Renamed")
     _wait_text(window, ["Renamed"])
 
-    _pointer_drag(window, card=0, section=1)
+    mid = _pointer_drag(window, card=0, section=1)["mid"]
+    # The card under the pointer is the card itself: no clone, and it is the
+    # real node that moved (and paints last, so it is on top of the board).
+    assert mid["clone"] is False
+    assert mid["lifted"] is True
+    assert mid["last"] is True
     cols = _wait(
         window,
         COLUMNS,
@@ -1130,6 +1135,70 @@ def test_kanban_label_edit_and_card_drag(window):
     # right-hand one now: the drag crossed into the second column.
     assert sorted(cols.values(), key=len)[0] == ["Two"], cols
     assert ["Renamed", "Three"] in [sorted(c) for c in cols.values()], cols
+
+
+def test_kanban_drag_shows_the_slot_before_the_release(window):
+    """A drag has to say where the card will land, not only where it is.
+
+    Inside one column the slot changes with no change in what is highlighted,
+    so the line in the gap is the only thing that can answer it — and the card
+    the pointer carries has to be the real one, or the board shows two of it.
+    """
+    _render(window, KANBAN)
+    _enter_edit_mode(window)
+    bands = _wait(
+        window,
+        KANBAN_ADDS,
+        lambda d: d["n"] == 2 and all(a["band"] for a in d["adds"]),
+        timeout=15,
+    )["adds"]
+    band = bands[0]["band"]
+
+    # Card 0 down its own column, to the last slot: the drop index changes, the
+    # highlighted column does not.
+    drag = _pointer_drag(window, card=0, section=0, aim="last")
+    mid = drag["mid"]
+    assert mid["clone"] is False, "the drag drew a second copy of the card"
+    assert mid["lifted"] is True
+    # The card under the pointer is the one that moved, by the pointer's own
+    # distance: neither twice as far, nor stuck, nor a copy that lags behind.
+    travel = mid["travel"]
+    assert abs(travel["dx"] - travel["px"]) <= 1.0, mid
+    assert abs(travel["dy"] - travel["py"]) <= 1.0, mid
+    # It is painted there too, and on top of the board it is passing over — the
+    # svg paints in document order, so a card that stayed in its slot would be
+    # drawn under its neighbours however well it followed the pointer.
+    assert mid["atPointer"] is True, mid
+    assert mid["target"] is True
+    # Mermaid's svg clips and the preview scrolls, so a card that travelled off
+    # the board would be cut off without the drag switching both off.
+    assert mid["unclipped"] is True
+    assert mid["scrolled"] is False
+    # The line is in the target column, spanning it, and in the last slot — which
+    # is where the release is about to act. `KANBAN_ADDS` reports a band by its
+    # centre, so the edges are derived from its width. It overhangs the column a
+    # little on each side so it still shows either side of the card covering it.
+    line = mid["line"]
+    assert line is not None and line["shown"] is True, mid
+    assert line["x"] >= band["x"] - band["width"] / 2 - 6, mid
+    assert 0 < line["w"] <= band["width"] + 12, mid
+    assert line["y"] > band["top"] + band["height"] / 2, mid
+    # The line is an svg child ahead of the cards, so it is painted over the
+    # column's own background and under every card — the dragged one included,
+    # which is what reads as "this card is over the slot". The ＋ is a positioned
+    # sibling of the svg, so it does paint over the line where the two meet; the
+    # indicator only has to be visible somewhere along its own run.
+    assert mid["lineUnder"] is True, mid
+    assert "line" in mid["overLine"], mid
+
+    cols = _wait(
+        window,
+        COLUMNS,
+        lambda d: ["Two", "One"] in [cards for cards in d["cols"].values()],
+        timeout=15,
+    )["cols"]
+    # The card went to the bottom of its own column, the slot the line was in.
+    assert ["Two", "One"] in [cards for cards in cols.values()], cols
 
 
 def _add_sits_in_its_band(add):

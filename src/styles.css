@@ -1461,25 +1461,39 @@ body {
   pointer-events: none;
 }
 
-.ProseMirror .mermaid .mermaid-drag-card {
-  position: absolute;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  padding: 2px 6px;
-  border: 1px solid var(--accent);
-  border-radius: 4px;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  font-size: 0.85em;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 30%);
+/* The card being dragged is the real one, so it is styled as *held* rather than
+   dimmed as a source: a drag clone used to sit on top of it, and a faded ghost
+   marked the slot it had left. Nothing is dimmed now — the gap the card came
+   from is the record, and the line below is the promise. */
+.ProseMirror .mermaid .kanban-dragging-card {
+  /* Off the hit-testing while it travels: the drop is decided by the column
+     under the pointer, not by whatever the card happens to be passing over. */
   pointer-events: none;
-  white-space: nowrap;
-  overflow: hidden;
+  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 35%));
 }
 
-.ProseMirror .mermaid .mermaid-drag-source {
-  opacity: 0.35;
+/* Mermaid's svg clips its own content (`overflow: hidden`) and the preview is a
+   scroll container, so a real card travelling off the board would be cut off
+   mid-drag instead of following the pointer. Both have to let it out. */
+.ProseMirror .mermaid-preview.kanban-dragging {
+  overflow: visible;
+}
+
+.ProseMirror .mermaid-preview.kanban-dragging > svg {
+  overflow: visible;
+}
+
+/* The gap the card will drop into, spanning the column like Trello's line: it is
+   the only part of a drag that answers "which slot", which the column outline
+   cannot say. It is an svg child ahead of `.items`, so every card paints over
+   it — the dragged one included — and `non-scaling-stroke` keeps it 3px on a
+   board that is zoomed to something else. */
+.ProseMirror .mermaid .kanban-drop-line {
+  stroke: var(--accent);
+  stroke-width: 3px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .ProseMirror .mermaid .kanban-drop-target {
