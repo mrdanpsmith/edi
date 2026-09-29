@@ -24,12 +24,8 @@ on:
     branches:
       - main
       - 'release/**'
-  # PRs get the same gate, so a branch is checked before it is merged and the
-  # coverage upload lands on the PR (github-code-quality[bot]'s summary and the
-  # uncovered-changed-lines annotations) instead of only on the default branch.
-  # Fork PRs run the whole gate with a read-only token; the coverage upload
-  # steps skip themselves (actions/upload-code-coverage checks the PR head
-  # repository itself) rather than failing on the missing code-quality: write.
+  # PRs get the same gate, so a branch is checked before it is merged rather
+  # than only after it lands on main.
   pull_request:
 
 concurrency:
@@ -92,7 +88,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      code-quality: write # GitHub code coverage API (actions/upload-code-coverage)
     defaults:
       run:
         shell: bash --noprofile --norc -e -o pipefail {0}
@@ -112,48 +107,20 @@ jobs:
         run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py scripts/mermaid-label-probe.py run_edi.py -q
       - name: Backend tests + coverage
         run: .venv/bin/pytest tests/ > /tmp/backend-cov.txt 2>&1
-      # GitHub's own coverage dashboard (built in, public preview since
-      # 2026-05): each Cobertura report uploads as its own labelled report and
-      # they render together as one PR summary from github-code-quality[bot],
-      # with uncovered changed lines annotated on the Files-changed tab. No
-      # third-party service and no upload token; needs code-quality: write.
-      # Two knobs keep a reporting hiccup out of the quality gate:
-      #   * fail-on-error: false — the API is in preview, so a 5xx, a rejected
-      #     payload or a processing timeout must not turn a green run red.
-      #   * the `if:` — only the default branch and pull requests, because for
-      #     a push to any *other* branch the action shells out to `gh pr list`
-      #     to look for a PR, and the builder image ships no `gh` (that path
-      #     fails the step). Tags and release/** runs are skipped outright.
-      - name: Upload frontend coverage
-        if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
-        uses: actions/upload-code-coverage@v1
-        with:
-          file: coverage/cobertura-coverage.xml
-          language: TypeScript
-          label: code-coverage/vitest
-          fail-on-error: 'false'
-      - name: Upload backend coverage
-        if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
-        uses: actions/upload-code-coverage@v1
-        with:
-          file: coverage-py/cobertura-coverage.xml
-          language: Python
-          label: code-coverage/pytest
-          fail-on-error: 'false'
-      # The README's two coverage badges are fed from a `badges` branch, not
-      # from the code-quality API (it exposes no badge URL), so the reports are
-      # handed to the `badges` job below as an artifact. Default branch only:
-      # a badge should show the state of main, not of a pull request.
-      - name: Stash Cobertura reports for the badge job
+      # One artifact carries the whole coverage story: the browsable HTML
+      # reports (what a human opens) and the two Cobertura files the `badges`
+      # job below reads its numbers from. Default branch only — a badge should
+      # read main, and only a main run has a baseline worth publishing.
+      - name: Publish the coverage report artifact
         if: github.ref_name == github.event.repository.default_branch
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-reports
+          name: coverage-report
           path: |
-            coverage/cobertura-coverage.xml
-            coverage-py/cobertura-coverage.xml
+            coverage
+            coverage-py
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 30
       - name: npm audit
         run: npm run audit
       - name: pip-audit
@@ -165,11 +132,13 @@ jobs:
           printf '\n## Backend coverage (pytest-cov)\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 25 /tmp/backend-cov.txt >> "$GITHUB_STEP_SUMMARY"
   # README coverage badges. shields.io can only read a value out of a URL and
-  # GitHub's built-in coverage exposes no badge URL, so the percentages are
-  # published as JSON to a dedicated `badges` branch that the README's
-  # /badge/dynamic/json badges read. Publishing is its own job so the only job
-  # holding a write token never runs the test suite, and it needs no builder
-  # image: just python3 and git.
+  # GitHub's built-in coverage is not available on this plan at all (let alone
+  # a badge URL), so the percentages are published as JSON to a dedicated
+  # `badges` branch that the README's /endpoint badges read. Publishing is its
+  # own job so the only job holding a write token never runs the test suite,
+  # and it needs no builder image: just python3 and git. It reads the two
+  # Cobertura files out of the `coverage-report` artifact the test job
+  # published — the same artifact that carries the browsable HTML reports.
   badges:
     name: Coverage badges
     needs: test
@@ -188,7 +157,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: coverage-reports
+          name: coverage-report
           path: reports
       - name: Publish the badge numbers
         env:

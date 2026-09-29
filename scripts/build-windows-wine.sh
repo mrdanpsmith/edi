@@ -167,6 +167,36 @@ stamp_value() {
 # --- 1. Wine prefix, pin-stamped (wine + python installer + wheel pins) ------
 # Kept under build/ so the checkout stays clean and a rerun in the same
 # checkout reuses the installed runtime (~2 min instead of ~20 on a tag).
+
+# A GUI bootstrapper under a synthetic display is the one genuinely flaky step
+# in here: wine's own allocator has been observed aborting mid-install
+# ("free(): corrupted unsorted chunks"), which wedges the installer until the
+# budget reaps it — and because `timeout` used to wrap the *wine* process
+# rather than the xvfb-run group, the kill left xvfb-run reaping a dead
+# display, so the only thing the log ever showed was the display dying
+# ("X connection to :99 broken") and a bare 124 with no stage named. `timeout`
+# now wraps the whole group (so the exit code belongs to the step and
+# xvfb-run tears its own display down), and a stage that still fails is retried
+# once from a clean wineserver. On a healthy run every command is invoked
+# exactly as before and returns 0, so this is a no-op on the happy path.
+gui() {
+  local budget=$1 rc=0 attempt
+  shift
+  for attempt in 1 2; do
+    if timeout "$budget" xvfb-run -a "$@"; then
+      return 0
+    else
+      rc=$?
+    fi
+    wineserver -k >/dev/null 2>&1 || true
+    if [ "$attempt" -eq 1 ]; then
+      echo "[wine] '$1' exited $rc — killing wineserver and retrying once" >&2
+      sleep 5
+    fi
+  done
+  return "$rc"
+}
+
 if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP" 2>/dev/null || true)" != "$(stamp_value)" ]; then
   echo "[wine] initializing fresh prefix (stamp missing or outdated)"
   rm -rf "$PREFIX" "$WINEHOME"
@@ -174,20 +204,22 @@ if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP" 2>/dev/null || true)" != "$(stamp_valu
   # The Python installer is a GUI bootstrapper: without an X display it is
   # killed immediately (wine reports 128+SIGINT), so wineboot and the install
   # run under xvfb-run. pip/pyinstaller are console apps and stay headless.
-  xvfb-run -a timeout 300 wineboot -u
+  gui 300 wineboot -u
   # VC++ 2015-2022 redistributable: makes msvcp140.dll etc. land in the
   # prefix's System32. Without it `import PySide6.QtCore` fails under wine, the
   # PyInstaller Qt hooks come back empty, and the bundle ships NO platform
   # plugins (Qt then dies with "no Qt platform plugin could be initialized").
   # The bootstrapper is also GUI — xvfb. Exit codes vary (0 / 3010 reboot /
-  # 1638 already installed), so verify by the DLL actually landing instead.
-  xvfb-run -a timeout 600 wine "$VC_REDIST" /install /quiet /norestart >/dev/null 2>&1 || true
+  # 1638 already installed), so verify by the DLL actually landing instead;
+  # which is also why this one is not retried (every retry burns its whole
+  # budget on a "already installed" exit code).
+  timeout 600 xvfb-run -a wine "$VC_REDIST" /install /quiet /norestart >/dev/null 2>&1 || true
   if [ ! -f "$PREFIX/drive_c/windows/system32/msvcp140.dll" ]; then
     echo "error: VC++ redistributable did not install (msvcp140.dll missing from prefix System32)" >&2
     exit 1
   fi
   echo "[wine] installing Windows Python ($(basename "$PY_INSTALLER"))"
-  xvfb-run -a timeout 600 wine "$PY_INSTALLER" /quiet InstallAllUsers=0 PrependPath=0 Shortcuts=0 \
+  gui 600 wine "$PY_INSTALLER" /quiet InstallAllUsers=0 PrependPath=0 Shortcuts=0 \
       Include_test=0 Include_launcher=0 Include_doc=0 Include_tcltk=0 Include_pip=1 \
       TargetDir='C:\\Python312'
   echo "[wine] pip install (offline wheels from /opt/wheels)"

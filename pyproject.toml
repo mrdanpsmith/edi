@@ -1,7 +1,7 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = "--cov=backend --cov-report=term-missing --cov-report=xml:coverage-py/cobertura-coverage.xml"
+addopts = "--cov=backend --cov-report=term-missing --cov-report=xml:coverage-py/cobertura-coverage.xml --cov-report=html:coverage-py/html"
 
 [tool.bandit]
 # B404 ("consider security implications of importing subprocess") is a pure

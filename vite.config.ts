@@ -22,7 +22,10 @@ export default defineConfig({
     exclude: ['**/node_modules/**', '**/.cache/**', '**/.npm/**', '**/dist/**', '**/dist-app/**', '**/build/**', '**/coverage-py/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov', 'cobertura'],
+      // 'html' is the browsable report the CI job ships as an artifact; the
+      // rest are machine-readable (cobertura feeds the badges branch, lcov is
+      // for editors/IDEs). The text one is what the run summary tails.
+      reporter: ['text', 'lcov', 'cobertura', 'html'],
       // There is no coverage.all in v4: the v8 provider globs include after a
       // full run and reports whatever it never loaded, so a module no test
       // imports lands at 0% instead of quietly leaving the denominator (proved
