@@ -1256,16 +1256,36 @@ describe('context menu', () => {
     expect(document.querySelectorAll('.edi-context-menu')).toHaveLength(1)
   })
 
-  /** Right-click `target` and press the menu's "Edit link…". */
-  function editLinkFrom(target: Element): void {
+  /** Right-click `target` and press the menu's item named `label`. */
+  function clickMenuItem(target: Element, label: string): void {
     target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
     const item = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
-      .find((button) => button.textContent === 'Edit link…')
-    expect(item, 'menu item Edit link…').toBeDefined()
+      .find((button) => button.textContent === label)
+    expect(item, `menu item ${label}`).toBeDefined()
     item!.click()
   }
 
-  it('offers Edit link… on a right-click over a link, and nowhere else', async () => {
+  /** Right-click `target` and press the menu's "Edit link…". */
+  function editLinkFrom(target: Element): void {
+    clickMenuItem(target, 'Edit link…')
+  }
+
+  it('copies the href of the right-clicked link, and leaves the others alone', async () => {
+    const { view } = await mountLinkDoc('[one](a.md) and [two](b.md)')
+    mainState.copyText.mockResolvedValue(true)
+
+    const anchors = document.querySelectorAll<HTMLElement>('#editor-container a[href]')
+    expect(anchors).toHaveLength(2)
+    clickMenuItem(anchors[1]!, 'Copy link')
+    await flushAsync()
+
+    expect(mainState.copyText).toHaveBeenCalledWith('b.md')
+    // Copying reads the document; it must not have rewritten anything.
+    expect(proseToMarkdown(view.state.doc)).toContain('[two](b.md)')
+    view.destroy()
+  })
+
+  it('offers Copy link on a right-click over a link, and nowhere else', async () => {
     const { view } = await mountLinkDoc('See [notes](other.md) here')
     const labels = (): string[] =>
       Array.from(document.querySelectorAll('.edi-menu-item'))
@@ -1274,13 +1294,15 @@ describe('context menu', () => {
     document
       .querySelector<HTMLElement>('#editor-container a[href]')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
+    expect(labels()).toContain('Copy link')
     expect(labels()).toContain('Edit link…')
 
-    // Plain text keeps the menu it always had: the item is about the link the
-    // right-click landed on, not about links existing somewhere in the doc.
+    // Plain text keeps the menu it always had: the items are about the link
+    // the right-click landed on, not about links existing somewhere in the doc.
     document
       .querySelector<HTMLElement>('#editor-container p')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
+    expect(labels()).not.toContain('Copy link')
     expect(labels()).not.toContain('Edit link…')
     view.destroy()
   })

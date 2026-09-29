@@ -870,7 +870,11 @@ function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
   // the context menu is the only place left to change one.
   const link = linkRangeForTarget(target)
   if (link) {
-    entries.push({ type: 'item', label: 'Edit link…', onSelect: () => editLink(link) })
+    entries.push(
+      { type: 'item', label: 'Copy link', onSelect: () => void copyLink(link) },
+      { type: 'separator' },
+      { type: 'item', label: 'Edit link…', onSelect: () => editLink(link) },
+    )
   }
   entries.push(
     { type: 'separator' },
@@ -898,6 +902,19 @@ function linkRangeForTarget(target: Element | null): LinkRange | null {
   // needs to walk out to the rest of the linked text, however many text nodes
   // emphasis in the label split it into.
   return linkRangeAt(view.state.doc, view.posAtDOM(anchor, 0))
+}
+
+/**
+ * Copy the link covering `link`, the context menu's "Copy link".
+ *
+ * The href is the one in the document (a relative markdown target stays
+ * relative), so what lands on the clipboard is what the source says, not a
+ * URL resolved against the app. The range is read at menu-build time for the
+ * same reason `editLink` does: that is the only moment the right-click's
+ * target is around, and copying cannot move it anyway.
+ */
+async function copyLink(link: LinkRange): Promise<void> {
+  if (await copyText(link.href)) flashStatus(`Copied ${link.href}`)
 }
 
 /**
