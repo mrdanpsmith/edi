@@ -1,5 +1,14 @@
 # Edi
 
+[![CI](https://github.com/mrdanpsmith/edi/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mrdanpsmith/edi/actions/workflows/ci.yml)
+[![TypeScript coverage](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmrdanpsmith%2Fedi%2Fbadges%2Fcoverage-ts.json)](https://github.com/mrdanpsmith/edi/actions/workflows/ci.yml)
+[![Python coverage](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmrdanpsmith%2Fedi%2Fbadges%2Fcoverage-py.json)](https://github.com/mrdanpsmith/edi/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/mrdanpsmith/edi)](https://github.com/mrdanpsmith/edi/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/mrdanpsmith/edi/total)](https://github.com/mrdanpsmith/edi/releases)
+[![License GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](./LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)](#installing-a-release)
+[![Runtime](https://img.shields.io/badge/runtime-Python%203.10%2B%20%C2%B7%20Node%2020.19%2B-blue)](#building-from-source)
+
 Markdown has grown into a format for writing text, drawing diagrams and holding
 tables — but the editors for it still treat it as a way to make some words look
 a little nicer.

@@ -144,6 +144,9 @@ jobs:
           language: Python
           label: code-coverage/pytest
           fail-on-error: 'false'
+      # The README's coverage badges are published by the `badges` job in ci.yml,
+      # deliberately not mirrored here: a tag (or workflow_dispatch) run has no
+      # branch to publish a baseline for, so the job could only ever be skipped.
       - name: npm audit
         run: npm run audit
       - name: pip-audit

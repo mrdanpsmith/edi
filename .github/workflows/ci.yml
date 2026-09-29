@@ -140,6 +140,20 @@ jobs:
           language: Python
           label: code-coverage/pytest
           fail-on-error: 'false'
+      # The README's two coverage badges are fed from a `badges` branch, not
+      # from the code-quality API (it exposes no badge URL), so the reports are
+      # handed to the `badges` job below as an artifact. Default branch only:
+      # a badge should show the state of main, not of a pull request.
+      - name: Stash Cobertura reports for the badge job
+        if: github.ref_name == github.event.repository.default_branch
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-reports
+          path: |
+            coverage/cobertura-coverage.xml
+            coverage-py/cobertura-coverage.xml
+          if-no-files-found: error
+          retention-days: 1
       - name: npm audit
         run: npm run audit
       - name: pip-audit
@@ -150,3 +164,63 @@ jobs:
           tail -n 12 /tmp/frontend-cov.txt >> "$GITHUB_STEP_SUMMARY"
           printf '\n## Backend coverage (pytest-cov)\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 25 /tmp/backend-cov.txt >> "$GITHUB_STEP_SUMMARY"
+  # README coverage badges. shields.io can only read a value out of a URL and
+  # GitHub's built-in coverage exposes no badge URL, so the percentages are
+  # published as JSON to a dedicated `badges` branch that the README's
+  # /badge/dynamic/json badges read. Publishing is its own job so the only job
+  # holding a write token never runs the test suite, and it needs no builder
+  # image: just python3 and git.
+  badges:
+    name: Coverage badges
+    needs: test
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # A badge is not a gate: a repo whose default workflow permissions are
+    # read-only would cap this job's token and fail the push, and that must not
+    # redden main. The step still reports its failure on the run.
+    continue-on-error: true
+    permissions:
+      contents: write # push the `badges` branch
+    defaults:
+      run:
+        shell: bash --noprofile --norc -e -o pipefail {0}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-reports
+          path: reports
+      - name: Publish the badge numbers
+        env:
+          BADGE_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          import xml.etree.ElementTree as ET
+
+          def color(pct):
+              if pct >= 90:
+                  return "brightgreen"
+              return "yellow" if pct >= 80 else "orange" if pct >= 70 else "red"
+
+          reports = (
+              ("reports/coverage/cobertura-coverage.xml", "coverage-ts.json", "coverage TS"),
+              ("reports/coverage-py/cobertura-coverage.xml", "coverage-py.json", "coverage PY"),
+          )
+          os.makedirs("badges", exist_ok=True)
+          for src, name, label in reports:
+              pct = float(ET.parse(src).getroot().get("line-rate")) * 100
+              payload = {"schemaVersion": 1, "label": label, "message": f"{pct:.1f}%", "color": color(pct)}
+              pathlib.Path("badges", name).write_text(json.dumps(payload) + "\n")
+              print(f"{name}: {pct:.1f}% ({payload['color']})")
+          PY
+          cd badges
+          git init -q -b badges
+          git add -A
+          git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+            commit -qm "coverage badges"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          # The token rides in an extra header rather than the remote URL, so it
+          # cannot be echoed back by a failing push.
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$BADGE_TOKEN" | base64 -w0)" \
+            push --force origin badges
