@@ -1964,6 +1964,9 @@ async function renderKanbanBoard(
   const svg = preview.querySelector('svg')!
   svg.querySelectorAll<SVGElement>('.sections > g').forEach((band, index) => {
     band.querySelector('rect')!.getBoundingClientRect = () => bands[index]!
+    // The band itself reports the same box, which is what a press anywhere in it
+    // and the field that stands in it are both measured against.
+    band.getBoundingClientRect = () => bands[index]!
   })
   svg.querySelectorAll<SVGElement>('.items > g.node').forEach((node, index) => {
     node.getBoundingClientRect = () => cardRects[index]!
@@ -2139,10 +2142,17 @@ describe('kanban drawn slots', () => {
     const { svg } = await renderKanbanBoard(commit)
     const header = columnSlot(svg).querySelector<HTMLElement>('.mermaid-editables')!
 
-    // The field holds the band's own text, so it is keyed into rather than
-    // replaced around: the new column's name is typed where the board is drawn.
+    // The name is typed where the board is drawn, and the field is *empty*: the
+    // label on a drawn slot is a place to put a name, not a name to retype, so
+    // seeding the field with it would make typing one a matter of selecting what
+    // is already there first. A card's composer has always started this way.
     click(header)
-    expect(document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.value).toBe('+ Add a column')
+    const field = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(field.value).toBe('')
+    expect(field.placeholder).toBe('Column name')
+    // Drawn as a field that *adds*, rather than one that overwrites a name the
+    // user did not write.
+    expect(document.querySelector('.mermaid-edit-field')!.className).toContain('mermaid-edit-field-new')
     typeAndConfirm('Archive')
 
     expect(commit).toHaveBeenCalledTimes(1)
@@ -2158,6 +2168,46 @@ describe('kanban drawn slots', () => {
         '  col1[Archive]',
       ].join('\n'),
     )
+  })
+
+  it('opens the same empty field from anywhere in the drawn column', async () => {
+    const { svg } = await renderKanbanBoard(vi.fn())
+    const band = columnSlot(svg)
+
+    // The label on the slot is where the eye goes, and the empty band around it
+    // is where the pointer usually lands. One field for both: empty, one line,
+    // standing in the band.
+    clickAt(band)
+    const fromBand = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(fromBand.value).toBe('')
+    expect(fromBand.placeholder).toBe('Column name')
+    // Standing in the band: the slot column is the fourth, at x 600, and the
+    // preview the field is placed from sits 10px down (the block's own inset), so
+    // the band's y 20 is 10 in it.
+    const box = document.querySelector<HTMLElement>('.mermaid-edit-field')!
+    expect(box.style.left).toBe('600px')
+    expect(box.style.top).toBe('10px')
+
+    // Esc, so the second press starts from a closed field rather than replacing
+    // the one the first opened.
+    document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    clickAt(columnSlot(svg).querySelector<HTMLElement>('.mermaid-editables')!)
+    expect(document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.value).toBe('')
+  })
+
+  it('refuses a new column with no name, and says so', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+
+    clickAt(columnSlot(svg))
+    // Enter on an empty field: there is no name to write down, and a column with
+    // none is not a column — so it is refused with the reason, exactly as an
+    // empty card title is, rather than committed as a header with nothing in it.
+    typeAndConfirm('')
+    expect(commit).not.toHaveBeenCalled()
+    expect(document.querySelector('.mermaid-edit-input')!.classList.contains('mermaid-edit-invalid')).toBe(true)
   })
 
   it('never arms the card drag on a press in a slot', async () => {

@@ -163,9 +163,14 @@ def wait_settled(win, value: str, timeout: float = 20) -> dict:
 def rename_label(win, index: int, label: str) -> dict:
     """Click the offered label at ``index``, append SUFFIX, and classify the result."""
     seeded = _click_first_offered(win, index=index)
-    if not seeded:
+    # `None` is "no editor opened", which is a failure; an *empty* seed is a field
+    # that opened on a placeholder (a drawn slot's label), which is not. Testing
+    # the seed for truth conflated the two and reported a working path as broken.
+    if seeded is None:
         return {"text": label, "verdict": "failed", "why": "no editor opened"}
-    value = seeded + SUFFIX
+    # An empty seed has no text to append to, so the suffix alone is the new text.
+    # The check is the same either way: does what was typed come back drawn?
+    value = f"{seeded}{SUFFIX}" if seeded else SUFFIX
     try:
         _type_and_confirm(win, value)
     except AssertionError as exc:  # the input never closed: the editor is stuck

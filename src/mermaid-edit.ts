@@ -1880,18 +1880,21 @@ export function attachMermaidEditing(
   }
 
   const family = diagramFamily(detectDiagramType(source))
+  // A drawn slot is a place to add rather than a thing to re-title. A card's is
+  // not even a label target — the chrome opens a wrapping composer for the slot
+  // instead, so a card is written rather than renamed — while a column's *is*
+  // one, because a column's name is a label like any other and the slot is named
+  // by the very editor that renames it. So its band is remembered here: a press
+  // anywhere on it, text or not, is a request for a name rather than a request to
+  // change one.
+  const slots = family === 'kanban' ? kanbanSlotElements(svg, parseKanban(source)) : null
+  const slotBand = slots !== null && slots.column >= 0 ? (sectionElements(svg)[slots.column] ?? null) : null
   let targets = labelTargets(svg, family, source)
-  if (family === 'kanban') {
-    // A drawn card slot is a place to add a card rather than a card to re-title,
-    // and the chrome opens a composer for it instead: a card is written, not
-    // renamed, so it is given a field that wraps with the title.
-    const slots = kanbanSlotElements(svg, parseKanban(source))
-    if (slots.cards.size > 0) {
-      targets = targets.filter((target) => {
-        const node = target.el.closest('g.node')
-        return node === null || !slots.cards.has(node as SVGElement)
-      })
-    }
+  if (slots !== null && slots.cards.size > 0) {
+    targets = targets.filter((target) => {
+      const node = target.el.closest('g.node')
+      return node === null || !slots.cards.has(node as SVGElement)
+    })
   }
   for (const target of targets) target.el.classList.add(EDITABLE_CLASS)
 
@@ -1922,7 +1925,8 @@ export function attachMermaidEditing(
     if (event.button !== 0) return
     const target = labelTargetAt(event, targets)
     if (!target) return
-    openEditor(openLabelEditor(host, target, source, family, commit))
+    const fresh = slotBand !== null && slotBand.contains(target.el) ? columnField(slotBand) : undefined
+    openEditor(openLabelEditor(host, target, source, family, commit, fresh))
   }) as EventListener)
 
   if (family === 'kanban') {
@@ -2215,9 +2219,50 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
 }
 
 /**
- * The label editor: `openInlineInput` seeded with the label being replaced. A
- * commit that cannot be mapped back to the source flashes the input red instead
- * of silently doing nothing.
+ * A field that *adds* rather than one that overwrites.
+ *
+ * The label a drawn slot carries is a placeholder, not a name, so the field that
+ * writes over it starts empty — the same as a new card's, and for the same
+ * reason: there is no title yet. What is different from a card is that this one
+ * *renames* the slot it stands in, so the mapping is still the label editor's
+ * (a click on a label is that label's own business, and a column's name is a
+ * label like any other). `rect` is the whole of what is being filled rather than
+ * the text standing on it, because what is being filled is a *column*: the field
+ * stands in the band, at one line, exactly where a card's stands in its slot.
+ */
+export interface FreshField {
+  rect: () => DOMRect
+  /** What the empty field says it is for, since it has no value to go on. */
+  placeholder: string
+}
+
+/**
+ * The field a drawn column's name is written in: empty, one line tall, and
+ * standing in the band rather than over the text on it.
+ *
+ * A card's is a composer of its own, because a card's title wraps and this does
+ * not — a column's name is one line, so it needs none of that machinery. What
+ * it does need is to *start* empty, or typing a name means selecting the
+ * placeholder the board drew first: the band is card-tall (that is what gives it
+ * somewhere to add) and its label says "+ Add a column", which is a place to put
+ * a name and not the name. So this is the same field a new card opens, minus the
+ * growing, and the label editor's own mapping is what still resolves the commit.
+ */
+function columnField(band: SVGElement): FreshField {
+  return {
+    rect: () => {
+      const at = band.getBoundingClientRect()
+      return new DOMRect(at.left, at.top, at.width, COMPOSER_HEIGHT)
+    },
+    placeholder: 'Column name',
+  }
+}
+
+/**
+ * The label editor: `openInlineInput` seeded with the label being replaced, or
+ * empty and drawn as a *new* thing when `fresh` says the label is a drawn
+ * placeholder. A commit that cannot be mapped back to the source flashes the
+ * input red instead of silently doing nothing.
  */
 function openLabelEditor(
   host: HTMLElement,
@@ -2225,6 +2270,7 @@ function openLabelEditor(
   source: string,
   family: DiagramFamily,
   commit: (source: string) => void,
+  fresh?: FreshField,
 ): (accept: boolean) => void {
   // The input holds the source's spelling of the span being replaced, and an
   // unchanged value is a cancel. The mapper, though, resolves from the label
@@ -2234,11 +2280,20 @@ function openLabelEditor(
   const current = target.sourceText ?? target.text
   return openInlineInput({
     host,
-    rect: target.el.getBoundingClientRect(),
-    value: current,
+    rect: fresh ? fresh.rect() : target.el.getBoundingClientRect(),
+    // A rename holds the name it is replacing, selected, so typing replaces it.
+    // A field that adds holds nothing, and says what it is for instead.
+    value: fresh ? '' : current,
+    placeholder: fresh?.placeholder,
+    // A field that adds something must not look like one that overwrites
+    // something: the dashed edges are what the difference *is*, and a user who
+    // cannot tell them apart is being asked to type over a name they did not
+    // write.
+    tone: fresh ? 'new' : 'label',
     // A card's own box is sized for the card, so a short label would otherwise
-    // be retyped in a field too narrow to see it in.
-    minWidth: RENAME_FIELD_WIDTH,
+    // be retyped in a field too narrow to see it in. A band is sized for the
+    // board, so it is wide enough on its own and needs no floor.
+    minWidth: fresh ? 0 : RENAME_FIELD_WIDTH,
     onAccept: (value) => {
       if (value === current) return true
       // A kanban label that cannot be written at all is refused here rather
@@ -3250,11 +3305,18 @@ function attachKanbanChrome(
     }
     // The new column is named through its own header, which the label editor
     // already owns: a click anywhere in the empty band is that header's click.
+    // The field it opens is a *new* one, though — empty, one line tall, standing
+    // in the band rather than over the text on it. The band is drawn card-tall
+    // (that is what gives it somewhere to add) and its label is a placeholder
+    // that is not a name to retype, so seeding the field with it would make
+    // typing a name a matter of selecting what is already there first.
     if (band === null || !contains(band.getBoundingClientRect(), event.clientX, event.clientY)) return
     const header = headerTarget(band)
     if (header === null) return
     event.preventDefault()
-    openEditor(openLabelEditor(container, header, source, 'kanban', commit))
+    // The same field the press on the label itself opens, so the two ways into a
+    // new column's name are one field rather than two that disagree.
+    openEditor(openLabelEditor(container, header, source, 'kanban', commit, columnField(band)))
   }) as EventListener
   container.addEventListener('click', onSlotClick)
 

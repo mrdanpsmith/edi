@@ -1778,9 +1778,11 @@ def test_kanban_menu_and_drawn_add_and_delete_columns(window):
 
     # The drawn column is where the *next* one goes, and it is named through the
     # label editor its own header is edited by, so the name is keyed into the band
-    # rather than asked for somewhere else.
+    # rather than asked for somewhere else. The field is *empty*: what the board
+    # drew there is a place to put a name, not a name to retype, and a card's
+    # composer has always started this way.
     opened = _click_kanban_column_slot(window)
-    assert opened["v"] == KANBAN_COLUMN_SLOT, opened
+    assert opened["v"] == "" and opened["ph"] == "Column name", opened
     _type_and_confirm(window, "Archive")
     _wait(
         window,

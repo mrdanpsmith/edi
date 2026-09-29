@@ -343,9 +343,15 @@ LABEL_STATE = (
 def _click_first_offered(win, startswith=None, index=None):
     """Click an offered label -- the first whose text starts with ``startswith``,
     or the one at ``index`` when the caller is walking the inventory in order --
-    and return the value the editor seeded: the source spelling, which is not
-    always the rendered text (a sankey node shares its element with a generated
-    value, a requirement row is drawn under mermaid's own idea of the key)."""
+    and return the value the editor seeded, or ``None`` when no field opened.
+    The seeded value is the source spelling, which is not always the rendered text
+    (a sankey node shares its element with a generated value, a requirement row is
+    drawn under mermaid's own idea of the key), and it can be **empty**: the label
+    on a drawn slot is a placeholder to be typed over, so it is written in a field
+    with nothing in it. Callers must compare against ``None``, not test the value
+    for truth. When the caller passes ``anchor``, the field is read together with
+    whatever it was opened from, in one snapshot.
+    """
     if startswith is not None and index is not None:
         raise ValueError("pass startswith or index, not both")
     if startswith is not None:
