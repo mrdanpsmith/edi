@@ -1362,6 +1362,49 @@ def test_kanban_drag_shows_the_slot_before_the_release(window):
     assert ["Two", "One"] in [_drawn(cards) for cards in cols.values()], cols
 
 
+def test_kanban_drop_line_stays_above_the_drawn_slot(window):
+    """The line says where the card lands, and a slot is not a place below it.
+
+    The foot of every column is drawn as a "+ Add a card" slot, so it is where
+    the bottom of a column *looks* like it is -- which is exactly where a user
+    drags to put a card last. There is no gap under it, because the slot is
+    where the next card goes and stays the last thing drawn: the card lands
+    above it. So the line has to be drawn in that gap, or it promises a place
+    the release does not act on.
+
+    Real browser only: the slot's drawn box, the gap heights and the line's
+    position in the drawing are mermaid's own layout.
+    """
+    _render(window, KANBAN)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 3, timeout=15)
+
+    # Card 0 dragged to the foot of its own column, aimed at the lower half of
+    # the drawn slot -- past the slot's middle, where a slot-as-a-card would
+    # have been counted as something above the pointer.
+    mid = _pointer_drag(window, card=0, section=0, aim="slot")["mid"]
+    slot = mid["slot"]
+    line = mid["line"]
+    assert slot is not None and line is not None and line["shown"] is True, mid
+    # The gap the card actually fills is the one above the slot.
+    assert line["y"] < slot["top"], (
+        f"the line is at {line['y']:.1f}, over the slot at {slot['top']:.1f}"
+        f"-{slot['bottom']:.1f}: it offers a place below it, which does not exist: {mid}"
+    )
+
+    # And the release lands the card above the slot, in the gap the line was in.
+    cols = _wait(
+        window,
+        COLUMNS,
+        lambda d: ["Two", "One"] in [_drawn(cards) for cards in d["cols"].values()],
+        timeout=15,
+    )["cols"]
+    drawn = [_drawn(cards) for cards in cols.values()]
+    assert ["Two", "One"] in drawn, cols
+    # The slot is still the last thing in the column it belongs to.
+    assert all(cards[-1] == "+ Add a card" for cards in cols.values()), cols
+
+
 def test_kanban_column_drag_reorders_the_board(window):
     """A column is a thing you can pick up, and a drag has to say where it lands.
 
@@ -1444,6 +1487,50 @@ KANBAN_TRAILING_EMPTY = (
     "    [Kanban editor]\n"
     "  col4[Done]"
 )
+
+
+def test_kanban_column_line_stays_left_of_the_drawn_column_slot(window):
+    """The rule says where the column lands, and the drawn column is not a place
+    after it.
+
+    The end of the board is drawn as a "+ Add a column" column, so it is where
+    the right-hand end of the board *looks* like it is -- which is where a user
+    drags to put a column last. There is no gap beyond it, because the slot is
+    where the next column goes and stays the last thing drawn: the column lands
+    before it. So the rule has to be drawn in that gap, or it promises a place
+    the release does not act on.
+
+    Real browser only: the slot's drawn box, the gap widths and the rule's
+    position in the drawing are mermaid's own layout.
+    """
+    _render(window, KANBAN)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 2, timeout=15)
+
+    # Column 0 dragged to the right of the board, aimed at the drawn column's
+    # right portion -- past its middle, where a slot-as-a-column would have been
+    # counted as something left of the pointer.
+    mid = _pointer_drag_column(window, column=0, slot="slot")["mid"]
+    slot = mid["slot"]
+    line = mid["line"]
+    assert slot is not None and line is not None and line["shown"] is True, mid
+    # The gap the column actually fills is the one before the slot.
+    assert line["x"] < slot["left"], (
+        f"the rule is at {line['x']:.1f}, over the drawn column at "
+        f"{slot['left']:.1f}-{slot['right']:.1f}: it offers a place after it,"
+        f" which does not exist: {mid}"
+    )
+
+    # And the release lands the column before the drawn one, in the gap the rule
+    # was in: Todo took its two cards to the end, and the board is read as a
+    # whole sequence. The drawn column holds no cards, so it is not in the read.
+    cols = _wait(
+        window,
+        COLUMNS,
+        lambda d: [_drawn(c) for c in d["cols"].values()] == [["Three"], ["One", "Two"]],
+        timeout=15,
+    )["cols"]
+    assert [_drawn(c) for c in cols.values()] == [["Three"], ["One", "Two"]], cols
 
 
 def test_kanban_column_drag_paints_over_the_cards_it_passes(window):

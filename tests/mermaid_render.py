@@ -434,7 +434,17 @@ def _pointer_drag(win, card, section, aim=None):
             return r.left >= sr.left - 1 && r.right <= sr.right + 1;
           }});
           const last = resting.length ? resting[resting.length - 1].getBoundingClientRect() : null;
-          const aimY = {json.dumps(aim)} === 'last' && last
+          // 'slot' aims at the drawn slot itself, the way a user dragging to
+          // the foot of a column does: the slot *is* the bottom of the column as
+          // it looks. Its lower half is the interesting half, since a gap below
+          // it would be a place a card could land, and it cannot.
+          const drawnSlot = cards.find((c) => c.classList.contains('mermaid-kanban-slot')
+            && (() => {{ const r = c.getBoundingClientRect();
+                 return r.left >= sr.left - 1 && r.right <= sr.right + 1; }})());
+          const slotBox = drawnSlot ? drawnSlot.getBoundingClientRect() : null;
+          const aimY = {json.dumps(aim)} === 'slot' && slotBox
+            ? slotBox.top + slotBox.height * 0.75
+            : {json.dumps(aim)} === 'last' && last
             ? last.top + last.height / 2 + 6
             : sr.top + 30;
           const to = {{ x: sr.left + sr.width / 2, y: aimY }};
@@ -532,6 +542,10 @@ def _pointer_drag(win, card, section, aim=None):
             unclipped: getComputedStyle(svg).overflow === 'visible'
               && getComputedStyle(preview).overflow === 'visible',
             scrolled: preview.scrollWidth > preview.clientWidth + 1,
+            // Where the drawn slot sits, so a caller can say whether the line is
+            // in a gap a card could actually land in.
+            slot: slotBox ? {{ top: slotBox.top, bottom: slotBox.bottom,
+                              h: slotBox.height }} : null,
           }};
           send(window, 'pointerup', to.x, to.y);
           return {{ mid, from, to, sr: {{ x: sr.left, y: sr.top, w: sr.width, h: sr.height }} }};
@@ -591,7 +605,15 @@ def _pointer_drag_column(win, column, slot):
           const others = sections.flatMap((s, i) => (i === {column}
             || s.classList.contains('mermaid-kanban-column-slot') ? []
             : [box(s.getBoundingClientRect())]));
-          const to = {{ x: {slot} >= others.length
+          // 'slot' aims at the drawn column at the end, the way a user dragging
+          // to the right of the board does: it *is* the end of the board as it
+          // looks. Its right portion is the interesting part, since a gap beyond
+          // it would be a place a column could land, and it cannot.
+          const drawnSlot = sections.find((s) => s.classList.contains('mermaid-kanban-column-slot'));
+          const slotBox = drawnSlot ? drawnSlot.getBoundingClientRect() : null;
+          const to = {{ x: {json.dumps(slot)} === 'slot' && slotBox
+              ? slotBox.left + slotBox.width * 0.75
+              : {slot} >= others.length
               ? Math.max(...others.map((r) => r.right)) + 24
               : (others[{slot} - 1].right + others[{slot}].left) / 2,
             y: sr.top + 12 }};
@@ -727,6 +749,10 @@ def _pointer_drag_column(win, column, slot):
             unclipped: getComputedStyle(svg).overflow === 'visible'
               && getComputedStyle(preview).overflow === 'visible',
             sr: {{ x: sr.left, y: sr.top, w: sr.width, h: sr.height }},
+            // Where the drawn column at the end sits, so a caller can say whether
+            // the rule is in a gap a real column could actually land in.
+            slot: slotBox ? {{ left: slotBox.left, right: slotBox.right,
+                               w: slotBox.width }} : null,
           }};
           send(window, 'pointerup', to.x, to.y);
           return {{ mid, from, to }};

@@ -2763,17 +2763,15 @@ function armCardDrag(drag: ArmedDrag): void {
         // line going away is the answer, and a release here does nothing.
         if (!target) return null
         const column = sections.indexOf(target)
-        const siblings = doc.cards.flatMap((entry, position) =>
-          entry.column === column && position !== from ? [cards[position].getBoundingClientRect()] : [],
-        )
-        const at = dropLineAt(siblings, dropIndex(event, doc, cards, from, column), sectionRect(target))
+        const { siblings, slot } = dropColumn(doc, cards, column, from)
+        const at = dropLineAt(siblings, dropIndex(event, siblings), sectionRect(target), slot)
         return { x1: at.x, y1: at.y, x2: at.x + at.width, y2: at.y }
       },
       drop: (event, target, moved) => {
         const column = moved && target ? sections.indexOf(target) : -1
         if (column < 0) return
-        const index = dropIndex(event, doc, cards, from, column)
-        const next = moveKanbanCard(source, from, column, index)
+        const { siblings } = dropColumn(doc, cards, column, from)
+        const next = moveKanbanCard(source, from, column, dropIndex(event, siblings))
         if (next !== null) drag.commit(next)
       },
     },
@@ -2806,12 +2804,14 @@ function armColumnDrag(drag: ArmedDrag): void {
        * columns could go into any of three, and the frames are all the same colour.
        */
       place: (event) => {
-        const at = columnGapAt(sections, columnSlotAt(event, sections, from), from)
+        const { rest, end } = dropSections(sections, from, drag.slots.column)
+        const at = columnGapAt(rest, end, columnSlotAt(event, rest))
         return at === null ? null : { x1: at.x, y1: at.y, x2: at.x, y2: at.y + at.height }
       },
       drop: (event, _target, moved) => {
         if (!moved) return
-        const next = moveKanbanColumn(source, from, columnSlotAt(event, sections, from))
+        const { rest } = dropSections(sections, from, drag.slots.column)
+        const next = moveKanbanColumn(source, from, columnSlotAt(event, rest))
         if (next !== null) drag.commit(next)
       },
     },
@@ -2829,14 +2829,37 @@ function armColumnDrag(drag: ArmedDrag): void {
  * computed from the pointer's position rather than from the column it happens to
  * be over.
  */
-function columnSlotAt(event: PointerEvent, sections: SVGElement[], from: number): number {
+function columnSlotAt(event: PointerEvent, rest: DOMRect[]): number {
   let slot = 0
+  for (const rect of rest) {
+    if (rect.left + rect.width / 2 < event.clientX) slot += 1
+  }
+  return slot
+}
+
+/**
+ * The board's columns a drop can land between, and the drawn column at its end.
+ *
+ * The drawn column is a place to add, not a column, and the two are told apart
+ * here once so nothing downstream has to: it *ends* the board rather than
+ * sitting in it, so the last gap is the one before it and there is no gap after
+ * it to offer. The list is the real columns with the dragged one lifted out,
+ * which is what makes the dragged column's own place count as a gap.
+ */
+function dropSections(
+  sections: SVGElement[],
+  from: number,
+  slot: number,
+): { rest: DOMRect[]; end: DOMRect | null } {
+  const rest: DOMRect[] = []
+  let end: DOMRect | null = null
   sections.forEach((section, index) => {
     if (index === from) return
     const rect = sectionRect(section)
-    if (rect.left + rect.width / 2 < event.clientX) slot += 1
+    if (index === slot) end = rect
+    else rest.push(rect)
   })
-  return Math.max(0, Math.min(slot, sections.length - 1))
+  return { rest, end }
 }
 
 /**
@@ -2855,13 +2878,19 @@ function columnSlotAt(event: PointerEvent, sections: SVGElement[], from: number)
  * `overflow: visible` (there so a card is not cut off) lets it do. A rule that
  * changes length as you move is a rule that cannot be trusted to mean anything.
  */
-function columnGapAt(sections: SVGElement[], slot: number, from: number): { x: number; y: number; height: number } | null {
-  if (sections.length === 0) return null
-  const rects = sections.map(sectionRect)
-  const rest = rects.flatMap((rect, index) => (index === from ? [] : [rect]))
+function columnGapAt(
+  rest: DOMRect[],
+  end: DOMRect | null,
+  slot: number,
+): { x: number; y: number; height: number } | null {
   if (rest.length === 0) return null
+  // The last gap is the one *before* the drawn column, which is where a column
+  // dropped at the end of the board lands. Without one there is nothing drawn
+  // there, so the gap is the last column's own right edge.
   const left = slot === 0 ? rest[0]!.left : rest[slot - 1]!.right
-  const right = slot === rest.length ? rest[rest.length - 1]!.right : rest[slot]!.left
+  const right = slot === rest.length
+    ? (end ? end.left : rest[rest.length - 1]!.right)
+    : rest[slot]!.left
   const top = Math.min(...rest.map((rect) => rect.top))
   const bottom = Math.max(...rest.map((rect) => rect.bottom))
   // The board's own height, top to bottom: a column is inserted between two
@@ -2917,40 +2946,79 @@ interface DropLine {
  * coordinates, spanning the column. A column of n cards offers n+1 gaps
  * and the dragged card's own place is one of them, so this is the whole answer
  * to "where does this land" — the line, not the card, is what the release acts
- * on. `siblings` are the target column's *other* cards, in board order, which is
- * what makes the dragged card's own slot count as a gap rather than a neighbour.
+ * on. `siblings` are the target column's other *real* cards, in board order,
+ * which is what makes the dragged card's own slot count as a gap rather than a
+ * neighbour; `slot` is the drawn slot, which ends the column rather than sitting
+ * in it.
  */
-function dropLineAt(siblings: DOMRect[], index: number, section: DOMRect): DropLine {
+function dropLineAt(
+  siblings: DOMRect[],
+  index: number,
+  section: DOMRect,
+  slot: DOMRect | null,
+): DropLine {
   const x = section.left - DROP_LINE_OVERHANG
   const width = section.width + DROP_LINE_OVERHANG * 2
-  if (siblings.length === 0) {
-    // Nothing to slot between, and an empty column's band is sized to its
-    // header alone, so the middle of the band is where the card will appear.
-    return { x, y: section.top + section.height / 2, width }
-  }
+  // Where the column's cards end. A drawn slot *is* the foot of the column as it
+  // looks, and it is where the next card goes and stays the last thing drawn --
+  // so the last gap is above it and there is nothing below it to offer. Without
+  // a slot the last gap is under the last card, and a column with no cards at
+  // all has a band sized to its header alone, so the middle of the band is
+  // where the card will appear.
+  const end = slot
+    ? slot.top - DROP_LINE_GAP
+    : siblings.length
+      ? siblings[siblings.length - 1].bottom + DROP_LINE_GAP
+      : section.top + section.height / 2
+  if (siblings.length === 0) return { x, y: end, width }
   const first = siblings[0]
-  const last = siblings[siblings.length - 1]
   const y =
     index <= 0
       ? first.top - DROP_LINE_GAP
       : index >= siblings.length
-        ? last.bottom + DROP_LINE_GAP
+        ? end
         : (siblings[index - 1].bottom + siblings[index].top) / 2
   return { x, y, width }
 }
 
 /**
- * Where a card lands inside a column: the number of that column's other cards
- * whose middle sits above the pointer, i.e. the insertion index as if the
- * dragged card were already lifted out of the list.
+ * A column's cards a drop can land between, and the drawn slot at its foot.
+ *
+ * The slot is a place to add, not a card, and the two are told apart here once
+ * so that nothing downstream has to: the slot's foot is the *end* of the column
+ * rather than a card above the last gap, and the list is the column's real cards
+ * in board order with the dragged one lifted out, which is what makes the
+ * dragged card's own place count as a gap rather than a neighbour.
  */
-function dropIndex(event: PointerEvent, doc: KanbanDoc, cards: SVGElement[], from: number, column: number): number {
-  let index = 0
+function dropColumn(
+  doc: KanbanDoc,
+  cards: SVGElement[],
+  column: number,
+  from: number,
+): { siblings: DOMRect[]; slot: DOMRect | null } {
+  const siblings: DOMRect[] = []
+  let slot: DOMRect | null = null
   doc.cards.forEach((card, position) => {
     if (position === from || card.column !== column) return
     const rect = cards[position].getBoundingClientRect()
-    if (rect.top + rect.height / 2 < event.clientY) index += 1
+    if (isKanbanCardSlot(card, doc)) slot = rect
+    else siblings.push(rect)
   })
+  return { siblings, slot }
+}
+
+/**
+ * Where a card lands inside a column: the number of the column's *real* cards
+ * whose middle sits above the pointer, i.e. the insertion index as if the
+ * dragged card were already lifted out of the list. The drawn slot is not one of
+ * them, so a pointer over the foot of a column asks for the last gap rather than
+ * a gap below the last card.
+ */
+function dropIndex(event: PointerEvent, siblings: DOMRect[]): number {
+  let index = 0
+  for (const rect of siblings) {
+    if (rect.top + rect.height / 2 < event.clientY) index += 1
+  }
   return index
 }
 
