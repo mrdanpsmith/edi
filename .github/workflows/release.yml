@@ -321,7 +321,12 @@ jobs:
           retention-days: 90
 
   # Wraps the onefile into versioned .deb/.rpm/.tar.gz/.AppImage.
-  package:
+  # Named for the platform it packages, matching `build-<platform>` and the
+  # script it calls (scripts/package-linux.sh): its output is 100% Linux
+  # formats, and a bare `package` read as platform-agnostic in a DAG whose
+  # other three jobs all name theirs. Kept separate from `build-linux` on
+  # purpose — the onefile is built and smoke-tested once, then wrapped.
+  package-linux:
     needs: build-linux
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -360,7 +365,12 @@ jobs:
   # Publishes the GitHub release with all platform artifacts. The changelog is
   # every commit since the previous tag (auto-linked by GitHub).
   release:
-    needs: [package, build-windows, build-macos]
+    # `test` is here because a quality gate nothing waits on is not a gate: it
+    # ran beside the builds and its result was discarded, so a red pytest or
+    # vitest run still published binaries. It must stay ungated by an `if:` of
+    # its own — a skipped dependency skips its dependents, which would have
+    # taken `release` down with it on workflow_dispatch.
+    needs: [test, package-linux, build-windows, build-macos]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:

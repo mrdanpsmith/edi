@@ -172,7 +172,7 @@ the old file in one step, so it is never left under both names.
 
 Each `vX.Y.Z` tag publishes the artifacts below.
 
-**Linux** — the `package` job wraps the onefile binary (it never rebuilds it, so
+**Linux** — the `package-linux` job wraps the onefile binary (it never rebuilds it, so
 the portability guarantee is inherited):
 
 | Artifact | Install |
