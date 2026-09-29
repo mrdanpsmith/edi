@@ -2280,12 +2280,37 @@ def test_kanban_titles_holding_delimiters_stay_editable(window):
     assert '    ["Add (the log)"]' in added["source"], added
     assert not added["error"] and not added["notice"], added
 
-    # What no quoting can carry -- a double quote would close the label its own
-    # quote opened -- is refused in place: nothing committed, the input still
-    # open, the board still in edit mode, so a second attempt is one edit away.
-    before = added["source"]
+    # A double quote is carried, as `&quot;`: a raw one would close the label
+    # its own quote opened, but the entity is not a quote to the grammar and
+    # mermaid draws it as `"`. Real browser only, for the same reason.
     _click_kanban_slot(window, 1)
-    _press_enter(window, 'a"b')
+    _type_and_confirm(window, 'He said "hi"')
+    quoted_amp = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any('He said "hi"' in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert '["He said &quot;hi&quot;"]' in quoted_amp["source"], quoted_amp
+    assert not quoted_amp["error"] and not quoted_amp["notice"], quoted_amp
+    assert quoted_amp["editing"] and quoted_amp["editable"], quoted_amp
+    # Renaming it again keeps the escape rather than writing a raw quote back.
+    assert _click_label(window, 'He said "hi"') == 'He said "hi"'
+    _type_and_confirm(window, 'He said "bye"')
+    requoted = _wait(
+        window,
+        LABEL_STATE,
+        lambda d: any('He said "bye"' in t for t in d["texts"]),
+        timeout=20,
+    )
+    assert '["He said &quot;bye&quot;"]' in requoted["source"], requoted
+
+    # What really cannot be carried is a title that is not text at all, and it
+    # is refused *in place*: nothing committed, the input still open, the board
+    # still in edit mode, so a second attempt is one edit away.
+    before = requoted["source"]
+    _click_kanban_slot(window, 1)
+    _press_enter(window, "   ")
     refused = _wait(
         window,
         LABEL_STATE,

@@ -220,8 +220,9 @@ def _click_label(win, text):
 
 def _press_enter(win, value):
     """Type a value into the open label editor and press Enter, without waiting
-    for the editor to close: a value the grammar cannot carry is refused *in
-    place*, so the input is still there afterwards and the caller asserts that."""
+    for the editor to close: a value that is not text at all (empty, or a line
+    break) is refused *in place*, so the input is still there afterwards and the
+    caller asserts that."""
     typed = _dump(
         win,
         f"""(() => {{

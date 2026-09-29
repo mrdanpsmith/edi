@@ -195,6 +195,8 @@ kanban
     feature2[Create REST endpoints]
     ["Fix (the race)"]
     ["Ship (v1) release"]
+    ["He said &quot;hi&quot; (loud)"]
+    ["the tag &amp;quot;x&amp;quot;"]
   [Review]
     bugfix1[Fix login timeout issue]@{ ticket: 1042, assigned: 'Bob', priority: 'High' }
   [Testing]

@@ -119,10 +119,27 @@ def drawn(value: str, texts: list) -> bool:
     return any(needle in "".join(text.split()) for text in texts)
 
 
+def spelled_out(value: str, source: str) -> bool:
+    """Whether the source spells the value, allowing for its own escaping.
+
+    A kanban label cannot hold a raw double quote -- a quoted label is drawn as
+    the text inside its quotes, so a raw one would close the run it sits in --
+    and the app writes ``&quot;`` instead, with ``&`` escaped ahead of it. So a
+    rename that worked can leave the source holding entities where the typed
+    value has the character. Decoding before comparing asks the question this
+    tool exists to ask ("did the user's text reach the document") without
+    treating the document's spelling of it as a failure; the order mirrors the
+    app's reader, so ``&amp;quot;`` still has to come back as literal
+    ``&quot;`` and not as a quote.
+    """
+    decoded = source.replace("&quot;", '"').replace("&amp;", "&")
+    return value in decoded
+
+
 def classify(value: str, state: dict) -> tuple[str, str]:
     """What the app did with one rename, and why, from what it shows after it."""
     shown = drawn(value, state.get("texts", []))
-    committed = bool(state.get("source")) and value in state["source"]
+    committed = bool(state.get("source")) and spelled_out(value, state["source"])
     if state.get("input"):
         return "failed", "the editor stayed open"
     if state.get("error"):

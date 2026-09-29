@@ -1182,20 +1182,40 @@ describe('kanban board insertion', () => {
     expect(mainState.showError).not.toHaveBeenCalled()
   })
 
-  it('reports names the kanban grammar cannot carry and inserts nothing', async () => {
+  it('inserts nothing when every name the dialog collects is blank', async () => {
     await loadMain()
     const view = attachView('Hello')
     menu('insertKanban')
     await flushAsync()
-    // A double quote is the one name no quoting can carry: it would close the
-    // label its own quote opened.
-    columnField().value = '"'
+    // Emptiness is the only thing left to refuse, and the dialog refuses it
+    // itself -- it says so in place and never settles, so the add never runs.
+    // A double quote is *not* such a name any more: it is carried as `&quot;`
+    // (see mermaid-kanban-escaping.test.ts), which is what left
+    // `insertKanbanBoard`'s error branch unreachable from here.
+    columnField().value = '   '
     addBoard()
     await flushAsync()
     expect(view.state.doc.childCount).toBe(1)
-    expect(mainState.showError).toHaveBeenCalledWith(
-      expect.stringContaining('kanban column'),
-    )
+    expect(mainState.showError).not.toHaveBeenCalled()
+    const error = document.querySelector<HTMLElement>('.edi-dialog-error')!
+    expect(error.hidden).toBe(false)
+    expect(error.textContent).toContain('at least one column')
+  })
+
+  it('builds a column whose name is a double quote, carried as an entity', async () => {
+    await loadMain()
+    mainState.showError.mockClear()
+    const view = attachView('Hello')
+    menu('insertKanban')
+    await flushAsync()
+    // A raw quote would close the label its own quote opened, so the source
+    // holds the entity and the board draws the quote.
+    columnField().value = 'Q3 "final"'
+    addBoard()
+    await flushAsync()
+    expect(mainState.showError).not.toHaveBeenCalled()
+    expect(view.state.doc.childCount).toBe(2)
+    expect(view.state.doc.child(1)?.attrs.value).toBe('kanban\n  col1["Q3 &quot;final&quot;"]')
   })
 
   it('inserts a column whose name holds a delimiter, quoted in the source', async () => {

@@ -1149,11 +1149,12 @@ const KANBAN_METADATA = /\s*@\s*\{[^@]*\}\s*$/
  * A *quoted* label is mermaid's own escape for text holding the shape
  * delimiters, and it draws the text inside the quotes and nothing else. The
  * span therefore covers the **whole quoted run, quotes included**, while the
- * label itself is the text inside them (`parseKanban` unquotes): a rename
- * replaces the run, so `kanbanInnerLabel` can quote a title that needs it and
- * unquote one that no longer does, without knowing which of the two it is
- * looking at. Recognised before the shape search, or a bare `"Fix (bug)"` finds
- * its own `(` and gets mapped to `bug`.
+ * label itself is the text inside them (`parseKanban` unquotes and unescapes,
+ * so the label is what the board draws): a rename replaces the run, so
+ * `kanbanInnerLabel` can quote a title that needs it and unquote one that no
+ * longer does, without knowing which of the two it is looking at. Recognised
+ * before the shape search, or a bare `"Fix (bug)"` finds its own `(` and gets
+ * mapped to `bug`.
  */
 function kanbanLabelSpan(body: string): Span | null {
   const metadata = KANBAN_METADATA.exec(body)
@@ -1186,7 +1187,8 @@ function kanbanLabelSpan(body: string): Span | null {
 
 /** A quoted label is drawn as the text inside its quotes, so that is the label. */
 function unquoteKanbanLabel(text: string): string {
-  return text.length > 1 && text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text
+  const bare = text.length > 1 && text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text
+  return unescapeKanbanEntities(bare)
 }
 
 function runForward(text: string, from: number, char: string): number {
@@ -1354,7 +1356,7 @@ export function moveKanbanCard(source: string, from: number, column: number, ind
  * Both mean a title the user typed is not the title the board shows. Quoting
  * the shape syntax is the line that keeps the two in step.
  */
-const KANBAN_QUOTE_CHARS = /[[\](){}@>]/
+const KANBAN_QUOTE_CHARS = /[[\](){}@>"&]/
 
 /**
  * The text to write *inside* a `[…]`'s delimiters. Mermaid's kanban grammar
@@ -1365,23 +1367,42 @@ const KANBAN_QUOTE_CHARS = /[[\](){}@>]/
  * be writable one way and not the other.
  */
 function kanbanInnerLabel(text: string): string {
-  return KANBAN_QUOTE_CHARS.test(text) ? `"${text}"` : text
+  return KANBAN_QUOTE_CHARS.test(text) ? kanbanQuotedLabel(text) : text
 }
 
 /** A label whose source already carries quotes keeps them across a rename. */
 function kanbanQuotedLabel(text: string): string {
-  return `"${text}"`
+  return `"${escapeKanbanEntities(text)}"`
 }
 
 /**
- * What no quoting can carry. A `"` would close the label the quote opened, and a
- * line break is not text at all. Everything else mermaid refuses in a bare label
- * is quoted above, so the refusal is about the *representable*, not the
- * convenient — and a card is refused before it reaches the source, because
+ * Mermaid's own escape inside a label, which is what lets a double quote exist
+ * on a board at all. A quoted label is drawn as the text inside its quotes, so
+ * a `"` written raw would close the label the quote opened and the rest of the
+ * title would be read as source: `["He said "hi" (loud)"]` is a parse error.
+ * `&quot;` is not a quote to the grammar and survives the quoted run, and
+ * mermaid draws it as `"` -- so `["He said &quot;hi&quot; (loud)"]` is the text
+ * `He said "hi" (loud)`. `&` is escaped first, since a title holding the literal
+ * text `&quot;` must come back as that text and not as a quote.
+ */
+function escapeKanbanEntities(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+}
+
+/** The inverse of `escapeKanbanEntities`, so a label reads as what is drawn. */
+function unescapeKanbanEntities(text: string): string {
+  return text.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+}
+
+/**
+ * What no quoting can carry: a line break is not text at all, and a title
+ * spanning one cannot be a single card. Everything else mermaid refuses in a
+ * bare label is quoted above, so the refusal is about the *representable*, not
+ * the convenient — and a card is refused before it reaches the source, because
  * committing one that cannot render strands the board on its last good diagram
  * with the card the user just typed visible nowhere.
  */
-const UNUSABLE_KANBAN_LABEL = /["\n]/
+const UNUSABLE_KANBAN_LABEL = /\n/
 
 /** Whether `name` can be written as a kanban column header or card label. */
 export function usableKanbanLabel(name: string): boolean {
@@ -1396,7 +1417,7 @@ export function usableKanbanLabel(name: string): boolean {
  */
 export function kanbanLabelRefusal(name: string): string {
   if (name.trim().length === 0) return 'A kanban label cannot be empty.'
-  return 'A kanban label can’t contain a double quote — there is no way to write one into a diagram.'
+  return 'A kanban label cannot span more than one line.'
 }
 
 /**
