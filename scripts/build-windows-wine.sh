@@ -121,6 +121,17 @@ B="${EDI_BUILD_ROOT:-/builds/edi}"
 VERSION="${EDI_VERSION:?EDI_VERSION not set}"
 cd "$B"
 
+# --- One clock for the whole run ---------------------------------------------
+# Every stage below announces when it STARTS and how far into the run it is.
+# That is not decoration: wineboot and the VC++ redistributable were the only
+# stages that produced no output at all, and they are also the two a slow run
+# wedges in, so a 20-minute job was indistinguishable from a hung one and its
+# time could not be attributed to anything. $SECONDS is a bash builtin and
+# STEPS always runs under bash.
+RUN_T0=$SECONDS
+elapsed() { printf '+%dm%02ds' "$(( (SECONDS - RUN_T0) / 60 ))" "$(( (SECONDS - RUN_T0) % 60 ))"; }
+stage() { printf '[wine] %s %s\n' "$(elapsed)" "$*"; }
+
 PREFIX="$B/build/wine-prefix"
 WINEHOME="$B/build/wine-home"
 STAMP="$PREFIX/.edi-stamp"
@@ -138,6 +149,10 @@ if [ -z "$PY_INSTALLER" ] || [ -z "$VC_REDIST" ] || [ ! -d /opt/wheels ] || ! co
   exit 1
 fi
 [ -f "$B/requirements-win.txt" ] || { echo "error: requirements-win.txt missing" >&2; exit 1; }
+
+# A GUI bootstrapper on a 2-vCPU shared runner is a different animal from one
+# on a big box; without this line a slow run cannot be told from a slow runner.
+stage "runner: $(nproc) cpu, $(awk '/MemTotal:/ { printf "%.1f GiB", $2 / 1048576 }' /proc/meminfo), prefix $([ -d "$PREFIX" ] && echo present || echo absent)"
 
 # Wine refuses to run as root (CI container jobs do), so re-exec the
 # whole script as an unprivileged user after making the dirs we write (build/,
@@ -162,6 +177,26 @@ stamp_value() {
     "$(md5sum "$B/requirements-win.txt" | cut -d' ' -f1)" \
     "$(basename "$PY_INSTALLER")" \
     "$(basename "$VC_REDIST")"
+}
+
+# "Reuse" means the stamp AND the three files every later stage assumes. The
+# stamp alone stopped being enough once CI began restoring this prefix from a
+# cache: a partial restore can leave .edi-stamp with none of the payload it
+# describes, and that surfaces much later as an inscrutable error inside
+# PyInstaller. Anything short of all four is a cold prefix, not a failure.
+PREFIX_SENTINELS="drive_c/windows/system32/msvcp140.dll
+drive_c/Python312/python.exe
+drive_c/Python312/Lib/site-packages/PySide6/QtWebEngineCore.pyd"
+
+prefix_reusable() {
+  [ -f "$STAMP" ] || return 1
+  [ "$(cat "$STAMP" 2>/dev/null || true)" = "$(stamp_value)" ] || return 1
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -e "$PREFIX/$f" ] || { echo "  prefix: stamp matches but $f is missing (corrupt restore?)" >&2; return 1; }
+  done <<< "$PREFIX_SENTINELS"
+  return 0
 }
 
 # --- 1. Wine prefix, pin-stamped (wine + python installer + wheel pins) ------
@@ -197,13 +232,14 @@ gui() {
   return "$rc"
 }
 
-if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP" 2>/dev/null || true)" != "$(stamp_value)" ]; then
-  echo "[wine] initializing fresh prefix (stamp missing or outdated)"
+if ! prefix_reusable; then
+  stage "cold prefix: building the Wine runtime from scratch (stamp missing, outdated, or incomplete)"
   rm -rf "$PREFIX" "$WINEHOME"
   mkdir -p "$PREFIX" "$WINEHOME"
   # The Python installer is a GUI bootstrapper: without an X display it is
   # killed immediately (wine reports 128+SIGINT), so wineboot and the install
   # run under xvfb-run. pip/pyinstaller are console apps and stay headless.
+  stage "wineboot -u (budget 300s)"
   gui 300 wineboot -u
   # VC++ 2015-2022 redistributable: makes msvcp140.dll etc. land in the
   # prefix's System32. Without it `import PySide6.QtCore` fails under wine, the
@@ -213,16 +249,26 @@ if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP" 2>/dev/null || true)" != "$(stamp_valu
   # 1638 already installed), so verify by the DLL actually landing instead;
   # which is also why this one is not retried (every retry burns its whole
   # budget on a "already installed" exit code).
-  timeout 600 xvfb-run -a wine "$VC_REDIST" /install /quiet /norestart >/dev/null 2>&1 || true
+  # Its exit code is not the test (0 / 3010 / 1638 all occur), so the DLL is.
+  # But the stage is not silent either: this was the one step that could spend
+  # its whole 600s budget with nothing in the log, which is exactly where a slow
+  # run's minutes went unaccounted for. Capture it, and surface it only if the
+  # DLL check is what actually failed.
+  stage "VC++ 2015-2022 redistributable (budget 600s)"
+  REDIST_LOG="$B/build/redist-wine.out"
+  REDIST_RC=0
+  timeout 600 xvfb-run -a wine "$VC_REDIST" /install /quiet /norestart > "$REDIST_LOG" 2>&1 || REDIST_RC=$?
   if [ ! -f "$PREFIX/drive_c/windows/system32/msvcp140.dll" ]; then
-    echo "error: VC++ redistributable did not install (msvcp140.dll missing from prefix System32)" >&2
+    echo "error: VC++ redistributable did not install (msvcp140.dll missing from prefix System32, exit $REDIST_RC)" >&2
+    sed 's/^/  redist: /' "$REDIST_LOG" 2>/dev/null || true
     exit 1
   fi
-  echo "[wine] installing Windows Python ($(basename "$PY_INSTALLER"))"
+  stage "VC++ redistributable ok (exit $REDIST_RC, msvcp140.dll present)"
+  stage "installing Windows Python $(basename "$PY_INSTALLER") (budget 600s, retried once)"
   gui 600 wine "$PY_INSTALLER" /quiet InstallAllUsers=0 PrependPath=0 Shortcuts=0 \
       Include_test=0 Include_launcher=0 Include_doc=0 Include_tcltk=0 Include_pip=1 \
       TargetDir='C:\\Python312'
-  echo "[wine] pip install (offline wheels from /opt/wheels)"
+  stage "pip install (offline wheels from /opt/wheels, budget 900s)"
   timeout 900 wine "$WINEPY" -m pip install --no-index --find-links /opt/wheels -r "$B/requirements-win.txt"
   # Qt6Core.dll hard-imports icuuc.dll (Windows' system ICU; present in every
   # real System32 >= 1703, but Wine only bundles it as of v11.5). Wine's own
@@ -231,6 +277,7 @@ if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP" 2>/dev/null || true)" != "$(stamp_valu
   # the plugins get collected, and (b) the analysis resolves it from an app
   # path, so it lands IN the bundle — the exe then runs even on Server/no-ICU
   # Windows. icu.dll is the 1903+ combined lib; icuuc/icuin the 1703+ pair.
+  stage "staging wine's ICU next to Qt6Core.dll (so the PyInstaller Qt hooks can collect plugins)"
   WINE_ICU_DIR="$(dirname "$(find /opt/wine-* -iname 'icuuc.dll' | head -n1)" 2>/dev/null || true)"
   PYSIDE_DIR="$PREFIX/drive_c/Python312/Lib/site-packages/PySide6"
   ICU_SET=""
@@ -248,14 +295,14 @@ if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP" 2>/dev/null || true)" != "$(stamp_valu
   echo "[wine] bundled wine ICU into PySide6 dir:${ICU_SET}"
   stamp_value > "$STAMP"
 else
-  echo "[wine] reusing prefix $PREFIX (stamp OK)"
+  stage "reusing prefix $PREFIX (stamp + sentinels OK: wineboot, redist, Python, pip and ICU staging all skipped)"
 fi
 
 # --- 2. Host capability probe (mirrors build-windows.ps1) -------------------
 # If Wine cannot even import QtWebEngineCore, no bundle could ever render here:
 # an environment limitation (like the Server-SKU runners), so skip the frozen
 # smoke and report the structural outcome only.
-echo "[wine] host capability probe (QtWebEngineCore import)"
+stage "host capability probe: can this Wine import QtWebEngineCore? (budget 240s)"
 PROBE_LOG="$B/build/probe-wine.out"
 PROBE_OK=0
 if timeout 240 wine "$WINEPY" -c "from PySide6.QtWebEngineCore import QWebEngineSettings; print('WEBENGINE_HOST_OK')" > "$PROBE_LOG" 2>&1 \
@@ -268,9 +315,25 @@ else
 fi
 
 # --- 3. PyInstaller onefile (edi.spec win32 branch under wine) --------------
-echo "[wine] PyInstaller onefile"
-PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1 timeout 1800 wine "$WINEPY" -m PyInstaller \
-    --clean --distpath dist-app --workpath build/win edi.spec
+# PyInstaller sends its progress to stdout, and under Wine the expensive part
+# of that run is a filesystem walk of the whole PySide6 tree (PySide6 +
+# Essentials + Addons + shiboken6, ~1.5 GB / tens of thousands of files) via
+# Wine's NT path layer on the Z: drive. That walk is silent, so when it wedges
+# the log just stops mid-hook and a timeout reports a bare 124 with no way to
+# tell "slow" from "dead". Hence the tee: it names the exact hook it died in,
+# and the wchan/STAT snapshot distinguishes a thread blocked in the kernel
+# (disk thrash) from one spinning on CPU (a Wine deadlock) — the two causes
+# that look identical from the outside and need opposite fixes.
+stage "PyInstaller onefile (budget 1800s)"
+PYINSTALLER_LOG="$B/build/pyinstaller-wine.out"
+if ! PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1 timeout 1800 wine "$WINEPY" -m PyInstaller \
+        --clean --distpath dist-app --workpath build/win edi.spec 2>&1 | tee "$PYINSTALLER_LOG"; then
+  echo "error: PyInstaller did not complete — last 30 lines it produced:" >&2
+  tail -n 30 "$PYINSTALLER_LOG" | sed 's/^/  pyinstaller: /' >&2 || true
+  echo "  processes at the moment of the timeout (STAT S = blocked, R = spinning):" >&2
+  ps -eo pid,etimes,stat,wchan:24,comm 2>/dev/null | grep -Ei 'PID|wineserver|wine|python' | sed 's/^/  ps: /' >&2 || true
+  exit 1
+fi
 [ -f dist-app/Edi.exe ] || { echo "error: dist-app/Edi.exe not produced" >&2; exit 1; }
 [ -f dist-app/Edi-selftest.exe ] || { echo "error: dist-app/Edi-selftest.exe not produced" >&2; exit 1; }
 
@@ -279,7 +342,7 @@ PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1 timeout 1800 wine "$WINEPY" -m PyInstaller 
 # (the pre-ICU-wrap defect) dies here even though the probe above may pass.
 # CArchiveReader is pure stdlib + PyInstaller, so it runs on the .exe file
 # itself — no wine render needed.
-echo "[wine] verifying bundle contents (Qt plugins + ICU in the CArchive)"
+stage "verifying bundle contents (Qt plugins + ICU in the CArchive, budget 300s)"
 cat > "$B/build/list_archive.py" <<'PYEOF'
 import sys
 from PyInstaller.archive.readers import CArchiveReader
@@ -319,7 +382,7 @@ fi
 # crash is classified SELFTEST_SKIPPED_ENVIRONMENTAL (4a already proved the
 # bundle), while extraction/DLL-load failures are hard faults.
 if [ "$PROBE_OK" = 1 ] && [ "$ARCHIVE_OK" = 1 ]; then
-  echo "[wine] smoke test (console twin, offscreen)"
+  stage "frozen smoke (console twin, offscreen)"
   SMOKE_FILE="$B/build/selftest-wine.txt"
   SMOKE_OUT_Z="Z:${SMOKE_FILE}"
   BUDGET_MIN="${EDI_SMOKE_BUDGET_MIN:-20}"
@@ -402,16 +465,16 @@ else
 fi
 
 # --- 5. Versioned artifact ---------------------------------------------------
-echo "[wine] wrapping artifacts"
+stage "wrapping artifacts"
 rm -f dist-app/Edi-selftest.exe
 mv dist-app/Edi.exe "dist-app/Edi-$VERSION-win64.exe"
-echo "[wine] DONE: dist-app/Edi-$VERSION-win64.exe"
+printf '[wine] DONE (%s): dist-app/Edi-%s-win64.exe\n' "$(elapsed)" "$VERSION"
 
 # --- 6. NSIS installer (native makensis, baked into the image) ---------------
 # edi.nsi is platform-neutral (relative dist-app\ paths, /DVERSION /DSETUPEXE
 # defines), so the Linux NSIS compiles byte-identically to a desktop Windows
 # build — no Wine needed for this step. Output: dist-app/Edi-<v>-win64-setup.exe
-echo "[wine] NSIS installer"
+stage "NSIS installer (native makensis, no wine)"
 if command -v makensis >/dev/null 2>&1; then
   # edi.nsi resolves relative File/OutFile paths against the SCRIPT's dir, so
   # every define is passed ABSOLUTE ($B/dist-app/...); OUTEXE overrides the
@@ -423,7 +486,7 @@ if command -v makensis >/dev/null 2>&1; then
     "-DOUTEXE=$B/dist-app/Edi-$VERSION-win64-setup.exe" \
     packaging/edi.nsi
   [ -f "dist-app/Edi-$VERSION-win64-setup.exe" ] || { echo "error: installer not produced" >&2; exit 1; }
-  echo "[wine] DONE: dist-app/Edi-$VERSION-win64-setup.exe"
+  printf '[wine] DONE (%s): dist-app/Edi-%s-win64-setup.exe\n' "$(elapsed)" "$VERSION"
 else
   echo "error: makensis not found in the image (run 'apt-get install nsis')" >&2
   exit 1

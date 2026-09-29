@@ -184,6 +184,48 @@ jobs:
         with:
           name: edi-web
           path: .
+      # The Wine prefix (Windows Python 3.12 + PySide6 + PyInstaller) is the
+      # expensive half of this build AND the only half with a history of
+      # wedging: cold, it is a 20+ minute block of GUI bootstrapper under a
+      # synthetic display, against ~2 min warm. CI never had a warm one --
+      # build/ lives inside the checkout, so every container job started from
+      # an empty prefix and paid the full price, which is where the observed
+      # variance between a 3-minute and a 20-minute release came from.
+      #
+      # The key is deliberately built from the SAME four inputs the script's
+      # own stamp_value() hashes -- wine version, the Windows pins, and both
+      # baked installer names -- plus the workspace path (a prefix bakes
+      # absolute paths). A key hit then implies a stamp match, which rules out
+      # the one state that would strand us forever: restored prefix, stamp
+      # mismatch, script rebuilds it, and actions/cache declines to overwrite a
+      # key that already exists, so the stale entry would be served forever.
+      # On a hit the script skips wineboot, the VC++ redist, the Python
+      # installer, pip and the ICU staging in one go; on a miss everything runs
+      # cold exactly as before, and the post-job save step populates the entry.
+      - name: Resolve the Wine prefix cache key
+        id: wine-prefix-key
+        run: |
+          set -euo pipefail
+          wine_ver="$(wine --version 2>/dev/null | tr -cd '[:alnum:]._-' | cut -c1-24)"
+          reqs="$(md5sum requirements-win.txt | cut -c1-8)"
+          py_installer="$(basename "$(ls /opt/py/python-*-amd64.exe | head -n1)" .exe | cut -c1-24)"
+          # The glob's failure is masked by the pipe to head, so an empty
+          # component would sail through and produce a degenerate key that
+          # collides across images. Fail here instead, where it is legible.
+          [ -n "$wine_ver" ] || { echo "error: 'wine --version' produced nothing — not the baked toolchain image" >&2; exit 1; }
+          [ -n "$py_installer" ] || { echo "error: no /opt/py/python-*-amd64.exe in this image" >&2; exit 1; }
+          echo "fingerprint: wine=$wine_ver reqs=$reqs python=$py_installer ws=$GITHUB_WORKSPACE"
+          echo "key=wine-prefix-${{ runner.os }}-${wine_ver}-${reqs}-${py_installer}-$(printf '%s' "$GITHUB_WORKSPACE" | md5sum | cut -c1-8)" >> "$GITHUB_OUTPUT"
+      # v6 like every other action pin in this file (checkout@v7, upload@v7,
+      # download@v8): v5+ needs a runner >= 2.327, which a GitHub-hosted
+      # container job has.
+      - name: Restore the Wine prefix cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            build/wine-prefix
+            build/wine-home
+          key: ${{ steps.wine-prefix-key.outputs.key }}
       - name: Build Windows onefile + installer via Wine
         run: ./scripts/build-windows-wine.sh "${VER#v}"
       - name: Upload Windows artifacts
