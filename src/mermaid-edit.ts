@@ -83,8 +83,23 @@ const CONCEALED_CLASS = 'is-concealed'
 export const KANBAN_CHROME_CLASS = 'mermaid-kanban-chrome'
 const MENU_ITEM_KIND_CLASS = 'mermaid-kanban-menu-item-'
 const MENU_ITEM_DANGER_CLASS = 'is-danger'
-/** Between a column's `⋯` and the list of items it opens. */
+/**
+ * Between a column's `⋯` and the list of items it opens — and how tall the
+ * transparent bridge over that gap is, since the gap is a hole in the popover
+ * with the board visible through it and the pointer crosses it on its way down
+ * every time. The number itself belongs to the stylesheet
+ * (`--mermaid-kanban-menu-gap`), which is also what draws the bridge, so where
+ * the list is placed and the hole in it are one measurement.
+ */
 const MENU_GAP = 6
+
+/** The gap the list is actually placed at, read off its own stylesheet. */
+const menuGap = (list: HTMLElement): number => {
+  const declared = Number.parseFloat(
+    getComputedStyle(list).getPropertyValue('--mermaid-kanban-menu-gap').trim(),
+  )
+  return Number.isFinite(declared) ? declared : MENU_GAP
+}
 // A column's name is one line of text, and the field that asks for it is placed
 // where a new column will stand — which on a board of empty columns is a band
 // only as tall as its header. A composer taller than the slot it fills hangs off
@@ -1550,15 +1565,16 @@ export function kanbanAuthoringSource(source: string): string {
  *
  * Every visual edit comes through here, whichever affordance made it: a card
  * typed into a drawn slot, a column named where the next one was drawn, a card
- * dragged between columns, a label renamed. Ids are only rewritten for the slots
- * that became content, and a line whose label could not be read is passed
- * through rather than guessed at.
+ * dragged between columns, a label renamed. Only the slots that became content
+ * are rewritten, a line whose label could not be read is passed through rather
+ * than guessed at, and a new column is given an id nothing on the board already
+ * uses (`freshKanbanId`) — it is a header like any other, and a duplicate id is
+ * what ties a card to the wrong column.
  */
 export function kanbanRealSource(patched: string): string {
   const doc = parseKanban(patched)
   if (!doc.lines.some(isKanbanSlotLine)) return patched
   const out: string[] = []
-  let columns = 0
   for (const line of doc.lines) {
     if (isKanbanSlotLine(line)) {
       if (line.label === null) {
@@ -1568,14 +1584,12 @@ export function kanbanRealSource(patched: string): string {
       // Still a placeholder: nothing was typed, so nothing is added.
       if (line.label === KANBAN_CARD_SLOT || line.label === KANBAN_COLUMN_SLOT) continue
       if (line.kind === 'column') {
-        columns += 1
-        out.push(`${line.indent}col${columns}[${kanbanInnerLabel(line.label)}]`)
+        out.push(`${line.indent}${freshKanbanId(doc.lines)}[${kanbanInnerLabel(line.label)}]`)
       } else {
         out.push(`${line.indent}[${kanbanInnerLabel(line.label)}]`)
       }
       continue
     }
-    if (line.kind === 'column') columns += 1
     out.push(line.indent + line.text)
   }
   return out.join('\n')
@@ -1671,49 +1685,6 @@ export function removeKanbanCard(source: string, card: number): string | null {
   const entry = doc.cards[card]
   if (!entry) return null
   const lines = doc.lines.filter((_, index) => index !== entry.line)
-  const next = rebuildKanban(lines)
-  return next === source ? null : next
-}
-
-/**
- * Insert a new column at position `at` among the board's columns, or `null` when
- * the label is unusable (see `usableKanbanLabel`) or the rebuild would not change
- * the source. `at` is 0 for before the first column and the column count for
- * after the last one, so a column can be added in the middle of a board.
- *
- * Only the new header line is added: the new column's own id is chosen fresh
- * (`freshKanbanId`) and nothing in the grammar ties a card to its column by
- * position, so every other line — including the ids the user gave their own
- * columns — is left exactly as it was. A renumbered board would be tidier and
- * would rewrite source the insert was never asked to touch.
- */
-export function addKanbanColumn(source: string, at: number, label: string): string | null {
-  const doc = parseKanban(source)
-  if (!usableKanbanLabel(label) || doc.columns.length === 0) return null
-  const text = label.trim()
-  const position = Math.max(0, Math.min(at, doc.columns.length))
-  const id = freshKanbanId(doc.lines)
-  // The same indent as the column next to it, so a tab-indented or six-space
-  // board does not gain a level.
-  const indent = doc.lines[doc.columns[Math.min(position, doc.columns.length - 1)]!]?.indent ?? '  '
-  const inner = kanbanInnerLabel(text)
-  const header: KanbanLine = {
-    text: `${id}[${inner}]`,
-    indent,
-    offset: 0,
-    kind: 'column',
-    label: text,
-    labelStart: id.length + 1,
-    labelEnd: id.length + 1 + inner.length,
-  }
-
-  const lines = doc.lines.slice()
-  // Straight after the column it follows, cards and all, so it lands in the gap
-  // the user was looking at rather than after that column's trailing comments.
-  // Ahead of the first column means *before the first column*, never before the
-  // `kanban` header, which is what makes the rest of the source a kanban at all.
-  const insertAt = position === 0 ? doc.columns[0] : lastColumnLine(doc, position - 1) + 1
-  lines.splice(insertAt, 0, header)
   const next = rebuildKanban(lines)
   return next === source ? null : next
 }
@@ -2453,10 +2424,19 @@ function kanbanCardAt(event: MouseEvent, svg: SVGSVGElement, family: DiagramFami
  * what it is passing over, and put back before its captured follower on the way
  * out. The follower is captured rather than re-walked, because the model→element
  * mapping these callers hold is the captured array.
+ *
+ * A lift grows a *single* thing and only a single thing. `scale` is 1 for a
+ * column, and that is not a lesser version of the card's: an svg transform scales
+ * about the element's own local origin, and a column's frame and its cards do not
+ * share one — the frame's origin is the board's corner, each card's is its own —
+ * so scaling them all by the same factor grows the frame's edges out from under
+ * cards that stay put. The column is *carried*: rigid, one thing, the outline
+ * saying so.
  */
 function liftElements(
   elements: readonly SVGElement[],
   cls: string,
+  scale = DRAG_LIFT_SCALE,
 ): { move: (dx: number, dy: number) => void; restore: () => void } {
   const bases = elements.map((element) => ({
     element,
@@ -2468,10 +2448,11 @@ function liftElements(
     parent?.appendChild(element)
     element.classList.add(cls)
   }
+  const grow = scale === 1 ? '' : ` scale(${scale})`
   return {
     move: (dx, dy) => {
       for (const { element, transform } of bases) {
-        element.setAttribute('transform', `${transform ?? ''} translate(${dx}, ${dy}) scale(${DRAG_LIFT_SCALE})`.trim())
+        element.setAttribute('transform', `${transform ?? ''} translate(${dx}, ${dy})${grow}`.trim())
       }
     },
     restore: () => {
@@ -2487,16 +2468,21 @@ function liftElements(
 
 /**
  * The drop indicator, created on the first move and inserted *into the svg ahead
- * of the cards*: it is a hint about the slot the release drops into, and the
- * thing being dragged is the subject, so every card paints over the line. An
- * overlay in the preview cannot do this — a positioned child of the preview
- * paints above the whole drawing, which is how the line used to draw across the
- * very card it was previewing.
+ * of the things it runs under*: it is a hint about where the release lands, and
+ * whatever it points between is the subject, so that paints over it. An overlay
+ * in the preview cannot do this — a positioned child of the preview paints above
+ * the whole drawing, which is how the line used to draw across the very card it
+ * was previewing.
+ *
+ * What it runs under is the caller's answer, because a card and a column are
+ * indicated against different things: a card line sits among cards (`.items`),
+ * while a column line stands in the gutter *between* frames — so it goes ahead of
+ * `.sections`, where the frame it is drawn across is over it rather than under.
  */
-function createDropLine(svg: SVGSVGElement): SVGLineElement {
+function createDropLine(svg: SVGSVGElement, before: Element | null): SVGLineElement {
   const line = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line')
   line.setAttribute('class', DROP_LINE_CLASS)
-  svg.insertBefore(line, svg.querySelector('.items'))
+  svg.insertBefore(line, before)
   return line
 }
 
@@ -2505,8 +2491,19 @@ function createDropLine(svg: SVGSVGElement): SVGLineElement {
  * restore. Everything that differs is in `hooks`, because "where does this land"
  * is the only real difference — a card lands in a slot inside a list, a list lands
  * in a gap between two lists.
+ *
+ * `before` is the sibling the indicator goes ahead of and `scale` how much the
+ * lift grows, because both belong to *what* is being dragged rather than to how a
+ * drag works: a card line runs under the cards, a column line under the frames.
  */
-function armDragGroup(drag: ArmedDrag, lifted: readonly SVGElement[], cls: string, hooks: DragHooks): void {
+function armDragGroup(
+  drag: ArmedDrag,
+  lifted: readonly SVGElement[],
+  cls: string,
+  hooks: DragHooks,
+  before: Element | null,
+  scale?: number,
+): void {
   const { container, svg, down } = drag
   const map = svgMapping(svg)
   let group: ReturnType<typeof liftElements> | null = null
@@ -2536,10 +2533,10 @@ function armDragGroup(drag: ArmedDrag, lifted: readonly SVGElement[], cls: strin
     const pointer = event as PointerEvent
     if (!group) {
       if (Math.hypot(pointer.clientX - down.clientX, pointer.clientY - down.clientY) < DRAG_THRESHOLD) return
-      group = liftElements(lifted, cls)
+      group = liftElements(lifted, cls, scale)
       group.move(0, 0)
       container.classList.add(DRAG_CONTAINER_CLASS)
-      line = createDropLine(svg)
+      line = createDropLine(svg, before)
     }
     // The drag is ours now, so no text selection or native drag should follow.
     pointer.preventDefault()
@@ -2600,7 +2597,7 @@ function armDragGroup(drag: ArmedDrag, lifted: readonly SVGElement[], cls: strin
 
 /** Drag a card into another column, or to another spot in its own. */
 function armCardDrag(drag: ArmedDrag): void {
-  const { source, doc, cards, sections, from } = drag
+  const { source, doc, cards, sections, svg, from } = drag
   const card = cards[from]
 
   armDragGroup(
@@ -2635,12 +2632,13 @@ function armCardDrag(drag: ArmedDrag): void {
         if (next !== null) drag.commit(next)
       },
     },
+    svg.querySelector('.items'),
   )
 }
 
 /** Drag a whole list to another place on the board. */
 function armColumnDrag(drag: ArmedDrag): void {
-  const { source, doc, cards, sections, from } = drag
+  const { source, doc, cards, sections, svg, from } = drag
   const frame = sections[from]
   if (!frame) return
   // A list is not one element: the frame and its cards are two sibling lists, so
@@ -2648,24 +2646,31 @@ function armColumnDrag(drag: ArmedDrag): void {
   // travel and the cards would stay behind.
   const lifted = [frame, ...cards.filter((_, index) => doc.cards[index]?.column === from)]
 
-  armDragGroup(drag, lifted, DRAG_COLUMN_CLASS, {
-    highlight: (event) => liveHit(event, sections, drag.slots.column),
-    /**
-     * A vertical line in the gap the list will drop into, spanning the board. The
-     * gap is the answer to "where does this land" the same way the card line's gap
-     * is, and it has to be drawn *between* two lists: a list held over three
-     * columns could go into any of three, and the frames are all the same colour.
-     */
-    place: (event) => {
-      const at = columnGapAt(sections, columnSlotAt(event, sections, from), from)
-      return at === null ? null : { x1: at.x, y1: at.y, x2: at.x, y2: at.y + at.height }
+  armDragGroup(
+    drag,
+    lifted,
+    DRAG_COLUMN_CLASS,
+    {
+      highlight: (event) => liveHit(event, sections, drag.slots.column),
+      /**
+       * A vertical line in the gap the list will drop into, spanning the board. The
+       * gap is the answer to "where does this land" the same way the card line's gap
+       * is, and it has to be drawn *between* two lists: a list held over three
+       * columns could go into any of three, and the frames are all the same colour.
+       */
+      place: (event) => {
+        const at = columnGapAt(sections, columnSlotAt(event, sections, from), from)
+        return at === null ? null : { x1: at.x, y1: at.y, x2: at.x, y2: at.y + at.height }
+      },
+      drop: (event, _target, moved) => {
+        if (!moved) return
+        const next = moveKanbanColumn(source, from, columnSlotAt(event, sections, from))
+        if (next !== null) drag.commit(next)
+      },
     },
-    drop: (event, _target, moved) => {
-      if (!moved) return
-      const next = moveKanbanColumn(source, from, columnSlotAt(event, sections, from))
-      if (next !== null) drag.commit(next)
-    },
-  })
+    svg.querySelector('.sections'),
+    1,
+  )
 }
 
 /**
@@ -2693,6 +2698,13 @@ function columnSlotAt(event: PointerEvent, sections: SVGElement[], from: number)
  * end up at, and a list dragged to the end lands past the last frame that is
  * still there, not past its own old one. Measuring against the untouched row
  * would put the line inside whichever column happened to be adjacent before.
+ *
+ * That is also why the line's *height* comes from the same row rather than from
+ * the board: the moving column is under the pointer and off wherever the pointer
+ * is, so a rule that took its top from it grew as the list was dragged upward —
+ * off the top of the board and out over the toolbar above it, which the drag's
+ * `overflow: visible` (there so a card is not cut off) lets it do. A rule that
+ * changes length as you move is a rule that cannot be trusted to mean anything.
  */
 function columnGapAt(sections: SVGElement[], slot: number, from: number): { x: number; y: number; height: number } | null {
   if (sections.length === 0) return null
@@ -2701,8 +2713,8 @@ function columnGapAt(sections: SVGElement[], slot: number, from: number): { x: n
   if (rest.length === 0) return null
   const left = slot === 0 ? rest[0]!.left : rest[slot - 1]!.right
   const right = slot === rest.length ? rest[rest.length - 1]!.right : rest[slot]!.left
-  const top = Math.min(...rects.map((rect) => rect.top))
-  const bottom = Math.max(...rects.map((rect) => rect.bottom))
+  const top = Math.min(...rest.map((rect) => rect.top))
+  const bottom = Math.max(...rest.map((rect) => rect.bottom))
   // The board's own height, top to bottom: a column is inserted between two
   // frames rather than into a slot inside one, so the line is a full-height rule
   // rather than a short bar in a band.
@@ -2959,26 +2971,6 @@ function attachKanbanChrome(
       }),
     )
 
-  /** A new column's name, typed over the band the board drew for it. */
-  const composeColumn = (at: number, box: () => DOMRect): void =>
-    openEditor(
-      openInlineInput({
-        host: container,
-        rect: box,
-        onPlaced: trackComposer,
-        value: '',
-        placeholder: 'Column name',
-        tone: 'new',
-        onAccept: (value) => {
-          const next = addKanbanColumn(source, at, value)
-          if (next === null) return kanbanLabelRefusal(value)
-          commit(next)
-          return true
-        },
-        onCancel: () => undefined,
-      }),
-    )
-
   /** Whether any control actually moved — what the settle loop below is run by. */
   const place = (): boolean => {
     const base = container.getBoundingClientRect()
@@ -3059,6 +3051,23 @@ function attachKanbanChrome(
     return item
   }
 
+  /**
+   * The list answers for itself, not just for its items: it has padding, 1px gaps
+   * between the items, and the bridge over the gap under its own `⋯`, and every
+   * one of those belongs to the popover. Only the items act on a press, so a press
+   * anywhere else in the list is held by it rather than reaching the board.
+   */
+  const menuList = (label: string): HTMLDivElement => {
+    const list = document.createElement('div')
+    list.className = MENU_LIST_CLASS
+    list.setAttribute('role', 'menu')
+    list.setAttribute('aria-label', label)
+    for (const type of ['pointerdown', 'mousedown'] as const) {
+      list.addEventListener(type, (event) => event.stopPropagation())
+    }
+    return list
+  }
+
   // The board is drawn with its slots, and this is what says which of the things
   // the DOM walk found are those slots: everything below is built for content.
   const slots = kanbanSlotElements(svg, doc)
@@ -3077,31 +3086,19 @@ function attachKanbanChrome(
     // name, and it is not yet a column to add to, rename or delete.
     if (column === slots.column) return
     const name = columnName(column)
-    // A column added from the menu has no drawn slot of its own, so its field is
-    // placed in the band's own space — under its name, where the column's first
-    // card would go.
-    const composerBox = (): DOMRect => {
-      const rect = sectionRect(section)
-      return new DOMRect(
-        rect.left + (rect.width - MENU_WIDTH) / 2,
-        rect.bottom - COMPOSER_HEIGHT,
-        MENU_WIDTH,
-        COMPOSER_HEIGHT,
-      )
-    }
     const menuBox = (): DOMRect => {
       const rect = sectionRect(section)
       const size = KANBAN_BUTTON_HALF * 2
       return new DOMRect(rect.right - KANBAN_BUTTON_EDGE - size, rect.top + KANBAN_BUTTON_EDGE, size, size)
     }
 
+    // Two items, and both are generic: the menu belongs to the column whose `⋯`
+    // it hangs off, so "Rename column" is already "rename *this* column", and
+    // nothing it says has to fit inside a name that can be any length. Adding a
+    // column is not here at all — the board is drawn with a column slot at its
+    // end, which is a place to name rather than an item in a list, so a way to
+    // add one that is *only* here would be a way to add one a board has not got.
     const actions: Array<{ text: string; kind: string; danger: boolean; run: () => void | Promise<void> }> = [
-      {
-        text: `Add a column after ${name}`,
-        kind: 'add',
-        danger: false,
-        run: () => composeColumn(column + 1, composerBox),
-      },
       {
         text: 'Rename column',
         kind: 'rename',
@@ -3122,7 +3119,10 @@ function attachKanbanChrome(
     if (kanbanColumnCount(source) > 1) {
       const taken = cardsIn(column)
       actions.push({
-        text: `Delete the ${name} column`,
+        // The name is the *dialog's* to say, not the item's: the prompt is where a
+        // delete is confirmed, so that is where "which one" has to be answered,
+        // and a list that says it twice is a list twice as wide as it needs to be.
+        text: 'Delete column',
         kind: 'delete',
         danger: true,
         run: () =>
@@ -3141,19 +3141,20 @@ function attachKanbanChrome(
       }
       // Another column's menu, if one is open, is not this one's business.
       dismissMenu()
-      const list = document.createElement('div')
-      list.className = MENU_LIST_CLASS
-      list.setAttribute('role', 'menu')
-      list.setAttribute('aria-label', `${name} column actions`)
+      const list = menuList(`${name} column actions`)
+      for (const action of actions) list.appendChild(menuItem(action.text, action.kind, action.danger, action.run))
+      layer.appendChild(list)
+      // Read after the list is in the tree, so its own stylesheet is in effect: the
+      // gap and the bridge that covers it are one number, and this is where the
+      // list is placed from it.
+      const gap = menuGap(list)
       placed.push({
         element: list,
         box: () => {
           const at = menuBox()
-          return { left: at.left + at.width - MENU_WIDTH, top: at.top + at.height + MENU_GAP, width: MENU_WIDTH }
+          return { left: at.left + at.width - MENU_WIDTH, top: at.top + at.height + gap, width: MENU_WIDTH }
         },
       })
-      for (const action of actions) list.appendChild(menuItem(action.text, action.kind, action.danger, action.run))
-      layer.appendChild(list)
       const at = placed.findIndex((entry) => entry.element === list)
       // Placed here rather than on the next resize: the list is built long after
       // the layer's own `place()` ran, so without this it would sit wherever the

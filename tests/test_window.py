@@ -72,6 +72,7 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _composer,
     _hover,
     _open_kanban_menu,
+    _press_in_the_menu_gap,
     _click_label,
     _dblclick_below_document,
     _dump,
@@ -1282,11 +1283,15 @@ def test_kanban_column_drag_reorders_the_board(window):
     assert line["h"] > mid["sr"]["h"] * 0.5, mid
     band = mid["sr"]
     assert line["x"] > band["x"] + band["w"], mid
-    # The line is an svg child ahead of the cards, so it is over the column's own
-    # background but under every card — and the gap it marks has nothing over it
-    # anyway, which is what makes it readable.
+    # The line is an svg child ahead of the *frames* and behind everything else,
+    # so the column it is previewing is not drawn across by its own rule — a rule
+    # the column is next to is one the column does not hide.
     assert mid["lineUnder"] is True, mid
     assert "line" in mid["overLine"], mid
+    # And the held column is the size it was drawn at: a `scale` on the lift would
+    # grow the frame about its own origin (where an svg transform scales) and push
+    # the cards out through the bottom of it.
+    assert mid["rigid"] is True, mid
 
     # `COLUMNS` is keyed by the band's x, so the dict is the board's order: a
     # column drag has to be read as the whole sequence, not as one column's cards.
@@ -1675,13 +1680,15 @@ def test_the_chrome_follows_the_board_when_the_window_is_resized(window):
         _resize_view(window, 1280)
 
 
-def test_kanban_menu_and_ghost_add_and_delete_columns(window):
-    """A column's actions are one menu, and its last one is a real column.
+def test_kanban_menu_and_drawn_add_and_delete_columns(window):
+    """A column's menu is the two things that are not places on the board.
 
-    The two marks that used to share a header corner are menu items now, and the
-    menu hangs inside the column it belongs to so it cannot be mistaken for the
-    next column's. The place a new column goes is *drawn* in the board, so the
-    menu is not the only way to add one and the board says so by standing empty.
+    Rename and delete, both of them named by what they do rather than by the
+    column they are on: the item belongs to the `⋯` it hangs off, and that `⋯`
+    already carries the name. Which column is the *prompt's* to say, and it does.
+    Adding is not in the list at all, because the place a new column goes is
+    *drawn* in the board — so the menu is not the only way to add one, and a
+    board drawn without a slot column has nothing in it to add.
     """
     _render(window, KANBAN_EMPTY)
     _enter_edit_mode(window)
@@ -1691,12 +1698,8 @@ def test_kanban_menu_and_ghost_add_and_delete_columns(window):
     assert menu["label"] == "Todo column actions", menu
     # The whole of the column's own actions, in one list, with the one that takes
     # something away marked as such.
-    assert [i["text"] for i in menu["items"]] == [
-        "Add a column after Todo",
-        "Rename column",
-        "Delete the Todo column",
-    ], menu
-    assert [i["danger"] for i in menu["items"]] == [False, False, True], menu
+    assert [i["text"] for i in menu["items"]] == ["Rename column", "Delete column"], menu
+    assert [i["danger"] for i in menu["items"]] == [False, True], menu
     assert menu["items"][0]["focused"] is True, menu
     # It hangs below its own ⋯ and inside the column, so it is not the next
     # column's menu opened one to the left.
@@ -1704,17 +1707,32 @@ def test_kanban_menu_and_ghost_add_and_delete_columns(window):
     assert menu["box"]["top"] >= band["box"]["top"], (menu, band)
     assert menu["box"]["right"] <= band["box"]["right"] + 1.0, (menu, band)
     assert menu["box"]["left"] >= band["box"]["left"] - 1.0, (menu, band)
+    # An item is bounded by the popover and not by its own words, so a label
+    # wider than the menu wraps inside it instead of widening the menu off the
+    # board. The wrapping is what a translation gets; nothing this app writes
+    # today is long enough to need it.
+    for item in menu["items"]:
+        assert item["wrap"] == "normal", item
+        assert item["box"]["right"] <= menu["box"]["right"] + 0.5, (item, menu)
+        assert item["box"]["left"] >= menu["box"]["left"] - 0.5, (item, menu)
+
+    # The gap under the ⋯ is a hole in the popover with the board showing through
+    # it, and the pointer is always travelling across it on its way down. A press
+    # there is a press on the menu, so the menu is still there afterwards.
+    gap = _press_in_the_menu_gap(window)
+    assert gap["gap"] > 0, gap
+    assert gap["hits"] == "the menu", gap
+    assert gap["stillOpen"] is True, gap
 
     # Moving the pointer off it takes the menu away again: it is a popover over a
     # board, not a dialog, so it must not keep the rest of the board out of reach.
     _hover(window, ".items > g.node", 0)
     _wait(window, KANBAN_MENU, lambda d: not d["open"], timeout=10)
 
-    # "Add a column after" is the header's ＋, unchanged in what it does.
-    _open_kanban_menu(window, 0)
-    _click_kanban_menu_item(window, "Add a column after Todo")
-    opened = _composer(window)
-    assert opened["v"] == "" and opened["ph"] == "Column name", opened
+    # A new column is the board's own drawn place, and it is named through the
+    # label editor its own header is edited by, so the name is keyed into the band
+    # rather than asked for somewhere else.
+    _click_kanban_column_slot(window)
     _type_and_confirm(window, "In review")
     added = _wait(
         window,
@@ -1732,7 +1750,7 @@ def test_kanban_menu_and_ghost_add_and_delete_columns(window):
 
     # And "Delete" says how many cards go with it, then goes.
     _open_kanban_menu(window, 0)
-    _click_kanban_menu_item(window, "Delete the Todo column")
+    _click_kanban_menu_item(window, "Delete column")
     prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
     assert prompt["title"] == "Delete the Todo column?" and prompt["danger"], prompt
     # Todo is empty by now, so the prompt must not claim it is taking cards.
@@ -1745,20 +1763,22 @@ def test_kanban_menu_and_ghost_add_and_delete_columns(window):
         timeout=15,
     )
     assert "id2[Two]" in dropped["sources"][0], dropped
-    assert dropped["sources"][0].splitlines()[1].strip() == "col1[In review]", dropped
+    # The column drawn at the end is still at the end: the board's own order is
+    # what a delete leaves behind, and the new one was appended, not inserted.
+    assert dropped["sources"][0].splitlines()[-1].strip() == "col1[In review]", dropped
     # The board re-rendered into three columns plus the place a fourth goes, so
     # the chrome is back to four bands and the band that was Todo is gone.
     board = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 4, timeout=15)
     assert [b["text"] for b in board["bands"]] == [
-        "In review",
         "Doing",
         "Done",
+        "In review",
         KANBAN_COLUMN_SLOT,
     ], board
 
-    # The drawn column is the board's own answer to "where does a new column go",
-    # and it is named through the label editor its own header is edited by, so the
-    # name is keyed into the band rather than asked for somewhere else.
+    # The drawn column is where the *next* one goes, and it is named through the
+    # label editor its own header is edited by, so the name is keyed into the band
+    # rather than asked for somewhere else.
     opened = _click_kanban_column_slot(window)
     assert opened["v"] == KANBAN_COLUMN_SLOT, opened
     _type_and_confirm(window, "Archive")
@@ -1792,10 +1812,7 @@ def test_kanban_menu_offers_no_delete_on_a_board_of_one(window):
     board = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 2, timeout=15)
 
     menu = _open_kanban_menu(window, 0)
-    assert [i["text"] for i in menu["items"]] == [
-        "Add a column after Review",
-        "Rename column",
-    ], menu
+    assert [i["text"] for i in menu["items"]] == ["Rename column"], menu
     assert not any(i["danger"] for i in menu["items"]), menu
     # A board of one is drawn with the column it would need to get back to two —
     # and that drawn column is not a column, so it is neither offered the delete

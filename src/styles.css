@@ -1632,15 +1632,32 @@ body {
   border-color: var(--danger);
 }
 
+/* A card and a column are *held*, and the cursor says so: an open hand over
+   either, a closed one while either is in the air. The grab belongs to the drag
+   and the drag belongs to the thing that has somewhere to go, which is why the
+   two slots below are not in this rule at all — a slot is nowhere, so it is not
+   held by anything. */
+.ProseMirror .mermaid.mermaid-editing .items > g.node:not(.mermaid-kanban-slot),
+.ProseMirror .mermaid.mermaid-editing .sections > g:not(.mermaid-kanban-column-slot) {
+  cursor: grab;
+}
+
+.ProseMirror .mermaid-preview.kanban-dragging .items > g.node,
+.ProseMirror .mermaid-preview.kanban-dragging .sections > g {
+  cursor: grabbing;
+}
+
 /* The two ways into the board are *part of the board*: mermaid draws a card slot
    at the foot of every column and a column slot at the end of the board, so there
    is nothing to hover for and nothing to position. They are muted because they
    hold nothing yet — a placeholder is only a place — and brighten under the
-   pointer, which is the only hover a slot has. The dashed edge is the *field*
-   that opens in one of them, not the slot (see .mermaid-edit-field-new). */
+   pointer, which is the only hover a slot has. Their cursor is the caret, because
+   a click on one opens a field to type a title in: the slot is not a copy of
+   anything and it is not held by anything, it is written on. The dashed edge is
+   the *field* that opens in one, not the slot (see .mermaid-edit-field-new). */
 .ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot,
 .ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot {
-  cursor: copy;
+  cursor: text;
 }
 
 .ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot rect,
@@ -1661,6 +1678,11 @@ body {
 /* The menu: right-aligned under its own `⋯`, so it hangs inside the column it
    belongs to and cannot be mistaken for the next column's. */
 .ProseMirror .mermaid .mermaid-kanban-menu-list {
+  /* The one number both halves of the menu's own geometry need: how far below
+     its `⋯` the list hangs, which the bridge below has to cover. It lives here
+     because the bridge is drawn from it; the placement reads it back
+     (`menuGap()` in `src/mermaid-edit.ts`) rather than keeping its own. */
+  --mermaid-kanban-menu-gap: 6px;
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -1673,6 +1695,26 @@ body {
   pointer-events: auto;
 }
 
+/* The gap between a `⋯` and its list is *in* the menu, not a hole beside it. The
+   pointer has to cross it to get from the button to the items, and a press in it
+   lands on the board underneath — which is a press outside the list, so the list
+   is taken away by the very gesture that was reaching for it. A menu with a
+   bridged gap is a menu you can use, and it is as tall as the distance the list
+   is placed at, because both are the number just above. */
+.ProseMirror .mermaid .mermaid-kanban-menu-list::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(-1 * var(--mermaid-kanban-menu-gap, 6px));
+  height: var(--mermaid-kanban-menu-gap, 6px);
+}
+
+/* Nothing in a menu wraps *out* of it. A column's name is not in any of the items
+   (the dialog that follows a delete says which column), but a name is not the only
+   thing that can be long: a translation, a future item, a label somebody wants
+   spelled out. So the text wraps inside the list's own width instead of deciding
+   the width itself, and the list's height grows to whatever it needed. */
 .ProseMirror .mermaid .mermaid-kanban-menu-item {
   display: block;
   width: 100%;
@@ -1683,8 +1725,10 @@ body {
   color: var(--text);
   font: inherit;
   font-size: 0.9em;
+  line-height: 1.35;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 

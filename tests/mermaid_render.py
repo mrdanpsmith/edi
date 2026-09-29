@@ -648,8 +648,8 @@ def _pointer_drag_column(win, column, slot):
               && [...mine[0].parentElement.children].slice(-mine.length)
                    .every((el, i) => el === mine[i]),
             // Tracking, as a delta between two points of the drag: the grab offset
-            // and the lift's scaling are constant, so what is held moves with the
-            // pointer by the pointer's own distance, whatever the board is scaled to.
+            // is constant, so what is held moves with the pointer by the pointer's
+            // own distance, whatever the board is scaled to.
             travel: {{ dx: at().left - half.left, dy: at().top - half.top,
                        px: to.x - (from.x + (to.x - from.x) * 4 / 8),
                        py: to.y - (from.y + (to.y - from.y) * 4 / 8) }},
@@ -657,8 +657,17 @@ def _pointer_drag_column(win, column, slot):
             line: lineRect ? {{ x: lineRect.left, y: lineRect.top,
                                 w: lineRect.width, h: lineRect.height,
                                 shown: line.style.display !== 'none' }} : null,
+            // `.sections` comes before `.items`, so a line in front of both
+            // draws across the column it is previewing. It goes in front of the
+            // frames and behind everything else.
             lineUnder: line ? line.parentElement === svg
-              && line.nextElementSibling === svg.querySelector('.items') : null,
+              && line.nextElementSibling === svg.querySelector('.sections') : null,
+            // A column is a frame with a padding and cards inside it, so a lift
+            // that grows it — a `scale` about the frame's own origin, which is
+            // where an svg transform scales — pushes the cards out through the
+            // bottom and drops the ones outside the section as well. Held means
+            // moved, and the frame is the same size it was.
+            rigid: Math.abs(at().width - sr.width) < 0.5 && Math.abs(at().height - sr.height) < 0.5,
             overLine,
             unclipped: getComputedStyle(svg).overflow === 'visible'
               && getComputedStyle(preview).overflow === 'visible',
@@ -746,9 +755,15 @@ KANBAN_MENU = (
     " const b = d ? [...d.querySelectorAll('.mermaid-kanban-menu-item')] : [];"
     " const r = d ? d.getBoundingClientRect() : null;"
     " return { open: !!d, label: d ? d.getAttribute('aria-label') : null,"
-    "   items: b.map((x) => ({ text: (x.textContent || '').trim(),"
-    "     danger: x.classList.contains('is-danger'),"
-    "     focused: x === document.activeElement })),"
+    "   items: b.map((x) => { const r = x.getBoundingClientRect();"
+    "     return { text: (x.textContent || '').trim(),"
+    "       danger: x.classList.contains('is-danger'),"
+    "       focused: x === document.activeElement,"
+    # An item is bounded by the popover, not by its own words: the width is
+    # fixed and the text wraps inside it, because a label this app does not
+    # write yet (a translation) must not be able to widen the menu.
+    "       wrap: getComputedStyle(x).whiteSpace,"
+    "       box: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } }; }),"
     "   box: r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null }; })()"
 )
 
@@ -814,6 +829,39 @@ def _open_kanban_menu(win, column):
     )
     assert not out.get("missing"), "the column had no ⋯"
     return _wait(win, KANBAN_MENU, lambda d: d["open"], timeout=10)
+
+
+def _press_in_the_menu_gap(win):
+    """Press in the gap between a `⋯` and the list it opened, and report the hit.
+
+    The gap is a hole in a popover with the board visible through it, so it is the
+    one place a pointer *aimed* at the menu lands on the board — and a press that
+    reaches the board takes the menu away. The bridge is what closes the hole, and
+    `elementFromPoint` is what says whether it did: a `::before` is not an
+    element, so the hit test reports the list it belongs to.
+    """
+    out = _dump(
+        win,
+        """(() => {
+          const list = document.querySelector('.mermaid .mermaid-kanban-menu-list');
+          const button = document.querySelector('.mermaid .mermaid-kanban-menu');
+          if (!list || !button) return { missing: true };
+          const l = list.getBoundingClientRect(), b = button.getBoundingClientRect();
+          const x = Math.round(l.right - 8), y = Math.round((b.bottom + l.top) / 2);
+          const hit = document.elementFromPoint(x, y);
+          if (hit) for (const type of ['pointerdown', 'mousedown']) {
+            hit.dispatchEvent(new PointerEvent(type, {
+              bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse',
+              isPrimary: true, button: 0, clientX: x, clientY: y }));
+          }
+          return { x, y, gap: Math.round(l.top - b.bottom),
+            hits: hit ? (hit.closest('.mermaid-kanban-menu-list') ? 'the menu'
+              : (hit.getAttribute('class') || hit.tagName.toLowerCase())) : null,
+            stillOpen: !!document.querySelector('.mermaid .mermaid-kanban-menu-list') };
+        })()""",
+    )
+    assert not out.get("missing"), "no open menu to press the gap of"
+    return out
 
 
 def _click_kanban_menu_item(win, text):

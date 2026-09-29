@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireResizeCallbacks, flushFrames } from './test-setup'
 import {
   addKanbanCard,
-  addKanbanColumn,
   attachMermaidEditing,
   buildKanbanSource,
   detectDiagramType,
@@ -758,72 +757,6 @@ describe('removeKanbanCard', () => {
   it('reports a card that is not there as null', () => {
     expect(removeKanbanCard(source, 9)).toBeNull()
     expect(removeKanbanCard(source, -1)).toBeNull()
-  })
-})
-
-describe('addKanbanColumn', () => {
-  const source = ['kanban', '  Todo', '    id1[One]', '  Doing', '    id2[Two]'].join('\n')
-
-  it('inserts straight after the column it follows, cards and all', () => {
-    // In the middle of the board, which is the whole point of a per-column ＋:
-    // nothing else moves, and nothing else is renumbered.
-    expect(addKanbanColumn(source, 1, 'In review')).toBe(
-      ['kanban', '  Todo', '    id1[One]', '  col1[In review]', '  Doing', '    id2[Two]'].join('\n'),
-    )
-  })
-
-  it('inserts before the first column and after the last one', () => {
-    expect(addKanbanColumn(source, 0, 'Backlog')).toBe(
-      ['kanban', '  col1[Backlog]', '  Todo', '    id1[One]', '  Doing', '    id2[Two]'].join('\n'),
-    )
-    expect(addKanbanColumn(source, 2, 'Done')).toBe(
-      ['kanban', '  Todo', '    id1[One]', '  Doing', '    id2[Two]', '  col1[Done]'].join('\n'),
-    )
-  })
-
-  it('clamps the position to the ends of the board', () => {
-    expect(addKanbanColumn(source, -5, 'Backlog')).toBe(addKanbanColumn(source, 0, 'Backlog'))
-    expect(addKanbanColumn(source, 99, 'Done')).toBe(addKanbanColumn(source, 2, 'Done'))
-  })
-
-  it('leaves the ids the user gave their own columns alone', () => {
-    const board = ['kanban', '  backlog[Todo]', '    id1[One]', '  wip[Doing]'].join('\n')
-    // Only the new header is added, and its id is one nothing else is using.
-    expect(addKanbanColumn(board, 1, 'Review')).toBe(
-      ['kanban', '  backlog[Todo]', '    id1[One]', '  col1[Review]', '  wip[Doing]'].join('\n'),
-    )
-  })
-
-  it('skips ids the board already uses, cards included', () => {
-    const board = ['kanban', '  col1[Todo]', '    col2[One]', '  Doing'].join('\n')
-    expect(addKanbanColumn(board, 1, 'Review')).toContain('  col3[Review]')
-  })
-
-  it('reuses the board own indent for the new column', () => {
-    expect(addKanbanColumn('kanban\n\tTodo\n\tDoing', 1, 'Done')).toBe('kanban\n\tTodo\n\tcol1[Done]\n\tDoing')
-  })
-
-  it('quotes a name the grammar cannot write bare, and reads it back', () => {
-    const next = addKanbanColumn(source, 1, 'Q3 (launch)')!
-    expect(next).toContain('  col1["Q3 (launch)"]')
-    const doc = parseKanban(next)
-    expect(doc.columns).toHaveLength(3)
-    expect(doc.lines[doc.columns[1]!]!.label).toBe('Q3 (launch)')
-  })
-
-  it('refuses a name no quoting can carry, or none at all', () => {
-    for (const label of ['', '   ', 'a"b', 'one\ntwo']) {
-      expect(addKanbanColumn(source, 1, label)).toBeNull()
-    }
-  })
-
-  it('round-trips: the new column is a column, empty and renamable', () => {
-    const doc = parseKanban(addKanbanColumn(source, 1, 'In review')!)
-    const at = 1
-    const column = doc.columns[at]!
-    expect(doc.cards.filter((card) => card.column === at)).toHaveLength(0)
-    // Renamable in the editor, which is what the `id[Label]` shape is for.
-    expect(doc.lines[column]!.labelStart).toBeGreaterThan(0)
   })
 })
 
@@ -1874,6 +1807,75 @@ describe('kanban drag', () => {
     expect(svg.querySelectorAll('.sections > g')[0]!.classList.contains('kanban-drop-target')).toBe(false)
   })
 
+  it('lifts a column whole, without growing it', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanban(commit)
+    // The frame and the two cards standing in it are the column, and they are
+    // three elements in two sibling lists, so all three lift together.
+    const section = svg.querySelectorAll('.sections > g')[0]!
+    const base = section.getAttribute('transform')
+
+    section.dispatchEvent(pointer('pointerdown', 70, 110))
+    window.dispatchEvent(pointer('pointermove', 400, 150))
+
+    // A card is one `g` and grows a little to say it is in the air. A column is
+    // a *frame with a padding and cards inside it*: scaling the frame about its
+    // own origin — SVG transforms scale there, not about the board — pushed the
+    // cards out of it, and a column that is a different size while it is held is
+    // a column being moved somewhere other than where it was dropped.
+    expect(section.getAttribute('transform')).toBe('translate(330, 40)')
+    expect(base).toBeNull()
+    // The two cards standing in it, addressed by the ids the fixture gave them:
+    // a lift re-appends what it lifted (to paint it last), so the sibling list is
+    // in a different order now than the model's, and an index into it is only
+    // still an index because the lift is the thing that moved.
+    for (const id of ['#K1', '#K2']) {
+      const card = svg.querySelector(id)!
+      expect(card.getAttribute('transform')).toContain('translate(330, 40)')
+      expect(card.getAttribute('transform')).not.toContain('scale')
+    }
+    // The card in the other column is not part of this lift and stays where it was.
+    expect(svg.querySelector('#K3')!.getAttribute('transform')).toBeNull()
+  })
+
+  it('draws the column line under the frames, not over them', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanban(commit)
+    const section = svg.querySelectorAll('.sections > g')[0]!
+
+    section.dispatchEvent(pointer('pointerdown', 70, 110))
+    window.dispatchEvent(pointer('pointermove', 400, 150))
+
+    // SVG paints in document order and `.sections` comes before `.items`, so a
+    // line in front of both draws straight across the column it is previewing —
+    // and across every card still in it. It belongs behind the frames: a rule
+    // the column is *next to* is one the column does not hide.
+    const line = dropLine()!
+    const sections = svg.querySelector('.sections')!
+    expect(line.nextElementSibling).toBe(sections)
+    expect(line.compareDocumentPosition(sections)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('keeps the column line the height of the board, whatever the pointer does', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanban(commit)
+    const section = svg.querySelectorAll('.sections > g')[0]!
+
+    section.dispatchEvent(pointer('pointerdown', 70, 110))
+    window.dispatchEvent(pointer('pointermove', 400, 150))
+    const bottom = Number(dropLine()!.getAttribute('y2'))
+
+    // Dragged up over the toolbar, then back down. The rule's length is the
+    // board's, measured off the columns that are *not* moving — taking it from
+    // the lifted one made the line grow with the pointer, off the top of the
+    // board and out over the toolbar, which the drag's un-clipped overflow lets
+    // it do. A rule that changes length as you move means nothing by its ends.
+    window.dispatchEvent(pointer('pointermove', 400, -40))
+    expect(Number(dropLine()!.getAttribute('y2'))).toBe(bottom)
+    window.dispatchEvent(pointer('pointermove', 400, 150))
+    expect(Number(dropLine()!.getAttribute('y2'))).toBe(bottom)
+  })
+
   it('edits a card label by clicking it', async () => {
     const commit = vi.fn()
     const { svg } = await renderKanban(commit)
@@ -2018,7 +2020,27 @@ describe('kanban drawn slots', () => {
     // And a column named where the new one was drawn becomes a real column.
     expect(
       kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE).replace('slotn[+ Add a column]', 'slotn[Archive]')),
-    ).toBe(['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '  Done', '    id3[Three]', '  col4[Archive]'].join('\n'))
+    ).toBe(['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '  Done', '    id3[Three]', '  col1[Archive]'].join('\n'))
+  })
+
+  it('gives a column named in a slot an id nothing on the board already uses', () => {
+    // The new column is a header like any other, and an id is what ties a card to
+    // the column above it, so a duplicate is not a cosmetic slip. `col3` is a card
+    // on this board and `col1` a column: the new column has to step over both.
+    const board = ['kanban', '  col1[Todo]', '    col3[One]', '  Doing'].join('\n')
+    const next = kanbanRealSource(kanbanAuthoringSource(board).replace('slotn[+ Add a column]', 'slotn[Review]'))
+    expect(next).toBe(['kanban', '  col1[Todo]', '    col3[One]', '  Doing', '  col2[Review]'].join('\n'))
+  })
+
+  it('quotes a column name the grammar cannot write bare, and reads it back', () => {
+    // The label editor holds the quoting rule for every path that writes a title,
+    // a named slot included: `Q3 (launch)` is a name the user can type, and
+    // `Q3 (launch)` is what the board has to draw afterwards.
+    const next = kanbanRealSource(
+      kanbanAuthoringSource(BOARD_SOURCE).replace('slotn[+ Add a column]', 'slotn[Q3 (launch)]'),
+    )
+    expect(next).toContain('  col1["Q3 (launch)"]')
+    expect(parseKanban(next).lines[parseKanban(next).columns[3]!]!.label).toBe('Q3 (launch)')
   })
 
   it('types a title in the slot that was pressed, in the slot own place', async () => {
@@ -2133,7 +2155,7 @@ describe('kanban drawn slots', () => {
         '  Doing',
         '  Done',
         '    id3[Three]',
-        '  col4[Archive]',
+        '  col1[Archive]',
       ].join('\n'),
     )
   })
@@ -2324,7 +2346,7 @@ describe('kanban delete buttons', () => {
   it('opens a column menu beside its own ⋯, and not beside the board', async () => {
     const preview = await renderBoard(vi.fn())
 
-    expect(openMenu(preview, 1)).toEqual(['Add a column after Doing', 'Rename column', 'Delete the Doing column'])
+    expect(openMenu(preview, 1)).toEqual(['Rename column', 'Delete column'])
     // The list hangs off the `⋯` it belongs to: right-aligned to it, under it.
     const list = preview.querySelector<HTMLElement>('.mermaid-kanban-menu-list')!
     expect(list.style.left).toBe('142px')
@@ -2333,7 +2355,7 @@ describe('kanban delete buttons', () => {
     // One at a time: a second `⋯` takes the first menu away.
     click(menus(preview)[2]!)
     expect(preview.querySelectorAll('.mermaid-kanban-menu-list')).toHaveLength(1)
-    expect(menuItems(preview)).toEqual(['Add a column after Done', 'Rename column', 'Delete the Done column'])
+    expect(menuItems(preview)).toEqual(['Rename column', 'Delete column'])
   })
 
   it('deletes a card, as one source patch, once the prompt is answered', async () => {
@@ -2372,7 +2394,9 @@ describe('kanban delete buttons', () => {
     const commit = vi.fn()
     const preview = await renderBoard(commit)
 
-    choose(preview, 0, 'Delete the Todo column')
+    choose(preview, 0, 'Delete column')
+    // Which column is the dialog's to say, not the item's: the item belongs to the
+    // `⋯` it hangs off, and the prompt is the one place the name is worth saying.
     expect(dialog().querySelector('.edi-dialog-title')!.textContent).toBe('Delete the Todo column?')
     // The consequence is in the prompt, not discovered afterwards.
     expect(dialog().querySelector('.edi-dialog-note')!.textContent).toContain('Its 2 cards go with it.')
@@ -2394,7 +2418,7 @@ describe('kanban delete buttons', () => {
     )
 
     // The one column still has its own actions, and the delete is not one of them.
-    expect(openMenu(preview, 0)).toEqual(['Add a column after Todo', 'Rename column'])
+    expect(openMenu(preview, 0)).toEqual(['Rename column'])
     // Its card can still go, so the board is editable without emptying it.
     expect(removeButtons(preview, 'mermaid-kanban-card-remove')).toHaveLength(1)
     // And the board is still drawn with the column it would need to get back to
@@ -2402,38 +2426,33 @@ describe('kanban delete buttons', () => {
     expect(preview.querySelector('.mermaid-kanban-column-slot')).not.toBeNull()
   })
 
-  it('adds a column after the one whose menu was opened', async () => {
-    const commit = vi.fn()
-    const preview = await renderBoard(commit)
+  it('does not offer to add a column, because the board is drawn with somewhere to', async () => {
+    const preview = await renderBoard(vi.fn())
 
-    choose(preview, 0, 'Add a column after Todo')
-    const field = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
-    expect(field.value).toBe('')
-    expect(field.placeholder).toBe('Column name')
-    // Nothing is said above the field: it stands in the band's own space, under
-    // the name that is there, which is what it is adding to.
-    const box = document.querySelector('.mermaid-edit-field')!
-    expect(box.children.length).toBe(1)
-    expect(box.className).toContain('mermaid-edit-field-new')
-
-    typeAndConfirm('In review')
-    expect(commit).toHaveBeenCalledTimes(1)
-    expect(commit).toHaveBeenCalledWith(
-      ['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  col1[In review]', '  Doing', '  Done', '    id3[Three]'].join(
-        '\n',
-      ),
-    )
+    // A way to add a column that is *only* in the menu is a way to add one a
+    // board drawn without a slot column would not have. The place to add is the
+    // board itself, and the menu is for the two things that are not places.
+    const items = openMenu(preview, 0)
+    expect(items).not.toContain('Add a column after Todo')
+    expect(items).toHaveLength(2)
   })
 
-  it('refuses a column name no quoting can carry, and says so', async () => {
-    const commit = vi.fn()
-    const preview = await renderBoard(commit)
+  it('holds itself open when the press lands on it rather than on an item', async () => {
+    const preview = await renderBoard(vi.fn())
+    click(menus(preview)[0]!)
+    const list = preview.querySelector<HTMLElement>('.mermaid-kanban-menu-list')!
 
-    choose(preview, 0, 'Add a column after Todo')
-    typeAndConfirm('a"b')
+    // The list has padding, 1px gaps between its items, and the bridge it draws
+    // over the gap under its own `⋯`; every one of those is the popover, so a
+    // press on any of them must not reach the board and dismiss it.
+    for (const type of ['pointerdown', 'mousedown']) {
+      list.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }))
+    }
+    expect(preview.querySelector('.mermaid-kanban-menu-list')).toBe(list)
 
-    expect(document.querySelector('.mermaid-edit-input')!.classList.contains('mermaid-edit-invalid')).toBe(true)
-    expect(commit).not.toHaveBeenCalled()
+    // A press on the board still is one, so the menu is dismissible at all.
+    list.parentElement!.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }))
+    expect(preview.querySelector('.mermaid-kanban-menu-list')).toBeNull()
   })
 
   it('goes away with the layer, all of them', async () => {
