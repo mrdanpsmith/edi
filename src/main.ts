@@ -24,6 +24,7 @@ import {
   pickTextImportPath,
   readAnyTextFile,
   readTextFile,
+  renameTextFile,
   UNTITLED,
   writeTextFile,
 } from './files'
@@ -48,6 +49,7 @@ import { enterDiagramEditMode, exitDiagramEditMode, insertKanbanBoard } from './
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { HomeScreen } from './home'
 import { addRecentFile, getRecentFiles } from './recents'
+import { promptForRename } from './urlDialog'
 import { Tabs } from './tabs'
 
 const IS_SELFTEST = new URLSearchParams(window.location.search).has('selftest')
@@ -211,6 +213,7 @@ function syncMenuState(): void {
   void invoke('setMenuState', {
     canRevert: Boolean(active?.path),
     canCopyPath: Boolean(active?.path),
+    canRename: Boolean(active?.path),
     toolbarVisible: toolbar?.isVisible() ?? true,
   }).catch(() => undefined)
 }
@@ -448,15 +451,46 @@ async function saveTo(path: string): Promise<void> {
   try {
     const md = blockEditor?.getMarkdown() ?? ''
     await writeTextFile(path, md)
-    setActivePath(path)
-    setActiveDirty(false)
-    updateTitle()
-    updateStatus()
-    syncDirty()
-    syncMenuState()
-    void rememberRecent(path)
+    afterSave(path)
   } catch (error) {
     reportError(`Failed to save ${path}`, error)
+  }
+}
+
+/** The document is on disk under `path` and clean: everything that follows. */
+function afterSave(path: string): void {
+  setActivePath(path)
+  setActiveDirty(false)
+  updateTitle()
+  updateStatus()
+  syncDirty()
+  syncMenuState()
+  void rememberRecent(path)
+}
+
+/**
+ * Rename the document in place: the same folder, a new name, and the old file
+ * gone. The write and the delete are one backend call, so the document is never
+ * left on disk under both names or under neither — a rename is not a Save As
+ * plus a delete the page can fail between.
+ */
+async function renameFile(): Promise<void> {
+  const oldPath = getActive()?.path
+  if (!oldPath) return
+  const currentName = oldPath.split('/').pop() ?? oldPath
+  const name = await promptForRename(currentName)
+  if (name === null) return
+  const newPath = oldPath.includes('/') ? `${dirname(oldPath)}/${name}` : name
+  if (!isSupportedFile(newPath)) {
+    await confirmAction(`"${name}" does not have a supported extension.\n\nContinue anyway?`)
+  }
+  try {
+    const md = blockEditor?.getMarkdown() ?? ''
+    await renameTextFile(oldPath, newPath, md)
+    afterSave(newPath)
+    flashStatus(`Renamed to ${name}`)
+  } catch (error) {
+    reportError(`Failed to rename ${oldPath}`, error)
   }
 }
 
@@ -974,6 +1008,7 @@ function init(): void {
     open: () => void openFile(),
     save: () => void saveFile(),
     saveAs: () => void saveFileAs(),
+    rename: () => void renameFile(),
     revert: () => void revertFile(),
     importTable: () => void importTable(),
     importText: () => void importTextFile(),

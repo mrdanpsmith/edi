@@ -3,6 +3,7 @@ export interface MenuCommands {
   open: () => void
   save: () => void
   saveAs: () => void
+  rename: () => void
   revert: () => void
   importTable: () => void
   importText: () => void

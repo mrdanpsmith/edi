@@ -1,5 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { promptForKanbanColumns, promptForKanbanDelete, promptForLink } from './urlDialog'
+import {
+  promptForKanbanColumns,
+  promptForKanbanDelete,
+  promptForLink,
+  promptForRename,
+} from './urlDialog'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -208,5 +213,105 @@ describe('promptForKanbanDelete', () => {
     )
     await expect(byBackdrop).resolves.toBe(false)
     expect(document.querySelector('.edi-dialog-overlay')).toBeNull()
+  })
+})
+
+describe('promptForRename', () => {
+  function field(): HTMLInputElement {
+    return document.querySelector<HTMLInputElement>('.edi-dialog-input')!
+  }
+
+  function rename(): HTMLButtonElement {
+    return document.querySelector<HTMLButtonElement>('.toolbar-primary')!
+  }
+
+  function error(): HTMLElement {
+    return document.querySelector<HTMLElement>('.edi-dialog-error')!
+  }
+
+  it('asks for a new name, pre-filled with the current one', () => {
+    const promise = promptForRename('notes.md')
+    expect(document.querySelector('.edi-dialog-title')?.textContent).toBe('Rename document')
+    expect(field().value).toBe('notes.md')
+    void promise
+  })
+
+  // The stem is what a rename changes, so it is what the field selects: typing
+  // replaces the name and leaves the extension (and the format) alone.
+  it('selects the name, not the extension', () => {
+    const withExtension = promptForRename('notes.markdown')
+    expect([field().selectionStart, field().selectionEnd]).toEqual([0, 5])
+    document.body.innerHTML = ''
+
+    const withoutExtension = promptForRename('notes')
+    expect([field().selectionStart, field().selectionEnd]).toEqual([0, 5])
+    void withExtension
+    void withoutExtension
+  })
+
+  it('resolves the typed name on Rename', async () => {
+    const promise = promptForRename('notes.md')
+    field().value = '  ideas.md  '
+    rename().click()
+    await expect(promise).resolves.toBe('ideas.md')
+    expect(document.querySelector('.edi-dialog-overlay')).toBeNull()
+  })
+
+  it('resolves with null on Cancel, on Escape and on a backdrop click', async () => {
+    const byCancel = promptForRename('notes.md')
+    document.querySelectorAll<HTMLButtonElement>('.edi-dialog-actions button')[0]!.click()
+    await expect(byCancel).resolves.toBeNull()
+
+    const byEscape = promptForRename('notes.md')
+    document.querySelector<HTMLElement>('.edi-dialog')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    await expect(byEscape).resolves.toBeNull()
+
+    const byBackdrop = promptForRename('notes.md')
+    document.querySelector<HTMLElement>('.edi-dialog-overlay')!.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true }),
+    )
+    await expect(byBackdrop).resolves.toBeNull()
+  })
+
+  // A rename deletes the old file, so a name that names nothing, names a path,
+  // or names the document itself is reported rather than acted on.
+  it('reports a name it cannot act on and stays open', async () => {
+    const promise = promptForRename('notes.md')
+
+    field().value = '   '
+    rename().click()
+    expect(error().textContent).toBe('Enter a name for the document')
+
+    field().value = 'archive/notes.md'
+    rename().click()
+    expect(error().textContent).toBe('A document name is one file name, not a path')
+
+    field().value = 'archive\\notes.md'
+    rename().click()
+    expect(error().textContent).toBe('A document name is one file name, not a path')
+
+    field().value = '..'
+    rename().click()
+    expect(error().textContent).toBe('A document name is one file name, not a path')
+
+    field().value = 'notes.md'
+    rename().click()
+    expect(error().textContent).toBe('That is the document’s current name')
+
+    expect(document.querySelector('.edi-dialog-overlay')).not.toBeNull()
+    expect(error().hidden).toBe(false)
+
+    field().value = 'ideas.md'
+    rename().click()
+    await expect(promise).resolves.toBe('ideas.md')
+  })
+
+  it('confirms with Enter', async () => {
+    const promise = promptForRename('notes.md')
+    field().value = 'ideas.md'
+    field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await expect(promise).resolves.toBe('ideas.md')
   })
 })

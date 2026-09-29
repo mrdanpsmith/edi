@@ -285,6 +285,7 @@ class MainWindow(QMainWindow):
         self._allow_close = False
         self._revert_action = None
         self._copy_path_action = None
+        self._rename_action = None
         self._toolbar_action = None
         self._insert_actions = None
 
@@ -344,6 +345,15 @@ class MainWindow(QMainWindow):
             action = QAction(label, self)
             action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
             file_menu.addAction(action)
+
+        # No shortcut: F2 is the spreadsheet cell editor's key to edit in place,
+        # and a menubar shortcut wins over the page, so one would cost that.
+        self._rename_action = QAction("Re&name…", self)
+        self._rename_action.setEnabled(False)
+        self._rename_action.triggered.connect(
+            lambda _checked=False: self._menu_command("rename")
+        )
+        file_menu.addAction(self._rename_action)
 
         self._revert_action = QAction("&Revert", self)
         self._revert_action.setEnabled(False)
@@ -513,11 +523,14 @@ class MainWindow(QMainWindow):
         can_revert: bool,
         can_copy_path: bool,
         toolbar_visible: bool,
+        can_rename: bool = False,
     ) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
         if self._copy_path_action is not None:
             self._copy_path_action.setEnabled(can_copy_path)
+        if self._rename_action is not None:
+            self._rename_action.setEnabled(can_rename)
         if self._toolbar_action is not None:
             self._toolbar_action.setChecked(toolbar_visible)
         if self._insert_actions is not None:
@@ -560,6 +573,18 @@ class MainWindow(QMainWindow):
             current.remove(path)
         current.insert(0, path)
         QSettings().setValue("recentFiles", current[:RECENT_LIMIT])
+
+    def forget_recent_file(self, path: str) -> None:
+        """Drop ``path`` from the recents, for when its file no longer exists.
+
+        A rename deletes the old file, and the recent list is rebuilt from
+        QSettings every time the submenu opens, so the entry has to go from the
+        settings rather than from the menu.
+        """
+        current = self.recent_files()
+        if path not in current:
+            return
+        QSettings().setValue("recentFiles", [entry for entry in current if entry != path])
 
     def confirm(self, message: str, callback=None) -> None:
         """Show a non-blocking centered Yes/No dialog.

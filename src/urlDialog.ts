@@ -193,6 +193,78 @@ export function promptForKanbanDelete(subject: string, consequence = ''): Promis
   })
 }
 
+/**
+ * A rename names a file where it already is: a name with a separator in it, or
+ * one that is `.`/`..`, is a move or a climb out of the folder, and a document
+ * is not moved by a rename.
+ */
+function isUsableFileName(name: string): boolean {
+  return name.length > 0 && !/[/\\]/.test(name) && name !== '.' && name !== '..'
+}
+
+/**
+ * Ask for the new name of a document, pre-filled with its current one, and
+ * resolve the name typed — or ``null`` if the user cancels (Esc, Cancel, or a
+ * click on the backdrop).
+ *
+ * The stem is what a rename changes, so it is what the field selects: typing
+ * replaces the name and leaves the extension alone. A rename deletes the old
+ * file, so a name that is empty, that points somewhere else, or that is the name
+ * the document already has is reported and left open rather than acted on — and
+ * whether the extension is one Edi can open is the save path's business (it
+ * asks the same question for a plain Save As), not this dialog's.
+ */
+export function promptForRename(currentName: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let field!: HTMLInputElement
+    openDialogShell<string | null>({
+      title: 'Rename document',
+      confirm: 'Rename',
+      tone: 'toolbar-primary',
+      cancelValue: null,
+      enter: 'confirm',
+      onSettle: resolve,
+      build: (box) => {
+        const label = document.createElement('label')
+        label.className = 'edi-dialog-label'
+        label.textContent = 'New name for this document'
+        box.append(label)
+
+        field = document.createElement('input')
+        field.className = 'edi-dialog-input'
+        field.type = 'text'
+        field.spellcheck = false
+        field.value = currentName
+        box.append(field)
+
+        const error = document.createElement('div')
+        error.className = 'edi-dialog-error'
+        error.hidden = true
+        box.append(error)
+
+        const refuse = (message: string): undefined => {
+          error.textContent = message
+          error.hidden = false
+          field.focus()
+          return undefined
+        }
+
+        return (): string | undefined => {
+          const name = field.value.trim()
+          if (!name) return refuse('Enter a name for the document')
+          if (!isUsableFileName(name)) return refuse('A document name is one file name, not a path')
+          if (name === currentName) return refuse('That is the document’s current name')
+          return name
+        }
+      },
+    })
+
+    const dot = currentName.lastIndexOf('.')
+    field.focus()
+    field.setSelectionRange(0, dot > 0 ? dot : currentName.length)
+  })
+}
+
 /** What a new kanban board starts with when the dialog is left alone. */
 export const DEFAULT_KANBAN_COLUMNS = 'Todo\nIn Progress\nReview\nDone'
 

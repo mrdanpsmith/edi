@@ -498,15 +498,17 @@ def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
     assert window._revert_action.isEnabled() is False
     assert window._copy_path_action.isEnabled() is False
+    assert window._rename_action.isEnabled() is False
     assert window._toolbar_action.isChecked() is True
     assert window._insert_actions is not None
     assert all(action.isEnabled() for action in window._insert_actions)
 
     window.update_menu_state(
-        can_revert=True, can_copy_path=True, toolbar_visible=False
+        can_revert=True, can_copy_path=True, toolbar_visible=False, can_rename=True
     )
     assert window._revert_action.isEnabled() is True
     assert window._copy_path_action.isEnabled() is True
+    assert window._rename_action.isEnabled() is True
     assert window._toolbar_action.isChecked() is False
     assert all(action.isEnabled() for action in window._insert_actions)
 
@@ -515,6 +517,7 @@ def test_update_menu_state_toggles_actions(visible, qtbot):
     )
     assert window._revert_action.isEnabled() is False
     assert window._copy_path_action.isEnabled() is False
+    assert window._rename_action.isEnabled() is False
     assert window._toolbar_action.isChecked() is True
     assert all(action.isEnabled() for action in window._insert_actions)
 
@@ -813,6 +816,43 @@ def test_open_recent_menu_lists_stored_recent_files(window, stored_recents):
     ]
     assert [action.toolTip() for action in entries] == ["/docs/a.md", "/other/b.md"]
     assert all(action.isEnabled() for action in entries)
+
+
+def test_forget_recent_file_drops_only_the_renamed_document(window, stored_recents):
+    window.add_recent_file("/x/a.md")
+    window.add_recent_file("/x/b.md")
+
+    window.forget_recent_file("/x/b.md")
+    assert window.recent_files() == ["/x/a.md"]
+
+    # A path that was never in the list leaves it alone (and does not
+    # rewrite the settings with a list QSettings would store as a scalar).
+    window.forget_recent_file("/x/never.md")
+    assert window.recent_files() == ["/x/a.md"]
+
+
+def test_rename_action_is_in_the_file_menu(window, qtbot):
+    action = _menu_action(window._file_menu, "Re&name")
+    assert action.isEnabled() is False
+
+
+def test_rename_action_is_enabled_from_the_menu_state(window):
+    window.update_menu_state(
+        can_revert=True, can_copy_path=True, toolbar_visible=True, can_rename=True
+    )
+    assert window._rename_action.isEnabled() is True
+
+    window.update_menu_state(
+        can_revert=False, can_copy_path=False, toolbar_visible=True
+    )
+    assert window._rename_action.isEnabled() is False
+
+
+def test_rename_action_invokes_js_command(visible, qtbot):
+    visible.update_menu_state(
+        can_revert=True, can_copy_path=True, toolbar_visible=True, can_rename=True
+    )
+    _assert_menu_action_sends_command(visible, qtbot, visible._rename_action, "rename")
 
 
 def test_open_recent_menu_replaces_previous_entries(window, stored_recents):

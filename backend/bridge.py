@@ -24,7 +24,7 @@ from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, S
 from PySide6.QtGui import QGuiApplication, QImage
 
 from .exec import run_code_block, run_code_block_streamed
-from .files import read_any_text_file, read_text_file, write_text_file
+from .files import read_any_text_file, read_text_file, rename_text_file, write_text_file
 from .tables import parse_table_file
 
 
@@ -51,6 +51,7 @@ class Bridge(QObject):
             "readTextFile": self._read_text_file,
             "readAnyTextFile": self._read_any_text_file,
             "writeTextFile": self._write_text_file,
+            "renameTextFile": self._rename_text_file,
             "writeBinaryFile": self._write_binary_file,
             "parseTableFile": self._parse_table_file,
             "copyTable": self._copy_table,
@@ -243,6 +244,34 @@ class Bridge(QObject):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _rename_text_file(self, request_id: int, args: dict) -> None:
+        """Save a document under a new name and delete the old file, in one step.
+
+        The write and the delete belong to a single call on purpose: the frontend
+        must never be able to save the new name, fail, and leave the document on
+        disk twice (or nowhere). ``rename_text_file`` refuses to do half of it.
+        """
+        old_path = args.get("oldPath")
+        new_path = args.get("newPath")
+        if not old_path or not new_path:
+            self._reply_error(request_id, "Missing path")
+            return
+
+        def work() -> None:
+            try:
+                rename_text_file(
+                    str(old_path), str(new_path), str(args.get("content") or "")
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._reply_error(request_id, str(exc))
+            else:
+                # The old name no longer names anything, so it is not something
+                # the recent list should offer a click away.
+                self._window.forget_recent_file(str(old_path))
+                self._reply(request_id, None)
+
+        threading.Thread(target=work, daemon=True).start()
+
     def _write_binary_file(self, request_id: int, args: dict) -> None:
         """Persist a base64-encoded blob (e.g. a rasterized diagram PNG).
 
@@ -363,6 +392,7 @@ class Bridge(QObject):
             can_revert=bool(args.get("canRevert")),
             can_copy_path=bool(args.get("canCopyPath")),
             toolbar_visible=bool(args.get("toolbarVisible")),
+            can_rename=bool(args.get("canRename")),
         )
         self._reply(request_id, None)
 

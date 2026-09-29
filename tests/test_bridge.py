@@ -24,6 +24,7 @@ class StubWindow(QObject):
         self.confirm_messages: list[str] = []
         self.alert_messages: list[str] = []
         self.can_revert = False
+        self.can_rename = False
         self.toolbar_visible = True
         self.opened_urls: list[str] = []
         self.recent_files_list: list[str] = []
@@ -43,11 +44,12 @@ class StubWindow(QObject):
         self.title = title
 
     def update_menu_state(
-        self, can_revert=False, can_copy_path=False, toolbar_visible=True
+        self, can_revert=False, can_copy_path=False, toolbar_visible=True, can_rename=False
     ) -> None:
         self.can_revert = can_revert
         self.can_copy_path = can_copy_path
         self.toolbar_visible = toolbar_visible
+        self.can_rename = can_rename
 
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
@@ -86,6 +88,9 @@ class StubWindow(QObject):
         if path in self.recent_files_list:
             self.recent_files_list.remove(path)
         self.recent_files_list.insert(0, path)
+
+    def forget_recent_file(self, path: str) -> None:
+        self.recent_files_list = [entry for entry in self.recent_files_list if entry != path]
 
 
 @pytest.fixture
@@ -177,12 +182,14 @@ def test_set_menu_state(bridge):
         {
             "canRevert": True,
             "toolbarVisible": False,
+            "canRename": True,
         },
     )
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
     assert window.can_revert is True
     assert window.toolbar_visible is False
+    assert window.can_rename is True
 
 
 def test_pick_import_path(bridge):
@@ -754,6 +761,56 @@ def test_write_text_file_error(bridge, tmp_path):
     )
     message = _wait_for(lambda: result.get(66))
     assert message["ok"] is False
+
+
+def test_rename_text_file_renames_and_drops_the_old_recent(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    old = tmp_path / "notes.md"
+    old.write_text("stale", encoding="utf-8")
+    new = tmp_path / "ideas.md"
+    window.recent_files_list = [str(old), "/other.md"]
+
+    _invoke(
+        bridge_obj,
+        "renameTextFile",
+        {"oldPath": str(old), "newPath": str(new), "content": "# Edited"},
+        67,
+    )
+    message = _wait_for(lambda: result.get(67))
+    assert message["ok"] is True
+    assert new.read_text(encoding="utf-8") == "# Edited"
+    assert not old.exists()
+    # The old name no longer names anything, so it is not left in the recents.
+    assert window.recent_files_list == ["/other.md"]
+
+
+def test_rename_text_file_missing_path(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "renameTextFile", {"oldPath": "/tmp/notes.md"}, 68)
+    message = _wait_for(lambda: result.get(68))
+    assert message["ok"] is False
+    assert "Missing path" in message["error"]
+
+
+def test_rename_text_file_error_keeps_the_recents(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    old = tmp_path / "notes.md"
+    old.write_text("mine", encoding="utf-8")
+    taken = tmp_path / "ideas.md"
+    taken.write_text("taken", encoding="utf-8")
+    window.recent_files_list = [str(old)]
+
+    _invoke(
+        bridge_obj,
+        "renameTextFile",
+        {"oldPath": str(old), "newPath": str(taken), "content": "# Edited"},
+        69,
+    )
+    message = _wait_for(lambda: result.get(69))
+    assert message["ok"] is False
+    # The rename did not happen, so the old name is still the document's.
+    assert window.recent_files_list == [str(old)]
+    assert old.exists()
 
 
 def test_parse_shebang_env_without_interpreter_returns_none():

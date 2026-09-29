@@ -57,6 +57,19 @@ export async function writeTextFile(path: string, content: string): Promise<void
   await invoke('writeTextFile', { path, content })
 }
 
+/**
+ * Save `content` at `newPath` and delete `oldPath` in the backend's single
+ * call, so the document ends up under exactly one name: the write and the
+ * delete are never two steps the page can fail between.
+ */
+export async function renameTextFile(
+  oldPath: string,
+  newPath: string,
+  content: string,
+): Promise<void> {
+  await invoke('renameTextFile', { oldPath, newPath, content })
+}
+
 export async function writeBinaryFile(path: string, data: string): Promise<void> {
   await invoke('writeBinaryFile', { path, data })
 }

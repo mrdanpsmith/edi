@@ -15,6 +15,7 @@ import {
   pickTextImportPath,
   readAnyTextFile,
   readTextFile,
+  renameTextFile,
   UNTITLED,
   writeTextFile,
 } from './files'
@@ -46,6 +47,19 @@ describe('bridge wrappers', () => {
     vi.mocked(invoke).mockResolvedValue(undefined)
     await expect(writeTextFile('/tmp/a.md', 'body')).resolves.toBeUndefined()
     expect(invoke).toHaveBeenCalledWith('writeTextFile', { path: '/tmp/a.md', content: 'body' })
+  })
+
+  it('renameTextFile hands the old name, the new one and the body over in one call', async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined)
+    await expect(renameTextFile('/tmp/a.md', '/tmp/b.md', 'body')).resolves.toBeUndefined()
+    // One call, not a write followed by a delete: the document is never on disk
+    // under both names.
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('renameTextFile', {
+      oldPath: '/tmp/a.md',
+      newPath: '/tmp/b.md',
+      content: 'body',
+    })
   })
 
   it('pickOpenPath resolves to null when the user cancels', async () => {
