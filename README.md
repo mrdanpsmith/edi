@@ -36,6 +36,9 @@ signature and an example. This section is the short version.
 - The preview renders as you write; every block has a handle on its left edge
   that toggles its own source view, so the rendered document and the markdown
   behind it are never more than a click apart.
+- Click a link to open it, right-click one to edit its address — clearing the
+  address leaves the text behind, unlinked. A link whose text and destination
+  disagree is underlined, and opening it asks first.
 - A home screen opens on launch with new/open/recent documents, and a light and
   dark appearance that follows the system.
 - Documents open in tabs, each with its own undo history and scroll position.

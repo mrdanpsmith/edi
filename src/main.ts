@@ -8,6 +8,7 @@ import { startThemeWatcher } from './theme'
 import { buildExportHtml, serializeDocToHtml } from './export'
 import { redoDepth, redoNoScroll, undoDepth, undoNoScroll } from 'prosemirror-history'
 import { selectAll } from 'prosemirror-commands'
+import { TextSelection } from 'prosemirror-state'
 import {
   dirname,
   fileName,
@@ -36,20 +37,20 @@ import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './cont
 import { toggleSourceMode } from './blockplugin'
 import { commitSourceMode } from './blockview'
 import { isMisleadingLink } from './linkSecurity'
-import { NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
+import { applyLink, NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
 import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
-import { createBlockEditor, type BlockEditor } from './editor'
+import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
 import { enterDiagramEditMode, exitDiagramEditMode, insertKanbanBoard } from './node/mermaid'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { HomeScreen } from './home'
 import { addRecentFile, getRecentFiles } from './recents'
-import { promptForRename } from './urlDialog'
+import { promptForLink, promptForRename } from './urlDialog'
 import { Tabs } from './tabs'
 
 const IS_SELFTEST = new URLSearchParams(window.location.search).has('selftest')
@@ -758,7 +759,7 @@ function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
     // view has none, so it falls through to the block actions alone.
     entries = spreadsheetMenuEntries(target) ?? []
   } else {
-    entries = buildDocumentMenu()
+    entries = buildDocumentMenu(target)
   }
   if (target) {
     const blockEntries = buildBlockMenuItems(target)
@@ -839,13 +840,13 @@ async function pasteIntoInput(input: HTMLInputElement): Promise<void> {
   input.focus()
 }
 
-function buildDocumentMenu(): ContextMenuEntry[] {
+function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
   const view = blockEditor?.getView()
   // Only offer undo/redo when there is actually history to traverse; a
   // enabled-but-no-op Redo just looks broken.
   const undoable = !!view && undoDepth(view.state) > 0
   const redoable = !!view && redoDepth(view.state) > 0
-  return [
+  const entries: ContextMenuEntry[] = [
     { type: 'item', label: 'Undo', disabled: !undoable, onSelect: () => editUndoNoScroll() },
     { type: 'item', label: 'Redo', disabled: !redoable, onSelect: () => editRedoNoScroll() },
     { type: 'separator' },
@@ -863,6 +864,15 @@ function buildDocumentMenu(): ContextMenuEntry[] {
     },
     { type: 'item', label: 'Paste', onSelect: () => void editPaste() },
     { type: 'item', label: 'Select all', onSelect: () => editSelectAll() },
+  ]
+  // A right-click on a link is how it is edited: a left-click opens it, and
+  // the click plugin ignores every other button (see `createBlockEditor`), so
+  // the context menu is the only place left to change one.
+  const link = linkRangeForTarget(target)
+  if (link) {
+    entries.push({ type: 'item', label: 'Edit link…', onSelect: () => editLink(link) })
+  }
+  entries.push(
     { type: 'separator' },
     {
       type: 'item',
@@ -874,7 +884,47 @@ function buildDocumentMenu(): ContextMenuEntry[] {
       label: 'Replace…',
       onSelect: () => openSearch(true),
     },
-  ]
+  )
+  return entries
+}
+
+/** The link the right-click landed on, as its document range. */
+function linkRangeForTarget(target: Element | null): LinkRange | null {
+  const view = blockEditor?.getView()
+  const anchor = target?.closest('a[href]')
+  if (!view || !anchor || !view.dom.contains(anchor)) return null
+  // The <a> ProseMirror drew *is* the mark's range, so the position at its
+  // first child is a position inside the link -- which is all `linkRangeAt`
+  // needs to walk out to the rest of the linked text, however many text nodes
+  // emphasis in the label split it into.
+  return linkRangeAt(view.state.doc, view.posAtDOM(anchor, 0))
+}
+
+/**
+ * Edit the link covering `link`, the context menu's "Edit link…".
+ *
+ * The range is resolved when the menu is built, because that is the only
+ * moment the right-click's target element is around. The dialog's overlay
+ * covers the editor, so nothing can move the link while it is up; it is
+ * re-checked against the document once the dialog settles regardless, so a
+ * range that no longer holds a link marks nothing at all.
+ */
+function editLink(link: LinkRange): void {
+  const view = blockEditor?.getView()
+  if (!view) return
+  void promptForLink(link.text, link.href, { editing: true }).then((entered) => {
+    if (entered === null) return
+    const current = linkRangeAt(view.state.doc, link.from)
+    if (!current) return
+    // `applyLink` writes over the selection, so the range is selected first.
+    // It also leaves the linked text selected, which is where the toolbar's
+    // Link button picks the same link up from.
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, current.from, current.to)),
+    )
+    view.focus()
+    applyLink(view, entered.url, entered.text)
+  })
 }
 
 function buildBlockMenuItems(target: Element): ContextMenuEntry[] {

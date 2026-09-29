@@ -98,7 +98,9 @@ function hyperlinkRun(view: EditorView): Promise<boolean> {
   const url = findLinkHref(view)
   const { from, to } = view.state.selection
   const text = view.state.selection.empty ? '' : view.state.doc.textBetween(from, to, '')
-  return promptForLink(text, url).then((entered) => {
+  // A non-empty href means the selection is already a link, so the dialog is
+  // changing one rather than making one.
+  return promptForLink(text, url, { editing: url !== '' }).then((entered) => {
     if (entered === null) return false
     view.focus()
     return applyLink(view, entered.url, entered.text)

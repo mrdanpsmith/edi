@@ -1134,6 +1134,85 @@ def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
     assert result["out"] == "Hello, World!"
 
 
+# --- Right-click on a link (src/editor.ts, src/main.ts) ---------------------------
+
+
+def test_right_click_edits_a_link_and_never_opens_it(window, monkeypatch):
+    """A real right-click on a link offers to edit it, and does not follow it.
+
+    ProseMirror hands *every* button's click to its `handleClick` prop -- its
+    mouse-down handler picks the single-click path with no button test, and only
+    the selection branch below it filters on button 0 -- so a right-click used
+    to open the link as well as raise the context menu. The plugin turns the
+    right button away itself, and the menu edits the link in place.
+
+    The link points off the machine, so "open" is observable at the bridge:
+    ``open_external_url`` is what would launch a browser, and it is replaced
+    with a recorder that does nothing.
+    """
+    opened = []
+    monkeypatch.setattr(window, "open_external_url", lambda url: opened.append(url))
+
+    md = "See [the site](https://example.com/) now"
+    window._web.page().runJavaScript(f"window.ediSetContent({json.dumps(md)}); true")
+
+    # The buttons are pressed in the browser's own order, so the menu is raised
+    # by the contextmenu event and the release still runs ProseMirror's click
+    # path -- the one that used to open the link.
+    state = _wait(
+        window,
+        "(() => { const a = document.querySelector('#editor-container a[href]');"
+        " if (!a) return { found: false };"
+        " const r = a.getBoundingClientRect();"
+        " const at = { x: r.left + r.width / 2, y: r.top + r.height / 2 };"
+        " const ev = (type) => new MouseEvent(type, { bubbles: true,"
+        "   cancelable: true, composed: true, view: window, clientX: at.x,"
+        "   clientY: at.y, button: 2, buttons: 2 });"
+        " ['mousedown', 'contextmenu', 'mouseup'].forEach((type) =>"
+        "   a.dispatchEvent(ev(type)));"
+        " return { found: true, menu: [...document.querySelectorAll('.edi-menu-item')]"
+        "   .map((b) => b.textContent) }; })()",
+        lambda d: d.get("found") and "Edit link…" in (d.get("menu") or []),
+        timeout=10,
+    )
+    assert "Edit link…" in state["menu"], state
+    assert opened == [], "a right-click opened the link"
+
+    # Confirming the edit dialog rewrites the href, in one undoable step.
+    def open_and_update():
+        return _dump(
+            window,
+            "(() => { const item = [...document.querySelectorAll('.edi-menu-item')]"
+            "   .find((b) => b.textContent === 'Edit link…'); if (!item) return { missing: true };"
+            " item.click();"
+            " const box = document.querySelector('.edi-dialog');"
+            " if (!box) return { opened: false };"
+            " const title = box.querySelector('.edi-dialog-title').textContent;"
+            " const url = box.querySelector('.edi-dialog-input');"
+            " const was = url.value;"
+            " url.value = 'https://example.org/edited';"
+            " box.querySelector('.toolbar-primary').click();"
+            " return { opened: true, title, was }; })()",
+        )
+
+    dialog = open_and_update()
+    assert dialog.get("opened"), dialog
+    assert dialog["title"] == "Edit link"
+    assert dialog["was"] == "https://example.com/", dialog
+
+    edited = _wait(
+        window,
+        "(() => { const doc = document.querySelector('.ProseMirror').pmViewDesc.node;"
+        " const out = []; doc.descendants((n) => { if (!n.isText) return;"
+        "   for (const m of n.marks) if (m.type.name === 'link') out.push(m.attrs.href); });"
+        " return { hrefs: out }; })()",
+        lambda d: d.get("hrefs") == ["https://example.org/edited"],
+        timeout=5,
+    )
+    assert edited["hrefs"] == ["https://example.org/edited"], edited
+    assert opened == [], "editing the link opened it"
+
+
 # --- Mermaid visual editing (src/mermaid-edit.ts) ---------------------------------
 # These stay in this module on purpose: they render in the session window above,
 # after every other test has run. A module of their own would need a second

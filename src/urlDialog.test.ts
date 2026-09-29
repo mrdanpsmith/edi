@@ -45,6 +45,17 @@ describe('promptForLink', () => {
     await expect(promise).resolves.toEqual({ text: '', url: 'https://new.example' })
   })
 
+  it('says it is editing when asked to, and still edits only the URL', async () => {
+    const promise = promptForLink('notes', 'https://oldsite.com', { editing: true })
+    expect(document.querySelector('.edi-dialog-title')!.textContent).toBe('Edit link')
+    expect(document.querySelector('.toolbar-primary')!.textContent).toBe('Update')
+    expect(document.querySelectorAll('.edi-dialog-input')).toHaveLength(1)
+    const input = document.querySelector<HTMLInputElement>('.edi-dialog-input')!
+    input.value = 'https://new.example'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await expect(promise).resolves.toEqual({ text: '', url: 'https://new.example' })
+  })
+
   it('resolves with the entered URL on Enter', async () => {
     const promise = promptForLink('', '')
     const input = document.querySelector<HTMLInputElement>('.edi-dialog-input')!

@@ -17,6 +17,8 @@ export function buildHelpGuideMarkdown(): string {
     '- File actions also live as toolbar buttons; hide that row with',
     '  `View → Toolbar`.',
     '- Click the small handle on a block\'s left edge to toggle its source view.',
+    '- Click a link to open it; right-click one to edit its address. Clearing',
+    '  the address removes the link and keeps the text.',
     '',
     '## Spreadsheet tables',
     '',

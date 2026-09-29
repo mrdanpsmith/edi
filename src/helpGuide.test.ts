@@ -26,6 +26,11 @@ describe('buildHelpGuideMarkdown', () => {
     expect(guide).toContain('`View → Toolbar`')
   })
 
+  it('says how a link is opened and edited', () => {
+    expect(guide).toContain('Click a link to open it; right-click one to edit')
+    expect(guide).toContain('removes the link and keeps the text')
+  })
+
   it('covers the spreadsheet essentials', () => {
     expect(guide).toContain('`Insert → Table…`')
     expect(guide).toContain('`Insert → Spreadsheet…`')

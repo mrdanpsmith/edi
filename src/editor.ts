@@ -164,6 +164,14 @@ export interface BlockEditorOptions {
   resolveImageSrc?: ResolveImage
 }
 
+/** One link in the document, as the range of linked text it covers. */
+export interface LinkRange {
+  from: number
+  to: number
+  href: string
+  text: string
+}
+
 export function createBlockEditor(
   parent: HTMLElement,
   initialMarkdown: string,
@@ -173,13 +181,17 @@ export function createBlockEditor(
 
   const linkClickPlugin = new Plugin({
     props: {
-      handleClick(view, pos) {
-        const link = linkMarkAt(view.state.doc, pos)
+      handleClick(view, pos, event) {
+        // ProseMirror routes every button's click through this prop (its mouse
+        // handler only filters on `button == 0` for the drag/selection paths,
+        // not before calling us), so a right-click has to be turned away here
+        // or it opens the link *and* offers the context menu. The context menu
+        // is where a link is edited (`main.ts`), and it is a right-click.
+        if (event.button !== 0) return false
+        const link = linkRangeAt(view.state.doc, pos)
         if (!link) return false
-        const href = link.attrs.href as string
-        if (typeof href !== 'string' || href === '') return false
-        const text = linkTextAt(view.state.doc, link)
-        options.onOpenLink?.(href, text)
+        if (typeof link.href !== 'string' || link.href === '') return false
+        options.onOpenLink?.(link.href, link.text)
         return true
       },
     },
@@ -365,14 +377,39 @@ function linkMarkAt(doc: import('prosemirror-model').Node, pos: number): import(
   return null
 }
 
-function linkTextAt(doc: import('prosemirror-model').Node, mark: import('prosemirror-model').Mark): string {
-  let text = ''
-  doc.nodesBetween(0, doc.content.size, (node) => {
-    if (!node.isText) return
-    const link = node.marks.find((m) => m.type.name === 'link')
-    if (link && link.eq(mark)) text += node.text ?? ''
-  })
-  return text
+/**
+ * The link under `pos`, as the whole run of text it covers.
+ *
+ * A markdown link is not always one text node — emphasis inside the label
+ * splits it (`[read *the* docs](url)`), and a click can land on any of the
+ * pieces — so the mark is expanded over its neighbours rather than reporting
+ * only the clicked one. Reading the text back from the range (rather than
+ * gathering every text node in the document carrying the same mark, which
+ * merges the labels of two links to the same place) is also what lets the
+ * context menu pre-fill the edit dialog with *this* link.
+ */
+export function linkRangeAt(
+  doc: import('prosemirror-model').Node,
+  pos: number,
+): LinkRange | null {
+  const mark = linkMarkAt(doc, pos)
+  if (!mark) return null
+  const $pos = doc.resolve(pos)
+  const parent = $pos.parent
+  const linked = (child: import('prosemirror-model').Node | null | undefined): boolean =>
+    !!child && child.isText && child.marks.some((m) => m.eq(mark))
+  const index = $pos.index()
+  let first = index
+  while (first > 0 && linked(parent.child(first - 1))) first--
+  let last = index + 1
+  while (last < parent.childCount && linked(parent.child(last))) last++
+  // `pos` is somewhere *inside* the text node it lands in, so the run is
+  // measured from that node's own start, not from `pos`.
+  let from = $pos.start()
+  for (let i = 0; i < first; i++) from += parent.child(i)!.nodeSize
+  let to = from
+  for (let i = first; i < last; i++) to += parent.child(i)!.nodeSize
+  return { from, to, href: mark.attrs.href as string, text: doc.textBetween(from, to) }
 }
 
 function buildMisleadingDecorations(doc: import('prosemirror-model').Node): DecorationSet {

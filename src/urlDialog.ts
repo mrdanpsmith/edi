@@ -108,13 +108,22 @@ function openDialogShell<T>(
  * `existingText` is the text the link will cover ('' means none — the dialog
  * then asks for link text). Resolves with the entered text/url pair (``text``
  * is '' when the field was hidden), or ``null`` if the user cancels.
+ *
+ * `editing` is the one caller that is changing a link that is already there —
+ * the context menu's "Edit link…" — so the title and the confirming button say
+ * so. The label's wording is not editable either way: it is the document's
+ * text, and retyping it is what the caret in it is for.
  */
-export function promptForLink(existingText: string, existingUrl: string): Promise<LinkPrompt | null> {
+export function promptForLink(
+  existingText: string,
+  existingUrl: string,
+  options: { editing?: boolean } = {},
+): Promise<LinkPrompt | null> {
   return new Promise((resolve) => {
     let urlInput!: HTMLInputElement
     openDialogShell<LinkPrompt | null>({
-      title: 'Insert link',
-      confirm: 'Insert',
+      title: options.editing ? 'Edit link' : 'Insert link',
+      confirm: options.editing ? 'Update' : 'Insert',
       tone: 'toolbar-primary',
       cancelValue: null,
       enter: 'confirm',

@@ -35,6 +35,10 @@ const mainState = vi.hoisted(() => {
   }
 
   return {
+    // Kept so every test can start from the stub view: a test that mounts a
+    // real one (the mermaid and link menus) would otherwise leak its
+    // selection into the next test's Cut/Copy enabled state.
+    defaultEditorView: editorView,
     hasBridge: vi.fn(() => false),
     invoke: vi.fn().mockResolvedValue(undefined),
     confirmAction: vi.fn().mockResolvedValue(true),
@@ -46,6 +50,7 @@ const mainState = vi.hoisted(() => {
     writeTextFile: vi.fn(),
     renameTextFile: vi.fn(),
     promptForRename: vi.fn(),
+    promptForLink: vi.fn(),
     pickExportPath: vi.fn(),
     pickImageImportPath: vi.fn(),
     pickImportPath: vi.fn(),
@@ -93,7 +98,10 @@ vi.mock('./files', async () => {
   }
 })
 
-vi.mock('./editor', () => ({
+vi.mock('./editor', async (importOriginal) => ({
+  // Only the editor itself is stubbed; `linkRangeAt` is a pure function over a
+  // document, and the context menu calls it for real.
+  linkRangeAt: (await importOriginal<typeof import('./editor')>()).linkRangeAt,
   createBlockEditor: vi.fn((
     _parent: HTMLElement,
     markdown: string,
@@ -168,7 +176,11 @@ vi.mock('./recents', () => ({
 
 vi.mock('./urlDialog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./urlDialog')>()
-  return { ...actual, promptForRename: mainState.promptForRename }
+  return {
+    ...actual,
+    promptForRename: mainState.promptForRename,
+    promptForLink: mainState.promptForLink,
+  }
 })
 
 vi.mock('./clipboard', async (importOriginal) => {
@@ -279,6 +291,7 @@ const FILE_MOCKS = [
   mainState.writeTextFile,
   mainState.renameTextFile,
   mainState.promptForRename,
+  mainState.promptForLink,
   mainState.pickExportPath,
   mainState.pickImageImportPath,
   mainState.pickImportPath,
@@ -301,6 +314,7 @@ beforeEach(() => {
   mainState.readText.mockReset().mockResolvedValue('PASTED')
   mainState.spreadsheetMenuEntries.mockReset().mockReturnValue(null)
   mainState.markdown = 'Welcome'
+  mainState.editorView = mainState.defaultEditorView
   mainState.editorOptions = undefined
   for (const mock of FILE_MOCKS) {
     mock.mockReset()
@@ -1200,6 +1214,31 @@ describe('kanban board insertion', () => {
 })
 
 describe('context menu', () => {
+  /**
+   * A real EditorView holding `markdown`, mounted where the context menu looks
+   * for it: `buildContextMenu` reads the view off the app's block editor, and
+   * that is a stub in this suite (a fake doc cannot answer `posAtDOM`).
+   */
+  async function mountLinkDoc(markdown: string): Promise<{ view: EditorView }> {
+    await loadMain()
+    // A session has to exist: with no document open the app answers no
+    // right-click at all, before the menu is even built.
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({
+        doc: markdownToProse(markdown, schema),
+        plugins: [history()],
+      }),
+    })
+    mainState.editorView = view as unknown as typeof mainState.editorView
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(view.dom)
+    await flushAsync()
+    return { view }
+  }
+
   it('opens the clipboard menu on right-click inside the editor', async () => {
     await loadMain()
     window.ediSetContent?.('Hello')
@@ -1215,6 +1254,79 @@ describe('context menu', () => {
     // Repeated right-clicks replace the open menu instead of stacking menus.
     editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 30, clientY: 30 }))
     expect(document.querySelectorAll('.edi-context-menu')).toHaveLength(1)
+  })
+
+  /** Right-click `target` and press the menu's "Edit link…". */
+  function editLinkFrom(target: Element): void {
+    target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
+    const item = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .find((button) => button.textContent === 'Edit link…')
+    expect(item, 'menu item Edit link…').toBeDefined()
+    item!.click()
+  }
+
+  it('offers Edit link… on a right-click over a link, and nowhere else', async () => {
+    const { view } = await mountLinkDoc('See [notes](other.md) here')
+    const labels = (): string[] =>
+      Array.from(document.querySelectorAll('.edi-menu-item'))
+        .map((button) => (button as HTMLButtonElement).textContent ?? '')
+
+    document
+      .querySelector<HTMLElement>('#editor-container a[href]')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
+    expect(labels()).toContain('Edit link…')
+
+    // Plain text keeps the menu it always had: the item is about the link the
+    // right-click landed on, not about links existing somewhere in the doc.
+    document
+      .querySelector<HTMLElement>('#editor-container p')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
+    expect(labels()).not.toContain('Edit link…')
+    view.destroy()
+  })
+
+  it('rewrites the href of the right-clicked link and leaves the others alone', async () => {
+    const { view } = await mountLinkDoc('[one](a.md) and [two](b.md)')
+    mainState.promptForLink.mockResolvedValue({ text: '', url: 'edited.md' })
+
+    const anchors = document.querySelectorAll<HTMLElement>('#editor-container a[href]')
+    expect(anchors).toHaveLength(2)
+    // Right-click the *second* link: the first must not be the one edited.
+    editLinkFrom(anchors[1]!)
+    await flushAsync()
+
+    expect(mainState.promptForLink).toHaveBeenCalledWith('two', 'b.md', { editing: true })
+    const markdown = proseToMarkdown(view.state.doc)
+    expect(markdown).toContain('[one](a.md)')
+    expect(markdown).toContain('[two](edited.md)')
+    view.destroy()
+  })
+
+  it('leaves the link untouched when the edit dialog is cancelled', async () => {
+    const { view } = await mountLinkDoc('[one](a.md)')
+    mainState.promptForLink.mockResolvedValue(null)
+
+    editLinkFrom(document.querySelector('#editor-container a[href]')!)
+    await flushAsync()
+
+    expect(mainState.promptForLink).toHaveBeenCalledWith('one', 'a.md', { editing: true })
+    expect(proseToMarkdown(view.state.doc)).toContain('[one](a.md)')
+    view.destroy()
+  })
+
+  it('removes the link when the edit dialog is emptied', async () => {
+    const { view } = await mountLinkDoc('See [notes](other.md) here')
+    mainState.promptForLink.mockResolvedValue({ text: '', url: '' })
+
+    editLinkFrom(document.querySelector('#editor-container a[href]')!)
+    await flushAsync()
+
+    // An empty URL is the toolbar Link button's "unlink", and it is one undo
+    // away from the link being back.
+    expect(proseToMarkdown(view.state.doc).trim()).toBe('See notes here')
+    undo(view.state, view.dispatch)
+    expect(proseToMarkdown(view.state.doc)).toContain('[notes](other.md)')
+    view.destroy()
   })
 
   it('disables cut and copy without a selection', async () => {
