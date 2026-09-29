@@ -125,7 +125,7 @@ export function buildHelpGuideMarkdown(): string {
     'source for you and drawn without the quotes; a title with a `"` in it is',
     'refused, with a note, because no quoting can carry one.',
     '',
-    'Right-click the diagram for Copy as image / Save as image.',
+    'Right-click the diagram for Copy image / Save image…',
     '',
     '## Runnable code blocks',
     '',

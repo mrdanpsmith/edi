@@ -52,7 +52,7 @@ describe('buildHelpGuideMarkdown', () => {
 
   it('documents mermaid and runnable blocks', () => {
     expect(guide).toContain('tagged `mermaid` renders as a diagram')
-    expect(guide).toContain('Copy as image / Save as image')
+    expect(guide).toContain('Copy image / Save image…')
     expect(guide).toContain('#!/usr/bin/env python3')
     expect(guide).toContain('**Run** button')
   })

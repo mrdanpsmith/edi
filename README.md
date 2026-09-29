@@ -1,21 +1,51 @@
 # Edi
 
-Markdown is becoming the modern format for writing text, diagrams, creating tables, and more.
-However, while markdown is becoming an all-encompassing, modern version of office documents, the only existing editors are designed as if it's just a way to make some text look a little better.
+Markdown has grown into a format for writing text, drawing diagrams and holding
+tables — but the editors for it still treat it as a way to make some words look
+a little nicer.
 
-Enter Edi. Edi is to be a modern, **exceedingly fast** markdown editor that lets you write up all of the amazing things that modern markdown has become, lets you compose diagrams in mermaid, and allows you to do in-line data processing on tables just like a mini-spreadsheet.
+Edi is a fast native desktop markdown editor that takes that further. The
+document stays plain markdown (that is still the source of truth), while the
+live preview turns three block types into real tools: tables become a
+spreadsheet that computes as you type, Mermaid diagrams are edited by clicking
+the labels *in* the picture, and fenced code blocks can be run from the document
+and show their output next to themselves.
 
-## Architecture
+Available for Linux, Windows and macOS.
 
-- **Frontend**: CodeMirror 6 + Mermaid + spreadsheet formulas in TypeScript, built with Vite into a single static `dist/`.
-- **Backend**: Python 3 + PySide6 (QtWidgets / QtWebEngine). A native `QWebEngineView` hosts the frontend; the page talks to Python through `QWebChannel` (`backend/bridge.py`), which provides file dialogs, file IO, and code-block execution.
-- **Distribution**: a portable single-file binary (`PyInstaller` onefile) built on Ubuntu 22.04 (glibc 2.35) so it runs on older desktop Linux too. Windows binaries are built in an WineHQ-staging container — a real Windows Python + PyInstaller under Wine, no Windows host needed — and shipped with an NSIS installer; macOS builds run natively on GitHub Actions' arm64 macOS runners (PyInstaller cannot cross-compile, so it must build on a Mac).
+## Contents
+
+- [Features](#features)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Installing a release](#installing-a-release)
+- [Upgrading](#upgrading)
+- [Building from source](#building-from-source)
+- [Packaging](#packaging)
+- [Checks and tests](#checks-and-tests)
+- [Versioning](#versioning)
+- [License](#license)
 
 ## Features
 
+**Everything in the app is documented in-app**: `Help → Edi Guide…` is the
+tour, and `Help → Formula Reference…` lists every spreadsheet function with a
+signature and an example. This section is the short version.
+
+### Live markdown editing
+
+- The preview renders as you write; every block has a handle on its left edge
+  that toggles its own source view, so the rendered document and the markdown
+  behind it are never more than a click apart.
+- A home screen opens on launch with new/open/recent documents, and a light and
+  dark appearance that follows the system.
+- Documents open in tabs, each with its own undo history and scroll position.
+
 ### Spreadsheet tables
 
-Tables render as a visual spreadsheet grid in the preview — a live formula bar, click-and-drag cell selection (Mod+click toggles cells, column/row/corner selectors), row/column add/remove, TSV clipboard, a right-click menu on any cell (undo/redo, cut, copy, paste, select all, clear contents, insert a row above / column left — plus the block's **Table view** and **Edit source**; right-click a column letter or row number to delete it), a **Use values** button (freezes the selected cells' formulas to their current computed values, so volatile cells stop recalculating), a whole-table **Resolve formulas?** mode (saves every computed value with the formulas kept in a comment and restored on reopen), and a handy `Insert → Table` size picker in the toolbar. Any cell whose content starts with `=` is computed live:
+A markdown table renders as a grid you can actually work in — click and drag to
+select cells, add or remove rows and columns, paste TSV from a spreadsheet.
+Any cell starting with `=` is computed live, with a formula bar that autocompletes
+function names:
 
 ```markdown
 | Item | Q1 | Q2 | Total |
@@ -25,249 +55,87 @@ Tables render as a visual spreadsheet grid in the preview — a live formula bar
 | **Total** | =SUM(B2:B3) | =SUM(C2:C3) | =SUM(D2:D3) |
 ```
 
-Supported: arithmetic (`+ - * / ^`), comparisons (`= <> < <= > >=`), string literals (`"…"`), the constants `TRUE`/`FALSE`, cell references (`B2`), ranges (`B2:C4`), and the functions `SUM`, `AVERAGE`/`AVG`, `MIN`, `MAX`, `COUNT`, `PRODUCT`, `MEDIAN`, `COUNTA`, `COUNTBLANK`, `LARGE`, `SMALL`, `STDEV`, `VAR`, `SUMIF`, `COUNTIF`, `AVERAGEIF` (criteria like `">5"`, `"Apples"`, or the wildcard patterns `"A*"`/`"??x"` — `~` escapes a literal `*`/`?`; sum/avg ranges pair by grid position with the criteria range, so a differently-shaped sum range reads the right cells), the math functions `ABS`, `SQRT`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `POWER`, `EXP`, `LN`, `LOG`, `LOG10`, `PI`, `RAND`, `RANDBETWEEN`, the logical functions `IF`, `IFERROR`, `IFS`, `SWITCH`, `CHOOSE` (all lazy — only the branch that runs is evaluated, so `=IF(A2=0, 0, 10/A2)` never divides), `AND`, `OR`, `NOT`, `ISERROR`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, and the text functions `CONCAT`/`CONCATENATE`, `TEXTJOIN`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT`, `RIGHT`, `MID`, `REPT`, `SUBSTITUTE`, `EXACT`, `VALUE`, and the date/time functions `TODAY`, `NOW`, `DATE`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DAYS`, `EDATE`, `EOMONTH` (dates render as `YYYY-MM-DD` — or `YYYY-MM-DD HH:MM:SS` with a time — over Excel-style serials, days from 1899-12-30), and the lookup functions `VLOOKUP`, `HLOOKUP`, `INDEX`, `MATCH`, `XLOOKUP` (ranges carry their 2D shape through `SUM`/`INDEX`-style calls, so a table resolves as rows × columns; lookups match case-insensitively, `INDEX` defaults omitted coordinates to 1, `MATCH` type 0 finds the exact position, types 1/−1 the largest ≤ / smallest ≥, `range_lookup` FALSE forces an exact `VLOOKUP`/`HLOOKUP`, and `XLOOKUP` adds next-smaller/larger and wildcard match modes with a custom not-found value), and the utility functions `UUID`/`GUID` (a fresh random UUID on every recalculation — use **Use values** to freeze it) and `B64ENCODE`/`B64DECODE` (UTF-8 base64). Text functions return text cells (rendered like any other text), so `=CONCAT("Total: ", B2)` works alongside the conditionals. `IF`/`IFERROR`/`IFS`/`SWITCH` only evaluate the branch they return, so `=IF(A2=0, 0, 10/A2)` never divides. Errors surface in the cell as `#DIV/0!`, `#VALUE!`, `#NUM!`, `#REF!`, `#NAME?`, `#N/A!`, `#CYCLE!`, or `#ERROR!`, and a tooltip explains the cause. The `fx` bar and cell editor autocomplete function names, and `Help → Formula Reference…` opens a generated reference of every function. A formula cell can be formatted like any other cell — wrapping the formula in inline marks (`**=SUM(B2:B3)**`, `*…*`, `` `…` ``, `~~…~~`, `==…==` `~…~`, `^…^`) styles the computed result instead of breaking the calculation.
-
-You can also define your own functions for the whole document in a fenced code block tagged `edi-formula`:
-
-````markdown
-```edi-formula
-MYAVG(a, b) = (a + b) / 2
-TAX(amount) = ROUND(amount * 0.2, 2)
-```
-````
-
-Each line is `NAME(params) = expression`; bodies may use numbers, parameters, arithmetic, and any built-in or other document function. Parameters accept numbers, cells, or ranges (a range arrives as its list of values, so it can be passed to `SUM` and friends). A definition whose name collides with a built-in, repeats another definition, or forms a loop is rejected and its block is flagged.
-
-
-### Executable code blocks
-
-A code block gets a **Run** button in the preview when its shebang line is written in the fence info string:
-
-````markdown
-```#!sh
-echo "Hello from a code block!"
-```
-````
-
-or as the first line inside the block, exactly like a shell script:
-
-````markdown
-```
-#!/usr/bin/env python3
-print("Hello from Python!")
-```
-````
-
-The shebang is interpreted like a shell's, so all of these forms work: `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/python3`, `#!/usr/bin/env node`, and `#!node --harmony` (flags are passed through). Supported interpreters: `python`/`python3`/`py`, `sh`/`shell`, `bash`, `node`/`js`/`javascript`, `ruby`/`rb`, and `perl`/`pl`. Code runs locally with a 30-second timeout; stdout, stderr, and the exit code are shown in an output cell after the run. Each block owns its own result cell, and results are never shared — every **Run** executes fresh, and identical-looking blocks in different documents (or later runs of the same block) do not reuse each other's output, since a block may legitimately produce different results each time (random values, current time, changing files, etc.).
-
-### Home screen
-
-Edi starts on a home screen instead of an unsaved document. From there you can start a new document (`Ctrl+N`), open one (`Ctrl+O`), jump back into a recently opened file (the last 8, remembered per machine — also under `File → Open Recent` once you're in the editor), reopen the welcome document, or quit. The editor is shown again automatically the moment a document is opened or created, and returns to the home screen when you close the last tab.
-
-### Tabs
-
-Open documents live in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one). Each tab keeps its own undo history and scroll position. `File → Open` always opens the file in a new tab, and closing a tab with unsaved changes asks for confirmation first.
-
-### Menus
-
-Document actions live in the native menu bar and, for the four most common ones (New, Open, Save, Save As), as toolbar buttons:
-
-- **File**: New, Open, Open Recent (the last 8 documents, same list as the home screen), Save, Save As, Rename… (enabled once the document has a path; asks for a new name in the same folder, saves under it and deletes the old file in one step, so the document is never left under both names — an existing file of that name is refused rather than overwritten), Revert (enabled once the document has a path), Copy File Path (`Ctrl+Shift+C`, likewise enabled once the document has a path), Export HTML, Quit.
-- **Insert**: Table, Kanban Board, Spreadsheet, Text File, Image.
-- **View**: Preview (toggle, default on), Toolbar (toggle, default on).
-- **Help**: Edi Guide, Formula Reference, About Edi.
-
-### Editing diagrams
-
-A Mermaid diagram is edited where you look at it, in an explicit edit mode. Press **Edit** on the diagram's hover toolbar, double-click the diagram, or pick **Edit diagram** from the right-click menu; the button reads **Done** (or the menu entry **Done editing**) while you are in it, and one diagram at a time is editable. Click a label and retype it, and the fenced source behind the block is patched in place. `Enter` or a click elsewhere commits, `Esc` cancels, and the source stays the document's source of truth — open the block with its handle at any time.
-
-Only labels the editor can genuinely rewrite are offered: a label you cannot click is one Mermaid computed rather than read (a treemap's per-section totals, a packet field's bit range, an xy chart's y-axis ticks, a kanban card's assignee, a Wardley stage name, a stereotype like `<<person>>`, a truncated `R...`), or one that appears in the source more than once with no way to tell the copies apart. Everything else is editable, including labels Mermaid wraps across several `tspan`s, which are edited as the source spells them.
-
-Renaming something the diagram refers to more than once renames the references with it: an ER entity, a state, a class, a git branch, a requirement, a Sankey node, a Wardley node, a Venn set, a journey actor. Diagrams without references of their own — flowchart, pie, mindmap, gantt, timeline, quadrant, treemap, tree, and the rest — relabel the matching text in the source.
-
-A kanban board is *drawn* with somewhere to add: every column holds an empty card-shaped **+ Add a card**, and an empty **+ Add a column** stands at the right of the board, drawn where the next column would go, so both places are shown rather than described. A click turns the card's own place into a field that writes a title — it grows as you type instead of scrolling the rest of the title out of sight, and when it is taller than the column it fills the document makes room, so the bottom of it is never cut off — and the new column is named through its own header, the same editor a column's name is edited with. What is left on the board is quiet chrome: point at a card and a **✕** appears on the card itself, and it goes away when the pointer leaves. A column's own actions live behind its **⋯** — add a column after it, rename it, or delete it with every card in it — and the last column on a board is not offered a delete, because it would leave no board behind. A **✕** asks first, naming the card or column and how many cards go with it; one edit, so **undo** brings the whole thing back. A new board comes from `Insert → Kanban Board…` (or the toolbar's Kanban button): name the columns, one per line, and the board is inserted already open for editing so its places to add can be filled straight away. Card and column titles are free text: a title holding a character Mermaid cannot read in a plain `[…]` label — a bracket or a parenthesis — is quoted in the source for you (`["Fix (the bug)"]`) and drawn without the quotes, and a rename brings the same quoting. Only a title containing a `"` is refused, with a note, since no quoting could carry it. Cards are dragged by their text, between columns and up and down one, and a whole column is dragged by its header or its cards and moves with every card still in it. Either way the thing you are dragging is the real one, lifted out of the board and following your pointer, and a line marks the exact slot it will drop into — the source lines are reordered to match. A place to add is not a card and not a column: pressing one asks for a title rather than lifting anything, and the source it writes is the board without it.
- Leaving edit mode restores the plain preview. A diagram that no longer parses keeps its last good rendering with a short note explaining why, so a half-typed label never leaves a blank block behind.
-
-### Spreadsheet import
-
-`Insert → Spreadsheet` reads a CSV, TSV, ODS, or XLSX file and inserts it at the cursor as a markdown table. Cell contents, shared strings, repeated rows/columns, and formula results are preserved.
-
-### Text-file and image insertion
-
-`Insert → Text File` reads any text file and inserts it at the cursor. `Insert → Image` picks an image and inserts a markdown image reference: relative to the document when the image lives inside its folder (so the document stays portable), otherwise absolute. The preview resolves relative image paths against the active document's directory so images always display.
-
-### Toolbar
-
-The toolbar above the editor leads with the file actions — New (Ctrl+N), Open… (Ctrl+O), Save (Ctrl+S), Save As… (Ctrl+Shift+S) — then toggles markdown formatting on the selection: **bold**, *italic*, strikethrough, a heading dropdown (Paragraph + Heading 1–6, replacing the old H1/H2 buttons), blockquote, inline code, fenced code blocks, task/bullet/numbered lists, horizontal rules, and links. `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` trigger bold, italic, and strikethrough. Hide it anytime via `View → Toolbar`.
-
-### Copy tables
-
-Every table in the preview has a **Copy** button. Pressing it puts both an HTML and a plain-text (tab-separated) version of the table on the clipboard, so it pastes correctly into Word documents, emails, and Excel spreadsheets.
-
-### HTML export
-
-`Ctrl+Shift+E` exports the currently rendered preview — including rendered Mermaid SVGs, computed spreadsheet values, and code block output — as a single self-contained HTML file with all styling inlined.
-
-## Building from source
-
-Requirements: Python 3.10+ (with `venv`), Node.js 20+, and a Linux desktop with X11/Wayland and OpenGL.
-
-The easiest path is the dependency script (Ubuntu/Debian):
-
-```sh
-./scripts/install-deps.sh
-```
-
-This sets up the Python virtualenv (`.venv/`, including PySide6), installs npm dependencies, and generates the app icon.
-
-### Development
-
-Build the frontend, then run the Python shell:
-
-```sh
-npm run build
-.venv/bin/python run_edi.py
-```
-
-### Portable single-file binary
-
-`scripts/build-pyzip.sh` builds the frontend and bundles the app into a single
-executable inside an Ubuntu 22.04 container (glibc 2.35), so the result also
-runs on older desktop Linux systems. The host Node/Python versions do not
-matter — everything is pinned inside Docker.
-
-```sh
-./scripts/build-pyzip.sh
-```
-
-Output: `./dist-app/edi` (smoke-tested offscreen before reporting success).
-
-#### Desktop integration (icon in dock/taskbar)
-
-On Linux (especially Wayland) the dock icon comes from a `.desktop` file, not
-the window icon — running the bare binary alone can therefore show a generic
-gear. Install the icon and desktop entry for the current user:
-
-```sh
-./scripts/install-desktop.sh [path/to/edi]   # defaults to ./dist-app/edi
-```
-
-This installs `edi.png` into `~/.local/share/icons/hicolor` and an
-`edi.desktop` entry into `~/.local/share/applications` (respecting
-`XDG_DATA_HOME`). Log out and back in if the gear persists.
-
-### Linux packages (.deb / .rpm / .AppImage / .tar.gz)
-
-Each `vX.Y.Z` release publishes four versioned artifacts (the CI `package` job
-wraps the onefile binary — it never rebuilds it, so the glibc 2.35 portability
-guarantee is inherited):
-
-| Artifact | Format | Install |
-| --- | --- | --- |
-| `edi_X.Y.Z_amd64.deb` | Debian/Ubuntu | `sudo apt install ./edi_X.Y.Z_amd64.deb` |
-| `edi-X.Y.Z-1.x86_64.rpm` | Fedora/RHEL/openSUSE | `sudo dnf install ./edi-X.Y.Z-1.x86_64.rpm` |
-| `Edi-X.Y.Z-x86_64.AppImage` | self-contained desktop app | `chmod +x && ./Edi-X.Y.Z-x86_64.AppImage` |
-| `edi-X.Y.Z-linux-x86_64.tar.gz` | portable archive | extract; run `./edi` or `./install.sh` |
-
-The packages install the binary, the desktop entry, and the hicolor icon set
-system-wide, so the dock/taskbar icon works out of the box (see above for the
-bare-binary alternative).
-
-Build all four from an existing binary locally:
-
-```sh
-./scripts/package-linux.sh [path/to/edi] [version]
-```
-
-Requires `dpkg-deb`, `rpmbuild` (`sudo apt-get install rpm`), and `curl`; the
-tarball's `install.sh` and the .deb are also what `install-desktop.sh` covers
-for the bare binary.
-
-### Windows and macOS binaries
-
-Each `vX.Y.Z` release publishes two Windows artifacts, both built by the CI
-`build-windows` job (a real Windows Python + PyInstaller running under
-WineHQ-staging — PyInstaller cannot cross-compile, but Wine provides the
-Windows runtime that makes edi.spec take its win32 branch):
-
-| Artifact | Format | Install |
-| --- | --- | --- |
-| `Edi-X.Y.Z-win64-setup.exe` | NSIS installer (recommended) | run it; installs to `%ProgramFiles%\Edi` with Start Menu / desktop shortcuts and a Settings → Apps uninstall entry |
-| `Edi-X.Y.Z-win64.exe` | portable onefile | run directly; nothing is installed and settings are still shared via the registry |
-
-Both run the same app — the installer just adds desktop integration and
-version tracking, and can be run over an existing install to upgrade it (see
-[Upgrading](#upgrading) below).
-
-Build Windows binaries locally on a Windows box:
-
-```sh
-powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Version 0.5.0
-```
-
-(Requires Node 20+ and Python 3.10+; missing toolchains are installed via
-Chocolatey.)
-
-**macOS** is built by the CI `build-macos` job on a free arm64 `macos-15`
-runner for every `vX.Y.Z` release.
-`scripts/build-macos.sh` builds `Edi-X.Y.Z-macos-arm64.dmg` (drag-to-Applications;
-Apple Silicon only); it is also the manual path on any Mac:
-
-```sh
-./scripts/build-macos.sh [x.y.z]   # version defaults to scripts/version.sh
-```
-
-The macOS app is ad-hoc code-signed (arm64 requires it) but not notarized (no
-Apple Developer account), so the first open on another Mac shows a
-Gatekeeper warning — open via right-click → Open, or clear the quarantine flag:
-`xattr -dr com.apple.quarantine Edi.app`.
-
-## Upgrading
-
-There is no in-app updater — update by installing the latest release artifact.
-Installing a newer version never touches your settings or documents.
-
-- **Windows (installer):** download the new `Edi-<version>-win64-setup.exe` and
-  run it over the existing install. It replaces the app in `%ProgramFiles%\Edi`,
-  refreshes the Start Menu / desktop shortcuts, updates the Settings → Apps
-  entry, and needs no uninstall first (it will ask for elevation). Settings
-  (recent files, theme) live in the registry and your `.md` files are wherever
-  you put them, so both are left intact.
-- **Windows (portable):** replace your downloaded `Edi-<version>-win64.exe`.
-  Each launch unpacks the app to a temp directory, so there is nothing to
-  uninstall; settings are still shared via the registry.
-- **Linux:** upgrade through your package manager — `sudo apt install
-  ./edi_<version>_amd64.deb` or `sudo dnf install ./edi-<version>-1.x86_64.rpm`
-  replaces the previous version. AppImage / tar.gz users just download the new
-  archive.
-- **macOS:** download `Edi-<version>-macos-arm64.dmg` and drag the new `Edi.app`
-  over the old one in Applications.
-
-All released versions are listed on the project's Releases page. No
-version-ordering is enforced: installing an older artifact over a newer
-installation downgrades it.
-
-## Checks and tests
-
-```sh
-npm run check          # typecheck + eslint + frontend unit tests
-.venv/bin/pytest tests/   # backend tests (PySide6, offscreen)
-npm run coverage       # frontend tests with coverage report
-```
-
-## Versioning
-
-Manage the version tracked in `package.json`, `package-lock.json`, and `backend/__init__.py`:
-
-```sh
-./scripts/version.sh current   # print the current version
-./scripts/version.sh set 0.2.0 # set an explicit version
-./scripts/version.sh bump patch   # or minor / major to auto-increment
-./scripts/version.sh check     # verify all declarations agree
-./scripts/version.sh tag       # create annotated git tag v<current-version>
-```
-
-`set`/`bump` update all three files and print the git commands to commit and push; pushing the `vX.Y.Z` tag triggers the GitHub Actions `Release` workflow's `release` job.
+- Built-in functions span aggregates, math, logic, text, date/time, lookups
+  (`VLOOKUP`, `XLOOKUP`, `INDEX`/`MATCH`, …) and utilities — every one of them
+  listed with a signature and an example by `Help → Formula Reference…`.
+- **Use values** freezes the selected cells to their computed results (handy for
+  volatile ones like `RAND` or `UUID`), and **Resolve formulas?** does the same
+  for the whole table, keeping the formulas in a comment for when it reopens.
+- Your own functions live in the document, in a fenced block tagged
+  `edi-formula` — one `NAME(params) = expression` per line, callable like any
+  built-in.
+
+### Mermaid you edit in place
+
+Fenced blocks tagged `mermaid` render as diagrams you can edit without touching
+the source: press **Edit** on the diagram, double-click it, or right-click →
+**Edit diagram**, then click a label to retype it. Renaming a name the diagram
+uses in more than one place (an ER entity, a state, a class, a git branch, a
+requirement…) renames the references with it.
+
+**Kanban boards** are the one diagram you build from the board itself: every
+column is drawn with an empty **+ Add a card**, and an empty **+ Add a column**
+stands at the right where the next one goes. Cards and whole columns are
+dragged with a drop line marking the exact slot, and a **✕** / **⋯** on a card
+or column deletes it (after asking, naming what goes with it) — one edit, so
+undo brings the whole thing back.
+
+Only labels that can genuinely be rewritten are clickable: a value Mermaid
+computed rather than read (a treemap total, an axis tick, a bit range) stays
+put. A diagram that stops parsing keeps its last good rendering with a short
+note, so a half-typed label never leaves a blank block behind.
+
+### Runnable code blocks
+
+A code block with a shebang line — in the fence info or as its first line —
+gets a **Run** button, and its output, stderr and exit code land in a result
+cell under it (**Stop** cancels a hung run, and a run is killed after 30
+seconds). `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/env node`, … all work, with
+the same shell-style argument parsing.
+
+### Encrypted fields
+
+The toolbar's **Encrypted field** stores a value as ciphertext: the markdown
+holds only `!masked[…]{label="…"}` and renders a masked pill. Click one to
+reveal, copy or edit it (one password prompt per session) — the plaintext never
+enters the document.
+
+### Find and replace
+
+`Ctrl+F` / `Ctrl+H` search the document's own text, including the markup of
+tables and diagrams, with whole-document matches highlighted in the preview. Enter
+and Shift+Enter step through them, and replacing keeps the formatting around the
+match.
+
+### Import and export
+
+- `Insert → Spreadsheet…` reads CSV, TSV, ODS and XLSX files as a table.
+- `Insert → Text File…` and `Insert → Image…` insert a file at the cursor;
+  a local image is referenced relatively, so the document stays portable.
+- Every table has a **Copy** button that puts HTML *and* tab-separated text on
+  the clipboard, for Word, Excel and email.
+- Right-click a rendered diagram for **Copy image** / **Save image…**.
+- `Ctrl+Shift+E` exports the whole rendered preview — diagrams, computed values
+  and code output included — as one self-contained HTML file.
+
+### Menus and toolbar
+
+Document actions live in the native menu bar, with the four most common ones
+(New, Open, Save, Save As) also as toolbar buttons; the rest of the toolbar
+toggles markdown formatting on the selection. Hide the row with
+`View → Toolbar`.
+
+| Menu | Items |
+| --- | --- |
+| **File** | New, Open, Open Recent, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Quit |
+| **Edit** | Undo, Redo, Cut, Copy, Paste, Select All, Find…, Replace… |
+| **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
+| **View** | Toolbar |
+| **Help** | Edi Guide…, Formula Reference…, About Edi… |
+
+`Revert` and `Rename…` need a document that has been saved somewhere; renaming
+asks for a new name in the same folder, writes the document under it and deletes
+the old file in one step, so it is never left under both names.
 
 ## Keyboard shortcuts
 
@@ -278,21 +146,155 @@ Manage the version tracked in `package.json`, `package-lock.json`, and `backend/
 | `Ctrl+O` | Open file (in a new tab) |
 | `Ctrl+S` | Save |
 | `Ctrl+Shift+S` | Save As |
-| `Ctrl+Shift+P` | Toggle preview |
+| `Ctrl+Shift+C` | Copy file path |
 | `Ctrl+Shift+E` | Export preview as HTML |
+| `Ctrl+B` / `Ctrl+I` | Bold / italic |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
+| `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste |
+| `Ctrl+A` | Select all |
 | `Ctrl+F` | Find in current document |
 | `Ctrl+H` | Find & replace in current document |
 | `Ctrl+Q` | Quit |
 
-## Development process
+## Installing a release
 
-1. All features are thoroughly tested using automated tests (Vitest for the frontend, `pytest` for the backend).
-2. Code is checked for duplication and poor quality using free, open static code analysis tools (ESLint and `tsc`).
-3. Versioning and tagging automatically results in releases being created by the GitHub Actions pipeline (using the `gh` CLI with the runner's built-in `GITHUB_TOKEN`). The tag-gated `Release` workflow (`.github/workflows/release.yml`) runs it; the `release` job refuses to run if the tag doesn't match the declared version (`version.sh check`).
-4. All unnecessary files are `.gitignore`d.
-5. All files necessary for building the project can be installed via a simple script (`scripts/install-deps.sh`) so that a new developer or user can easily build the project from source.
-6. Linting is part of the standard checks.
-7. Coverage metrics are available as part of the build and check process (`npm run coverage` and the `test` CI job).
+Each `vX.Y.Z` tag publishes the artifacts below.
+
+**Linux** — the `package` job wraps the onefile binary (it never rebuilds it, so
+the portability guarantee is inherited):
+
+| Artifact | Install |
+| --- | --- |
+| `edi_X.Y.Z_amd64.deb` | `sudo apt install ./edi_X.Y.Z_amd64.deb` |
+| `edi-X.Y.Z-1.x86_64.rpm` | `sudo dnf install ./edi-X.Y.Z-1.x86_64.rpm` |
+| `Edi-X.Y.Z-x86_64.AppImage` | `chmod +x && ./Edi-X.Y.Z-x86_64.AppImage` |
+| `edi-X.Y.Z-linux-x86_64.tar.gz` | extract; run `./edi` or `./install.sh` |
+
+They install the binary, the desktop entry and the icon set system-wide. Running
+the bare binary instead? The dock/taskbar icon on Linux comes from a
+`.desktop` file rather than the window icon, so install one for the current user:
+
+```sh
+./scripts/install-desktop.sh [path/to/edi]   # defaults to ./dist-app/edi
+```
+
+That writes `edi.png` into `~/.local/share/icons/hicolor` and an `edi.desktop`
+entry into `~/.local/share/applications` (respecting `XDG_DATA_HOME`); log out
+and back in if the gear icon persists.
+
+**Windows** — a real Windows Python + PyInstaller runs under WineHQ-staging in
+CI, so no Windows host is needed to cut a release:
+
+| Artifact | Install |
+| --- | --- |
+| `Edi-X.Y.Z-win64-setup.exe` | run it; installs to `%ProgramFiles%\Edi` with Start Menu / desktop shortcuts and a Settings → Apps uninstall entry |
+| `Edi-X.Y.Z-win64.exe` | run directly; nothing is installed (settings are still shared via the registry) |
+
+**macOS** — `Edi-X.Y.Z-macos-arm64.dmg` (Apple Silicon), drag-to-Applications.
+The app is ad-hoc code-signed (arm64 will not launch unsigned) but not
+notarized, so the first open on another Mac warns: right-click → Open, or clear
+it with `xattr -dr com.apple.quarantine Edi.app`.
+
+## Upgrading
+
+There is no in-app updater — install the newest release artifact. Your settings
+and documents are never touched.
+
+- **Windows (installer):** run the new setup over the existing install. It
+  replaces the app in `%ProgramFiles%\Edi`, refreshes the shortcuts and the
+  Settings → Apps entry, and needs no uninstall first.
+- **Windows (portable):** replace your copy of the `.exe`. Each launch unpacks
+  to a temp directory, so there is nothing to uninstall.
+- **Linux:** upgrade through your package manager with the new `.deb`/`.rpm`;
+  AppImage and tar.gz users just download the new archive.
+- **macOS:** drag the new `Edi.app` over the old one in Applications.
+
+Nothing enforces version order — installing an older artifact over a newer
+install downgrades it.
+
+## Building from source
+
+Requirements: Python 3.10+ (with `venv`), Node.js 20.19+/22.12+, and a Linux
+desktop with X11 or Wayland.
+
+```sh
+./scripts/install-deps.sh
+```
+
+This creates the virtualenv (`.venv/`, with PySide6), installs the npm
+dependencies and generates the app icon. Then build the frontend and run the
+Python shell — `npm run dev` on its own is only the Vite server, not the app:
+
+```sh
+npm run build
+.venv/bin/python run_edi.py
+```
+
+### How it fits together
+
+- **Frontend** — the document editor is [ProseMirror](https://prosemirror.net)
+  (with CodeMirror 6 inside fenced code blocks), plus Mermaid and the spreadsheet
+  formula engine, in TypeScript. Vite builds it into a single static `dist/`.
+- **Backend** — Python 3 + PySide6. A native `QWebEngineView` hosts
+  `dist/index.html`; the page talks to Python over `QWebChannel`
+  (`backend/bridge.py`), which owns the file dialogs, file IO and code-block
+  execution.
+- **The document is the file** — plain markdown on disk. Nothing about the
+  spreadsheet, the diagrams or the encrypted fields needs a sidecar file.
+
+## Packaging
+
+```sh
+./scripts/build-pyzip.sh            # single-file binary -> ./dist-app/edi
+./scripts/package-linux.sh [path/to/edi] [version]   # .deb / .rpm / .AppImage / tar.gz
+```
+
+`build-pyzip.sh` builds the frontend and bundles the app into one executable
+inside an Ubuntu 22.04 container (glibc 2.35), so the result also runs on older
+desktop Linux systems; the host's Node and Python versions do not matter, and
+the binary is smoke-tested offscreen before it reports success. `package-linux.sh`
+wraps an existing binary (never rebuilds it) and needs `dpkg-deb`, `rpmbuild`
+(`sudo apt-get install rpm`) and `curl`.
+
+```sh
+./scripts/build-windows-wine.sh [VERSION]   # Windows onefile + NSIS installer, on Linux
+./scripts/build-macos.sh [x.y.z]            # Edi.app + .dmg, on a Mac
+```
+
+Windows binaries are built in a WineHQ-staging container that carries a real
+Windows Python and PyInstaller (PyInstaller cannot cross-compile, but Wine
+provides the Windows runtime that makes `edi.spec` take its `win32` branch);
+`scripts/build-windows.ps1` is the same build on a real Windows desktop. macOS
+must be built on a Mac, for the same reason.
+
+## Checks and tests
+
+```sh
+npm run check               # typecheck + eslint + frontend unit tests + duplicate scan
+npm run coverage            # frontend tests with a coverage report
+.venv/bin/pytest tests/     # backend tests (PySide6, offscreen)
+```
+
+Both halves are required to be green before a change lands, and CI runs the same
+commands: `npm run check` is the local gate, the `Release` pipeline adds the
+platform builds, and pushing a `vX.Y.Z` tag publishes the artifacts above.
+
+## Versioning
+
+The version is tracked in `package.json`, `package-lock.json` and
+`backend/__init__.py`, and `scripts/version.sh` keeps them in step:
+
+```sh
+./scripts/version.sh current      # print the current version
+./scripts/version.sh set 0.2.0    # set an explicit version
+./scripts/version.sh bump patch   # or minor / major, to auto-increment
+./scripts/version.sh check        # verify all declarations agree
+./scripts/version.sh tag          # create annotated git tag v<current-version>
+```
+
+`set`/`bump` update all three files and print the git commands to commit and
+push; pushing the `vX.Y.Z` tag starts the release, whose `release` job refuses to
+run if the tag does not match the declared version.
 
 ## License
 
