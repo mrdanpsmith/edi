@@ -10,9 +10,11 @@
 #   * <owner>/edi-builder:jammy      — Ubuntu 22.04 (glibc 2.35) + Qt runtime
 #     libs, Node 22, venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
 #     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/build job.
-#   * <owner>/edi-wine-builder:jammy — Ubuntu 22.04 + WineHQ-staging, baked
-#     win_amd64 wheels + Windows Python + VC redist, native `nsis`. Only the
-#     build-windows job (+ locally scripts/build-windows-wine.sh).
+# The Wine image (<owner>/edi-wine-builder:jammy) is NOT used by any job here;
+# it exists only for the legacy local scripts/build-windows-wine.sh. The
+# build-windows job runs on a GitHub-hosted windows-2025 runner and pip
+# installs its own venv, because PyInstaller cannot cross-compile and emulating
+# Windows made the build 30-50m and unrenderable.
 # The venv is a read-only image layer — never pip-install at job time; bake
 # changes into the images (images.yml). Nodes: images must exist in ghcr before
 # any CI run (run images.yml manually once after import).
@@ -169,65 +171,77 @@ jobs:
           retention-days: 30
 
   # Windows deliverables WITHOUT a Windows host (see workflow header comment).
+  # Windows builds on real Windows. It used to run on ubuntu inside the
+  # edi-wine-builder image (Dockerfile.wine + build-windows-wine.sh), which
+  # emulated the target: a Wine prefix had to be built from GUI installers
+  # under a synthetic X display (~26m), and then PyInstaller's walk of the
+  # ~1.5 GB PySide6 tree went through Wine's NT path layer, so a 3-minute
+  # build was 3 minutes on a good day and 30-50m on a bad one. Wine can also
+  # never import QtWebEngineCore, so its smoke was permanently reduced to the
+  # structural check -- the render it existed to perform was impossible there.
+  #
+  # PyInstaller cannot cross-compile, so this has to be a real Windows Python,
+  # and that is all this job is: run the native script (scripts/build-windows.
+  # ps1, previously the desktop-only path) on a GitHub-hosted Windows runner.
+  # Those runners are pre-warmed -- measured at 4s to provision, 0s "Set up
+  # job" -- so this is not the per-job VM spin-up that made GitLab's Windows
+  # runners cost minutes. The edi-web artifact carries dist/ + the .ico, so
+  # the job needs no Node, exactly as the Wine job did not.
+  #
+  # The timeout is 45m to match build-linux, not the Wine job's 180m: the
+  # stages that justified 180m (wineboot, VC++ redist, the Python installer)
+  # do not exist on this runner.
   build-windows:
     needs: frontend
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/${{ github.repository_owner }}/edi-wine-builder:jammy
-    timeout-minutes: 180
-    env:
-      EDI_WINE_IMAGE: ghcr.io/${{ github.repository_owner }}/edi-wine-builder:jammy
+    runs-on: windows-2025
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: edi-web
           path: .
-      # The Wine prefix (Windows Python 3.12 + PySide6 + PyInstaller) is the
-      # expensive half of this build AND the only half with a history of
-      # wedging: cold, it is a 20+ minute block of GUI bootstrapper under a
-      # synthetic display, against ~2 min warm. CI never had a warm one --
-      # build/ lives inside the checkout, so every container job started from
-      # an empty prefix and paid the full price, which is where the observed
-      # variance between a 3-minute and a 20-minute release came from.
-      #
-      # The key is deliberately built from the SAME four inputs the script's
-      # own stamp_value() hashes -- wine version, the Windows pins, and both
-      # baked installer names -- plus the workspace path (a prefix bakes
-      # absolute paths). A key hit then implies a stamp match, which rules out
-      # the one state that would strand us forever: restored prefix, stamp
-      # mismatch, script rebuilds it, and actions/cache declines to overwrite a
-      # key that already exists, so the stale entry would be served forever.
-      # On a hit the script skips wineboot, the VC++ redist, the Python
-      # installer, pip and the ICU staging in one go; on a miss everything runs
-      # cold exactly as before, and the post-job save step populates the entry.
-      - name: Resolve the Wine prefix cache key
-        id: wine-prefix-key
+      # venv + pip + PyInstaller + the full offscreen smoke, all in the one
+      # script that also stages System32's ICU into the venv so PyInstaller's
+      # Qt hooks find the plugins. The version is recomputed per step from the
+      # workflow-level VER rather than passed through an env var: each pwsh
+      # step is a separate process, so a plain $env: var would not survive.
+      - name: Build onefile + full smoke on real Windows
+        shell: pwsh
         run: |
-          set -euo pipefail
-          wine_ver="$(wine --version 2>/dev/null | tr -cd '[:alnum:]._-' | cut -c1-24)"
-          reqs="$(md5sum requirements-win.txt | cut -c1-8)"
-          py_installer="$(basename "$(ls /opt/py/python-*-amd64.exe | head -n1)" .exe | cut -c1-24)"
-          # The glob's failure is masked by the pipe to head, so an empty
-          # component would sail through and produce a degenerate key that
-          # collides across images. Fail here instead, where it is legible.
-          [ -n "$wine_ver" ] || { echo "error: 'wine --version' produced nothing — not the baked toolchain image" >&2; exit 1; }
-          [ -n "$py_installer" ] || { echo "error: no /opt/py/python-*-amd64.exe in this image" >&2; exit 1; }
-          echo "fingerprint: wine=$wine_ver reqs=$reqs python=$py_installer ws=$GITHUB_WORKSPACE"
-          echo "key=wine-prefix-${{ runner.os }}-${wine_ver}-${reqs}-${py_installer}-$(printf '%s' "$GITHUB_WORKSPACE" | md5sum | cut -c1-8)" >> "$GITHUB_OUTPUT"
-      # v6 like every other action pin in this file (checkout@v7, upload@v7,
-      # download@v8): v5+ needs a runner >= 2.327, which a GitHub-hosted
-      # container job has.
-      - name: Restore the Wine prefix cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            build/wine-prefix
-            build/wine-home
-          key: ${{ steps.wine-prefix-key.outputs.key }}
-      - name: Build Windows onefile + installer via Wine
-        run: ./scripts/build-windows-wine.sh "${VER#v}"
+          $v = '${{ env.VER }}'.TrimStart('v')
+          if (-not $v) { throw "no version" }
+          ./scripts/build-windows.ps1 -Version $v
+      # Kept as its own step, and kept unconditionally, because it is the gate
+      # that still runs when the smoke above is skipped as environmental: the
+      # pluginless-bundle defect dies here even on a host that cannot render.
+      # Same script the Wine path used, so the two cannot drift.
+      - name: Structural bundle check (Qt plugins + ICU in the CArchive)
+        shell: pwsh
+        run: |
+          $v = '${{ env.VER }}'.TrimStart('v')
+          $py = (Resolve-Path '.venv-win/Scripts/python.exe').Path
+          & $py scripts/check_bundle_contents.py "dist-app/Edi-$v-win64.exe"
+          if ($LASTEXITCODE -ne 0) { throw "bundle is missing Qt plugins / ICU: the Qt hooks did not collect them" }
+      - name: Build the NSIS installer
+        shell: pwsh
+        run: |
+          # Native Windows makensis with ABSOLUTE -D defines, because makensis
+          # resolves relative File/OutFile against the SCRIPT's directory, not
+          # the CWD (the same path quirk the Wine job documented).
+          choco install nsis -y --no-progress | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed: $LASTEXITCODE" }
+          $v = '${{ env.VER }}'.TrimStart('v')
+          $onefile = (Resolve-Path "dist-app/Edi-$v-win64.exe").Path
+          $ico = (Resolve-Path 'scripts/assets/app-icon.ico').Path
+          $setup = Join-Path $PWD "dist-app/Edi-$v-win64-setup.exe"
+          # The selftest console twin is a build-time artifact, not a release
+          # artifact: deleting it here keeps the upload glob to exactly the
+          # versioned onefile + the installer.
+          Remove-Item 'dist-app/Edi-selftest.exe' -ErrorAction SilentlyContinue
+          & makensis "-DVERSION=$v" "-DSETUPEXE=$onefile" "-DICO=$ico" "-DOUTEXE=$setup" packaging/edi.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed: $LASTEXITCODE" }
+          Get-ChildItem dist-app | Select-Object Name, Length
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -236,10 +250,6 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  # macOS .dmg, built natively on an arm64 Mac (scripts/build-macos.sh is fully
-  # self-contained: npm ci + frontend build + .venv-macos + PyInstaller + ad-hoc
-  # code-sign + offscreen smoke + hdiutil .dmg). Not notarized (no Apple
-  # Developer account), so Gatekeeper warns on first open — accepted tradeoff.
   build-macos:
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15

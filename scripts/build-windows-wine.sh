@@ -343,26 +343,13 @@ fi
 # CArchiveReader is pure stdlib + PyInstaller, so it runs on the .exe file
 # itself — no wine render needed.
 stage "verifying bundle contents (Qt plugins + ICU in the CArchive, budget 300s)"
-cat > "$B/build/list_archive.py" <<'PYEOF'
-import sys
-from PyInstaller.archive.readers import CArchiveReader
-
-c = CArchiveReader(sys.argv[1])
-names = {n.lower().replace('\\', '/') for n in c.toc}
-need = [
-    'pyside6/plugins/platforms/qwindows.dll',
-    'pyside6/plugins/platforms/qoffscreen.dll',
-    'pyside6/plugins/imageformats/qjpeg.dll',
-    'pyside6/icuuc.dll',
-    'pyside6/icuin.dll',
-]
-missing = [w for w in need if w not in names]
-if missing:
-    print('BUNDLE_MISSING total=%d missing=%r' % (len(names), missing))
-    sys.exit(1)
-print('BUNDLE_OK total=%d (platform plugins, imageformats, ICU all present)' % len(names))
-PYEOF
-timeout 300 wine "$WINEPY" "Z:$B/build/list_archive.py" "Z:$B/dist-app/Edi.exe" \
+# The check itself lives in scripts/check_bundle_contents.py, shared verbatim
+# with the native build-windows job: it is the gate that still proves the
+# bundle when the frozen smoke is skipped as environmental, so two copies of
+# the required-entry list would be two chances to let the pluginless-bundle
+# defect through. CArchiveReader is pure stdlib + PyInstaller, so it reads the
+# .exe under Wine exactly as it does on real Windows.
+timeout 300 wine "$WINEPY" "Z:$B/scripts/check_bundle_contents.py" "Z:$B/dist-app/Edi.exe" \
   > "$B/build/archive-wine.out" 2>&1
 if grep -q 'BUNDLE_OK' "$B/build/archive-wine.out"; then
   echo "[wine] bundle structural check OK"

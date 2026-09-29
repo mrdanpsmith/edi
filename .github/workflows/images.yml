@@ -9,9 +9,10 @@
 #   * ghcr.io/<owner>/edi-wine-builder:jammy — Ubuntu 22.04 + WineHQ-staging
 #     (>=11.5 devline so its bundled ICU satisfies Qt6Core.dll — wine-stable 11.0
 #     predates that), baked win_amd64 wheels, the Windows Python installer, the
-#     VC redist, and native `nsis` (Dockerfile.wine). Consumed only by the
-#     build-windows job (+ locally by scripts/build-windows-wine.sh), so its
-#     ~1 GB stays out of the everyday image pull.
+#     VC redist, and native `nsis` (Dockerfile.wine). No CI job consumes it
+#     any more — build-windows runs on a GitHub-hosted windows-2025 runner —
+#     so it is built purely for the local scripts/build-windows-wine.sh. It
+#     can be dropped (with Dockerfile.wine) without touching the release DAG.
 #
 # Building these is the single expensive setup step, cached in the registry
 # (buildx cache): rebuilds only happen when a Dockerfile / requirements file /
