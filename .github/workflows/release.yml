@@ -376,10 +376,13 @@ jobs:
     permissions:
       contents: write
     timeout-minutes: 30
+    # Read by both the changelog lookup (releases API) and the release create.
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # Full history + tags for the git-describe changelog.
+          # Full history + tags: the changelog git-logs from the last release.
           fetch-depth: 0
       # upload-artifact flattens wildcard uploads (paths are preserved only
       # "after the first wildcard"), so every platform artifact unzips flat
@@ -407,7 +410,15 @@ jobs:
           fi
       - name: Build changelog
         run: |
-          PREV_TAG=$(git describe --abbrev=0 --tags "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          # Previous *release*, not previous tag: a tag with no published
+          # release (a failed run) used to become the boundary and silently
+          # drop everything that shipped. Drafts and prereleases are excluded so
+          # the range always starts at the last version a user could actually
+          # install; drop the prerelease clause if you ever want the rc..stable
+          # delta instead.
+          PREV_TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+            | grep -v -x "$GITHUB_REF_NAME" | head -1 || true)
           RANGE="${GITHUB_REF_NAME}"
           [ -n "$PREV_TAG" ] && RANGE="${PREV_TAG}..${GITHUB_REF_NAME}"
           printf '## Changes in %s\n\n' "$GITHUB_REF_NAME" > /tmp/CHANGELOG.md
@@ -415,8 +426,6 @@ jobs:
           printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
           printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: replace `Edi-%s-win64.exe`); settings and documents are untouched. Linux: upgrade via your package manager. macOS: replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" >> /tmp/CHANGELOG.md
       - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           mapfile -t FILES < <(find artifacts -type f | sort)
           if [ "${#FILES[@]}" -eq 0 ]; then
