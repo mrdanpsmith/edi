@@ -289,15 +289,27 @@ jobs:
           retention-days: 90
 
   build-macos:
+    needs: frontend
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      # The same edi-web artifact the Linux and Windows builds consume, for the
+      # same reason: it is the dist/ the `test` job actually validated. macOS
+      # used to build its own frontend and its own icons, so the .app shipped a
+      # second, untested build of the UI and the generated .icns in this
+      # artifact had no consumer at all. build-macos.sh now ASSERTS the
+      # artifact and hard-fails without it -- no rebuild fallback, because a
+      # script that regenerates what it was meant to consume turns a broken
+      # download into a green build of something else. That is also why this job
+      # no longer needs setup-node: nothing here runs npm any more, so all
+      # three platform jobs are now structurally the same (checkout, download
+      # edi-web, build).
+      - uses: actions/download-artifact@v8
         with:
-          node-version: 22
-          cache: npm
+          name: edi-web
+          path: .
       - name: Build macOS app + dmg
         run: ./scripts/build-macos.sh "${VER#v}"
       - name: Upload dmg

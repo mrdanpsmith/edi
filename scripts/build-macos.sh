@@ -7,6 +7,13 @@
 # an arm64 `macos-15` runner for v* tags; this script is also the local path —
 # run it on a Mac when cutting a release without CI.
 #
+# It does NOT build the frontend or the icons: the `frontend` job builds both
+# once and uploads them as the `edi-web` artifact, which this job (and the
+# Linux/Windows jobs) consume. So it needs no Node, and it ASSERTS its
+# preconditions rather than falling back to building them — see the check
+# below. Locally, produce the inputs once with:
+#   npm ci && npm run build && node scripts/generate-icon.mjs
+#
 #   ./scripts/build-macos.sh [x.y.z]      # version from scripts/version.sh by default
 #
 # Output: dist-app/Edi-<ver>-macos-arm64.dmg
@@ -41,11 +48,9 @@ HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_AUTO_UPDATE
 
 # --- Toolchain: brew-install what the pins need ------------------------------
-if ! command -v node >/dev/null 2>&1 || [ "$(node --version | sed -E 's/^v([0-9]+).*/\1/')" -lt 20 ]; then
-  echo "Installing node@22 via Homebrew..."
-  brew install node@22
-  export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
-fi
+# Node is deliberately NOT provisioned here: the frontend and the icon
+# variants are built once in the frontend job and consumed, so nothing in this
+# script runs npm. Only the Python venv below needs a toolchain check.
 if ! command -v python3 >/dev/null 2>&1 || \
    ! python3 -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
   echo "Installing python@3.12 via Homebrew..."
@@ -55,18 +60,40 @@ fi
 
 print_step "Building Edi $VERSION for macOS (arm64)"
 
-# --- Frontend ----------------------------------------------------------------
-npm ci --no-audit --no-fund
-npm run build
+# --- Frontend + icons: consumed, never built here ---------------------------
+# The frontend is built ONCE, in the `frontend` job (release.yml), which also
+# generates the .ico/.icns variants and uploads dist/ + the icons as `edi-web`.
+# Every platform build consumes that one artifact. This script does not build
+# the frontend and does not generate icons: regenerating here meant the .app
+# shipped a second, separately built dist/ that the `test` job never ran
+# against, and nothing enforced the two were the same (AGENTS.md used to
+# assert they were "byte-identical" while also saying macOS rebuilt it).
+#
+# So this is an assert, not a fallback. A missing artifact is a hard failure
+# with the one command that fixes it, exactly as build-windows.ps1 does for its
+# own two preconditions -- because a script that quietly regenerates what it
+# was supposed to consume turns a broken artifact download into a green build
+# of something else, which is the failure mode worth refusing to have.
+print_step "Checking prebuilt frontend + icons"
+MISSING=""
+[ -f "$ROOT/dist/index.html" ] || MISSING="$MISSING dist/index.html"
+[ -f "$ROOT/scripts/assets/app-icon.ico" ] || MISSING="$MISSING scripts/assets/app-icon.ico"
+[ -f "$ROOT/scripts/assets/app-icon.icns" ] || MISSING="$MISSING scripts/assets/app-icon.icns"
+if [ -n "$MISSING" ]; then
+  echo "error: prebuilt frontend/icons missing:$MISSING" >&2
+  echo "hint: in CI these come from the 'edi-web' artifact that the frontend job" >&2
+  echo "      uploads; check that job succeeded and that this job downloads it." >&2
+  echo "      locally, produce them once with:" >&2
+  echo "        npm ci && npm run build && node scripts/generate-icon.mjs" >&2
+  exit 1
+fi
+echo "using the prebuilt dist/ + generated icons"
 
 # --- Python venv --------------------------------------------------------------
 python3 -m venv .venv-macos
 PY_VENV="$ROOT/.venv-macos/bin/python"
 "$PY_VENV" -m pip install --upgrade pip
 "$PY_VENV" -m pip install "PySide6==6.11.1" "pyinstaller==6.22.0" "defusedxml"
-
-# --- Icons (ico + icns from the 1024 master, pure Node) ---------------------
-node scripts/generate-icon.mjs
 
 # --- PyInstaller .app ---------------------------------------------------------
 rm -rf dist-app
