@@ -40,3 +40,28 @@ export function fireResizeCallbacks(): void {
   const pending = (globalThis as { __resizeCallbacks?: Set<() => void> }).__resizeCallbacks
   for (const callback of [...(pending ?? [])]) callback()
 }
+
+// jsdom has no layout, so it has nothing to scroll: `scrollIntoView` reports
+// itself as unimplemented, which vitest counts as an unhandled error the moment a
+// composer grows the block around it. Nothing about scrolling is under test — the
+// padding that makes the growth possible is plain style — so it is stubbed here
+// rather than guarded around in the code that uses it.
+if (typeof Element !== 'undefined') {
+  Element.prototype.scrollIntoView = function scrollIntoView(): void {}
+}
+
+/**
+ * Let `n` animation frames go by.
+ *
+ * The kanban chrome does not reposition inside the `ResizeObserver` callback
+ * itself: it asks for a frame and asks for another only while something actually
+ * moved, so a board that is still settling is followed and a settled one is
+ * left alone. A test that fires the observer and reads a style in the same tick
+ * would read the placement from before the resize, which is the placement the
+ * test is not about.
+ */
+export async function flushFrames(n = 4): Promise<void> {
+  for (let frame = 0; frame < n; frame += 1) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  }
+}

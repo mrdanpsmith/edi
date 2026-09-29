@@ -1422,9 +1422,10 @@ body {
   cursor: text;
 }
 
-/* The one-line field an inline edit is made in. It owns the geometry — a caption
-   and the input ride together as one box, so a prompt can be as long as it needs
-   to be and the input below it still has room for a real title. */
+/* The field an inline edit is made in. It owns the geometry, because a field is
+   absolutely positioned: an absolutely positioned child of a horizontal scroller
+   is placed from the scrolled content rather than from the visible box, so the
+   wrapper is what adds the preview's scroll back. */
 .ProseMirror .mermaid .mermaid-edit-field {
   position: absolute;
   z-index: 4;
@@ -1433,33 +1434,9 @@ body {
   gap: 2px;
 }
 
-/* What the field is for, above the value. Truncates rather than being clipped
-   mid-glyph, and keeps the whole of itself in `title`. */
-.ProseMirror .mermaid .mermaid-edit-caption {
-  box-sizing: border-box;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 1px 5px;
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-/* A field that is about to *add* something is drawn as one: a dashed accent edge
-   and an accent caption, so it cannot be mistaken for a field that is about to
-   overwrite a label. */
-.ProseMirror .mermaid .mermaid-edit-field-new .mermaid-edit-caption {
-  border-color: var(--accent);
-  border-style: dashed;
-  color: var(--accent);
-}
-
+/* A field that is about to *add* something is drawn as one — the same dashed
+   accent the drawn slot it stands in has, so the slot visibly becoming the field
+   is what says the value is new rather than a replacement. */
 .ProseMirror .mermaid .mermaid-edit-field-new .mermaid-edit-input {
   border-style: dashed;
   background: color-mix(in srgb, var(--accent) 6%, var(--bg));
@@ -1479,9 +1456,19 @@ body {
   box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
 }
 
-/* A field with a caption closes the box it opened, so the two read as one. */
-.ProseMirror .mermaid .mermaid-edit-field:has(.mermaid-edit-caption) .mermaid-edit-input {
-  border-radius: 0 0 3px 3px;
+/* A composer types a title that is being *written* rather than replaced, so it
+   wraps: the whole of what is being typed stays visible instead of scrolling out
+   of sight to the right, and it is the field that resizes rather than the board
+   that grows — one line per line of the title, up to the cap the script keeps it
+   to, and past that it scrolls rather than climbing over the columns behind. */
+.ProseMirror .mermaid .mermaid-edit-input-wrap {
+  display: block;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.25;
+  padding: 2px 3px;
+  min-height: 1.25em;
+  box-sizing: border-box;
 }
 
 .ProseMirror .mermaid .mermaid-edit-input.mermaid-edit-invalid {
@@ -1519,6 +1506,17 @@ body {
   filter: drop-shadow(0 6px 10px rgb(0 0 0 / 35%));
 }
 
+/* A whole list is lifted the same way a card is — the frame and its cards, which
+   are two separate sibling lists, so both carry the class. The frame is what the
+   pointer was holding, so it is what gets the shadow: the cards ride along
+   inside it. `outline` rather than a filter, because the frame is an svg
+   rectangle and a drop-shadow on it would be drawn *under* its own fill. */
+.ProseMirror .mermaid .kanban-dragging-column {
+  pointer-events: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Mermaid's svg clips its own content (`overflow: hidden`) and the preview is a
    scroll container, so a real card travelling off the board would be cut off
    mid-drag instead of following the pointer. Both have to let it out. */
@@ -1549,63 +1547,172 @@ body {
 }
 
 /* The board's own controls in edit mode. They are HTML overlays positioned from
-   the card or column they belong to, so their `left`/`top` are their centre; the
-   layer only ever exists in edit mode, and this keeps them out of a preview
-   regardless. Every one is a `button`, so the double click that ends an edit
-   session leaves them alone too. */
+   the card or column they belong to, so their `left`/`top` are their top-left
+   corner and every one of them is given its own box; the layer only ever exists
+   in edit mode, and this keeps them out of a preview regardless. Every one is a
+   `button`, so the double click that ends an edit session leaves them alone too. */
+.ProseMirror .mermaid .mermaid-kanban-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
 .ProseMirror .mermaid .mermaid-kanban-btn {
   position: absolute;
-  z-index: 4;
-  transform: translate(-50%, -50%);
-  width: 22px;
-  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px dashed var(--border);
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
   background: var(--surface-raised);
   color: var(--text-muted);
-  font-size: 0.9em;
+  font: inherit;
   line-height: 1;
   cursor: pointer;
+  /* The layer is inert, so a control opts back in to the pointer — which is what
+     lets a button that is not there take no clicks at all. */
+  pointer-events: auto;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease,
+    background 120ms ease;
+}
+
+/* A control that belongs to one card or one list is not on screen until the
+   pointer is on it. It is also not *clickable* until then, so a concealed ✕ can
+   never eat the press that was meant to drag the card it is hiding on. */
+.ProseMirror .mermaid .mermaid-kanban-btn.is-concealed {
   opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
+  pointer-events: none;
+}
+
+.ProseMirror .mermaid .mermaid-kanban-btn.is-concealed.is-shown {
+  opacity: 1;
+  /* And it is *pressable* again: a revealed control that still took no clicks
+     looked like a control that did nothing, and the press fell through to the
+     label underneath it. */
+  pointer-events: auto;
 }
 
 .ProseMirror .mermaid.mermaid-editing .mermaid-kanban-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
-  border-style: solid;
 }
 
-/* A delete asks before it acts, so it is a ✕ and it is the one button that goes
-   red: the board is the user's document, and this one takes something away. */
-.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-card-remove:hover,
-.ProseMirror .mermaid.mermaid-kanban-column-remove:hover {
+/* The `⋯` is the one control that stays on screen: a menu nobody can find is not
+   a quiet board, it is a board with no way to rename or delete a column. It is
+   drawn as a quiet mark rather than a control, so it reads as the corner of the
+   column rather than as a second heading. */
+.ProseMirror .mermaid .mermaid-kanban-menu {
+  font-size: 0.85em;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0.65;
+}
+
+.ProseMirror .mermaid .mermaid-kanban-menu:hover,
+.ProseMirror .mermaid .mermaid-kanban-menu:focus-visible {
+  opacity: 1;
+}
+
+/* A card's ✕ is the smallest thing on the board and hugs its corner, so it covers
+   as little of the card's own title as a pressable target can. */
+.ProseMirror .mermaid .mermaid-kanban-card-remove {
+  font-size: 0.75em;
+  border-radius: 3px;
+  border-color: transparent;
+  background: transparent;
+}
+
+/* A delete asks before it acts, so it is a ✕ and it is the one thing on a card
+   that goes red: the board is the user's document, and this takes something away. */
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-card-remove:hover {
   color: var(--danger);
   border-color: var(--danger);
 }
 
-/* A card's ✕ is smaller than a ＋ and hugs its corner, so it covers as little of
-   the card's own title as a pressable target can. */
-.ProseMirror .mermaid .mermaid-kanban-card-remove {
-  width: 16px;
-  height: 16px;
-  font-size: 0.75em;
-  border-radius: 3px;
+/* The two ways into the board are *part of the board*: mermaid draws a card slot
+   at the foot of every column and a column slot at the end of the board, so there
+   is nothing to hover for and nothing to position. They are muted because they
+   hold nothing yet — a placeholder is only a place — and brighten under the
+   pointer, which is the only hover a slot has. The dashed edge is the *field*
+   that opens in one of them, not the slot (see .mermaid-edit-field-new). */
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot {
+  cursor: copy;
 }
 
-.ProseMirror .mermaid .mermaid-preview:hover .mermaid-kanban-btn,
-.ProseMirror .mermaid .mermaid-kanban-btn:focus-visible {
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot .nodeLabel,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot .section-label {
+  opacity: 0.62;
+  transition: opacity 120ms ease;
+}
+
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot:hover rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot:hover .nodeLabel,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot:hover rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot:hover .section-label {
   opacity: 1;
 }
 
-/* A card's delete belongs to the card, and a card in flight is not where it was:
-   its ✕ would sit in the gap it left, offering to delete a slot. Hidden for the
-   length of the drag, and back with the render that follows the drop. */
-.ProseMirror .mermaid-preview.kanban-dragging .mermaid-kanban-card-remove {
+/* The menu: right-aligned under its own `⋯`, so it hangs inside the column it
+   belongs to and cannot be mistaken for the next column's. */
+.ProseMirror .mermaid .mermaid-kanban-menu-list {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  pointer-events: auto;
+}
+
+.ProseMirror .mermaid .mermaid-kanban-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9em;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ProseMirror .mermaid .mermaid-kanban-menu-item:hover,
+.ProseMirror .mermaid .mermaid-kanban-menu-item:focus-visible {
+  background: var(--surface);
+  color: var(--accent);
+  outline: none;
+}
+
+/* The one item that removes something says so in the same red as the ✕ it
+   replaced, because it is the same decision with a longer way of asking it. */
+.ProseMirror .mermaid .mermaid-kanban-menu-item.is-danger {
+  color: var(--danger);
+}
+
+.ProseMirror .mermaid .mermaid-kanban-menu-item.is-danger:hover,
+.ProseMirror .mermaid .mermaid-kanban-menu-item.is-danger:focus-visible {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+/* A card in flight is not where it was, so the ✕ that was hiding on it would sit
+   in the gap it left, offering to delete a slot. Hidden for the length of the
+   drag, and back with the render that follows the drop. The column `⋯` has the
+   same problem, one column out, and the same answer. */
+.ProseMirror .mermaid-preview.kanban-dragging .mermaid-kanban-card-remove,
+.ProseMirror .mermaid-preview.kanban-dragging .mermaid-kanban-menu {
   visibility: hidden;
 }
 

@@ -1154,14 +1154,19 @@ describe('mermaid visual mode rendering', () => {
   })
 
   // A board with an empty middle column: mermaid still draws that column, as a
-  // shorter band, so a per-column ＋ has somewhere to go for it too.
+  // shorter band, so it is drawn with a card slot of its own.
   const KANBAN_BOARD = ['kanban', '  Todo', '    id1[One]', '  Doing', '  Done', '    id2[Two]'].join('\n')
 
-  function addButtons(view: EditorView): HTMLButtonElement[] {
-    return Array.from(view.dom.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-add'))
+  /** The drawn slots, in board order: one per column, then the new column. */
+  function drawnSlots(view: EditorView): SVGElement[] {
+    return Array.from(view.dom.querySelectorAll<SVGElement>('.mermaid-kanban-slot, .mermaid-kanban-column-slot'))
   }
 
-  it('adds a card to the column whose ＋ was pressed, in one transaction', async () => {
+  function cardSlots(view: EditorView): SVGElement[] {
+    return Array.from(view.dom.querySelectorAll<SVGElement>('.mermaid-kanban-slot'))
+  }
+
+  it('adds a card to the column whose slot was pressed, in one transaction', async () => {
     mockKanban()
     let transactions = 0
     const counted = new Plugin({
@@ -1177,18 +1182,16 @@ describe('mermaid visual mode rendering', () => {
     await flush()
 
     enterDiagramEditMode(view, firstBlockPos(view))
-    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
-    expect(addButtons(view).map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Add a card to Todo',
-      'Add a card to Doing',
-      'Add a card to Done',
-    ])
+    expect(await rendered(view, '.mermaid-kanban-slot')).toBe(true)
+    // One card slot per column, and the column the board would have next: the
+    // places to add are drawn rather than waited for.
+    expect(cardSlots(view)).toHaveLength(3)
+    expect(drawnSlots(view)).toHaveLength(4)
 
-    addButtons(view)[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    cardSlots(view)[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
     expect(input.value).toBe('')
     expect(input.placeholder).toBe('Card title')
-    expect(view.dom.querySelector('.mermaid-edit-caption')!.textContent).toBe('New card in Doing')
 
     transactions = 0
     input.value = 'Fresh'
@@ -1209,9 +1212,26 @@ describe('mermaid visual mode rendering', () => {
     expect(transactions).toBe(1)
     await flush()
     await flush()
-    expect(vi.mocked(mermaidModule.default.render).mock.calls.at(-1)?.[1]).toBe(patched)
-    // The render replaced the SVG, and with it the layer: a ＋ per column still.
-    expect(addButtons(view)).toHaveLength(3)
+    // The board is *drawn* with somewhere to add: the rendered source is the
+    // patched board plus its slots, which is why the document above is not it.
+    expect(vi.mocked(mermaidModule.default.render).mock.calls.at(-1)?.[1]).toBe(
+      [
+        'kanban',
+        '  Todo',
+        '    id1[One]',
+        '    slotc0[+ Add a card]',
+        '  Doing',
+        '    [Fresh]',
+        '    slotc1[+ Add a card]',
+        '  Done',
+        '    id2[Two]',
+        '    slotc2[+ Add a card]',
+        '  slotn[+ Add a column]',
+      ].join('\n'),
+    )
+    // The render replaced the SVG, and with it the slots, which are re-drawn from
+    // the board that was just committed — a slot per column, still.
+    expect(cardSlots(view)).toHaveLength(3)
 
     expect(undo(view.state, view.dispatch)).toBe(true)
     expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + KANBAN_BOARD + '\n```\n')
@@ -1228,21 +1248,21 @@ describe('mermaid visual mode rendering', () => {
     await flush()
 
     enterDiagramEditMode(view, firstBlockPos(view))
-    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
+    expect(await rendered(view, '.mermaid-kanban-slot')).toBe(true)
 
-    addButtons(view)[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    cardSlots(view)[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
     input.value = 'Discarded'
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
 
     expect(await rendered(view, '.mermaid-edit-input', false)).toBe(true)
     expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + KANBAN_BOARD + '\n```\n')
-    expect(addButtons(view)).toHaveLength(3)
+    expect(cardSlots(view)).toHaveLength(3)
 
     view.destroy()
   })
 
-  it('takes the ＋ away with the editing layer, and offers them again after', async () => {
+  it('takes the slots away with the editing layer, and draws them again after', async () => {
     mockKanban()
     const view = createEditor('```mermaid\n' + KANBAN_BOARD + '\n```\n\nAfter the board')
 
@@ -1251,30 +1271,31 @@ describe('mermaid visual mode rendering', () => {
     await flush()
 
     enterDiagramEditMode(view, firstBlockPos(view))
-    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
-    expect(addButtons(view)).toHaveLength(3)
+    expect(await rendered(view, '.mermaid-kanban-slot')).toBe(true)
+    expect(cardSlots(view)).toHaveLength(3)
 
     editToggle(view).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     expect(editModeOf(view)).toBe(false)
-    // They are the layer's, so Done removes them like it removes the labels.
-    expect(await rendered(view, '.mermaid-kanban-add', false)).toBe(true)
+    // They are part of the editing layer, so Done removes them like it removes
+    // the labels: the document's own source has no slots in it.
+    expect(await rendered(view, '.mermaid-kanban-slot', false)).toBe(true)
     expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
 
     // ...and so does a double click outside the diagram, which ends the mode
     // from a gesture that never lands on it.
     enterDiagramEditMode(view, firstBlockPos(view))
-    expect(await rendered(view, '.mermaid-kanban-add')).toBe(true)
+    expect(await rendered(view, '.mermaid-kanban-slot')).toBe(true)
     const paragraph = Array.from(view.dom.querySelectorAll<HTMLElement>('p')).find(
       (el) => el.textContent === 'After the board' && el.closest('.mermaid') === null,
     )!
     paragraph.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }))
     expect(editModeOf(view)).toBe(false)
-    expect(await rendered(view, '.mermaid-kanban-add', false)).toBe(true)
+    expect(await rendered(view, '.mermaid-kanban-slot', false)).toBe(true)
 
     view.destroy()
   })
 
-  it('offers no ＋ on a diagram that is not a board', async () => {
+  it('draws no slots on a diagram that is not a board', async () => {
     mockFlowchart()
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
 
@@ -1284,7 +1305,7 @@ describe('mermaid visual mode rendering', () => {
 
     enterDiagramEditMode(view, firstBlockPos(view))
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
-    expect(addButtons(view)).toHaveLength(0)
+    expect(drawnSlots(view)).toHaveLength(0)
 
     view.destroy()
   })

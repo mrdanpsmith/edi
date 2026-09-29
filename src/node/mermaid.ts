@@ -8,9 +8,11 @@ import { reinitializeMermaidTheme } from '../mermaid'
 import {
   EDITING_CLASS,
   FIELD_CLASS,
-  KANBAN_BUTTON_CLASS,
+  KANBAN_CHROME_CLASS,
   buildKanbanSource,
   finishMermaidLabelEditing,
+  kanbanAuthoringSource,
+  kanbanRealSource,
   renderDiagram,
 } from '../mermaid-edit'
 import { BLOCK_PLUGIN_KEY } from '../blockplugin'
@@ -254,10 +256,22 @@ class MermaidNodeView implements NodeView {
 
   private async renderPreview(container: HTMLElement, code: string): Promise<void> {
     const button = this.createToggleButton()
-    await renderDiagram(container, code, {
+    // A board is authored from the board, so in edit mode it is *drawn* with the
+    // two places a card or a column can be added: mermaid lays a card slot out in
+    // the next card's own place and a column slot out as a column, which is
+    // something no hand-placed control can be. The slots are part of what is
+    // rendered and never part of what is committed — the document holds the
+    // board, and the slots are derived from it on every render.
+    const drawn = this.editing ? kanbanAuthoringSource(code) : code
+    await renderDiagram(container, drawn, {
       host: this.dom,
       // A commit handler is what puts the diagram into edit mode.
-      commit: this.editing ? (source) => this.commitSource(source) : undefined,
+      commit: this.editing
+        ? // A patch made against the drawn board comes back through the real
+          // source, which keeps a slot the user has typed a name for — the edit
+          // itself — and drops one still holding its placeholder.
+          (patched) => this.commitSource(kanbanRealSource(patched))
+        : undefined,
       actions: [button],
     })
   }
@@ -308,11 +322,14 @@ class MermaidNodeView implements NodeView {
     if (this.cm !== null) return true
     const target = event.target
     if (!(target instanceof Element)) return false
-    // The label editor and the board's own buttons are real controls inside the
+    // The label editor and the board's own chrome are real controls inside the
     // block: every keystroke and mouse event in them belongs to the editor, not
-    // to ProseMirror. The rest of the diagram keeps its normal behaviour —
-    // clicking it still selects the block and reveals its handle.
-    return target.closest(`.${FIELD_CLASS}, .${KANBAN_BUTTON_CLASS}`) !== null
+    // to ProseMirror. The chrome is matched by its *layer* rather than by the
+    // button class, because an open `⋯` menu is a list of items rather than a
+    // button and is just as much the editor's own surface. The rest of the
+    // diagram keeps its normal behaviour — clicking it still selects the block
+    // and reveals its handle.
+    return target.closest(`.${FIELD_CLASS}, .${KANBAN_CHROME_CLASS}`) !== null
   }
 
   ignoreMutation(): boolean {
@@ -465,9 +482,9 @@ function diagramEditTogglePos(event: MouseEvent): number | null {
   const block = event.target.closest<HTMLElement>('.mermaid')
   if (!block) return null
   // Chrome and an open label editor handle their own double clicks, and so does
-  // a board button: a double click on a button is a click on a button, not a
-  // request to toggle this diagram.
-  if (event.target.closest(`.mermaid-toolbar, .${FIELD_CLASS}, .${KANBAN_BUTTON_CLASS}`) !== null) return null
+  // a board's controls: a double click on one of them — or inside a `⋯` menu —
+  // is a click on that, not a request to toggle this diagram.
+  if (event.target.closest(`.mermaid-toolbar, .${FIELD_CLASS}, .${KANBAN_CHROME_CLASS}`) !== null) return null
   if (block.querySelector(`.${FIELD_CLASS}`) !== null) return null
   const handle = block.querySelector<HTMLElement>('.block-handle[data-block-pos]')
   const pos = handle ? Number(handle.dataset.blockPos) : Number.NaN

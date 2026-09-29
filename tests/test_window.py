@@ -40,16 +40,23 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     BOARD_DIALOG,
     CARDS_AND_BANDS,
     COLUMNS,
+    COMPOSER_FIT,
     DELETE_PROMPT,
     DOC_SOURCE,
     EDIT_STATE,
     FLOW,
     KANBAN,
-    KANBAN_ADDS,
-    KANBAN_BUTTONS,
+    KANBAN_BARE,
+    KANBAN_CARD_SLOT,
+    KANBAN_CHROME,
+    KANBAN_COLUMN_SLOT,
     KANBAN_EMPTY,
     KANBAN_LONE,
+    KANBAN_MENU,
+    KANBAN_ONE,
     KANBAN_QUOTED,
+    KANBAN_SHOWN,
+    KANBAN_SLOTS,
     LABEL_INVENTORY,
     LABEL_STATE,
     SEQUENCE,
@@ -58,15 +65,25 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _click_first_offered,
     _click_done,
     _answer_delete_prompt,
-    _click_kanban_add,
+    _click_kanban_column_slot,
+    _click_kanban_slot,
     _click_kanban_button,
+    _click_kanban_menu_item,
+    _composer,
+    _hover,
+    _open_kanban_menu,
     _click_label,
     _dblclick_below_document,
     _dump,
     _enter_edit_mode,
     _open_board_dialog,
     _pointer_drag,
+    _pointer_drag_column,
+    _resize_view,
     _press_enter,
+    _press_key,
+    _shown,
+    _unhover,
     _pump_until,
     _render,
     _set_document,
@@ -1106,6 +1123,15 @@ def test_visual_edit_mode_and_label_commit(window):
     )["notice"]
 
 
+def _drawn(cards):
+    """A column's own cards, without the slot the board is drawn with.
+
+    The board is drawn with somewhere to add a card in every column, so a column
+    reports one more card than it holds. A place to add is not a card.
+    """
+    return [card for card in cards if card != KANBAN_CARD_SLOT]
+
+
 def test_kanban_label_edit_and_card_drag(window):
     _render(window, KANBAN)
     _enter_edit_mode(window)
@@ -1136,9 +1162,11 @@ def test_kanban_label_edit_and_card_drag(window):
         timeout=15,
     )["cols"]
     # Mermaid lays a column's cards out side by side, so the renamed card is the
-    # right-hand one now: the drag crossed into the second column.
-    assert sorted(cols.values(), key=len)[0] == ["Two"], cols
-    assert ["Renamed", "Three"] in [sorted(c) for c in cols.values()], cols
+    # right-hand one now: the drag crossed into the second column. The drawn slot
+    # every column is drawn with is a place rather than content, so it is not in
+    # the comparison.
+    assert sorted(map(_drawn, cols.values()), key=len)[0] == ["Two"], cols
+    assert ["Renamed", "Three"] in [sorted(_drawn(c)) for c in cols.values()], cols
 
 
 def test_kanban_drag_shows_the_slot_before_the_release(window):
@@ -1150,13 +1178,21 @@ def test_kanban_drag_shows_the_slot_before_the_release(window):
     """
     _render(window, KANBAN)
     _enter_edit_mode(window)
+    # The board is drawn with a slot at the foot of every column and one more
+    # column at the end, so there is a place to add without any chrome at all.
+    slots = _wait(
+        window,
+        KANBAN_SLOTS,
+        lambda d: len(d["cards"]) == 2 and d["column"] is not None,
+        timeout=15,
+    )
     bands = _wait(
         window,
-        KANBAN_ADDS,
-        lambda d: d["n"] == 2 and all(a["band"] for a in d["adds"]),
+        KANBAN_CHROME,
+        lambda d: len(d["bands"]) == 3 and all(b["box"] for b in d["bands"]),
         timeout=15,
-    )["adds"]
-    band = bands[0]["band"]
+    )["bands"]
+    band = bands[0]["box"]
 
     # Card 0 down its own column, to the last slot: the drop index changes, the
     # highlighted column does not.
@@ -1179,86 +1215,186 @@ def test_kanban_drag_shows_the_slot_before_the_release(window):
     assert mid["unclipped"] is True
     assert mid["scrolled"] is False
     # The line is in the target column, spanning it, and in the last slot — which
-    # is where the release is about to act. `KANBAN_ADDS` reports a band by its
-    # centre, so the edges are derived from its width. It overhangs the column a
-    # little on each side so it still shows either side of the card covering it.
+    # is where the release is about to act. It overhangs the column a little on
+    # each side so it still shows either side of the card covering it.
     line = mid["line"]
     assert line is not None and line["shown"] is True, mid
-    assert line["x"] >= band["x"] - band["width"] / 2 - 6, mid
-    assert 0 < line["w"] <= band["width"] + 12, mid
-    assert line["y"] > band["top"] + band["height"] / 2, mid
+    assert line["x"] >= band["left"] - 6, mid
+    assert 0 < line["w"] <= band["right"] - band["left"] + 12, mid
+    assert line["y"] > (band["top"] + band["bottom"]) / 2, mid
     # The line is an svg child ahead of the cards, so it is painted over the
     # column's own background and under every card — the dragged one included,
-    # which is what reads as "this card is over the slot". The ＋ is a positioned
-    # sibling of the svg, so it does paint over the line where the two meet; the
-    # indicator only has to be visible somewhere along its own run.
+    # which is what reads as "this card is over the gap".
     assert mid["lineUnder"] is True, mid
     assert "line" in mid["overLine"], mid
+    # The slots the drag was aimed between are still the board's own, afterwards.
+    assert _wait(
+        window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 2, timeout=15
+    )["cards"], slots
 
     cols = _wait(
         window,
         COLUMNS,
-        lambda d: ["Two", "One"] in [cards for cards in d["cols"].values()],
+        lambda d: ["Two", "One"] in [_drawn(cards) for cards in d["cols"].values()],
         timeout=15,
     )["cols"]
-    # The card went to the bottom of its own column, the slot the line was in.
-    assert ["Two", "One"] in [cards for cards in cols.values()], cols
+    # The card went to the bottom of its own column, the gap the line was in.
+    assert ["Two", "One"] in [_drawn(cards) for cards in cols.values()], cols
 
 
-def _add_sits_in_its_band(add):
-    """A ＋ is only ever offered centred in its own column and in the bottom of
-    it, so that is what both a zoom and the re-render have to preserve."""
-    band = add["band"]
+def test_kanban_column_drag_reorders_the_board(window):
+    """A column is a thing you can pick up, and a drag has to say where it lands.
+
+    The mirror of the card drag: a card drops into a slot inside a list, so its
+    line is a short bar in a band, while a list drops into a *gap* between two
+    lists, so its line is a full-height vertical rule. Either way the list that
+    moves is the real one — frame and cards together, since mermaid draws those in
+    two separate sibling lists and only the frame is under the pointer.
+    """
+    _render(window, KANBAN)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 2, timeout=15)
+
+    drag = _pointer_drag_column(window, column=0, slot=1)
+    mid = drag["mid"]
+    assert mid["clone"] is False, "the drag drew a second copy of the column"
+    assert mid["lifted"] is True, mid
+    assert mid["cardsLifted"] is True, "the cards did not travel with their column"
+    # Everything held moved by the pointer's own distance: neither twice as far
+    # for the cards, nor stuck, nor a copy that lags behind.
+    travel = mid["travel"]
+    assert abs(travel["dx"] - travel["px"]) <= 1.0, mid
+    assert abs(travel["dy"] - travel["py"]) <= 1.0, mid
+    assert all(abs(m["dx"] - travel["dx"]) <= 1.0 for m in mid["cardMoved"]), mid
+    assert all(abs(m["dy"] - travel["dy"]) <= 1.0 for m in mid["cardMoved"]), mid
+    # Painted on top of what it is passing over: the svg paints in document order,
+    # so a frame left in its place would be drawn under every column it crosses.
+    assert mid["frameOnTop"] is True, mid
+    assert mid["cardsOnTop"] is True, mid
+    # A list that travels off the board is clipped by the svg and the scrolling
+    # preview, exactly as a card is.
+    assert mid["unclipped"] is True, mid
+
+    # The line is a full-height vertical rule, in the gap the release will fill.
+    line = mid["line"]
+    assert line is not None and line["shown"] is True, mid
+    assert line["w"] <= 8, mid
+    assert line["h"] > mid["sr"]["h"] * 0.5, mid
+    band = mid["sr"]
+    assert line["x"] > band["x"] + band["w"], mid
+    # The line is an svg child ahead of the cards, so it is over the column's own
+    # background but under every card — and the gap it marks has nothing over it
+    # anyway, which is what makes it readable.
+    assert mid["lineUnder"] is True, mid
+    assert "line" in mid["overLine"], mid
+
+    # `COLUMNS` is keyed by the band's x, so the dict is the board's order: a
+    # column drag has to be read as the whole sequence, not as one column's cards.
+    cols = _wait(
+        window,
+        COLUMNS,
+        lambda d: [_drawn(c) for c in d["cols"].values()] == [["Three"], ["One", "Two"]],
+        timeout=15,
+    )["cols"]
+    # Todo took its two cards along, whole, as one source patch — and it is one
+    # undo away, because it is one setNodeMarkup. The column the board is drawn
+    # with holds no cards, so it is not in the reading.
+    assert [_drawn(c) for c in cols.values()] == [["Three"], ["One", "Two"]], cols
+
+
+def _slot_sits_in_its_band(slot, band):
+    """A card slot is drawn *in* its own column, at the foot of it.
+
+    So this is one reading rather than a placement to keep: the board is drawn
+    with somewhere to add a card, and mermaid draws that somewhere inside the
+    band whose column it belongs to.
+    """
     return (
-        abs(add["x"] - band["x"]) <= 1.0
-        and add["y"] > (band["top"] + band["bottom"]) / 2
-        and add["y"] <= band["bottom"] + 1.0
+        band["box"]["left"] - 1 <= slot["box"]["left"]
+        and slot["box"]["right"] <= band["box"]["right"] + 1
+        and slot["box"]["bottom"] <= band["box"]["bottom"] + 1
     )
 
 
+def _slots_in_their_bands(board, slots):
+    """Every card slot in the band of the column it belongs to, in board order.
 
-def test_kanban_add_button_creates_a_card(window):
-    """The per-column ＋ creates a card in that column, as one source patch.
+    The one thing a stale drawing would break, and the only thing worth
+    asserting: which column each place to add a card is standing in. Where the
+    board sits on screen is its business, not the test's. The board is drawn with
+    one band more than it has columns — the one the next column goes in — so the
+    last band is not a column with a slot in it.
+    """
+    bands = board["bands"][: len(slots["cards"])]
+    if len(bands) != len(slots["cards"]):
+        return False
+    return all(
+        _slot_sits_in_its_band(slot, band) for slot, band in zip(slots["cards"], bands)
+    )
 
-    Real browser only, because the whole feature is geometry: a button placed
-    from the section rect, repositioned when the zoom toolbar rescales it, and
-    rebuilt by the re-render the commit triggers.
+
+def _column_slot_past_the_board(board, slots):
+    """The drawn column standing past the last real one, where a new one goes."""
+    column = slots["column"]
+    last = board["bands"][-1]
+    return (
+        column is not None
+        and abs(column["box"]["left"] - last["box"]["left"]) <= 1.0
+        and abs(column["box"]["right"] - last["box"]["right"]) <= 1.0
+    )
+
+
+def test_kanban_drawn_slot_creates_a_card(window):
+    """The place a card is added is drawn in the board, and it adds one there.
+
+    Real browser only, because the whole feature is the drawing: a card slot in
+    every column and a column at the end of the board, both put in the source
+    only for as long as the board is being edited, and a commit that strips them.
     """
     _render(window, KANBAN_EMPTY)
     _enter_edit_mode(window)
 
-    adds = _wait(window, KANBAN_ADDS, lambda d: d["n"] == 3, timeout=15)
-    assert [a["label"] for a in adds["adds"]] == [
-        "Add a card to Todo",
-        "Add a card to Doing",
-        "Add a card to Done",
-    ], adds
-    assert all(_add_sits_in_its_band(add) for add in adds["adds"]), adds
+    slots = _wait(window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 3, timeout=15)
+    board = _wait(
+        window,
+        KANBAN_CHROME,
+        lambda d: len(d["bands"]) == 4 and all(b["box"] for b in d["bands"]),
+        timeout=15,
+    )
+    assert [card["text"] for card in slots["cards"]] == [KANBAN_CARD_SLOT] * 3, slots
+    assert slots["column"] and slots["column"]["text"] == KANBAN_COLUMN_SLOT, slots
+    assert _slots_in_their_bands(board, slots), (slots, board)
+    # The drawn column *is* the last band, past the last real one, where the next
+    # column goes: the place is shown rather than described.
+    assert _column_slot_past_the_board(board, slots), (slots, board)
     # The empty column is the one worth checking: mermaid sizes its band to the
-    # header alone, so the band (and the ＋ in it) is much shorter (50px against
-    # 79px for a column holding a card).
-    empty = adds["adds"][1]
-    assert empty["band"]["height"] * 1.5 < adds["adds"][0]["band"]["height"], adds
+    # header alone, and the slot is drawn in it all the same — the place to add a
+    # card does not need a card to be there already. With a slot, the band is
+    # about a card tall again, which is what used to be the bar's problem.
+    def band_height(band):
+        return band["box"]["bottom"] - band["box"]["top"]
 
-    # A zoom rescales every section rect, so the overlay has to follow it. The
-    # whole diagram is re-centred as it widens, so "followed" means the ＋ is
-    # still in its own band, not that it moved right.
+    assert band_height(board["bands"][1]) < band_height(board["bands"][0]), board
+
+    # A zoom rescales the whole drawing, and there is nothing to keep in step: the
+    # slot *is* the board's own card, so it is in the same column after a zoom as
+    # before it.
     _zoom(window, "+")
     zoomed = _wait(
         window,
-        KANBAN_ADDS,
-        lambda d: d["n"] == 3
-        and d["adds"][0]["band"]["width"] > adds["adds"][0]["band"]["width"]
-        and all(_add_sits_in_its_band(a) for a in d["adds"]),
+        KANBAN_SLOTS,
+        lambda d: len(d["cards"]) == 3
+        and d["cards"][0]["box"]["width"] > slots["cards"][0]["box"]["width"],
         timeout=15,
     )
+    assert _slots_in_their_bands(_dump(window, KANBAN_CHROME), zoomed), zoomed
     _zoom(window, "100%")
 
-    opened = _click_kanban_add(window, 1)
-    # The field says what it is for in a caption, and leaves the input itself to
-    # the one thing a user types: a short title.
+    opened = _click_kanban_slot(window, 1)
+    # The field is the slot's own box, so a title is typed where the card will
+    # be, and the input itself is left to the one thing a user types.
     assert opened["v"] == "" and opened["ph"] == "Card title", opened
-    assert opened["caption"] == "New card in Doing", opened
+    assert abs(opened["box"]["x"] - opened["anchor"]["x"]) <= 1.0, opened
     _type_and_confirm(window, "Fresh")
     state = _wait(
         window,
@@ -1267,7 +1403,11 @@ def test_kanban_add_button_creates_a_card(window):
         timeout=20,
     )
     assert not state["input"] and not state["error"] and not state["notice"], state
+    # The document's own source holds the card and no slots: the places to add
+    # exist only for as long as the board is drawn.
     assert state["source"] and "    [Fresh]" in state["source"], state
+    assert KANBAN_CARD_SLOT not in state["source"], state
+    assert KANBAN_COLUMN_SLOT not in state["source"], state
     # Into the column that was pressed: the empty one, so its band grew.
     cols = _wait(
         window,
@@ -1275,17 +1415,16 @@ def test_kanban_add_button_creates_a_card(window):
         lambda d: any("Fresh" in cards for cards in d["cols"].values()),
         timeout=15,
     )["cols"]
-    assert ["Fresh"] in [sorted(cards) for cards in cols.values()], cols
+    assert ["Fresh"] in [sorted(_drawn(cards)) for cards in cols.values()], cols
 
-    # The render replaced the SVG and with it the overlay, so the ＋ are back --
-    # still one per column, and still in their own bands.
-    adds = _wait(window, KANBAN_ADDS, lambda d: d["n"] == 3, timeout=15)
-    assert all(_add_sits_in_its_band(add) for add in adds["adds"]), adds
-    assert adds["adds"][1]["band"]["height"] > empty["band"]["height"], adds
+    # The commit re-drew the board, and with it the slots: one per column still,
+    # the new card's column among them, and the drawn column at the end.
+    after = _wait(window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 3, timeout=15)
+    assert _slots_in_their_bands(_dump(window, KANBAN_CHROME), after), after
 
-    # ...and the input it opens is the same one a label edit uses, so Esc is
+    # ...and the field it opens is the same one a label edit uses, so Esc is
     # the same way out of it.
-    _click_kanban_add(window, 0)
+    _click_kanban_slot(window, 0)
     _type(window, "Discarded")
     _dump(
         window,
@@ -1293,8 +1432,65 @@ def test_kanban_add_button_creates_a_card(window):
         " i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));"
         " return { closed: true }; })()",
     )
-    after = _wait(window, LABEL_STATE, lambda d: not d["input"], timeout=10)
-    assert "Discarded" not in (after["source"] or ""), after
+    gone = _wait(window, LABEL_STATE, lambda d: not d["input"], timeout=10)
+    assert "Discarded" not in (gone["source"] or ""), gone
+
+
+def _menus(board):
+    """The per-column `⋯` of a `KANBAN_CHROME` snapshot, matched to their bands.
+
+    By horizontal order, which is board order: a menu says which column it is for
+    only in an aria-label, and that is no help to a test comparing boxes.
+    """
+    return sorted(
+        (b for b in board["buttons"] if b["kind"] == "mermaid-kanban-menu"),
+        key=lambda menu: menu["box"]["left"],
+    )
+
+
+def _menu_in_its_band(band, menu, name=None):
+    """A `⋯` belongs in its own column's corner — and clear of its name.
+
+    In the band because that is the shape it annotates and the drag and the hit
+    test both read positions from; clear of the name because the name is what a
+    click there renames, and a control lying across it covers that.
+    """
+    if not (
+        band["box"]["left"] - 0.5 <= menu["box"]["left"]
+        and menu["box"]["right"] <= band["box"]["right"] + 0.5
+        and band["box"]["top"] - 0.5 <= menu["box"]["top"]
+        and menu["box"]["bottom"] <= band["box"]["bottom"] + 0.5
+    ):
+        return False
+    if name is None:
+        return True
+    return not (
+        menu["box"]["left"] < name["right"]
+        and name["left"] < menu["box"]["right"]
+        and menu["box"]["top"] < name["bottom"]
+        and name["top"] < menu["box"]["bottom"]
+    )
+
+
+def _placed(board):
+    """Whether every control is where the board it belongs to now is.
+
+    The one thing a stale placement breaks, and the only thing worth asserting
+    after a resize: every `⋯` in its own band's corner, and no control over any
+    band's name. The places to add a card are not in the list, because they are
+    not controls: they are drawn in the board, so there is nothing to place. The
+    drawn column at the end is drawn too, so it has no `⋯` — it is a place to
+    type a name, not a column to add to, rename or delete yet.
+    """
+    bands = board["bands"]
+    real = [b for b in bands if b["text"] != KANBAN_COLUMN_SLOT]
+    menus = _menus(board)
+    if len(bands) - len(real) != 1 or len(menus) != len(real):
+        return False
+    return all(
+        _menu_in_its_band(band, menu, band["name"])
+        for band, menu in zip(real, menus)
+    )
 
 
 def _buttons_in(shape, button):
@@ -1307,97 +1503,218 @@ def _buttons_in(shape, button):
     )
 
 
-def test_kanban_buttons_add_and_delete_cards_and_columns(window):
-    """A board can be authored, not just rearranged: add and delete both of its
-    two things, from a control on the thing itself.
+def test_kanban_chrome_is_quiet_until_the_pointer_asks(window):
+    """A board's own controls are not all of the board.
 
-    Real browser only. Every button here is an HTML overlay positioned from a
-    mermaid rect, so what is being tested is the geometry, the prompt, and the
-    round trip back into the source — none of which jsdom can lay out.
+    Adding used to be a ＋ on every column header *and* a ＋ in every band *and* an
+    empty column standing beside the board: four positioned things per column,
+    none of them drawn by mermaid, all of them answering "how do I add". Now the
+    board is *drawn* with a card slot in every column and a column at the end, so
+    what is left is one control per column — a quiet `⋯` in its corner — and a
+    `✕` only for the card under the pointer. Real browser only: it is all
+    geometry read from a mermaid rect.
     """
     _render(window, KANBAN_EMPTY)
     _enter_edit_mode(window)
 
     board = _wait(
         window,
-        KANBAN_BUTTONS,
-        lambda d: len(d["buttons"]) == 11 and len(d["cards"]) == 2 and len(d["bands"]) == 3,
+        KANBAN_CHROME,
+        lambda d: len(d["buttons"]) == 5 and len(d["cards"]) == 5 and len(d["bands"]) == 4,
         timeout=15,
     )
-    # The card ＋ plus the two header controls per column, and a ✕ per card.
+    # Two real cards, a slot in each of the three columns, and the drawn column.
+    texts = [card["text"] for card in board["cards"]]
+    assert texts.count(KANBAN_CARD_SLOT) == 3, texts
+    assert sorted(t for t in texts if t != KANBAN_CARD_SLOT) == ["One", "Two"], texts
     kinds = sorted(b["kind"] for b in board["buttons"])
+    # A slot is not a card, so it is nothing to delete: a ✕ per real card only.
     assert kinds == (
-        ["mermaid-kanban-add"] * 3
-        + ["mermaid-kanban-card-remove"] * 2
-        + ["mermaid-kanban-column-add"] * 3
-        + ["mermaid-kanban-column-remove"] * 3
+        ["mermaid-kanban-card-remove"] * 2 + ["mermaid-kanban-menu"] * 3
     ), kinds
-    # Each ✕ is inside the card or the band it names. A ✕ that lands on the
-    # neighbouring card is the failure this cannot be eyeballed past.
+    assert {b["text"] for b in board["buttons"] if b["kind"] == "mermaid-kanban-menu"} == {"⋯"}
+
+    # Each control's whole box sits inside the card or band it names.
     for button in board["buttons"]:
-        if button["kind"] == "mermaid-kanban-card-remove":
-            assert any(_buttons_in(card, button) for card in board["cards"]), (button, board["cards"])
-        else:
-            assert any(_buttons_in(band, button) for band in board["bands"]), (button, board["bands"])
-    # The two column controls share the top-right of their band, side by side:
-    # ＋ where it has always been, ✕ in the space the ＋ left for it.
-    for band in board["bands"]:
-        in_band = [
-            b
-            for b in board["buttons"]
-            if b["kind"] != "mermaid-kanban-card-remove" and _buttons_in(band, b)
-        ]
-        add = [b for b in in_band if b["kind"] == "mermaid-kanban-column-add"]
-        remove = [b for b in in_band if b["kind"] == "mermaid-kanban-column-remove"]
-        assert len(add) == 1 and len(remove) == 1, (band, in_band)
-        assert abs(add[0]["box"]["y"] - remove[0]["box"]["y"]) < 1.0, (add[0], remove[0])
-        assert add[0]["box"]["x"] > remove[0]["box"]["x"], (add[0], remove[0])
+        shapes = board["cards"] if button["kind"] == "mermaid-kanban-card-remove" else board["bands"]
+        assert any(_buttons_in(shape, button) for shape in shapes), (button, shapes)
+    # And the drawn column is the board's own, not a control laid beside it.
+    slots = _dump(window, KANBAN_SLOTS)
+    assert _column_slot_past_the_board(board, slots), (slots, board)
 
-    # A card's ✕ asks first, and a Cancel takes nothing away.
-    _click_kanban_button(window, "mermaid-kanban-card-remove", 0)
-    prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
-    assert prompt["title"] == "Delete “One”?" and prompt["danger"], prompt
-    assert prompt["buttons"] == ["Cancel", "Delete"], prompt
-    _answer_delete_prompt(window, "Cancel")
-    _wait(window, DELETE_PROMPT, lambda d: not d["present"], timeout=10)
-    kept = _wait(window, DOC_SOURCE, lambda d: d["n"] == 1, timeout=10)
-    assert "id1[One]" in kept["sources"][0], kept
+    # Nothing is on screen but the controls that belong to the whole board.
+    quiet = [b for b in board["buttons"] if not b["visible"]]
+    assert sorted(b["kind"] for b in quiet) == ["mermaid-kanban-card-remove"] * 2, quiet
+    # A concealed control takes no clicks either, so a hidden ✕ can never eat the
+    # press that was meant to drag the card it is hiding on.
+    assert not any(b["clickable"] for b in quiet), quiet
 
-    # And answering it removes the card, as one source patch.
-    _click_kanban_button(window, "mermaid-kanban-card-remove", 0)
-    prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
-    assert "removed from the Todo column" in prompt["note"], prompt
-    _answer_delete_prompt(window, "Delete")
-    gone = _wait(
-        window,
-        DOC_SOURCE,
-        lambda d: d["n"] == 1 and "id1[One]" not in d["sources"][0],
-        timeout=15,
-    )
-    assert "id2[Two]" in gone["sources"][0], gone
-    # The render rebuilt the board, so the controls are back — now one card.
-    board = _wait(
-        window,
-        KANBAN_BUTTONS,
-        lambda d: len(d["buttons"]) == 10 and len(d["cards"]) == 1,
-        timeout=15,
-    )
-    assert [b["label"] for b in board["buttons"] if b["kind"] == "mermaid-kanban-card-remove"] == [
-        "Delete the card Two"
-    ], board
+    # Hovering a card reveals that card's ✕ and nothing else: there is no per-list
+    # control to reveal any more, because the place to add is drawn.
+    _hover(window, ".items > g.node", 0)
+    assert [(b["kind"], b["label"], b["clickable"]) for b in _shown(window)] == [
+        ("mermaid-kanban-card-remove", "Delete the card One", True)
+    ]
+    # Hovering a *slot* reveals nothing at all: it is a place, not a control.
+    _hover(window, ".mermaid-kanban-slot", 0)
+    assert _shown(window) == [], _shown(window)
 
-    # A column's ＋ adds a column after that one, named by its caption.
-    _click_kanban_button(window, "mermaid-kanban-column-add", 0)
-    opened = _wait(
+    # Leaving the board takes it all away again.
+    _unhover(window)
+    assert _shown(window) == []
+
+
+def test_an_empty_column_draws_its_own_place_to_add(window):
+    """A board of empty columns still shows where a card goes, and takes the press.
+
+    The shape every report was about: a board whose every column is empty, so
+    mermaid sizes each band to its header alone. The place to add a card is drawn
+    in that band by mermaid itself, so it is a card-shaped thing rather than a
+    bar laid out over a 24px name — and the press is taken through the document's
+    own hit test, because a slot nobody can reach is not a place to add.
+    """
+    _render(window, KANBAN_BARE)
+    _enter_edit_mode(window)
+    board = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 5, timeout=15)
+    slots = _wait(window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 4, timeout=15)
+    assert _slots_in_their_bands(board, slots), (slots, board)
+    # Every band is sized to its header alone, and the slot is drawn in it all the
+    # same — so the band grew to a card's height to hold the place to add one.
+    heights = {band["box"]["bottom"] - band["box"]["top"] for band in board["bands"][:4]}
+    assert len(heights) == 1, board["bands"]
+
+    opened = _click_kanban_slot(window, 1)
+    assert opened["v"] == "" and opened["ph"] == "Card title", opened
+    # The field is the slot's own box — its top edge and its centre line are the
+    # slot's, and it is a composer so it is a little taller than the card it
+    # becomes — which is what makes the slot read as turning into a card rather
+    # than as opening a field elsewhere.
+    assert abs(opened["box"]["x"] - opened["anchor"]["x"]) <= 1.0, opened
+    assert abs(opened["box"]["top"] - opened["anchor"]["top"]) <= 1.0, opened
+    assert opened["box"]["height"] >= 20, opened
+    _press_key(window, "Escape")
+
+
+def test_a_composer_gets_the_room_it_needs_to_be_usable(window):
+    """A field taller than the band it fills is still a field you can see.
+
+    A drawn slot is a card, so an empty column's band is sized to header *and*
+    card — but a title that needs several lines takes the composer to more than
+    twice that, and a field is absolutely positioned, so the part of it below the
+    board contributes nothing to the block's height and is not something the
+    editor can scroll to. The block grows to hold it.
+    """
+    _render(window, KANBAN_BARE)
+    _enter_edit_mode(window)
+    board = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 5, timeout=15)
+    band = board["bands"][0]["box"]
+
+    # The short field is the slot's own box, inside the band that was drawn for it.
+    _click_kanban_slot(window, 0)
+    short = _composer(window)
+    assert band["top"] - 0.5 <= short["box"]["top"] <= band["bottom"] + 0.5, (short, band)
+    assert short["box"]["bottom"] <= band["bottom"] + 0.5, (short, band)
+
+    # Long enough that the field has to run past the bottom of the block whatever
+    # slack the document happens to leave, so what is asserted is the block
+    # growing rather than the field happening to fit.
+    _type(window, "a card title long enough that the composer grows well past the height of the column it was opened in")
+    grown = _wait(
         window,
-        "(() => { const i = document.querySelector('.mermaid-edit-input');"
-        " return { v: i ? i.value : null, ph: i ? i.placeholder : null,"
-        "   caption: (document.querySelector('.mermaid-edit-caption') || {}).textContent }; })()",
-        lambda d: d["v"] is not None,
+        COMPOSER_FIT,
+        lambda d: d["box"] is not None
+        and d["box"]["height"] > short["box"]["height"] + 20
+        and d["box"]["bottom"] > short["box"]["bottom"] + 20
+        and d["box"]["bottom"] <= d["block"]["bottom"] + 0.5,
         timeout=10,
     )
+    assert grown["box"]["bottom"] > band["bottom"], (grown, band)
+    assert float(grown["pad"].replace("px", "")) > 0, grown
+    # ...and the room is given back, so the diagram is not left padded out.
+    _press_key(window, "Escape")
+    let_go = _wait(window, COMPOSER_FIT, lambda d: d["box"] is None, timeout=10)
+    assert float((let_go["pad"] or "0px").replace("px", "")) == 0, let_go
+
+    # A title that is committed leaves nothing behind either: the card takes the
+    # room the composer had, in the band it was written in.
+    _click_kanban_slot(window, 0)
+    _type_and_confirm(window, "Ask")
+    filled = _wait(
+        window, DOC_SOURCE, lambda d: d["n"] == 1 and "[Ask]" in d["sources"][0], timeout=15
+    )
+    # Under the first column, which is where the slot it was written in was drawn.
+    assert filled["sources"][0].splitlines()[2].strip() == "[Ask]", filled
+    settled = _wait(window, COMPOSER_FIT, lambda d: d["box"] is None, timeout=10)
+    assert float((settled["pad"] or "0px").replace("px", "")) == 0, settled
+
+
+def test_the_chrome_follows_the_board_when_the_window_is_resized(window):
+    """A control is placed from a rect read off the board, so it must be re-placed.
+
+    A window resize narrows the preview while the svg keeps the size mermaid drew
+    it at, and the board is *centred* in the preview, so everything the controls
+    are positioned from moves without the size of anything observed changing.
+    Left behind, a `⋯` and a `✕` belong to a column that has moved away from
+    them — and the slots, which are part of the drawing, are re-laid-out by
+    mermaid itself.
+    """
+    _render(window, KANBAN_BARE)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 5, timeout=15)
+    try:
+        for width in (860, 640):
+            _resize_view(window, width)
+            board = _wait(
+                window,
+                KANBAN_CHROME,
+                lambda d: len(d["bands"]) == 5 and _placed(d),
+                timeout=10,
+            )
+            assert _placed(board), board
+    finally:
+        _resize_view(window, 1280)
+
+
+def test_kanban_menu_and_ghost_add_and_delete_columns(window):
+    """A column's actions are one menu, and its last one is a real column.
+
+    The two marks that used to share a header corner are menu items now, and the
+    menu hangs inside the column it belongs to so it cannot be mistaken for the
+    next column's. The place a new column goes is *drawn* in the board, so the
+    menu is not the only way to add one and the board says so by standing empty.
+    """
+    _render(window, KANBAN_EMPTY)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 4, timeout=15)
+
+    menu = _open_kanban_menu(window, 0)
+    assert menu["label"] == "Todo column actions", menu
+    # The whole of the column's own actions, in one list, with the one that takes
+    # something away marked as such.
+    assert [i["text"] for i in menu["items"]] == [
+        "Add a column after Todo",
+        "Rename column",
+        "Delete the Todo column",
+    ], menu
+    assert [i["danger"] for i in menu["items"]] == [False, False, True], menu
+    assert menu["items"][0]["focused"] is True, menu
+    # It hangs below its own ⋯ and inside the column, so it is not the next
+    # column's menu opened one to the left.
+    band = _dump(window, KANBAN_CHROME)["bands"][0]
+    assert menu["box"]["top"] >= band["box"]["top"], (menu, band)
+    assert menu["box"]["right"] <= band["box"]["right"] + 1.0, (menu, band)
+    assert menu["box"]["left"] >= band["box"]["left"] - 1.0, (menu, band)
+
+    # Moving the pointer off it takes the menu away again: it is a popover over a
+    # board, not a dialog, so it must not keep the rest of the board out of reach.
+    _hover(window, ".items > g.node", 0)
+    _wait(window, KANBAN_MENU, lambda d: not d["open"], timeout=10)
+
+    # "Add a column after" is the header's ＋, unchanged in what it does.
+    _open_kanban_menu(window, 0)
+    _click_kanban_menu_item(window, "Add a column after Todo")
+    opened = _composer(window)
     assert opened["v"] == "" and opened["ph"] == "Column name", opened
-    assert opened["caption"] == "New column after Todo", opened
     _type_and_confirm(window, "In review")
     added = _wait(
         window,
@@ -1409,12 +1726,13 @@ def test_kanban_buttons_add_and_delete_cards_and_columns(window):
     _wait(
         window,
         SECTIONS,
-        lambda d: d["n"] == 4 and any("In review" in s for s in d["sections"]),
+        lambda d: d["n"] == 5 and any("In review" in s for s in d["sections"]),
         timeout=15,
     )
 
-    # And a column's ✕ says how many cards go with it, then goes.
-    _click_kanban_button(window, "mermaid-kanban-column-remove", 0)
+    # And "Delete" says how many cards go with it, then goes.
+    _open_kanban_menu(window, 0)
+    _click_kanban_menu_item(window, "Delete the Todo column")
     prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
     assert prompt["title"] == "Delete the Todo column?" and prompt["danger"], prompt
     # Todo is empty by now, so the prompt must not claim it is taking cards.
@@ -1428,7 +1746,180 @@ def test_kanban_buttons_add_and_delete_cards_and_columns(window):
     )
     assert "id2[Two]" in dropped["sources"][0], dropped
     assert dropped["sources"][0].splitlines()[1].strip() == "col1[In review]", dropped
-    assert _dump(window, KANBAN_ADDS)["n"] == 3, "the ＋ did not survive a cancelled card"
+    # The board re-rendered into three columns plus the place a fourth goes, so
+    # the chrome is back to four bands and the band that was Todo is gone.
+    board = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 4, timeout=15)
+    assert [b["text"] for b in board["bands"]] == [
+        "In review",
+        "Doing",
+        "Done",
+        KANBAN_COLUMN_SLOT,
+    ], board
+
+    # The drawn column is the board's own answer to "where does a new column go",
+    # and it is named through the label editor its own header is edited by, so the
+    # name is keyed into the band rather than asked for somewhere else.
+    opened = _click_kanban_column_slot(window)
+    assert opened["v"] == KANBAN_COLUMN_SLOT, opened
+    _type_and_confirm(window, "Archive")
+    _wait(
+        window,
+        DOC_SOURCE,
+        lambda d: d["n"] == 1 and "Archive" in d["sources"][0],
+        timeout=20,
+    )
+    _wait(
+        window,
+        SECTIONS,
+        lambda d: d["n"] == 5 and "Archive" in d["sections"],
+        timeout=15,
+    )
+    # And the board is drawn with a *new* place to add a column: the one that was
+    # named is a real column now, so there is a fresh slot at the end again.
+    after = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 5, timeout=15)
+    slots = _dump(window, KANBAN_SLOTS)
+    assert _column_slot_past_the_board(after, slots), (slots, after)
+
+
+def test_kanban_menu_offers_no_delete_on_a_board_of_one(window):
+    """A board keeps at least one column, so a board of one is not offered the
+    delete that would leave nothing behind. What cannot be done is not on the
+    board — the menu included, which is now the only place a column is deleted
+    from."""
+    _set_scheme(window, False)
+    _render(window, KANBAN_ONE)
+    _enter_edit_mode(window)
+    board = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 2, timeout=15)
+
+    menu = _open_kanban_menu(window, 0)
+    assert [i["text"] for i in menu["items"]] == [
+        "Add a column after Review",
+        "Rename column",
+    ], menu
+    assert not any(i["danger"] for i in menu["items"]), menu
+    # A board of one is drawn with the column it would need to get back to two —
+    # and that drawn column is not a column, so it is neither offered the delete
+    # nor counted as the second one that would make the delete possible.
+    slots = _dump(window, KANBAN_SLOTS)
+    assert _column_slot_past_the_board(board, slots), (slots, board)
+
+
+def test_kanban_card_delete_asks_first(window):
+    """A card's ✕ is only there for the card under the pointer, and it asks.
+
+    Revealed by a real hover, because that is the promise: the control is not on
+    the card until the pointer is on it. The ✕ is still the one thing on a card
+    that goes red, because it is the one that takes something away.
+    """
+    _render(window, KANBAN_EMPTY)
+    _enter_edit_mode(window)
+    # Two real cards and a slot in every column, so a card is found by what it
+    # says rather than by where it happens to be in the list of drawn cards.
+    _wait(
+        window,
+        KANBAN_CHROME,
+        lambda d: len([c for c in d["cards"] if c["text"] == KANBAN_CARD_SLOT]) == 3,
+        timeout=15,
+    )
+
+    # A ✕ that is not there cannot be pressed: a Cancel takes nothing away.
+    _hover(window, ".items > g.node", 0)
+    _wait(
+        window,
+        KANBAN_CHROME,
+        lambda d: any(
+            b["kind"] == "mermaid-kanban-card-remove" and b["shown"] and b["label"] == "Delete the card One"
+            for b in d["buttons"]
+        ),
+        timeout=10,
+    )
+    _click_kanban_button(window, "mermaid-kanban-card-remove", 0)
+    prompt = _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
+    assert prompt["title"] == "Delete “One”?" and prompt["danger"], prompt
+    assert prompt["buttons"] == ["Cancel", "Delete"], prompt
+    assert "removed from the Todo column" in prompt["note"], prompt
+    _answer_delete_prompt(window, "Cancel")
+    _wait(window, DELETE_PROMPT, lambda d: not d["present"], timeout=10)
+    kept = _wait(window, DOC_SOURCE, lambda d: d["n"] == 1, timeout=10)
+    assert "id1[One]" in kept["sources"][0], kept
+
+    # And answering it removes the card, as one source patch, leaving one ✕.
+    _hover(window, ".items > g.node", 0)
+    _click_kanban_button(window, "mermaid-kanban-card-remove", 0)
+    _wait(window, DELETE_PROMPT, lambda d: d["present"], timeout=10)
+    _answer_delete_prompt(window, "Delete")
+    gone = _wait(
+        window,
+        DOC_SOURCE,
+        lambda d: d["n"] == 1 and "id1[One]" not in d["sources"][0],
+        timeout=15,
+    )
+    assert "id2[Two]" in gone["sources"][0], gone
+    # One real card is left, and the board is still drawn with a slot in every
+    # column, so what the delete removed was a card and not a place to add one.
+    board = _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 4, timeout=15)
+    assert [c["text"] for c in board["cards"] if c["text"] != KANBAN_CARD_SLOT] == ["Two"], board
+    assert [b["label"] for b in board["buttons"] if b["kind"] == "mermaid-kanban-card-remove"] == [
+        "Delete the card Two"
+    ], board
+
+
+def test_kanban_drawn_slot_composes_a_wrapping_title(window):
+    """A drawn slot becomes a field where it stood, and the field is a composer.
+
+    A card title is written rather than replaced and is often longer than the
+    card that will hold it, so the field wraps: the whole of what is being typed
+    stays visible instead of scrolling out of sight to the right. Enter still
+    commits it, and Shift+Enter is not a way to write a line break into a title
+    mermaid cannot read one into.
+    """
+    _render(window, KANBAN_EMPTY)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 4, timeout=15)
+
+    # The second slot is the second column's, and the field reads in the same
+    # snapshot as the slot it came from: two boxes read at two moments are two
+    # moments of the layout, not two boxes.
+    _click_kanban_slot(window, 1)
+    opened = _composer(
+        window,
+        "document.querySelectorAll('.mermaid .items > g.node.mermaid-kanban-slot')[1]",
+        expression=True,
+    )
+    assert opened["wrap"] is True, "the card composer is not a wrapping field"
+    # Where the slot was: a user who pressed it is looking at that spot, and a
+    # field that appeared somewhere else is a different gesture.
+    assert opened["anchor"] is not None, opened
+    assert abs(opened["box"]["left"] - opened["anchor"]["left"]) <= 1.0, opened
+    assert abs(opened["box"]["top"] - opened["anchor"]["top"]) <= 1.0, opened
+
+    # A line break cannot be written into a card title, so Shift+Enter is refused
+    # rather than left to make a title mermaid will not read back: the field stays
+    # open, with the value the user has, and no card half-created.
+    # A title longer than the pill, so the field has to grow to hold it: the whole
+    # of what is being written is visible rather than scrolled out of sight.
+    title = "A title long enough to wrap onto a second line of the composer"
+    _type(window, title)
+    grown = _composer(window)
+    assert grown["input"]["height"] > opened["input"]["height"] + 8, (opened, grown)
+
+    refused = _press_key(window, "Enter", shift=True)
+    assert refused["value"] == title, refused
+    # Refused means the field is still there, with the title still in it, and
+    # nothing was written to the board: the shift key is not a commit key.
+    still = _dump(window, "(() => { const i = document.querySelector('.mermaid-edit-input');"
+                   " return { open: !!i, value: i ? i.value : null,"
+                   "   broken: i ? i.value.indexOf('\\n') >= 0 : null }; })()")
+    assert still == {"open": True, "value": title, "broken": False}, still
+    assert _dump(window, DOC_SOURCE)["sources"][0] == KANBAN_EMPTY, "Shift+Enter wrote to the board"
+    # Enter is the commit key, and the card is the title that was written.
+    _press_key(window, "Enter")
+    _wait(
+        window,
+        DOC_SOURCE,
+        lambda d: d["n"] == 1 and "A title long enough to wrap" in d["sources"][0],
+        timeout=20,
+    )
 
 
 def test_double_click_below_a_lone_board_ends_its_edit_session(window):
@@ -1452,8 +1943,10 @@ def test_double_click_below_a_lone_board_ends_its_edit_session(window):
 
     after = _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)
     assert not after["marked"], after
-    # The ＋ are edit mode's, so they go with it.
-    assert _dump(window, KANBAN_ADDS)["n"] == 0, "the ＋ outlived the edit session"
+    # The drawn places to add are edit mode's, so they go with it: the source is
+    # the document, and it has no slots in it.
+    left = _dump(window, KANBAN_SLOTS)
+    assert left["cards"] == [] and left["column"] is None, "a drawn slot outlived the edit session"
 
     # ...and the gesture is not the editor's own: a second one is harmless, and
     # the board can be reopened and ended again.
@@ -1562,8 +2055,8 @@ def test_kanban_titles_holding_delimiters_stay_editable(window):
     assert '["Ship (v1)"]' in quoted["source"], quoted
     assert not quoted["error"] and not quoted["notice"], quoted
 
-    # The ＋ takes the same kind of title and lands it the same way.
-    _click_kanban_add(window, 0)
+    # A drawn slot takes the same kind of title and lands it the same way.
+    _click_kanban_slot(window, 0)
     _type_and_confirm(window, "Add (the log)")
     added = _wait(
         window,
@@ -1578,7 +2071,7 @@ def test_kanban_titles_holding_delimiters_stay_editable(window):
     # quote opened -- is refused in place: nothing committed, the input still
     # open, the board still in edit mode, so a second attempt is one edit away.
     before = added["source"]
-    _click_kanban_add(window, 1)
+    _click_kanban_slot(window, 1)
     _press_enter(window, 'a"b')
     refused = _wait(
         window,
@@ -1603,17 +2096,16 @@ def test_kanban_board_command_inserts_a_board_ready_to_fill(window):
     # A document to insert into, so the editor is real before the command runs.
     _set_document(window, "# Tasks\n", "Tasks")
     _open_board_dialog(window, ["Todo", "Doing", "Done"])
-    adds = _wait(window, KANBAN_ADDS, lambda d: d["n"] == 3, timeout=20)
-    assert [add["label"] for add in adds["adds"]] == [
-        "Add a card to Todo",
-        "Add a card to Doing",
-        "Add a card to Done",
-    ], adds
-
     # Real mermaid accepted the built source (col1[…] columns and all), and the
-    # board came up already open for editing — the ＋ above are its own.
+    # board came up already open for editing — drawn with a place to add a card
+    # in every column and a column to add at the end.
+    slots = _wait(
+        window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 3 and d["column"] is not None, timeout=20
+    )
+    assert [c["text"] for c in slots["cards"]] == [KANBAN_CARD_SLOT] * 3, slots
+    assert slots["column"]["text"] == KANBAN_COLUMN_SLOT, slots
     assert _dump(window, EDIT_STATE)["editing"], "the new board is not in edit mode"
-    sections = _wait(window, SECTIONS, lambda d: d["n"] == 3, timeout=15)
+    sections = _wait(window, SECTIONS, lambda d: d["n"] == 4, timeout=15)
     joined = " ".join(sections["sections"])
     assert all(name in joined for name in ("Todo", "Doing", "Done")), sections
     # The board round-trips: what the document holds is what mermaid rendered.
@@ -1621,9 +2113,9 @@ def test_kanban_board_command_inserts_a_board_ready_to_fill(window):
         "kanban\n  col1[Todo]\n  col2[Doing]\n  col3[Done]"
     ]
 
-    # And it behaves like any other board from here: a ＋ creates a card, in the
-    # column it was pressed in.
-    _click_kanban_add(window, 1)
+    # And it behaves like any other board from here: a drawn slot creates a card,
+    # in the column it was drawn in.
+    _click_kanban_slot(window, 1)
     _type_and_confirm(window, "Write the spec")
     state = _wait(
         window, LABEL_STATE, lambda d: any("Write the spec" in t for t in d["texts"]), timeout=20

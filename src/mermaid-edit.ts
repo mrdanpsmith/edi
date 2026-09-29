@@ -25,9 +25,9 @@ import { promptForKanbanDelete } from './urlDialog'
 
 const EDITABLE_CLASS = 'mermaid-editables'
 const INPUT_CLASS = 'mermaid-edit-input'
-/** The box an inline input is placed and sized by, so a caption rides with it. */
+const INPUT_WRAP_CLASS = 'mermaid-edit-input-wrap'
+/** The box an inline input is placed and sized by, and the only child it has. */
 export const FIELD_CLASS = 'mermaid-edit-field'
-const CAPTION_CLASS = 'mermaid-edit-caption'
 /** On the field above an input that is *adding* something, not replacing it. */
 const FIELD_NEW_CLASS = 'mermaid-edit-field-new'
 const INVALID_CLASS = 'mermaid-edit-invalid'
@@ -40,6 +40,9 @@ const INVALID_FLASH_MS = 700
 const DRAG_CARD_CLASS = 'kanban-dragging-card'
 /** On the preview while a card is in flight, so the board stops clipping it. */
 const DRAG_CONTAINER_CLASS = 'kanban-dragging'
+
+/** On a whole lifted list: the frame, so the list reads as one thing leaving. */
+const DRAG_COLUMN_CLASS = 'kanban-dragging-column'
 /** The line drawn in the gap the card will drop into. */
 const DROP_LINE_CLASS = 'kanban-drop-line'
 const DROP_TARGET_CLASS = 'kanban-drop-target'
@@ -58,23 +61,50 @@ const DRAG_LIFT_SCALE = 1.04
  * double-click that ends an edit session without touching any of them.
  */
 export const KANBAN_BUTTON_CLASS = 'mermaid-kanban-btn'
-/** The per-column ＋ that creates a card. */
-export const ADD_BUTTON_CLASS = 'mermaid-kanban-add'
-const COLUMN_ADD_BUTTON_CLASS = 'mermaid-kanban-column-add'
+/** The quiet `⋯` in a column's corner, and the menu it opens. */
+export const MENU_BUTTON_CLASS = 'mermaid-kanban-menu'
+const MENU_LIST_CLASS = 'mermaid-kanban-menu-list'
+const MENU_ITEM_CLASS = 'mermaid-kanban-menu-item'
+/** Drawn on the board for the card a column is offered next, and its composer. */
+export const ADD_SLOT_CLASS = 'mermaid-kanban-slot'
+/** Drawn on the board for the column the board is offered next. */
+export const COLUMN_SLOT_CLASS = 'mermaid-kanban-column-slot'
 const CARD_REMOVE_BUTTON_CLASS = 'mermaid-kanban-card-remove'
-const COLUMN_REMOVE_BUTTON_CLASS = 'mermaid-kanban-column-remove'
-/** Half the board buttons' side, in px: they are placed by their centre. */
-const KANBAN_BUTTON_HALF = 11
-/** Half a card's delete button, which is smaller than a ＋. */
-const REMOVE_BUTTON_HALF = 8
-/** From a card's or column's own corner to the centre of its button. */
-const KANBAN_BUTTON_EDGE = 10
-/** Between a column's two header buttons. */
-const KANBAN_BUTTON_GAP = 5
-/** A field that names a new card or column, wide enough for a real title. */
-const NEW_FIELD_WIDTH = 200
-const NEW_FIELD_HEIGHT = 22
-const NEW_FIELD_LIFT = 8
+/** On the one control that is currently under the pointer. */
+const SHOWN_CLASS = 'is-shown'
+/** On a control that is only there for the thing under the pointer. */
+const CONCEALED_CLASS = 'is-concealed'
+/**
+ * The layer every board control is built into, exported because the node view
+ * keys its own event handling off it: it holds the buttons *and* the menu list,
+ * which is not a button but is just as much the editor's own surface — a double
+ * click inside an open menu is a click on a menu, not a request to end the edit.
+ */
+export const KANBAN_CHROME_CLASS = 'mermaid-kanban-chrome'
+const MENU_ITEM_KIND_CLASS = 'mermaid-kanban-menu-item-'
+const MENU_ITEM_DANGER_CLASS = 'is-danger'
+/** Between a column's `⋯` and the list of items it opens. */
+const MENU_GAP = 6
+// A column's name is one line of text, and the field that asks for it is placed
+// where a new column will stand — which on a board of empty columns is a band
+// only as tall as its header. A composer taller than the slot it fills hangs off
+// the bottom of the board, so it is one line here; the *card* composer is the one
+// that grows with the title being written.
+const COMPOSER_HEIGHT = 30
+// How much room the block keeps under a field that hangs below its diagram.
+const FIELD_MARGIN = 8
+// A composer grows with the title being written, because a card's own box does
+// not: four lines is past anything that fits on a board, and past that the field
+// scrolls rather than climbing over the columns behind it.
+const COMPOSER_MAX_HEIGHT = 96
+/** Half a board button's side, in px. */
+const KANBAN_BUTTON_HALF = 9
+/** Half a card's delete button, which is smaller than a corner control. */
+const REMOVE_BUTTON_HALF = 7
+/** From a card's or column's own corner to the edge of its control. */
+const KANBAN_BUTTON_EDGE = 8
+/** The menu's own width, in px — it is the width of its longest item. */
+const MENU_WIDTH = 190
 /** A field retyping an existing label, in px. */
 const RENAME_FIELD_WIDTH = 140
 
@@ -1436,6 +1466,157 @@ export function buildKanbanSource(columns: string[], opts: { firstCard?: string 
   return ['kanban', ...lines].join('\n')
 }
 
+// ── the slots a board is drawn with in edit mode ─────────────────────────────
+//
+// A board is authored from the board, so the two places a card or a column can
+// be added have to be *drawn*: mermaid lays out the slot the way it lays out the
+// real thing, which is the whole point — a card slot is in the next card's own
+// place rather than a bar laid over the one above it, and a column slot is a
+// column, as wide and as tall as the real ones, so nothing about the board has
+// to be positioned by hand and nothing about it can be laid over.
+//
+// A slot is therefore part of the *source the board is drawn from* and never part
+// of the source that is committed: the document holds the board, and the slots
+// are re-derived from it on every render. Every visual edit is patched against
+// the drawn source and comes back through `kanbanRealSource`, which keeps a slot
+// the user has typed a name for — that is the edit — and drops one that still
+// says what it says.
+
+/** What a column's next card says while it is still only a place to put one. */
+export const KANBAN_CARD_SLOT = '+ Add a card'
+/** What the next column says while it is still only a place to put one. */
+export const KANBAN_COLUMN_SLOT = '+ Add a column'
+// A reserved id, so a slot is recognisable by what it *is* rather than by what
+// it says: a card the user has genuinely titled `+ Add a card` is a real card,
+// and only the drawn slot carries an id nothing else on a board would.
+const SLOT_ID = /^slot[cn]\d*$/
+const isSlotId = (id: string): boolean => SLOT_ID.test(id)
+
+/** Whether a line is one of the board's own slots, rather than content. */
+function isKanbanSlotLine(line: KanbanLine): boolean {
+  return line.kind !== 'blank' && isSlotId(kanbanNodeId(line.text))
+}
+
+/**
+ * The source a board is *drawn* from in edit mode: `source` with a card slot at
+ * the end of every column and a column slot at the end of the board. Anything
+ * that is not a board is handed back untouched, so a diagram family that has no
+ * slots is never touched by this.
+ *
+ * The card slot goes directly after the column's last card — where a new card
+ * would land — and keeps that column's own card indent, so a board written with
+ * tabs or six spaces is drawn the way it was written.
+ */
+export function kanbanAuthoringSource(source: string): string {
+  // Only a board has columns to offer, and the line model is generous enough to
+  // read one out of any indented node list — a flowchart's nodes are exactly that
+  // shape, so the diagram itself has to say which of the two this is.
+  if (detectDiagramType(source) !== 'kanban') return source
+  const doc = parseKanban(source)
+  const first = doc.columns[0]
+  if (first === undefined) return source
+  const columnIndent = doc.lines[first].indent
+  const card = doc.cards.find((entry) => entry.column === 0)
+  const cardIndent = doc.lines[card?.line ?? -1]?.indent ?? `${columnIndent}  `
+  const cardSlot = (column: number): string =>
+    `${cardIndent}slotc${column}[${KANBAN_CARD_SLOT}]`
+  const columnSlot = (): string => `${columnIndent}slotn[${KANBAN_COLUMN_SLOT}]`
+
+  // Where each column's slot lines go: after the last thing that belongs to it.
+  const after = new Map<number, string[]>()
+  doc.columns.forEach((_header, column) => {
+    const end = lastColumnLine(doc, column)
+    // The board's own slot column is the last one, so the new column is drawn
+    // after the last column's card slot — a board read left to right, ending in
+    // the place the next one goes.
+    const lines = [cardSlot(column)]
+    if (column === doc.columns.length - 1) lines.push(columnSlot())
+    after.set(end, [...(after.get(end) ?? []), ...lines])
+  })
+
+  const out: string[] = []
+  doc.lines.forEach((line, index) => {
+    out.push(line.indent + line.text)
+    for (const slot of after.get(index) ?? []) out.push(slot)
+  })
+  return out.join('\n')
+}
+
+/**
+ * The document's own source behind a board that was drawn with slots: a slot
+ * that still carries its placeholder is a place and is dropped, and one the user
+ * has typed a name for is content, so it is kept — rewritten to an ordinary
+ * node, because a slot's reserved id is not something to commit to a document.
+ *
+ * Every visual edit comes through here, whichever affordance made it: a card
+ * typed into a drawn slot, a column named where the next one was drawn, a card
+ * dragged between columns, a label renamed. Ids are only rewritten for the slots
+ * that became content, and a line whose label could not be read is passed
+ * through rather than guessed at.
+ */
+export function kanbanRealSource(patched: string): string {
+  const doc = parseKanban(patched)
+  if (!doc.lines.some(isKanbanSlotLine)) return patched
+  const out: string[] = []
+  let columns = 0
+  for (const line of doc.lines) {
+    if (isKanbanSlotLine(line)) {
+      if (line.label === null) {
+        out.push(line.indent + line.text)
+        continue
+      }
+      // Still a placeholder: nothing was typed, so nothing is added.
+      if (line.label === KANBAN_CARD_SLOT || line.label === KANBAN_COLUMN_SLOT) continue
+      if (line.kind === 'column') {
+        columns += 1
+        out.push(`${line.indent}col${columns}[${kanbanInnerLabel(line.label)}]`)
+      } else {
+        out.push(`${line.indent}[${kanbanInnerLabel(line.label)}]`)
+      }
+      continue
+    }
+    if (line.kind === 'column') columns += 1
+    out.push(line.indent + line.text)
+  }
+  return out.join('\n')
+}
+
+/**
+ * Whether a card in the drawn model is one of the board's own slots, and so is
+ * a place to add a card rather than a card to move or delete.
+ */
+function isKanbanCardSlot(card: KanbanCard, doc: KanbanDoc): boolean {
+  return card.label === KANBAN_CARD_SLOT && isSlotId(kanbanNodeId(doc.lines[card.line].text))
+}
+
+/** Whether a column in the drawn model is the board's own slot column. */
+function isKanbanColumnSlot(column: number, doc: KanbanDoc): boolean {
+  const line = doc.lines[doc.columns[column]]
+  return line !== undefined && isSlotId(kanbanNodeId(line.text))
+}
+
+/**
+ * The board's drawn slots, as the elements the DOM walk found them in. A slot is
+ * a card or a column of the drawn model — that is what makes mermaid lay it out
+ * like one — so the walks that line the model up with the DOM find it there, and
+ * this says which of the things they found is a place to add to rather than
+ * content: not draggable, not deletable, and not something a drop may land in.
+ */
+function kanbanSlotElements(
+  svg: SVGSVGElement,
+  doc: KanbanDoc,
+): { cards: Set<SVGElement>; column: number } {
+  const cards = cardElements(svg)
+  const sections = sectionElements(svg)
+  const slots = new Set<SVGElement>()
+  doc.cards.forEach((card, index) => {
+    const el = cards[index]
+    if (el !== undefined && isKanbanCardSlot(card, doc)) slots.add(el)
+  })
+  const column = doc.columns.findIndex((_line, index) => isKanbanColumnSlot(index, doc))
+  return { cards: slots, column: sections[column] === undefined ? -1 : column }
+}
+
 /**
  * A node's own id, or `''` for a bare label (which *is* the id). The id is what
  * ties a card to the column above it, and it is the one thing a new column has
@@ -1459,6 +1640,24 @@ function lastColumnLine(doc: KanbanDoc, column: number): number {
   const cards = doc.cards.filter((card) => card.column === column)
   const last = cards.length === 0 ? -1 : cards[cards.length - 1].line
   return Math.max(doc.columns[column], last)
+}
+
+/**
+ * The whole run of lines a column is made of: its header and everything down to
+ * the next column header. `lastColumnLine` stops at the last *node*; this does
+ * not, and the difference is the point — a comment or a blank line written
+ * inside a column is part of that column, so a move takes it along and a board
+ * with a blank line between two of its cards does not end up orphaning the
+ * second one.
+ */
+function columnBlock(doc: KanbanDoc, column: number): { start: number; end: number } {
+  const start = doc.columns[column]
+  if (start === undefined) return { start: -1, end: -1 }
+  let end = start
+  for (let line = start + 1; line < doc.lines.length && doc.lines[line]!.kind !== 'column'; line += 1) {
+    end = line
+  }
+  return { start, end }
 }
 
 /**
@@ -1528,7 +1727,10 @@ export function addKanbanColumn(source: string, at: number, label: string): stri
 export function removeKanbanColumn(source: string, column: number): string | null {
   const doc = parseKanban(source)
   const header = doc.columns[column]
-  if (header === undefined || doc.columns.length < 2) return null
+  // A board keeps at least one column, and the slot column the board is drawn
+  // with is a place rather than one: a board of one real column is still a board
+  // of one, and emptying it would leave nothing for the new column to follow.
+  if (header === undefined || realKanbanColumns(doc).length < 2) return null
   const doomed = new Set([header, ...doc.cards.filter((card) => card.column === column).map((card) => card.line)])
   const lines = doc.lines.filter((_, index) => !doomed.has(index))
   const next = rebuildKanban(lines)
@@ -1537,7 +1739,56 @@ export function removeKanbanColumn(source: string, column: number): string | nul
 
 /** How many cards a column delete would take with it, for the prompt to say. */
 export function kanbanColumnCardCount(source: string, column: number): number {
-  return parseKanban(source).cards.filter((card) => card.column === column).length
+  const doc = parseKanban(source)
+  return doc.cards.filter((card) => card.column === column && !isKanbanCardSlot(card, doc)).length
+}
+
+/** The columns a board really has: a drawn slot is a place to add one, not one. */
+function realKanbanColumns(doc: KanbanDoc): number[] {
+  return doc.columns.filter((_line, index) => !isKanbanColumnSlot(index, doc))
+}
+
+/** How many columns a board has, not counting the slot it is drawn with. */
+export function kanbanColumnCount(source: string): number {
+  return realKanbanColumns(parseKanban(source)).length
+}
+
+/**
+ * Move the column at `from` so it ends up at `to` among the board's columns, or
+ * `null` when there is no such column or the move would not change the source.
+ *
+ * A column travels as a whole block — its header, its cards and anything written
+ * inside it (`columnBlock`) — because the grammar is indentation based: a card is
+ * only a card by being indented under the header above it, so leaving a card
+ * behind would silently turn it into a column of its own. Nothing else moves,
+ * which is what keeps a comment above the column where the user put it.
+ *
+ * The insertion point is the same kind of arithmetic `addKanbanColumn` does, from
+ * the other side: before the target column's header, or after the target's own
+ * block. A move rewrites no line's text, so ids, quoting and indentation are all
+ * preserved exactly — a reordered board is the same board read in a new order.
+ */
+export function moveKanbanColumn(source: string, from: number, to: number): string | null {
+  const doc = parseKanban(source)
+  const block = columnBlock(doc, from)
+  if (block.start < 0 || doc.columns.length < 2) return null
+  const position = Math.max(0, Math.min(to, doc.columns.length - 1))
+  if (position === from) return null
+
+  const lines = doc.lines.slice()
+  const moved = lines.splice(block.start, block.end - block.start + 1)
+  // Everything after the lifted block has moved up by its length, so the target
+  // is addressed after the removal rather than before it.
+  const shift = moved.length
+  const shifted = (line: number): number => (line > block.end ? line - shift : line)
+
+  let insertAt: number
+  if (position < from) insertAt = doc.columns[position]!
+  else insertAt = shifted(columnBlock(doc, position).end) + 1
+  lines.splice(insertAt, 0, ...moved)
+
+  const next = rebuildKanban(lines)
+  return next === source ? null : next
 }
 
 // ── rendering ──────────────────────────────────────────────────────────────
@@ -1658,7 +1909,19 @@ export function attachMermaidEditing(
   }
 
   const family = diagramFamily(detectDiagramType(source))
-  const targets = labelTargets(svg, family, source)
+  let targets = labelTargets(svg, family, source)
+  if (family === 'kanban') {
+    // A drawn card slot is a place to add a card rather than a card to re-title,
+    // and the chrome opens a composer for it instead: a card is written, not
+    // renamed, so it is given a field that wraps with the title.
+    const slots = kanbanSlotElements(svg, parseKanban(source))
+    if (slots.cards.size > 0) {
+      targets = targets.filter((target) => {
+        const node = target.el.closest('g.node')
+        return node === null || !slots.cards.has(node as SVGElement)
+      })
+    }
+  }
   for (const target of targets) target.el.classList.add(EDITABLE_CLASS)
 
   // One inline editor at a time. Opening another — a different label, a card
@@ -1693,7 +1956,7 @@ export function attachMermaidEditing(
 
   if (family === 'kanban') {
     dispose.push(attachKanbanDrag(container, svg, source, commit, () => closeEditor?.(false)))
-    dispose.push(attachKanbanButtons(container, svg, source, commit, () => closeEditor?.(false)))
+    dispose.push(attachKanbanChrome(container, svg, source, commit, () => closeEditor?.(false), targets))
   }
 
   editingLayers.set(host, (accept) => {
@@ -1754,25 +2017,31 @@ function contains(rect: DOMRect, x: number, y: number): boolean {
 interface InlineInputSpec {
   /** The `.mermaid` block the field is appended to and positioned against. */
   host: HTMLElement
-  /** Where to put it, in viewport coordinates (`getBoundingClientRect`). */
-  rect: DOMRect
+  /**
+   * Where to put it, in viewport coordinates (`getBoundingClientRect`). A
+   * function is read again on every reposition, which is what a field that fills
+   * a spot the board can move out from under it needs.
+   */
+  rect: DOMRect | (() => DOMRect)
+  /**
+   * Called once the field is in the tree, with a way to place it again. The
+   * callback reports whether it moved anything, which is what a caller's own
+   * settle loop is run by.
+   */
+  onPlaced?: (field: HTMLElement, reposition: () => boolean) => void
   value: string
   placeholder?: string
   /**
    * A short heading above the field — `New card in In Progress` for a card being
    * named, `Card in Todo` for one being renamed. The column name belongs in it
    * rather than in the placeholder because a placeholder is drawn *inside* the
-   * field and disappears at the first keystroke, and because a title like that is
-   * longer than the title it is asking for: in the field it has the whole width
-   * and truncates in the middle of nothing, whereas in a 120px input it was cut
-   * to `New card in In…` before the user had typed anything.
    */
-  caption?: string
   /**
    * `new` reads as adding something rather than replacing what is there, and is
-   * drawn as such: a dashed accent edge and an accent caption, so a field that is
+   * drawn as such: a dashed accent edge and an accent border, so a field that is
    * about to *create* a card cannot be mistaken for one that is about to
-   * overwrite one.
+   * overwrite one. It needs no words to say which: the place it was opened from
+   * is drawn in the board, so the board is the sentence it finishes.
    */
   tone?: 'label' | 'new'
   /**
@@ -1780,6 +2049,15 @@ interface InlineInputSpec {
    * legible title — a new card is typed from nothing, so it is given room.
    */
   minWidth?: number
+  /**
+   * Type a wrapping `textarea` rather than a one-line `input`, for a title that
+   * is written rather than replaced. A card title is still a single line of
+   * *source* — mermaid will not read a line break into a card — so the wrap is
+   * only ever display: the whole of what is being typed stays visible instead of
+   * scrolling out of sight to the right, and Enter is still the key that commits.
+   * That is the whole difference, so it is one flag rather than a second field.
+   */
+  multiline?: boolean
   /**
    * Enter, or a blur. Return `true` when the caller is done with the input
    * either way, `false` to refuse the value quietly, and a string to refuse it
@@ -1806,37 +2084,60 @@ interface InlineInputSpec {
  * being editable.
  */
 function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
-  const { host, rect, value, placeholder, caption, tone = 'label', onAccept, onCancel } = spec
+  const { host, value, placeholder, tone = 'label', onAccept, onCancel } = spec
   const origin = host.getBoundingClientRect()
-  // A wrapper owns the geometry, so a caption and the input stay one box that can
-  // be placed over a column and clipped to nothing: an absolutely positioned
+  // A live box when the caller has one: a composer stands where the control it
+  // replaced stood, and the board moves under it (a scroll, a resize, the block
+  // growing around the field itself), so a box read once at open leaves the field
+  // standing in the past while the control it covers has gone somewhere else.
+  const box = (): DOMRect => (typeof spec.rect === 'function' ? spec.rect() : spec.rect)
+  // A wrapper owns the geometry, so the input is one box that can be placed over
+  // a column and clipped to nothing: an absolutely positioned
   // child of a horizontal scroller is placed from the scrolled content, not from
   // the visible box, so the preview's own scroll has to be added back (`host` is
   // the block for a label, which never scrolls).
   const field = document.createElement('div')
   field.className = tone === 'new' ? `${FIELD_CLASS} ${FIELD_NEW_CLASS}` : FIELD_CLASS
 
-  if (caption !== undefined) {
-    const label = document.createElement('div')
-    label.className = CAPTION_CLASS
-    label.textContent = caption
-    // The full text stays reachable on hover, so a column too long to show is
-    // truncated rather than lost.
-    label.title = caption
-    field.appendChild(label)
-  }
-
-  const input = document.createElement('input')
-  input.type = 'text'
-  input.className = INPUT_CLASS
+  const input = document.createElement(spec.multiline ? 'textarea' : 'input')
+  if (input instanceof HTMLInputElement) input.type = 'text'
+  input.className = spec.multiline ? `${INPUT_CLASS} ${INPUT_WRAP_CLASS}` : INPUT_CLASS
   input.value = value
   if (placeholder) input.placeholder = placeholder
-  input.style.height = `${rect.height || 20}px`
+  input.style.height = `${box().height || 20}px`
+  // A wrapping field is sized by its own content, not by the slot it replaced:
+  // a card title is longer than the card-shaped place it was opened from more
+  // often than not, and a fixed box either scrolls the rest of the title out of
+  // sight or covers the columns behind it with a field nothing is being typed
+  // into.
+  if (spec.multiline) {
+    input.style.height = 'auto'
+    input.addEventListener('input', () => {
+      input.style.height = 'auto'
+      input.style.height = `${Math.min(input.scrollHeight, COMPOSER_MAX_HEIGHT)}px`
+      // Past the cap the field stops climbing and scrolls: the point is that the
+      // whole title is *reachable*, not that the composer can eat the board.
+      const scroll = input.scrollHeight > COMPOSER_MAX_HEIGHT
+      input.style.overflowY = scroll ? 'auto' : 'hidden'
+      fit()
+    })
+  }
 
-  const width = Math.max(rect.width, spec.minWidth ?? 0, 40)
-  field.style.left = `${rect.left - origin.left + host.scrollLeft}px`
-  field.style.top = `${rect.top - origin.top}px`
+  const width = Math.max(box().width, spec.minWidth ?? 0, 40)
   field.style.width = `${width}px`
+
+  const place = (): boolean => {
+    const at = box()
+    // `scrollLeft` because the preview is a horizontal scroller: an absolute
+    // child is placed from the scrolled content, not from the visible box.
+    const left = `${at.left - origin.left + host.scrollLeft}px`
+    const top = `${at.top - origin.top}px`
+    const moved = field.style.left !== left || field.style.top !== top
+    field.style.left = left
+    field.style.top = top
+    return moved
+  }
+  place()
 
   let closed = false
   const close = (): void => {
@@ -1845,6 +2146,7 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
     // Not `.remove()`: a blur handler can fire while the field is being
     // detached, and `remove()` throws when the node no longer has a parent.
     field.parentNode?.removeChild(field)
+    if (block) block.style.paddingBottom = paddingAtOpen
   }
   const finish = (accept: boolean): void => {
     if (closed) return
@@ -1874,8 +2176,16 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
   input.addEventListener('keydown', (event) => {
     const key = (event as KeyboardEvent).key
     if (key === 'Enter') {
+      // A wrapping field would otherwise commit on the first line and leave the
+      // rest of the title behind, so Enter is the commit key here whatever the
+      // field is.
       event.preventDefault()
-      finish(true)
+      // Shift+Enter is the way a textarea normally starts a new line, and a
+      // mermaid card title cannot hold one — so it is refused, leaving the field
+      // open with the value the user has. Committing instead would be worse than
+      // doing nothing: the title would go in without the line break, and the rest
+      // of what was typed would be left behind in a field that has gone.
+      if (!(event as KeyboardEvent).shiftKey) finish(true)
     } else if (key === 'Escape') {
       event.preventDefault()
       finish(false)
@@ -1892,8 +2202,42 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
     field.addEventListener(type, (event) => event.stopPropagation())
   }
 
+  // A field is absolutely positioned, so it contributes nothing to the block's
+  // height — and a composer can easily be taller than the thing it fills: mermaid
+  // sizes an empty column's band to its header alone, so the field that asks for
+  // the first card in it hangs below the band, and at the end of a document the
+  // part that hangs is not something the editor can scroll to. The dialog would
+  // simply be clipped. So the block grows to hold the field, and gives the space
+  // back when it goes.
+  const block = host.closest<HTMLElement>('.mermaid')
+  const paddingAtOpen = block?.style.paddingBottom ?? ''
+  /** Whether the block had to grow (or shrink back) for the field. */
+  const fit = (): boolean => {
+    if (!block) return false
+    const shown = Number.parseFloat(block.style.paddingBottom) || 0
+    const room = block.getBoundingClientRect().bottom - shown - field.getBoundingClientRect().bottom
+    const pad = room < FIELD_MARGIN ? Math.ceil(FIELD_MARGIN - room) : 0
+    if (pad === shown) return false
+    block.style.paddingBottom = pad === 0 ? '' : `${pad}px`
+    // Growing the block makes the field reachable, not looked at — and only when
+    // it really grew, so this cannot feed the place that just caused it.
+    if (pad > 0) field.scrollIntoView({ block: 'nearest' })
+    return true
+  }
+
   field.appendChild(input)
   host.appendChild(field)
+  // The field's height is final once it is in the tree and the browser has laid
+  // it out, which is the next frame.
+  requestAnimationFrame(() => {
+    fit()
+    spec.onPlaced?.(field, () => {
+      // Reported, because growing the block is itself something that moves the
+      // board: the diagram is centred in the block, so a block that grew shifts
+      // every rect this was just placed from. The caller settles it.
+      return place() || fit()
+    })
+  })
   input.focus()
   if (value) input.select()
   return finish
@@ -1968,13 +2312,27 @@ function attachKanbanDrag(
     if (down.button !== 0) return
     const cards = cardElements(svg)
     const sections = sectionElements(svg)
-    const card = cardAt(down, cards)
-    if (!card) return
     const doc = parseKanban(source)
     // A model that does not line up with the DOM would mis-attribute the move.
     if (doc.cards.length !== cards.length || doc.columns.length !== sections.length) return
-    closeEditor()
-    armDrag({ container, svg, source, doc, cards, sections, from: cards.indexOf(card), down, commit })
+    // A card wins over the column it sits in: the cards are a layer of their own,
+    // painted above the frames, so a press that landed on one means the card.
+    const slots = kanbanSlotElements(svg, doc)
+    const card = cardAt(down, cards)
+    if (card) {
+      // A drawn slot is a place, not a card: pressing one asks for a title
+      // rather than lifting anything, and it falls through to nothing so the
+      // column it stands in is not dragged instead.
+      if (slots.cards.has(card)) return
+      closeEditor()
+      armCardDrag({ container, svg, source, doc, cards, sections, slots, from: cards.indexOf(card), down, commit })
+      return
+    }
+    const column = columnAt(down, sections, cards)
+    if (column >= 0 && column !== slots.column) {
+      closeEditor()
+      armColumnDrag({ container, svg, source, doc, cards, sections, slots, from: column, down, commit })
+    }
   }
   // Cancelling dragstart keeps the browser's own SVG drag (which swallows the
   // pointer stream) from ever starting; preventing pointerdown instead would
@@ -1995,18 +2353,83 @@ interface ArmedDrag {
   doc: KanbanDoc
   cards: SVGElement[]
   sections: SVGElement[]
+  /** The board's drawn slots, which are places rather than content. */
+  slots: { cards: Set<SVGElement>; column: number }
   from: number
   down: PointerEvent
   commit: (source: string) => void
 }
 
+/**
+ * The section a release would land in, or `null` for the drawn slot column: it
+ * is a place to *name*, not a column to put anything in, so nothing is offered
+ * over it and a release there does nothing.
+ */
+function liveHit(event: PointerEvent, sections: SVGElement[], slotColumn: number): SVGElement | null {
+  const target = hitTest(event, sections, sectionRect)
+  return target !== null && sections.indexOf(target) === slotColumn ? null : target
+}
+
+/** How a lift is driven: where the pointer is over, and what a release does. */
+interface DragHooks {
+  /** The element the pointer is over, marked as the drop target. */
+  highlight: (event: PointerEvent) => SVGElement | null
+  /**
+   * Where the line goes, which is the only part of a drag the user can see, in
+   * viewport coordinates — the drawing's own units are this group's business.
+   * `null` promises nothing: there is nowhere to land.
+   */
+  place: (event: PointerEvent, target: SVGElement | null) => { x1: number; y1: number; x2: number; y2: number } | null
+  /** The commit, once the release has been acted on. */
+  drop: (event: PointerEvent, target: SVGElement | null, moved: boolean) => void
+}
+
 function cardAt(event: MouseEvent, cards: SVGElement[]): SVGElement | null {
+  return drawnElementAt(event, '.items > .node', cards)
+}
+
+/**
+ * The drawn element a press or click landed in, and one rule for both: the
+ * element the pointer is *on* first, then the coordinates. A card or a slot is
+ * part of the diagram rather than a control on top of it, so the pointer can be
+ * over its label, its box or its background, and an element's own box alone
+ * answers only for the part of it that is the card.
+ */
+function drawnElementAt(event: MouseEvent, selector: string, candidates: SVGElement[]): SVGElement | null {
   const el = event.target
   if (el instanceof Element) {
-    const direct = el.closest<SVGElement>('.items > .node')
-    if (direct && cards.includes(direct)) return direct
+    const direct = el.closest<SVGElement>(selector)
+    if (direct && candidates.includes(direct)) return direct
   }
-  return hitTest(event, cards, (card) => card.getBoundingClientRect())
+  return hitTest(event, candidates, (candidate) => candidate.getBoundingClientRect())
+}
+
+/**
+ * The column a press that missed every card belongs to — the column's own frame,
+ * which is the only part of a list that is not one of its cards. A press on the
+ * header label is none of its business (that is a rename, and the label editor
+ * opens on the click), so a list is grabbed by the frame around its name, which
+ * is also where a hand goes for a whole list. `-1` when the press is not a grab.
+ */
+function columnAt(event: MouseEvent, sections: SVGElement[], cards: SVGElement[]): number {
+  if (hitTest(event, cards, (card) => card.getBoundingClientRect()) !== null) return -1
+  const el = event.target
+  if (el instanceof Element) {
+    if (el.closest('.cluster-label') || el.closest('.cluster-title')) return -1
+    const direct = el.closest<SVGElement>('.sections > g')
+    if (direct) {
+      const index = sections.indexOf(direct)
+      return index < 0 ? -1 : index
+    }
+  }
+  // The coordinate fallback for a diagram shown as a baked bitmap, where the
+  // press lands on an `<img>` rather than on the section: one whose own label is
+  // under the pointer is still a rename and not a grab.
+  const hit = hitTest(event, sections, sectionRect)
+  if (hit === null) return -1
+  const label = hit.querySelector('.cluster-label, .cluster-title')
+  if (label && contains(label.getBoundingClientRect(), event.clientX, event.clientY)) return -1
+  return sections.indexOf(hit)
 }
 
 /** The kanban card under the pointer, if this diagram has cards to drag. */
@@ -2014,38 +2437,95 @@ function kanbanCardAt(event: MouseEvent, svg: SVGSVGElement, family: DiagramFami
   return family === 'kanban' ? cardAt(event, cardElements(svg)) : null
 }
 
-function armDrag(drag: ArmedDrag): void {
-  const { container, svg, source, doc, cards, sections, from, down, commit } = drag
-  const card = cards[from]
-  // The drag only ever *appends* to the transform mermaid gave the card, so
-  // putting it back is restoring a string rather than recomputing a position.
-  const baseTransform = card.getAttribute('transform')
-  const map = svgMapping(svg)
-  const sectionAt = (event: MouseEvent): SVGElement | null => hitTest(event, sections, sectionRect)
+/**
+ * Lift `elements` and have them follow the pointer, then put every one of them
+ * back exactly as it was.
+ *
+ * What moves *is* the thing: no clone, no ghost, and the hole it leaves behind is
+ * the only record of where it came from. Every transform mermaid gave an element
+ * is read first and kept, so restoring a lift is putting a string back rather
+ * than recomputing a position — which is also why an element that had no
+ * transform at all (a column frame) is restored by removing one.
+ *
+ * Two things have to be arranged for a lifted element to be visible, and both are
+ * about paint order rather than geometry: SVG paints in document order, so a
+ * lifted element is re-appended to the end of its own parent to be *on top* of
+ * what it is passing over, and put back before its captured follower on the way
+ * out. The follower is captured rather than re-walked, because the model→element
+ * mapping these callers hold is the captured array.
+ */
+function liftElements(
+  elements: readonly SVGElement[],
+  cls: string,
+): { move: (dx: number, dy: number) => void; restore: () => void } {
+  const bases = elements.map((element) => ({
+    element,
+    transform: element.getAttribute('transform'),
+    parent: element.parentNode,
+    follower: element.nextSibling,
+  }))
+  for (const { element, parent } of bases) {
+    parent?.appendChild(element)
+    element.classList.add(cls)
+  }
+  return {
+    move: (dx, dy) => {
+      for (const { element, transform } of bases) {
+        element.setAttribute('transform', `${transform ?? ''} translate(${dx}, ${dy}) scale(${DRAG_LIFT_SCALE})`.trim())
+      }
+    },
+    restore: () => {
+      for (const { element, transform, parent, follower } of bases) {
+        if (transform === null) element.removeAttribute('transform')
+        else element.setAttribute('transform', transform)
+        element.classList.remove(cls)
+        if (parent) parent.insertBefore(element, follower)
+      }
+    },
+  }
+}
 
-  let lifted = false
+/**
+ * The drop indicator, created on the first move and inserted *into the svg ahead
+ * of the cards*: it is a hint about the slot the release drops into, and the
+ * thing being dragged is the subject, so every card paints over the line. An
+ * overlay in the preview cannot do this — a positioned child of the preview
+ * paints above the whole drawing, which is how the line used to draw across the
+ * very card it was previewing.
+ */
+function createDropLine(svg: SVGSVGElement): SVGLineElement {
+  const line = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line')
+  line.setAttribute('class', DROP_LINE_CLASS)
+  svg.insertBefore(line, svg.querySelector('.items'))
+  return line
+}
+
+/**
+ * The machinery a card drag and a column drag share: threshold, lift, indicator,
+ * restore. Everything that differs is in `hooks`, because "where does this land"
+ * is the only real difference — a card lands in a slot inside a list, a list lands
+ * in a gap between two lists.
+ */
+function armDragGroup(drag: ArmedDrag, lifted: readonly SVGElement[], cls: string, hooks: DragHooks): void {
+  const { container, svg, down } = drag
+  const map = svgMapping(svg)
+  let group: ReturnType<typeof liftElements> | null = null
   let line: SVGLineElement | null = null
   let over: SVGElement | null = null
-  // Where the card sat in `.items`, so the paint order can be undone too: SVG
-  // paints in document order, and every card is one long list of siblings, so
-  // the dragged card has to become the last of them to be *on top* of the board
-  // it is passing over. The model→element mapping is the captured `cards` array,
-  // which re-appending does not disturb — but a fresh `cardElements()` walk
-  // would, so the original order is restored on the way out.
-  const parent = card.parentNode
-  const follower = card.nextSibling
+
+  /** A point of the board in viewport px, in the drawing's own user units. */
+  const user = (x: number, y: number): { x: number; y: number } => ({
+    x: map.x + (x - map.rect.left) / map.scaleX,
+    y: map.y + (y - map.rect.top) / map.scaleY,
+  })
 
   const stop = (): void => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onCancel)
-    if (lifted) {
-      if (baseTransform === null) card.removeAttribute('transform')
-      else card.setAttribute('transform', baseTransform)
-      card.classList.remove(DRAG_CARD_CLASS)
-      container.classList.remove(DRAG_CONTAINER_CLASS)
-      if (parent) parent.insertBefore(card, follower)
-    }
+    group?.restore()
+    group = null
+    container.classList.remove(DRAG_CONTAINER_CLASS)
     line?.remove()
     line = null
     over?.classList.remove(DROP_TARGET_CLASS)
@@ -2054,79 +2534,34 @@ function armDrag(drag: ArmedDrag): void {
 
   const onMove = (event: Event): void => {
     const pointer = event as PointerEvent
-    if (!lifted) {
+    if (!group) {
       if (Math.hypot(pointer.clientX - down.clientX, pointer.clientY - down.clientY) < DRAG_THRESHOLD) return
-      lifted = true
-      card.classList.add(DRAG_CARD_CLASS)
+      group = liftElements(lifted, cls)
+      group.move(0, 0)
       container.classList.add(DRAG_CONTAINER_CLASS)
-      parent?.appendChild(card)
-      line = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line')
-      line.setAttribute('class', DROP_LINE_CLASS)
-      // Into the svg, ahead of the cards: the indicator is a hint about the slot
-      // the card will drop into, and the card being dragged is the subject, so
-      // every card paints over the line. An overlay in the preview cannot do
-      // this — a positioned child of the preview paints above the whole svg.
-      svg.insertBefore(line, svg.querySelector('.items'))
+      line = createDropLine(svg)
     }
     // The drag is ours now, so no text selection or native drag should follow.
     pointer.preventDefault()
-    // The card *is* the thing under the pointer: no clone, no second copy of
-    // it on screen, and the gap it leaves behind is the only record of where
-    // it came from. The offset is divided back into the viewBox's own units, so
-    // it tracks the pointer by a pixel whatever the board is scaled to.
-    const dx = (pointer.clientX - down.clientX) / map.scaleX
-    const dy = (pointer.clientY - down.clientY) / map.scaleY
-    card.setAttribute(
-      'transform',
-      `${baseTransform ?? ''} translate(${dx}, ${dy}) scale(${DRAG_LIFT_SCALE})`.trim(),
-    )
-    const next = sectionAt(pointer)
-    if (next !== over) {
-      over?.classList.remove(DROP_TARGET_CLASS)
-      over = next
-      over?.classList.add(DROP_TARGET_CLASS)
-    }
-    placeDropLine(pointer, next)
+    // The offset is divided back into the viewBox's own units, so the thing
+    // tracks the pointer by a pixel whatever the board is scaled to.
+    group.move((pointer.clientX - down.clientX) / map.scaleX, (pointer.clientY - down.clientY) / map.scaleY)
+    const target = hooks.highlight(pointer)
+    if (line) placeLine(line, hooks.place(pointer, target))
   }
-
-  const onUp = (event: Event): void => {
-    const pointer = event as PointerEvent
-    const dragged = lifted
-    const target = dragged ? sectionAt(pointer) : null
-    const column = target ? sections.indexOf(target) : -1
-    const index = dragged && column >= 0 ? dropIndex(pointer, doc, cards, from, column) : -1
-    stop()
-    if (column < 0) return
-    const next = moveKanbanCard(source, from, column, index)
-    if (next !== null) commit(next)
-  }
-
-  const onCancel = (): void => stop()
 
   /**
-   * Put the line where a release would drop the card. It is placed on every
-   * move rather than only on the target changing, because the *index* changes
-   * within one column all the time, and that index is the thing the user cannot
-   * see: a card over a three-card column is going to the first, second or third
-   * slot, and nothing about the column outline says which.
+   * The line is an svg child, so its endpoints are written in the drawing's own
+   * units — which is also why a scrolled or zoomed preview needs no correction
+   * here, and why the caller only ever thinks in the pixels it was handed.
    */
-  const placeDropLine = (pointer: PointerEvent, target: SVGElement | null): void => {
-    if (!line) return
-    if (!target) {
-      // Off every column there is nowhere to land, so nothing is promised: the
-      // line going away is the answer, and a release here does nothing.
+  const placeLine = (line: SVGLineElement, at: { x1: number; y1: number; x2: number; y2: number } | null): void => {
+    if (!at) {
       line.style.display = 'none'
       return
     }
-    const column = sections.indexOf(target)
-    const siblings = doc.cards.flatMap((card, position) =>
-      card.column === column && position !== from ? [cards[position].getBoundingClientRect()] : [],
-    )
-    const at = dropLineAt(siblings, dropIndex(pointer, doc, cards, from, column), sectionRect(target))
-    // The line is an svg child, so it is placed in the drawing's own units —
-    // which also means a scrolled or zoomed preview needs no correction here.
-    const start = user(at.x, at.y)
-    const end = user(at.x + at.width, at.y)
+    const start = user(at.x1, at.y1)
+    const end = user(at.x2, at.y2)
     line.style.display = ''
     line.setAttribute('x1', `${start.x}`)
     line.setAttribute('y1', `${start.y}`)
@@ -2134,15 +2569,144 @@ function armDrag(drag: ArmedDrag): void {
     line.setAttribute('y2', `${end.y}`)
   }
 
-  /** A point of the board in viewport px, in the drawing's own user units. */
-  const user = (x: number, y: number): { x: number; y: number } => ({
-    x: map.x + (x - map.rect.left) / map.scaleX,
-    y: map.y + (y - map.rect.top) / map.scaleY,
-  })
+  const onUp = (event: Event): void => {
+    const pointer = event as PointerEvent
+    const target = hooks.highlight(pointer)
+    const moved = group !== null
+    stop()
+    hooks.drop(pointer, target, moved)
+  }
+
+  const onCancel = (): void => stop()
+
+  // The drop target is the element the pointer is over, marked for the drag's
+  // duration; the card case marks the column it is in, the column case the list
+  // whose gap it would fill.
+  const original = hooks.highlight
+  hooks.highlight = (event: PointerEvent): SVGElement | null => {
+    const next = original(event)
+    if (next !== over) {
+      over?.classList.remove(DROP_TARGET_CLASS)
+      over = next
+      over?.classList.add(DROP_TARGET_CLASS)
+    }
+    return next
+  }
 
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
   window.addEventListener('pointercancel', onCancel)
+}
+
+/** Drag a card into another column, or to another spot in its own. */
+function armCardDrag(drag: ArmedDrag): void {
+  const { source, doc, cards, sections, from } = drag
+  const card = cards[from]
+
+  armDragGroup(
+    drag,
+    [card],
+    DRAG_CARD_CLASS,
+    {
+      highlight: (event) => liveHit(event, sections, drag.slots.column),
+      /**
+       * Put the line where a release would drop the card. It is placed on every
+       * move rather than only on the target changing, because the *index* changes
+       * within one column all the time, and that index is the thing the user
+       * cannot see: a card over a three-card column is going to the first, second
+       * or third slot, and nothing about the column outline says which.
+       */
+      place: (event, target) => {
+        // Off every column there is nowhere to land, so nothing is promised: the
+        // line going away is the answer, and a release here does nothing.
+        if (!target) return null
+        const column = sections.indexOf(target)
+        const siblings = doc.cards.flatMap((entry, position) =>
+          entry.column === column && position !== from ? [cards[position].getBoundingClientRect()] : [],
+        )
+        const at = dropLineAt(siblings, dropIndex(event, doc, cards, from, column), sectionRect(target))
+        return { x1: at.x, y1: at.y, x2: at.x + at.width, y2: at.y }
+      },
+      drop: (event, target, moved) => {
+        const column = moved && target ? sections.indexOf(target) : -1
+        if (column < 0) return
+        const index = dropIndex(event, doc, cards, from, column)
+        const next = moveKanbanCard(source, from, column, index)
+        if (next !== null) drag.commit(next)
+      },
+    },
+  )
+}
+
+/** Drag a whole list to another place on the board. */
+function armColumnDrag(drag: ArmedDrag): void {
+  const { source, doc, cards, sections, from } = drag
+  const frame = sections[from]
+  if (!frame) return
+  // A list is not one element: the frame and its cards are two sibling lists, so
+  // the whole list is lifted as the unit it reads as — otherwise the frame would
+  // travel and the cards would stay behind.
+  const lifted = [frame, ...cards.filter((_, index) => doc.cards[index]?.column === from)]
+
+  armDragGroup(drag, lifted, DRAG_COLUMN_CLASS, {
+    highlight: (event) => liveHit(event, sections, drag.slots.column),
+    /**
+     * A vertical line in the gap the list will drop into, spanning the board. The
+     * gap is the answer to "where does this land" the same way the card line's gap
+     * is, and it has to be drawn *between* two lists: a list held over three
+     * columns could go into any of three, and the frames are all the same colour.
+     */
+    place: (event) => {
+      const at = columnGapAt(sections, columnSlotAt(event, sections, from), from)
+      return at === null ? null : { x1: at.x, y1: at.y, x2: at.x, y2: at.y + at.height }
+    },
+    drop: (event, _target, moved) => {
+      if (!moved) return
+      const next = moveKanbanColumn(source, from, columnSlotAt(event, sections, from))
+      if (next !== null) drag.commit(next)
+    },
+  })
+}
+
+/**
+ * Where a column lands: the number of columns whose middle lies left of the
+ * pointer, clamped to the board. The same shape as a card's insertion index, one
+ * level up, and for the same reason — the slot *is* the answer, so the drop is
+ * computed from the pointer's position rather than from the column it happens to
+ * be over.
+ */
+function columnSlotAt(event: PointerEvent, sections: SVGElement[], from: number): number {
+  let slot = 0
+  sections.forEach((section, index) => {
+    if (index === from) return
+    const rect = sectionRect(section)
+    if (rect.left + rect.width / 2 < event.clientX) slot += 1
+  })
+  return Math.max(0, Math.min(slot, sections.length - 1))
+}
+
+/**
+ * The vertical line for a slot: the gap the list will drop into.
+ *
+ * The neighbours are read off the board *without* the moving column, because that
+ * is the row of frames the gap is measured in — `slot` is the index the list will
+ * end up at, and a list dragged to the end lands past the last frame that is
+ * still there, not past its own old one. Measuring against the untouched row
+ * would put the line inside whichever column happened to be adjacent before.
+ */
+function columnGapAt(sections: SVGElement[], slot: number, from: number): { x: number; y: number; height: number } | null {
+  if (sections.length === 0) return null
+  const rects = sections.map(sectionRect)
+  const rest = rects.flatMap((rect, index) => (index === from ? [] : [rect]))
+  if (rest.length === 0) return null
+  const left = slot === 0 ? rest[0]!.left : rest[slot - 1]!.right
+  const right = slot === rest.length ? rest[rest.length - 1]!.right : rest[slot]!.left
+  const top = Math.min(...rects.map((rect) => rect.top))
+  const bottom = Math.max(...rects.map((rect) => rect.bottom))
+  // The board's own height, top to bottom: a column is inserted between two
+  // frames rather than into a slot inside one, so the line is a full-height rule
+  // rather than a short bar in a band.
+  return { x: (left + right) / 2, y: top, height: bottom - top }
 }
 
 /** The section's background rect, i.e. the column area mermaid sized to its cards. */
@@ -2229,63 +2793,104 @@ function dropIndex(event: PointerEvent, doc: KanbanDoc, cards: SVGElement[], fro
   return index
 }
 
-// ── kanban board buttons ───────────────────────────────────────────────────
+// ── kanban board chrome ─────────────────────────────────────────────────────
 
 /**
- * The board's own controls in edit mode: a ＋ that names a new card at the bottom
- * of every column, and — in the top-right corner of every card and every column —
- * a ✕ to delete it and a ＋ to add a column after it. The card ＋ is at the
- * bottom because that is where a new card will appear, and the corner buttons
- * are in the corner because a card's own box has no room for a row of them.
+ * A placed control's box, in viewport coordinates. The width and height are
+ * optional because a control is sized by its own content in one case only — the
+ * menu, whose height is however many items it has — and every other caller says
+ * both, so this is what a full `DOMRect` is accepted as.
+ */
+interface ChromeBox {
+  left: number
+  top: number
+  width?: number
+  height?: number
+}
+
+/**
+ * The board's own controls in edit mode, and as few of them as a board can be
+ * read with: a quiet `⋯` in the corner of every real column, and a `✕` on the
+ * card under the pointer. The places to add are not controls at all — they are
+ * *drawn* into the board (`kanbanAuthoringSource`), so mermaid lays them out and
+ * this layer never has to.
+ *
+ * A board used to carry a ＋ and a ✕ on every column header *and* a ＋ in every
+ * band — three marks of the same size per column, none of them saying what they
+ * were for, and the two in a header competing for one corner. The column's own
+ * actions collapse into the `⋯`, the header's two floating marks become menu
+ * items, and everything belonging to a single card is revealed only for the card
+ * under the pointer. The `⋯` stays visible whatever the pointer is doing: a
+ * control nobody can find is not quieter, it is missing.
  *
  * They are HTML in the preview rather than `foreignObject`s inside mermaid's own
  * layout: a view-mode diagram is a baked bitmap, which cannot host them, and an
  * overlay is rebuilt from the rendered sections on every render anyway. Their
- * geometry is the card or section rect minus the preview's — the same arithmetic
- * the drag's drop line used to need — recomputed after each render and on every
- * `ResizeObserver` tick, which is what covers the zoom toolbar (it sets
- * `svg.style.width`), a window resize and a theme change in one hook. A
- * `foreignObject` inside the section is the fallback if the overlay ever proves
- * stubborn, but it could only be used in edit mode for the same reason.
+ * geometry is the card or section rect minus the preview's — recomputed after
+ * each render and on every `ResizeObserver` tick, which is what covers the zoom
+ * toolbar (it sets `svg.style.width`), a window resize and a theme change in one
+ * hook. A `foreignObject` inside the section is the fallback if the overlay ever
+ * proves stubborn, but it could only be used in edit mode for the same reason.
  */
-function attachKanbanButtons(
+function attachKanbanChrome(
   container: HTMLElement,
   svg: SVGSVGElement,
   source: string,
   commit: (source: string) => void,
   openEditor: (finish: (accept: boolean) => void) => void,
+  targets: LabelTarget[],
 ): () => void {
   const sections = sectionElements(svg)
   const cards = cardElements(svg)
   const doc = parseKanban(source)
-  // A model that does not line up with the DOM would put a card in a column the
-  // user did not press, or delete a neighbour of the one they pressed, and there
-  // is no rendering to compare against.
+  // A model that does not line up with the DOM would put a control on a card the
+  // user did not press, or offer to delete a neighbour of the one they pressed,
+  // and there is no rendering to compare against.
   if (doc.columns.length === 0 || doc.columns.length !== sections.length || doc.cards.length !== cards.length) {
     return () => undefined
   }
 
   const columnName = (column: number): string => doc.lines[doc.columns[column]]?.label ?? 'this column'
-  const cardsIn = (column: number): number => doc.cards.filter((card) => card.column === column).length
-  const placed: Array<{ button: HTMLButtonElement; point: () => { x: number; y: number } }> = []
+  /** How many *cards* a column holds: a drawn slot is a place, not one of them. */
+  const cardsIn = (column: number): number =>
+    doc.cards.filter((card) => card.column === column && !isKanbanCardSlot(card, doc)).length
+  /** Where a new card goes: the drawn slot's own place, at the end of the column. */
+  const slotAt = (column: number): number =>
+    doc.cards.filter((card) => card.column === column).length - 1
+  const placed: Array<{ element: HTMLElement; box: () => ChromeBox }> = []
+  // An open composer is positioned from the control it replaced, so it has to be
+  // placed again whenever the board is: left behind, it stands in the past while
+  // the control it covers has gone somewhere else. Dropped as soon as the field
+  // it
+  // belongs to is gone, which is the only signal that it is closed.
+  const repositions: Array<{ field: HTMLElement; reposition: () => boolean }> = []
+  // A card's ✕ is reached by the card itself, never by a position: the board is
+  // drawn with a slot in every column, so a card's index among *all* the cards
+  // is not its index among the ones that can be deleted — and a slot, having no
+  // ✕ at all, is simply not in the map.
+  const cardRemoves = new Map<SVGElement, HTMLButtonElement>()
+
+  const layer = document.createElement('div')
+  layer.className = KANBAN_CHROME_CLASS
+  container.appendChild(layer)
 
   /**
-   * One board button, with the event guards every one of them needs: a press
+   * One board control, with the event guards every one of them needs: a press
    * must not reach ProseMirror (it would start a node selection), the drag (it
-   * hit-tests cards by coordinate and would arm over a card a button sits on) or
+   * hit-tests cards by coordinate and would arm over a card a control sits on) or
    * the click that opens a label's editor.
    */
-  const button = (
+  const control = (
     kind: string,
-    glyph: string,
+    text: string,
     label: string,
-    point: () => { x: number; y: number },
+    box: () => ChromeBox,
     onClick: () => void,
-  ): void => {
+  ): HTMLButtonElement => {
     const element = document.createElement('button')
     element.type = 'button'
     element.className = `${KANBAN_BUTTON_CLASS} ${kind}`
-    element.textContent = glyph
+    element.textContent = text
     element.title = label
     element.setAttribute('aria-label', label)
     element.addEventListener('click', (event) => {
@@ -2297,8 +2902,9 @@ function attachKanbanButtons(
       event.stopPropagation()
     })
     element.addEventListener('pointerdown', (event) => event.stopPropagation())
-    container.appendChild(element)
-    placed.push({ button: element, point })
+    layer.appendChild(element)
+    placed.push({ element, box })
+    return element
   }
 
   // A delete is confirmed before it is applied, so the source is patched only
@@ -2310,85 +2916,289 @@ function attachKanbanButtons(
     })
   }
 
+  /**
+   * An open composer is positioned from the slot it stands in, so it has to be
+   * placed again whenever the board is: left behind, it stands in the past while
+   * the slot it covers has gone somewhere else. Dropped as soon as the field it
+   * belongs to is gone, which is the only signal that it is closed.
+   */
+  const trackComposer = (
+    field: HTMLElement,
+    reposition: () => boolean,
+  ): void => void repositions.push({ field, reposition })
+
+  /**
+   * A new card's title, typed over the slot the board drew for it. The field
+   * stands exactly where the slot is, which is what makes the slot read as
+   * turning into a card rather than as opening a field elsewhere, and the block
+   * is grown for it if it is taller than the slot — on a board of empty columns
+   * a card does not fit its own band.
+   */
+  const composeCard = (column: number, box: () => DOMRect): void =>
+    openEditor(
+      openInlineInput({
+        host: container,
+        rect: box,
+        onPlaced: trackComposer,
+        value: '',
+        placeholder: 'Card title',
+        tone: 'new',
+        // A card title is still a title: it wraps as it is typed so the whole of
+        // what is being written is visible, and Enter is the one key that commits
+        // it, so the composer is a textarea rather than a taller one-line input.
+        multiline: true,
+        onAccept: (value) => {
+          // Into the slot's own place, so the slot stays the place the *next*
+          // card would go and the board is still drawn with a way to add one.
+          const next = addKanbanCard(source, column, slotAt(column), value)
+          if (next === null) return kanbanLabelRefusal(value)
+          commit(next)
+          return true
+        },
+        onCancel: () => undefined,
+      }),
+    )
+
+  /** A new column's name, typed over the band the board drew for it. */
+  const composeColumn = (at: number, box: () => DOMRect): void =>
+    openEditor(
+      openInlineInput({
+        host: container,
+        rect: box,
+        onPlaced: trackComposer,
+        value: '',
+        placeholder: 'Column name',
+        tone: 'new',
+        onAccept: (value) => {
+          const next = addKanbanColumn(source, at, value)
+          if (next === null) return kanbanLabelRefusal(value)
+          commit(next)
+          return true
+        },
+        onCancel: () => undefined,
+      }),
+    )
+
+  /** Whether any control actually moved — what the settle loop below is run by. */
+  const place = (): boolean => {
+    const base = container.getBoundingClientRect()
+    let moved = false
+    for (const { element, box } of placed) {
+      const at = box()
+      // `scrollLeft` because the preview is a horizontal scroller: an absolute
+      // child is placed from the scrolled content, not from the visible box.
+      const left = `${at.left - base.left + container.scrollLeft}px`
+      const top = `${at.top - base.top}px`
+      if (element.style.left !== left) moved = true
+      element.style.left = left
+      if (element.style.top !== top) moved = true
+      element.style.top = top
+      if (at.width !== undefined) element.style.width = `${at.width}px`
+      if (at.height !== undefined) element.style.height = `${at.height}px`
+    }
+    for (let index = repositions.length - 1; index >= 0; index -= 1) {
+      const entry = repositions[index]
+      if (!entry.field.isConnected) repositions.splice(index, 1)
+      else if (entry.reposition()) moved = true
+    }
+    return moved
+  }
+
+  // A place that moved something asks for another one, and the loop ends as soon
+  // as a place moves nothing. This is what catches the movement nothing
+  // observes: the board is *centred* in the preview, so the svg slides inside it
+  // when the block around it grows — a composer hanging below a short column
+  // makes the block grow, which recentres the board, which moves every control
+  // without changing the size of the svg, the preview or anything else measured
+  // here. Left behind, a control keeps the box it had: a `⋯` beside a column that
+  // has moved, a `✕` over nothing, a field standing where its slot used to be.
+  let settling = 0
+  const schedule = (): void => {
+    if (settling) return
+    settling = requestAnimationFrame(() => {
+      settling = 0
+      if (place()) schedule()
+    })
+  }
+
+  // ── the ⋯ menu ──
+  //
+  // One at a time, and one per diagram: a board is not a toolbar, and two open
+  // menus over it say nothing about either. The list is a positioned sibling of
+  // the svg like every other control, so it is chrome too — the double click
+  // that ends an edit session must not land inside it.
+  let closeMenu: (() => void) | null = null
+  // Which `⋯` the open menu belongs to, so pressing *that* one is the toggle and
+  // pressing any other is a move: without it, a second `⋯` could only ever close
+  // the first menu, and opening a second one took two presses.
+  let openMenuFor: HTMLButtonElement | null = null
+  const dismissMenu = (): void => {
+    closeMenu?.()
+    closeMenu = null
+    openMenuFor = null
+  }
+
+  const menuItem = (text: string, kind: string, danger: boolean, run: () => void | Promise<void>): HTMLButtonElement => {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = `${MENU_ITEM_CLASS} ${MENU_ITEM_KIND_CLASS}${kind}${danger ? ` ${MENU_ITEM_DANGER_CLASS}` : ''}`
+    item.setAttribute('role', 'menuitem')
+    item.textContent = text
+    item.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    item.addEventListener('pointerdown', (event) => event.stopPropagation())
+    item.addEventListener('click', (event) => {
+      event.stopPropagation()
+      // The menu goes first: an item that opens a composer must not leave its
+      // own list on screen over the field that replaced the button.
+      dismissMenu()
+      void run()
+    })
+    return item
+  }
+
+  // The board is drawn with its slots, and this is what says which of the things
+  // the DOM walk found are those slots: everything below is built for content.
+  const slots = kanbanSlotElements(svg, doc)
+  for (const el of slots.cards) el.classList.add(ADD_SLOT_CLASS)
+  if (slots.column >= 0) sections[slots.column].classList.add(COLUMN_SLOT_CLASS)
+  /** The box a slot's own composer stands in, given a line's own height. */
+  const slotComposerBox = (el: SVGElement, height: number): (() => DOMRect) => {
+    return () => {
+      const at = el.getBoundingClientRect()
+      return new DOMRect(at.left, at.top, at.width, height)
+    }
+  }
+
   sections.forEach((section, column) => {
+    // The new column at the end of the board has no menu: it is a place to type a
+    // name, and it is not yet a column to add to, rename or delete.
+    if (column === slots.column) return
     const name = columnName(column)
-    // Card identity here is positional: a new card goes on the end of its
-    // column, and every later edit re-derives the model from the source.
-    // Registered with the layer, so Done (or a re-render) resolves it exactly as
-    // it resolves a label being retyped.
-    button(ADD_BUTTON_CLASS, '＋', `Add a card to ${name}`, () => addButtonPoint(section), () =>
-      openEditor(
-        openInlineInput({
-          host: container,
-          rect: cardTitleRect(section),
-          value: '',
-          caption: `New card in ${name}`,
-          placeholder: 'Card title',
-          tone: 'new',
-          onAccept: (value) => {
-            const next = addKanbanCard(source, column, cardsIn(column), value)
-            if (next === null) return kanbanLabelRefusal(value)
-            commit(next)
-            return true
-          },
-          onCancel: () => undefined,
-        }),
-      ),
-    )
-    button(
-      COLUMN_ADD_BUTTON_CLASS,
-      '＋',
-      `Add a column after ${name}`,
-      () => cornerPoint(sectionRect(section), KANBAN_BUTTON_HALF * 2),
-      () =>
-        openEditor(
-          openInlineInput({
-            host: container,
-            rect: columnTitleRect(section),
-            value: '',
-            caption: `New column after ${name}`,
-            placeholder: 'Column name',
-            tone: 'new',
-            onAccept: (value) => {
-              const next = addKanbanColumn(source, column + 1, value)
-              if (next === null) return kanbanLabelRefusal(value)
-              commit(next)
-              return true
-            },
-            onCancel: () => undefined,
-          }),
-        ),
-    )
+    // A column added from the menu has no drawn slot of its own, so its field is
+    // placed in the band's own space — under its name, where the column's first
+    // card would go.
+    const composerBox = (): DOMRect => {
+      const rect = sectionRect(section)
+      return new DOMRect(
+        rect.left + (rect.width - MENU_WIDTH) / 2,
+        rect.bottom - COMPOSER_HEIGHT,
+        MENU_WIDTH,
+        COMPOSER_HEIGHT,
+      )
+    }
+    const menuBox = (): DOMRect => {
+      const rect = sectionRect(section)
+      const size = KANBAN_BUTTON_HALF * 2
+      return new DOMRect(rect.right - KANBAN_BUTTON_EDGE - size, rect.top + KANBAN_BUTTON_EDGE, size, size)
+    }
+
+    const actions: Array<{ text: string; kind: string; danger: boolean; run: () => void | Promise<void> }> = [
+      {
+        text: `Add a column after ${name}`,
+        kind: 'add',
+        danger: false,
+        run: () => composeColumn(column + 1, composerBox),
+      },
+      {
+        text: 'Rename column',
+        kind: 'rename',
+        danger: false,
+        // The very mapper a click on the header uses, found by position rather
+        // than by name: two columns may share a name, and the one that renames is
+        // the one whose menu was opened.
+        run: () => {
+          const target = targets.find((entry) => section.contains(entry.el))
+          if (target) openEditor(openLabelEditor(container, target, source, 'kanban', commit))
+        },
+      },
+    ]
     // A board keeps at least one column, so a board of one is not offered the
     // delete that would leave nothing behind: what cannot be done is not on the
-    // board. `removeKanbanColumn` refuses it as well.
-    if (doc.columns.length > 1) {
+    // board. `removeKanbanColumn` refuses it as well, and the slot column the
+    // board is drawn with is not one of them.
+    if (kanbanColumnCount(source) > 1) {
       const taken = cardsIn(column)
-      button(
-        COLUMN_REMOVE_BUTTON_CLASS,
-        '✕',
-        `Delete the ${name} column`,
-        () => cornerPoint(sectionRect(section), KANBAN_BUTTON_HALF * 2, KANBAN_BUTTON_HALF * 2 + KANBAN_BUTTON_GAP),
-        () =>
+      actions.push({
+        text: `Delete the ${name} column`,
+        kind: 'delete',
+        danger: true,
+        run: () =>
           confirmDelete(
             removeKanbanColumn(source, column),
             `the ${name} column`,
             taken === 0 ? 'The column is removed from the board.' : `Its ${taken} card${taken === 1 ? '' : 's'} go with it.`,
           ),
-      )
+      })
     }
+
+    const menu = control(MENU_BUTTON_CLASS, '⋯', `${name} column actions`, menuBox, () => {
+      if (openMenuFor === menu) {
+        dismissMenu()
+        return
+      }
+      // Another column's menu, if one is open, is not this one's business.
+      dismissMenu()
+      const list = document.createElement('div')
+      list.className = MENU_LIST_CLASS
+      list.setAttribute('role', 'menu')
+      list.setAttribute('aria-label', `${name} column actions`)
+      placed.push({
+        element: list,
+        box: () => {
+          const at = menuBox()
+          return { left: at.left + at.width - MENU_WIDTH, top: at.top + at.height + MENU_GAP, width: MENU_WIDTH }
+        },
+      })
+      for (const action of actions) list.appendChild(menuItem(action.text, action.kind, action.danger, action.run))
+      layer.appendChild(list)
+      const at = placed.findIndex((entry) => entry.element === list)
+      // Placed here rather than on the next resize: the list is built long after
+      // the layer's own `place()` ran, so without this it would sit wherever the
+      // markup put it — the top-left of the board, over the first column.
+      place()
+      closeMenu = () => {
+        list.remove()
+        if (at >= 0) placed.splice(at, 1)
+      }
+      openMenuFor = menu
+      ;(list.firstElementChild as HTMLElement | null)?.focus()
+    })
+    menu.addEventListener('keydown', (event) => {
+      const key = (event as KeyboardEvent).key
+      if (key !== 'Escape' && key !== 'ArrowDown' && key !== 'ArrowUp') return
+      event.preventDefault()
+      event.stopPropagation()
+      if (key === 'Escape') {
+        dismissMenu()
+        return
+      }
+      const items = [...layer.querySelectorAll<HTMLElement>(`.${MENU_ITEM_CLASS}`)]
+      const at = items.indexOf(document.activeElement as HTMLElement)
+      const step = key === 'ArrowDown' ? 1 : -1
+      items[(at + step + items.length) % items.length]?.focus()
+    })
+
   })
 
-  cards.forEach((_, index) => {
+  cards.forEach((card, index) => {
     const entry = doc.cards[index]
-    if (entry.column < 0) return
+    // A slot is a place rather than content, so it is nothing to delete.
+    if (entry.column < 0 || slots.cards.has(card)) return
     const name = entry.label ?? 'this card'
     const column = columnName(entry.column)
-    button(
+    const box = (): DOMRect => {
+      const rect = card.getBoundingClientRect()
+      const size = REMOVE_BUTTON_HALF * 2
+      return new DOMRect(rect.right - KANBAN_BUTTON_EDGE - size, rect.top + KANBAN_BUTTON_EDGE, size, size)
+    }
+    const remove = control(
       CARD_REMOVE_BUTTON_CLASS,
       '✕',
       `Delete the card ${name}`,
-      () => cornerPoint(cards[index].getBoundingClientRect(), REMOVE_BUTTON_HALF * 2),
+      box,
       () =>
         confirmDelete(
           removeKanbanCard(source, index),
@@ -2396,58 +3206,141 @@ function attachKanbanButtons(
           `It is removed from the ${column} column.`,
         ),
     )
+    remove.classList.add(CONCEALED_CLASS)
+    cardRemoves.set(card, remove)
   })
 
-  const place = (): void => {
-    const base = container.getBoundingClientRect()
-    for (const { button: element, point } of placed) {
-      const at = point()
-      // `scrollLeft` because the preview is a horizontal scroller: an absolute
-      // child is placed from the scrolled content, not from the visible box.
-      element.style.left = `${at.x - base.left + container.scrollLeft}px`
-      element.style.top = `${at.y - base.top}px`
+  // ── the two drawn slots ──
+  //
+  // A board's shape is obvious while you are looking at it and not at all once
+  // it is a paragraph of source, so both places a card or a column can be added
+  // are *drawn*: a card slot in every column, in the next card's own place, and a
+  // column at the end of the board, as wide and as tall as the real ones. Mermaid
+  // lays both out as the things they are about to become, so nothing is
+  // positioned by hand, nothing can be laid over a card, and the board is exactly
+  // the board plus the room it needs to grow.
+  //
+  // They are resolved from the click rather than pressed as controls: a slot is
+  // part of the drawing, so a click in one is a click on the board. A card slot
+  // asks for a title in a field that wraps with it, and the new column is named
+  // with the label editor its own header is edited by, so a name is keyed into the
+  // band exactly as it is edited once it exists.
+  const slotOf = new Map<SVGElement, number>()
+  for (const el of slots.cards) slotOf.set(el, doc.cards[cards.indexOf(el)].column)
+  /** A band's own name, which is what a press anywhere in the band edits. */
+  const headerTarget = (band: SVGElement): LabelTarget | null =>
+    targets.find((entry) => band.contains(entry.el)) ?? null
+  const onSlotClick = ((event: MouseEvent) => {
+    if (event.button !== 0) return
+    const band = slots.column < 0 ? null : sections[slots.column]!
+    const slot = drawnElementAt(event, `.${ADD_SLOT_CLASS}, .${COLUMN_SLOT_CLASS}`, [
+      ...slotOf.keys(),
+      ...(band === null ? [] : [band]),
+    ])
+    if (slot === null) return
+    // A click on a label is the label's own business, which is how a card's title
+    // and a band's name are edited.
+    if (event.target instanceof Element && event.target.closest(`.${EDITABLE_CLASS}`) !== null) return
+    const column = slotOf.get(slot)
+    if (column !== undefined) {
+      event.preventDefault()
+      composeCard(column, slotComposerBox(slot, COMPOSER_HEIGHT))
+      return
     }
+    // The new column is named through its own header, which the label editor
+    // already owns: a click anywhere in the empty band is that header's click.
+    if (band === null || !contains(band.getBoundingClientRect(), event.clientX, event.clientY)) return
+    const header = headerTarget(band)
+    if (header === null) return
+    event.preventDefault()
+    openEditor(openLabelEditor(container, header, source, 'kanban', commit))
+  }) as EventListener
+  container.addEventListener('click', onSlotClick)
+
+  // ── what is under the pointer ──
+  //
+  // The card you are on shows how to delete it, and nothing else is revealed —
+  // which is the whole answer to a board whose chrome used to be all of it at
+  // once. Adding is not here at all: the board is *drawn* with somewhere to add.
+  let shownRemove: HTMLButtonElement | null = null
+  const swap = (current: HTMLButtonElement | null, next: HTMLButtonElement | null): HTMLButtonElement | null => {
+    if (next === current) return current
+    current?.classList.remove(SHOWN_CLASS)
+    next?.classList.add(SHOWN_CLASS)
+    return next
   }
+  const onOver = (event: Event): void => {
+    const pointer = event as PointerEvent
+    // The menu is a popover, not a modal: moving the pointer off it takes it
+    // away, because a board is not a dialog and nothing else on it is reachable
+    // while one is open. The `⋯` and the items are chrome, so a pointer over
+    // either of them never gets here to close the list it just opened.
+    if (closeMenu && !(event.target instanceof Element && event.target.closest(`.${MENU_LIST_CLASS}`))) {
+      dismissMenu()
+    }
+    // A control is revealed by the pointer being *on it*, whatever the diagram
+    // underneath says: `columnAt` refuses a press on a column's own name (that is
+    // a rename, and the label editor opens on the click), so a hit-test of the
+    // diagram alone would leave a visible ✕ that no hover can turn on.
+    const hovered =
+      event.target instanceof Element
+        ? (event.target.closest<HTMLElement>(`.${KANBAN_BUTTON_CLASS}`) as HTMLButtonElement | null)
+        : null
+    if (hovered !== null && [...cardRemoves.values()].includes(hovered)) {
+      shownRemove = swap(shownRemove, hovered)
+      return
+    }
+    // A card shows how to delete it, a slot shows nothing at all — it is a place
+    // to add a card, and a ✕ over one would be offering to delete what is not
+    // there yet.
+    const card = cardAt(pointer, cards)
+    shownRemove = swap(shownRemove, card ? cardRemoves.get(card) ?? null : null)
+  }
+  const onLeave = (): void => {
+    shownRemove = swap(shownRemove, null)
+  }
+  const onEscape = (event: Event): void => {
+    if (!(event as KeyboardEvent).key || (event as KeyboardEvent).key !== 'Escape') return
+    event.preventDefault()
+    event.stopPropagation()
+    dismissMenu()
+  }
+  container.addEventListener('pointerover', onOver as EventListener)
+  container.addEventListener('pointerleave', onLeave)
+  // A press anywhere that is not the menu's own list dismisses it. The `⋯` and
+  // the items stop the press reaching here, so the `⋯`'s own click is the toggle.
+  container.addEventListener('pointerdown', (() => dismissMenu()) as EventListener)
+  container.addEventListener('keydown', onEscape as EventListener)
+
   place()
-  const observer = new ResizeObserver(place)
+  const observer = new ResizeObserver(schedule)
+  // The *preview*, not just the svg: a window resize narrows the preview while
+  // the svg keeps the size mermaid drew it at, so an observer on the svg alone
+  // never fires and every control keeps the box it had — which is how a `⋯` ends
+  // up beside the wrong column after a resize.
   observer.observe(svg)
+  observer.observe(container)
+  // Both scrollers, and both because a control is positioned from a rect read off
+  // the diagram: the preview scrolls horizontally once the board is wider than it
+  // is (and `place` compensates for that), and the editor scrolls vertically —
+  // which is what showing a composer that hangs below a short board does. A
+  // control that is not told about either keeps the box it had, and a `⋯` that
+  // does is a `⋯` floating over the wrong column.
+  const scroller = container.closest('.ProseMirror')?.parentElement ?? null
+  for (const node of [container, scroller]) {
+    if (!node) continue
+    observer.observe(node)
+    node.addEventListener('scroll', schedule)
+  }
 
   return () => {
     observer.disconnect()
-    for (const { button: element } of placed) element.remove()
+    cancelAnimationFrame(settling)
+    for (const node of [container, scroller]) node?.removeEventListener('scroll', schedule)
+    container.removeEventListener('click', onSlotClick)
+    container.removeEventListener('pointerover', onOver as EventListener)
+    container.removeEventListener('pointerleave', onLeave)
+    container.removeEventListener('keydown', onEscape as EventListener)
+    layer.remove()
   }
-}
-
-/** The ＋'s centre: the bottom of the column band, horizontally centred. */
-function addButtonPoint(section: SVGElement): { x: number; y: number } {
-  const rect = sectionRect(section)
-  return { x: rect.left + rect.width / 2, y: rect.bottom - KANBAN_BUTTON_HALF }
-}
-
-/**
- * The centre of a `size`-wide button in the top-right corner of `rect`, or that
- * same corner `shift` px further along — which is how a column's two header
- * buttons sit side by side instead of on top of each other.
- */
-function cornerPoint(rect: DOMRect, size: number, shift = 0): { x: number; y: number } {
-  const inset = size / 2
-  return { x: rect.right - KANBAN_BUTTON_EDGE - inset - shift, y: rect.top + KANBAN_BUTTON_EDGE + inset }
-}
-
-/** Where a new card's title is typed: over its column, just above the ＋. */
-function cardTitleRect(section: SVGElement): DOMRect {
-  const point = addButtonPoint(section)
-  const top = point.y - KANBAN_BUTTON_HALF - NEW_FIELD_LIFT - NEW_FIELD_HEIGHT
-  return new DOMRect(point.x - NEW_FIELD_WIDTH / 2, top, NEW_FIELD_WIDTH, NEW_FIELD_HEIGHT)
-}
-
-/** Where a new column's name is typed: over the middle of the band it joins. */
-function columnTitleRect(section: SVGElement): DOMRect {
-  const rect = sectionRect(section)
-  return new DOMRect(
-    rect.left + rect.width / 2 - NEW_FIELD_WIDTH / 2,
-    rect.top + rect.height / 2 - NEW_FIELD_HEIGHT / 2,
-    NEW_FIELD_WIDTH,
-    NEW_FIELD_HEIGHT,
-  )
 }

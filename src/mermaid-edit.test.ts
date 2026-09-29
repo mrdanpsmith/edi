@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fireResizeCallbacks } from './test-setup'
+import { fireResizeCallbacks, flushFrames } from './test-setup'
 import {
   addKanbanCard,
   addKanbanColumn,
@@ -8,8 +8,13 @@ import {
   buildKanbanSource,
   detectDiagramType,
   finishMermaidLabelEditing,
+  KANBAN_CARD_SLOT,
+  KANBAN_COLUMN_SLOT,
+  kanbanAuthoringSource,
   kanbanColumnCardCount,
+  kanbanRealSource,
   moveKanbanCard,
+  moveKanbanColumn,
   parseKanban,
   patchLabel,
   rebuildKanban,
@@ -860,6 +865,70 @@ describe('removeKanbanColumn', () => {
   })
 })
 
+describe('moveKanbanColumn', () => {
+  // Three columns, two cards in the first, an empty middle, a comment written
+  // inside the last one and a blank line the user put between two cards.
+  const board = [
+    'kanban',
+    '  col1[Todo]',
+    '    id1[One]',
+    '',
+    '    id2[Two]',
+    '  col2[Doing]',
+    '  col3[Done]',
+    '    id3[Three]',
+    '    %% shipped',
+  ].join('\n')
+
+  it('takes a column and every card under it to the end of the board', () => {
+    expect(moveKanbanColumn(board, 0, 2)).toBe(
+      ['kanban', '  col2[Doing]', '  col3[Done]', '    id3[Three]', '    %% shipped', '  col1[Todo]', '    id1[One]', '', '    id2[Two]'].join('\n'),
+    )
+  })
+
+  it('takes it to the front, the other way round', () => {
+    expect(moveKanbanColumn(board, 2, 0)).toBe(
+      ['kanban', '  col3[Done]', '    id3[Three]', '    %% shipped', '  col1[Todo]', '    id1[One]', '', '    id2[Two]', '  col2[Doing]'].join('\n'),
+    )
+  })
+
+  it('inserts between two columns, which is the only way to reorder the middle', () => {
+    expect(moveKanbanColumn(board, 2, 1)).toBe(
+      ['kanban', '  col1[Todo]', '    id1[One]', '', '    id2[Two]', '  col3[Done]', '    id3[Three]', '    %% shipped', '  col2[Doing]'].join('\n'),
+    )
+  })
+
+  it('keeps a blank line inside a column with the cards it separates', () => {
+    // The grammar is indentation based, so leaving the blank behind would leave
+    // `id2` at column level — a column of its own, with the board's shape changed.
+    const moved = moveKanbanColumn(board, 0, 2)!
+    const doc = parseKanban(moved)
+    expect(doc.cards.map((card) => card.label)).toEqual(['Three', 'One', 'Two'])
+    expect(doc.columns.length).toBe(3)
+    // Both cards of the moved column are still cards, in the column that moved.
+    expect(doc.cards.filter((card) => card.column === 2).map((card) => card.label)).toEqual(['One', 'Two'])
+  })
+
+  it('rewrites no line\'s text: the same board in a new order', () => {
+    const before = parseKanban(board).lines.map((line) => line.indent + line.text).sort()
+    const after = moveKanbanColumn(board, 0, 1)!
+    expect(parseKanban(after).lines.map((line) => line.indent + line.text).sort()).toEqual(before)
+  })
+
+  it('clamps the target into the board, so a release past the end lands at the end', () => {
+    expect(moveKanbanColumn(board, 0, 99)).toBe(moveKanbanColumn(board, 0, 2))
+    expect(moveKanbanColumn(board, 2, -3)).toBe(moveKanbanColumn(board, 2, 0))
+  })
+
+  it('changes nothing when the column is already there, or is not there', () => {
+    expect(moveKanbanColumn(board, 1, 1)).toBeNull()
+    expect(moveKanbanColumn(board, 9, 0)).toBeNull()
+    expect(moveKanbanColumn(board, -1, 0)).toBeNull()
+    // A board of one has nowhere to move a column to.
+    expect(moveKanbanColumn('kanban\n  Todo\n    id1[One]', 0, 0)).toBeNull()
+  })
+})
+
 describe('buildKanbanSource', () => {
   it('builds a runnable board from the column names', () => {
     // The de-duplicated name holds parentheses, so it is quoted — mermaid draws
@@ -968,6 +1037,23 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+}
+
+/**
+ * A click *at* something, carrying the coordinates a real one has: a drawn slot
+ * is part of the diagram rather than a button on top of it, so it is hit-tested
+ * by where the pointer is instead of pressed.
+ */
+function clickAt(el: Element): void {
+  const at = el.getBoundingClientRect()
+  el.dispatchEvent(
+    new MouseEvent('click', {
+      bubbles: true,
+      button: 0,
+      clientX: at.left + at.width / 2,
+      clientY: at.top + at.height / 2,
+    }),
+  )
 }
 
 /** The label elements the editing layer marked, in document order. */
@@ -1813,8 +1899,20 @@ const BOARD_SOURCE = [
   '    id3[Three]',
 ].join('\n')
 
-const BOARD_BANDS = [rect(0, 20, 140, 100), rect(200, 20, 140, 50), rect(400, 20, 140, 50)]
-const BOARD_CARD_RECTS = [rect(10, 40, 120, 20), rect(10, 70, 120, 20), rect(410, 40, 120, 20)]
+const BOARD_BANDS = [
+  rect(0, 20, 140, 110),
+  rect(200, 20, 140, 80),
+  rect(400, 20, 140, 80),
+  rect(600, 20, 140, 80),
+]
+const BOARD_CARD_RECTS = [
+  rect(10, 40, 120, 24),
+  rect(10, 68, 120, 24),
+  rect(10, 96, 120, 24),
+  rect(210, 50, 120, 24),
+  rect(410, 40, 120, 24),
+  rect(410, 68, 120, 24),
+]
 
 function kanbanCard(label: string): string {
   return `<g class="node default"><rect /><g class="label"><foreignObject><div class="labelBkg">` +
@@ -1832,13 +1930,22 @@ function boardSvg(columns: string[], cards: string[]): string {
     `<g class="items">${cards.map(kanbanCard).join('')}</g></svg>`
 }
 
-const BOARD_SVG = boardSvg(['Todo', 'Doing', 'Done'], ['One', 'Two', 'Three'])
+/** The three cards, then the drawn slot of each column, in the order mermaid
+ *  walks them: column by column, top to bottom, with the new column last. */
+const BOARD_SVG = boardSvg(
+  ['Todo', 'Doing', 'Done', KANBAN_COLUMN_SLOT],
+  ['One', 'Two', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT, 'Three', KANBAN_CARD_SLOT],
+)
 
 /**
  * Render a board in edit mode with its geometry filled in, which jsdom will not
  * compute: every band and card gets the rect it would have on screen, and the
  * layer is attached a second time now that the layer knows them. A real render
  * already has them in that order.
+ *
+ * A real edit-mode render is the board *drawn with its slots* and every patch is
+ * made against that, so this does the same and hands the commit the real source
+ * back, exactly as the node view does — the document never holds a slot.
  */
 async function renderKanbanBoard(
   commit: (next: string) => void,
@@ -1849,7 +1956,9 @@ async function renderKanbanBoard(
 ): Promise<{ host: HTMLElement; preview: HTMLElement; svg: SVGSVGElement }> {
   hoisted.render.mockResolvedValue({ svg: svgSource })
   const { host, preview } = harness()
-  await renderDiagram(preview, source, { host, commit })
+  const drawn = kanbanAuthoringSource(source)
+  const real = (patched: string): void => commit(kanbanRealSource(patched))
+  await renderDiagram(preview, drawn, { host, commit: real })
   const svg = preview.querySelector('svg')!
   svg.querySelectorAll<SVGElement>('.sections > g').forEach((band, index) => {
     band.querySelector('rect')!.getBoundingClientRect = () => bands[index]!
@@ -1858,67 +1967,85 @@ async function renderKanbanBoard(
     node.getBoundingClientRect = () => cardRects[index]!
   })
   preview.getBoundingClientRect = () => rect(0, 10, 800, 600)
-  attachMermaidEditing(preview, svg, source, commit)
+  attachMermaidEditing(preview, svg, drawn, real)
   return { host, preview, svg }
 }
 
-describe('kanban add buttons', () => {
-  function addButtons(scope: ParentNode): HTMLButtonElement[] {
-    return Array.from(scope.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-add'))
-  }
+/** The drawn card slots, in the order the board's columns hold them. */
+function cardSlots(svg: SVGSVGElement): SVGElement[] {
+  return Array.from(svg.querySelectorAll<SVGElement>('.items > g.node.mermaid-kanban-slot'))
+}
 
-  it('offers a ＋ for every column, the empty one included', async () => {
-    const { preview } = await renderKanbanBoard(vi.fn())
-    const buttons = addButtons(preview)
+function columnSlot(svg: SVGSVGElement): SVGElement {
+  return svg.querySelector<SVGElement>('.sections > g.mermaid-kanban-column-slot')!
+}
 
-    expect(buttons).toHaveLength(3)
-    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Add a card to Todo',
-      'Add a card to Doing',
-      'Add a card to Done',
-    ])
+describe('kanban drawn slots', () => {
+  it('draws a card slot in every column and a column at the end of the board', async () => {
+    const { svg } = await renderKanbanBoard(vi.fn())
+
+    // The slots are the board as it is drawn in edit mode, and nothing else: the
+    // same board with a card slot at the end of each column and a new column
+    // after the last one. They are part of what mermaid lays out, so a card slot
+    // is in the next card's own place and the new column is as tall and as wide
+    // as a real one.
+    expect(kanbanAuthoringSource(BOARD_SOURCE)).toBe(
+      [
+        'kanban',
+        '  Todo',
+        '    id1[One]',
+        '    id2[Two]',
+        '    slotc0[+ Add a card]',
+        '  Doing',
+        '    slotc1[+ Add a card]',
+        '  Done',
+        '    id3[Three]',
+        '    slotc2[+ Add a card]',
+        '  slotn[+ Add a column]',
+      ].join('\n'),
+    )
+    expect(cardSlots(svg)).toHaveLength(3)
+    expect(columnSlot(svg)).not.toBeNull()
   })
 
-  it('centres each ＋ in the bottom of its own column band', async () => {
-    const { preview } = await renderKanbanBoard(vi.fn())
-    const [todo, doing] = addButtons(preview)
-    // The preview sits 10px down the block, so a band at y=20 is y=10 in it.
-    expect(todo!.style.left).toBe('70px')
-    expect(todo!.style.top).toBe('99px')
-    // The empty column's band is half as tall, and its ＋ follows it up.
-    expect(doing!.style.left).toBe('270px')
-    expect(doing!.style.top).toBe('49px')
+  it('never holds a slot in the document, however the board is edited', () => {
+    // The source the document keeps is the board, exactly as it was written.
+    expect(kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE))).toBe(BOARD_SOURCE)
+    // A card typed into a slot is content, and its slot id is not committed.
+    expect(
+      kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE).replace('slotc1[+ Add a card]', '[Fresh]')),
+    ).toBe(['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '    [Fresh]', '  Done', '    id3[Three]'].join('\n'))
+    // And a column named where the new one was drawn becomes a real column.
+    expect(
+      kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE).replace('slotn[+ Add a column]', 'slotn[Archive]')),
+    ).toBe(['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '  Done', '    id3[Three]', '  col4[Archive]'].join('\n'))
   })
 
-  it('follows the diagram when it is resized, as a zoom makes it', async () => {
-    const { preview, svg } = await renderKanbanBoard(vi.fn())
-    const button = addButtons(preview)[0]!
-    // What the zoom toolbar does: the whole diagram gets wider, so the first
-    // column's band grows with it and the ＋ has to move.
-    const band = svg.querySelectorAll<SVGElement>('.sections > g')[0]!
-    band.querySelector('rect')!.getBoundingClientRect = () => rect(0, 20, 280, 200)
-    fireResizeCallbacks()
+  it('types a title in the slot that was pressed, in the slot own place', async () => {
+    const { svg } = await renderKanbanBoard(vi.fn())
 
-    expect(button.style.left).toBe('140px')
-    expect(button.style.top).toBe('199px')
-  })
-
-  it('creates a card in the column that was pressed, as one source patch', async () => {
-    const commit = vi.fn()
-    const { preview } = await renderKanbanBoard(commit)
-
-    click(addButtons(preview)[1]!)
+    clickAt(cardSlots(svg)[1]!)
     const field = input()
-    expect(field.value).toBe('')
     expect(field.placeholder).toBe('Card title')
-    // The column is named in a caption above the field rather than in the
-    // placeholder: a prompt longer than the title it asks for was cut off before
-    // a character was typed, and a placeholder vanishes at the first keystroke.
-    const caption = document.querySelector<HTMLElement>('.mermaid-edit-caption')!
-    expect(caption.textContent).toBe('New card in Doing')
-    expect(caption.title).toBe('New card in Doing')
-    // And a field that is about to *add* is drawn as one, not as a rename.
-    expect(field.closest('.mermaid-edit-field')!.className).toContain('mermaid-edit-field-new')
+    // The field stands exactly where the slot is, which is what makes the slot
+    // read as turning into a card rather than as opening a field elsewhere. The
+    // preview sits 10px down the block, so a slot at y=50 is y=40 in it.
+    const box = document.querySelector<HTMLElement>('.mermaid-edit-field')!
+    expect(box.style.left).toBe('210px')
+    expect(box.style.top).toBe('40px')
+    // Nothing is said above the field: the slot it fills already says what it is,
+    // and a heading that repeated it was a caption explaining the obvious. The
+    // field is the input and nothing else, so a second child would be a caption.
+    expect(box.children.length).toBe(1)
+    // A field that is about to *add* is drawn as one, not as a rename.
+    expect(box.className).toContain('mermaid-edit-field-new')
+  })
+
+  it('creates the card in the column its slot is in, and the board keeps its slots', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+
+    clickAt(cardSlots(svg)[1]!)
     typeAndConfirm('Fresh')
 
     expect(commit).toHaveBeenCalledTimes(1)
@@ -1932,9 +2059,9 @@ describe('kanban add buttons', () => {
 
   it('leaves the board alone on Esc', async () => {
     const commit = vi.fn()
-    const { preview } = await renderKanbanBoard(commit)
+    const { svg } = await renderKanbanBoard(commit)
 
-    click(addButtons(preview)[0]!)
+    clickAt(cardSlots(svg)[0]!)
     typeAndConfirm('Discarded', 'Escape')
 
     expect(commit).not.toHaveBeenCalled()
@@ -1943,9 +2070,9 @@ describe('kanban add buttons', () => {
 
   it('accepts a title holding a delimiter, quoting it in the source', async () => {
     const commit = vi.fn()
-    const { preview } = await renderKanbanBoard(commit)
+    const { svg } = await renderKanbanBoard(commit)
 
-    click(addButtons(preview)[0]!)
+    clickAt(cardSlots(svg)[0]!)
     typeAndConfirm('Fix (the bug)')
 
     // The card lands; the quotes are how the source spells it, not what the
@@ -1957,9 +2084,9 @@ describe('kanban add buttons', () => {
 
   it('refuses a title no quoting can carry, and says so', async () => {
     const commit = vi.fn()
-    const { preview } = await renderKanbanBoard(commit)
+    const { svg } = await renderKanbanBoard(commit)
 
-    click(addButtons(preview)[0]!)
+    clickAt(cardSlots(svg)[0]!)
     typeAndConfirm('a"b')
 
     // Flashed, not silently dropped — and the board is untouched.
@@ -1967,47 +2094,94 @@ describe('kanban add buttons', () => {
     expect(commit).not.toHaveBeenCalled()
   })
 
-  it('never arms the card drag on a press', async () => {
-    const commit = vi.fn()
-    const { preview } = await renderKanbanBoard(commit)
-    const button = addButtons(preview)[0]!
-    const down = new Event('pointerdown', { bubbles: true, cancelable: true })
-    Object.assign(down, { clientX: 70, clientY: 99, button: 0 })
-
-    button.dispatchEvent(down)
-    window.dispatchEvent(
-      Object.assign(new Event('pointermove', { bubbles: true }), { clientX: 20, clientY: 45, button: 0 }),
-    )
-
-    // The ＋ sits over a card, and the drag hit-tests by coordinate.
-    expect(document.querySelector('.kanban-drop-line')).toBeNull()
+  it('is not a label, so a card slot is never offered for renaming', async () => {
+    const { svg } = await renderKanbanBoard(vi.fn())
+    // A card slot is a place to add a card rather than a card to re-title, so it
+    // is not one of the diagram's editable labels...
+    expect(editables(svg).map((el) => el.textContent?.trim())).toEqual([
+      'Todo',
+      'Doing',
+      'Done',
+      KANBAN_COLUMN_SLOT,
+      'One',
+      'Two',
+      'Three',
+    ])
+    // ...while the new column is a header like any other, and is named by
+    // renaming it, which is the same editor editing any other label.
+    expect(columnSlot(svg).querySelector(`.${'mermaid-editables'}`)).not.toBeNull()
   })
 
-  it('is not a label, so it is never offered for renaming', async () => {
-    const { preview, svg } = await renderKanbanBoard(vi.fn())
-    // It is HTML in the preview, not an SVG label: nothing walks it.
-    expect(editables(svg).map((el) => el.textContent?.trim())).toEqual(['Todo', 'Doing', 'Done', 'One', 'Two', 'Three'])
-    expect(addButtons(preview).some((button) => button.classList.contains('mermaid-editables'))).toBe(false)
+  it('names the new column through its own header, and the board keeps it', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+    const header = columnSlot(svg).querySelector<HTMLElement>('.mermaid-editables')!
+
+    // The field holds the band's own text, so it is keyed into rather than
+    // replaced around: the new column's name is typed where the board is drawn.
+    click(header)
+    expect(document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.value).toBe('+ Add a column')
+    typeAndConfirm('Archive')
+
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(commit).toHaveBeenCalledWith(
+      [
+        'kanban',
+        '  Todo',
+        '    id1[One]',
+        '    id2[Two]',
+        '  Doing',
+        '  Done',
+        '    id3[Three]',
+        '  col4[Archive]',
+      ].join('\n'),
+    )
+  })
+
+  it('never arms the card drag on a press in a slot', async () => {
+    const { svg } = await renderKanbanBoard(vi.fn())
+    const slot = cardSlots(svg)[0]!
+    const at = slot.getBoundingClientRect()
+    slot.dispatchEvent(
+      Object.assign(new Event('pointerdown', { bubbles: true, cancelable: true }), {
+        clientX: at.left + 10,
+        clientY: at.top + 10,
+        button: 0,
+      }),
+    )
+    window.dispatchEvent(
+      Object.assign(new Event('pointermove', { bubbles: true }), {
+        clientX: at.left - 40,
+        clientY: at.top - 10,
+        button: 0,
+      }),
+    )
+
+    // A slot is a place, not a card: the press asks for a title and lifts
+    // nothing — and it does not fall through to the column drag either.
+    expect(document.querySelector('.kanban-drop-line')).toBeNull()
+    expect(document.querySelector(`.${'kanban-dragging'}`)).toBeNull()
   })
 
   it('goes away with the layer, and comes back with the next render', async () => {
-    const commit = vi.fn()
-    const { host, preview } = await renderKanbanBoard(commit)
-    expect(addButtons(preview)).toHaveLength(3)
+    const { host, preview, svg } = await renderKanbanBoard(vi.fn())
+    expect(cardSlots(svg)).toHaveLength(3)
 
     finishMermaidLabelEditing(host, false)
-    expect(addButtons(preview)).toHaveLength(0)
+    expect(preview.querySelectorAll('.mermaid-edit-field')).toHaveLength(0)
+    expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(0)
 
-    await renderDiagram(preview, BOARD_SOURCE, { host, commit })
-    expect(addButtons(preview)).toHaveLength(3)
+    await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host, commit: vi.fn() })
+    expect(cardSlots(preview.querySelector('svg')!)).toHaveLength(3)
   })
 
-  it('offers none on a diagram that is not a board', async () => {
+  it('draws no slots on a diagram that is not a board', async () => {
     hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
     const { host, preview } = harness()
     await renderDiagram(preview, 'graph TD\n  A[Alpha]\n  B[Beta]', { host, commit: vi.fn() })
 
-    expect(addButtons(preview)).toHaveLength(0)
+    expect(preview.querySelectorAll('.mermaid-kanban-slot')).toHaveLength(0)
+    expect(kanbanAuthoringSource('graph TD\n  A[Alpha]\n  B[Beta]')).toBe('graph TD\n  A[Alpha]\n  B[Beta]')
   })
 })
 
@@ -2018,6 +2192,38 @@ describe('kanban delete buttons', () => {
 
   function removeButtons(scope: ParentNode, kind: string): HTMLButtonElement[] {
     return Array.from(scope.querySelectorAll<HTMLButtonElement>(`.${kind}`))
+  }
+
+  function menus(scope: ParentNode): HTMLButtonElement[] {
+    return Array.from(scope.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-menu'))
+  }
+
+  /** Open a column's `⋯` and return the items of the menu it opened. */
+  function openMenu(preview: HTMLElement, column: number): string[] {
+    click(menus(preview)[column]!)
+    return menuItems(preview)
+  }
+
+  function menuItems(scope: ParentNode): string[] {
+    return Array.from(scope.querySelectorAll<HTMLElement>('.mermaid-kanban-menu-item')).map(
+      (item) => item.textContent ?? '',
+    )
+  }
+
+  /** Open a column's menu and press one of its items. */
+  function choose(scope: ParentNode, column: number, text: string): void {
+    click(menus(scope)[column]!)
+    const item = Array.from(scope.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-menu-item')).find(
+      (candidate) => candidate.textContent === text,
+    )
+    expect(item).not.toBeUndefined()
+    click(item!)
+  }
+
+  function hover(el: Element, x: number, y: number): void {
+    const event = new Event('pointerover', { bubbles: true })
+    Object.assign(event, { clientX: x, clientY: y, button: 0 })
+    el.dispatchEvent(event)
   }
 
   function dialog(): HTMLElement {
@@ -2039,7 +2245,7 @@ describe('kanban delete buttons', () => {
     return new Promise((resolve) => setTimeout(resolve, 0))
   }
 
-  it('offers a ✕ on every card and every column, in their own corners', async () => {
+  it('offers a ✕ on every card and a ⋯ on every column, and nothing else', async () => {
     const preview = await renderBoard(vi.fn())
 
     expect(removeButtons(preview, 'mermaid-kanban-card-remove').map((b) => b.getAttribute('aria-label'))).toEqual([
@@ -2047,30 +2253,87 @@ describe('kanban delete buttons', () => {
       'Delete the card Two',
       'Delete the card Three',
     ])
-    expect(removeButtons(preview, 'mermaid-kanban-column-remove').map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Delete the Todo column',
-      'Delete the Doing column',
-      'Delete the Done column',
+    expect(menus(preview).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Todo column actions',
+      'Doing column actions',
+      'Done column actions',
     ])
-    // Four kinds over three columns and three cards, and every one of them is the
-    // editor's own chrome: a press on any is not a press on the diagram below.
-    expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(12)
+    // A slot is a place rather than content, so it is not deletable — and the
+    // new column is not a column yet, so it has no actions either. Everything a
+    // board can be pressed for is one of these buttons, and each is the editor's
+    // own chrome: a press on any is not a press on the diagram below.
+    expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(6)
+  })
+
+  it('conceals the card ✕ until the pointer asks', async () => {
+    const preview = await renderBoard(vi.fn())
+    const shown = (scope: ParentNode): string[] =>
+      Array.from(scope.querySelectorAll<HTMLElement>('.mermaid-kanban-btn.is-shown')).map(
+        (el) => el.getAttribute('aria-label') ?? '',
+      )
+
+    // The `⋯` belongs to the whole column and is always on screen; the ✕ is the
+    // card's own, and nothing is revealed before the pointer asks.
+    expect(shown(preview)).toEqual([])
+    expect(menus(preview)[0]!.classList.contains('mermaid-kanban-is-concealed')).toBe(false)
+
+    // Hovering a card reveals that card's ✕. The event carries the pointer's
+    // position, and dispatching it *on the card* is what makes the handler's own
+    // `event.target` the card.
+    const card = preview.querySelector<SVGElement>('.items > g.node')!
+    hover(card, 60, 45)
+    expect(shown(preview)).toEqual(['Delete the card One'])
+
+    // ...and taking the pointer off the board takes it away again.
+    preview.dispatchEvent(new Event('pointerleave'))
+    expect(shown(preview)).toEqual([])
+  })
+
+  it('follows the diagram when it is resized, as a zoom makes it', async () => {
+    const { preview, svg } = await renderKanbanBoard(vi.fn())
+    const remove = removeButtons(preview, 'mermaid-kanban-card-remove')[0]!
+    // What the zoom toolbar does: the whole diagram gets wider, so the first
+    // column's band and card grow with it and the ✕ has to move.
+    const card = svg.querySelector<SVGElement>('.items > g.node')!
+    card.getBoundingClientRect = () => rect(0, 40, 260, 24)
+    fireResizeCallbacks()
+    // The chrome repositions in a frame, and again while the board is still
+    // settling, rather than inside the observer callback.
+    await flushFrames()
+
+    // The card's own right edge (260) less the button and its 8px inset,
+    // against a preview that sits 10px down the block.
+    expect(remove.style.left).toBe('238px')
+    expect(remove.style.top).toBe('38px')
   })
 
   it('puts a card own ✕ in its own top-right corner, and the column two in the header', async () => {
     const preview = await renderBoard(vi.fn())
-    // The preview sits 10px down the block, so a card at y=40 is y=30 in it.
+    // The preview sits 10px down the block, so a card at y=40 is y=30 in it: the
+    // ✕ is 14px wide, 8px in from the card's right edge at 130.
     const [one] = removeButtons(preview, 'mermaid-kanban-card-remove')
-    expect(one!.style.left).toBe('112px')
-    expect(one!.style.top).toBe('48px')
+    expect(one!.style.left).toBe('108px')
+    expect(one!.style.top).toBe('38px')
 
-    // ＋ then ✕, side by side along the top-right of the band.
-    const columnAdd = removeButtons(preview, 'mermaid-kanban-column-add')[0]!
-    const columnRemove = removeButtons(preview, 'mermaid-kanban-column-remove')[0]!
-    expect(columnAdd.style.top).toBe('31px')
-    // The delete sits to the left of the ＋, by its own width and a gap.
-    expect(Number.parseFloat(columnAdd.style.left) - Number.parseFloat(columnRemove.style.left)).toBe(27)
-    expect(columnRemove.style.top).toBe(columnAdd.style.top)
+    // The `⋯` is 18px, 8px in from the band's own top-right corner.
+    const column = menus(preview)[0]!
+    expect(column.style.left).toBe('114px')
+    expect(column.style.top).toBe('18px')
+  })
+
+  it('opens a column menu beside its own ⋯, and not beside the board', async () => {
+    const preview = await renderBoard(vi.fn())
+
+    expect(openMenu(preview, 1)).toEqual(['Add a column after Doing', 'Rename column', 'Delete the Doing column'])
+    // The list hangs off the `⋯` it belongs to: right-aligned to it, under it.
+    const list = preview.querySelector<HTMLElement>('.mermaid-kanban-menu-list')!
+    expect(list.style.left).toBe('142px')
+    expect(list.style.top).toBe('42px')
+    expect(list.style.width).toBe('190px')
+    // One at a time: a second `⋯` takes the first menu away.
+    click(menus(preview)[2]!)
+    expect(preview.querySelectorAll('.mermaid-kanban-menu-list')).toHaveLength(1)
+    expect(menuItems(preview)).toEqual(['Add a column after Done', 'Rename column', 'Delete the Done column'])
   })
 
   it('deletes a card, as one source patch, once the prompt is answered', async () => {
@@ -2109,7 +2372,7 @@ describe('kanban delete buttons', () => {
     const commit = vi.fn()
     const preview = await renderBoard(commit)
 
-    click(removeButtons(preview, 'mermaid-kanban-column-remove')[0]!)
+    choose(preview, 0, 'Delete the Todo column')
     expect(dialog().querySelector('.edi-dialog-title')!.textContent).toBe('Delete the Todo column?')
     // The consequence is in the prompt, not discovered afterwards.
     expect(dialog().querySelector('.edi-dialog-note')!.textContent).toContain('Its 2 cards go with it.')
@@ -2117,32 +2380,41 @@ describe('kanban delete buttons', () => {
     click(dialogButton('Delete'))
     await settle()
     expect(commit).toHaveBeenCalledWith(['kanban', '  Doing', '  Done', '    id3[Three]'].join('\n'))
+    // The menu took itself away, so it is not left hanging over the board.
+    expect(preview.querySelector('.mermaid-kanban-menu-list')).toBeNull()
   })
 
   it('offers no column delete on a board of one, which would leave no board', async () => {
     const { preview } = await renderKanbanBoard(
       vi.fn(),
       'kanban\n  Todo\n    id1[One]',
-      boardSvg(['Todo'], ['One']),
-      [BOARD_BANDS[0]!],
-      [BOARD_CARD_RECTS[0]!],
+      boardSvg(['Todo', KANBAN_COLUMN_SLOT], ['One', KANBAN_CARD_SLOT]),
+      [BOARD_BANDS[0]!, BOARD_BANDS[3]!],
+      [BOARD_CARD_RECTS[0]!, BOARD_CARD_RECTS[2]!],
     )
 
-    expect(removeButtons(preview, 'mermaid-kanban-column-add')).toHaveLength(1)
-    expect(removeButtons(preview, 'mermaid-kanban-column-remove')).toHaveLength(0)
+    // The one column still has its own actions, and the delete is not one of them.
+    expect(openMenu(preview, 0)).toEqual(['Add a column after Todo', 'Rename column'])
     // Its card can still go, so the board is editable without emptying it.
     expect(removeButtons(preview, 'mermaid-kanban-card-remove')).toHaveLength(1)
+    // And the board is still drawn with the column it would need to get back to
+    // two, which is the whole answer to a board of one.
+    expect(preview.querySelector('.mermaid-kanban-column-slot')).not.toBeNull()
   })
 
-  it('offers a ＋ per column, naming a new column after the one pressed', async () => {
+  it('adds a column after the one whose menu was opened', async () => {
     const commit = vi.fn()
     const preview = await renderBoard(commit)
 
-    click(removeButtons(preview, 'mermaid-kanban-column-add')[0]!)
+    choose(preview, 0, 'Add a column after Todo')
     const field = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
     expect(field.value).toBe('')
     expect(field.placeholder).toBe('Column name')
-    expect(document.querySelector('.mermaid-edit-caption')!.textContent).toBe('New column after Todo')
+    // Nothing is said above the field: it stands in the band's own space, under
+    // the name that is there, which is what it is adding to.
+    const box = document.querySelector('.mermaid-edit-field')!
+    expect(box.children.length).toBe(1)
+    expect(box.className).toContain('mermaid-edit-field-new')
 
     typeAndConfirm('In review')
     expect(commit).toHaveBeenCalledTimes(1)
@@ -2157,7 +2429,7 @@ describe('kanban delete buttons', () => {
     const commit = vi.fn()
     const preview = await renderBoard(commit)
 
-    click(removeButtons(preview, 'mermaid-kanban-column-add')[0]!)
+    choose(preview, 0, 'Add a column after Todo')
     typeAndConfirm('a"b')
 
     expect(document.querySelector('.mermaid-edit-input')!.classList.contains('mermaid-edit-invalid')).toBe(true)

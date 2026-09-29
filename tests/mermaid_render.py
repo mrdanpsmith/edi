@@ -23,6 +23,12 @@ def _pump_until(condition, timeout=8.0):
 
 
 def _dump(win, script):
+    """Run ``script`` in the page and read its value back.
+
+    Every probe here must therefore evaluate to an *object*: a bare array comes
+    back as an empty string rather than as JSON, and a probe that returns one
+    fails as a `JSONDecodeError` about a value the reader never saw.
+    """
     js = win._web.page().runJavaScript
     out = {}
     js(f"JSON.stringify({script})", lambda v: out.update(json.loads(v) if isinstance(v, str) else {}))
@@ -125,9 +131,19 @@ KANBAN_EMPTY = "kanban\n  Todo\n    id1[One]\n  Doing\n  Done\n    id2[Two]"
 # A document that is nothing but a board, the shape that leaves the scroller's
 # own white space under it: the editor's box ends with the diagram, so a double
 # click below the board is a click on the scroller, not on the editor.
+# A board of exactly one column: the shape that cannot be deleted at all, so the
+# delete is not offered. KANBAN_LONE below is a different thing (one column of
+# cards among three), which is why this one is spelled out rather than reused.
+KANBAN_ONE = "kanban\n  col1[Review]\n    id1[Ship it]"
 KANBAN_LONE = (
     "kanban\n  col1[Todo]\n  col2[In Progress]\n  col3[Done]\n"
     "    [hi]\n    [how]\n    [are]\n    [you?]"
+)
+# A board of four empty columns, the shape every one of the three reports was
+# about: every band is sized to its header alone, so the space a bar, a composer
+# or a new column needs is not there until something makes room.
+KANBAN_BARE = (
+    "kanban\n  col1[Todo]\n  col2[In progress]\n  col3[Review]\n  col4[Done]"
 )
 # A hand-written board whose titles hold the delimiters a bare `[…]` cannot
 # carry, plus one bare card (`Plain`) for the other direction. Mermaid draws a
@@ -230,6 +246,30 @@ def _type_and_confirm(win, value, timeout=15):
     )
 
 
+def _press_key(win, key, shift=False):
+    """Press a key in the open field and leave it open, with modifiers.
+
+    What is observable is the field's *reaction* — still open, value unchanged, no
+    commit — which is the whole of a refused keystroke. A synthetic keydown cannot
+    insert a character, so this is not a claim about the browser's own editing; it
+    is a claim about what the editor did with the key.
+    """
+    out = _dump(
+        win,
+        f"""(() => {{
+          const i = document.querySelector('.mermaid-edit-input');
+          if (!i) return {{ missing: true }};
+          i.dispatchEvent(new KeyboardEvent('keydown', {{
+            key: {json.dumps(key)}, shiftKey: {json.dumps(bool(shift))},
+            bubbles: true, cancelable: true,
+          }}));
+          return {{ value: i.value }};
+        }})()""",
+    )
+    assert not out.get("missing"), "no field was open"
+    return out
+
+
 def _type(win, value):
     """Type into the open label editor and leave it open -- the half-finished
     state the toggle button and an outside double click have to resolve."""
@@ -289,6 +329,7 @@ LABEL_STATE = (
     "  editable: !!document.querySelector('.mermaid-editables'),"
     "  invalid: !!document.querySelector('.mermaid-edit-invalid'),"
     "  notice: !!document.querySelector('.mermaid-edit-notice'),"
+  "  noticeText: (document.querySelector('.mermaid-edit-notice') || {}).textContent || '',"
     "  error: !!document.querySelector('.mermaid-error'),"
     "  source: (() => { const out = [];"
     "   const walk = (n) => { if (n.attrs && typeof n.attrs.value === 'string' && n.attrs.value)"
@@ -376,9 +417,12 @@ def _pointer_drag(win, card, section, aim=None):
           const cr = card.getBoundingClientRect();
           const sr = (section.querySelector('rect') || section).getBoundingClientRect();
           const from = {{ x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 }};
-          // A slot is where the pointer is released, so it is aimed inside the
-          // board rather than at a band edge: the ＋ owns the bottom of a band.
+          // A gap is where the pointer is released, so it is aimed inside the
+          // board rather than at a band edge. The drawn slot at the foot of the
+          // column is not one of the column's cards, so the last gap is the one
+          // below its last *card* rather than the one below the slot.
           const resting = cards.filter((c) => {{
+            if (c.classList.contains('mermaid-kanban-slot')) return false;
             const r = c.getBoundingClientRect();
             return r.left >= sr.left - 1 && r.right <= sr.right + 1;
           }});
@@ -490,36 +534,176 @@ def _pointer_drag(win, card, section, aim=None):
     return out
 
 
+def _pointer_drag_column(win, column, slot):
+    """Drag kanban column ``column`` to final index ``slot`` with real pointer events.
+
+    The mirror of :func:`_pointer_drag`: where a card lands in a slot inside a
+    column, a column lands in a *gap* between two columns, so the indicator is a
+    full-height vertical rule and the release point is a horizontal position.
+
+    Reports what the drag looked like mid-flight, before the release, since the
+    whole point of it is the preview: no clone, the real frame and its cards
+    lifted together, and the rule in the gap the release will act on.
+    """
+    out = _dump(
+        win,
+        f"""(() => {{
+          const cards = [...document.querySelectorAll('.mermaid .items > g.node')];
+          const sections = [...document.querySelectorAll('.mermaid .sections > g')];
+          const section = sections[{column}];
+          if (!section) return {{ missing: true }};
+          const frame = section.querySelector('rect') || section;
+          const sr = frame.getBoundingClientRect();
+          const box = (r) => ({{ left: r.left, right: r.right, top: r.top, bottom: r.bottom }});
+          const inside = (r, x, y) => x >= r.left - 1 && x <= r.right + 1
+            && y >= r.top - 1 && y <= r.bottom + 1;
+          // A grab point is a piece of the frame that is neither one of its cards
+          // nor its header label: mermaid's cards are ~15px narrower than the
+          // band, so the strip down its left edge belongs to the column alone.
+          const label = section.querySelector('.cluster-label, .cluster-title');
+          const labelRect = label ? label.getBoundingClientRect() : null;
+          let from = null;
+          outer:
+          for (let dy of [0, -12, 12, -24, 24]) {{
+            for (let dx = 3; dx <= 14; dx += 2) {{
+              const x = sr.left + dx;
+              const y = (sr.top + sr.bottom) / 2 + dy;
+              if (y < sr.top + 2 || y > sr.bottom - 2) continue;
+              if (cards.some((c) => inside(c.getBoundingClientRect(), x, y))) continue;
+              if (labelRect && inside(labelRect, x, y)) continue;
+              from = {{ x, y }};
+              break outer;
+            }}
+          }}
+          if (!from) return {{ missing: 'no-frame' }};
+          // Aim past the right edge of the board for the last slot, into the gap
+          // for any other: the release reads the pointer's x, not a section. The
+          // drawn column at the end is a place rather than a column, so a gap is
+          // counted between the real ones and the aim means what it meant before
+          // the board was drawn with it.
+          const others = sections.flatMap((s, i) => (i === {column}
+            || s.classList.contains('mermaid-kanban-column-slot') ? []
+            : [box(s.getBoundingClientRect())]));
+          const to = {{ x: {slot} >= others.length
+              ? Math.max(...others.map((r) => r.right)) + 24
+              : (others[{slot} - 1].right + others[{slot}].left) / 2,
+            y: sr.top + 12 }};
+          const send = (target, type, x, y) => target.dispatchEvent(new PointerEvent(type, {{
+            bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse',
+            isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
+          }}));
+          const mine = cards.filter((c) => {{
+            const r = c.getBoundingClientRect();
+            return r.left >= sr.left - 1 && r.right <= sr.right + 1;
+          }});
+          send(section, 'pointerdown', from.x, from.y);
+          const at = () => frame.getBoundingClientRect();
+          let half = null;
+          for (let i = 1; i <= 8; i++) {{
+            send(window, 'pointermove',
+                 from.x + (to.x - from.x) * i / 8,
+                 from.y + (to.y - from.y) * i / 8);
+            if (i === 4) half = {{ left: at().left, top: at().top,
+                                    cards: mine.map((c) => {{ const r = c.getBoundingClientRect();
+                                                               return {{ left: r.left, top: r.top }}; }}) }};
+          }}
+          const preview = section.closest('.mermaid-preview');
+          const svg = preview.querySelector('svg');
+          const line = document.querySelector('.mermaid .kanban-drop-line');
+          // Where every card of the column is, as a delta from halfway through
+          // the drag. Read from the rendered rect, not from the transform: the
+          // transform is mermaid's own position *plus* the drag, and the card it
+          // is carried by is what has to track the pointer.
+          const cardMoved = mine.map((c, i) => {{
+            const r = c.getBoundingClientRect();
+            const h = half.cards[i];
+            return {{ dx: r.left - h.left, dy: r.top - h.top }};
+          }});
+          const lineRect = line ? line.getBoundingClientRect() : null;
+          const overLine = (() => {{
+            if (!lineRect || !line) return null;
+            const answers = [];
+            line.style.pointerEvents = 'auto';
+            for (let i = 0; i <= 10; i++) {{
+              const hit = document.elementFromPoint(lineRect.left + lineRect.width / 2,
+                                                    lineRect.top + lineRect.height * i / 10);
+              answers.push(hit === line ? 'line'
+                : (hit && hit.getAttribute && hit.getAttribute('class')) || (hit && hit.tagName) || 'null');
+            }}
+            line.style.pointerEvents = '';
+            return [...new Set(answers)];
+          }})();
+          const mid = {{
+            clone: document.querySelector('.mermaid-drag-card') !== null,
+            lifted: section.classList.contains('kanban-dragging-column'),
+            // One class for the whole unit: the cards are carried, not pointed
+            // at, so they are part of what is lifted rather than a drag of their own.
+            cardsLifted: mine.every((c) => c.classList.contains('kanban-dragging-column')),
+            // Paint order: svg paints in document order, so a frame left in its
+            // place is drawn under every column it is passing over. The cards are
+            // re-appended as a block, so it is the *set* that has moved to the end
+            // of `.items` — they travel together and never overlap each other.
+            frameOnTop: section.parentElement.lastElementChild === section,
+            cardsOnTop: mine.length > 0
+              && [...mine[0].parentElement.children].slice(-mine.length)
+                   .every((el, i) => el === mine[i]),
+            // Tracking, as a delta between two points of the drag: the grab offset
+            // and the lift's scaling are constant, so what is held moves with the
+            // pointer by the pointer's own distance, whatever the board is scaled to.
+            travel: {{ dx: at().left - half.left, dy: at().top - half.top,
+                       px: to.x - (from.x + (to.x - from.x) * 4 / 8),
+                       py: to.y - (from.y + (to.y - from.y) * 4 / 8) }},
+            cardMoved,
+            line: lineRect ? {{ x: lineRect.left, y: lineRect.top,
+                                w: lineRect.width, h: lineRect.height,
+                                shown: line.style.display !== 'none' }} : null,
+            lineUnder: line ? line.parentElement === svg
+              && line.nextElementSibling === svg.querySelector('.items') : null,
+            overLine,
+            unclipped: getComputedStyle(svg).overflow === 'visible'
+              && getComputedStyle(preview).overflow === 'visible',
+            sr: {{ x: sr.left, y: sr.top, w: sr.width, h: sr.height }},
+          }};
+          send(window, 'pointerup', to.x, to.y);
+          return {{ mid, from, to }};
+        }})()""",
+    )
+    assert out.get("missing") is None, f"no column to grab: {out.get('missing')}"
+    return out
+
+
 EDIT_STATE = (
     "(() => ({ editing: !!document.querySelector('.mermaid-editing'),"
     " marked: document.querySelectorAll('.mermaid-editables').length,"
     " button: (document.querySelector('.mermaid-edit-toggle') || {}).textContent }))()"
 )
 
-# The per-column ＋, with the band it belongs to: a button is only ever offered
-# while it is centred in its own column and sits in the bottom of it, so both
-# boxes are what a zoom (which rescales the section rects) has to keep agreeing
-# with.
-KANBAN_ADDS = (
-    "(() => { const buttons = [...document.querySelectorAll('.mermaid .mermaid-kanban-add')];"
-    " const sections = [...document.querySelectorAll('.mermaid .sections > g')];"
-    " return { n: buttons.length, adds: buttons.map((el, i) => {"
-    "   const b = el.getBoundingClientRect();"
-    "   const s = sections[i] ? (sections[i].querySelector('rect') || sections[i])"
-    "     .getBoundingClientRect() : null;"
-    "   return { label: el.getAttribute('aria-label'),"
-    "     x: b.left + b.width / 2, y: b.top + b.height / 2,"
-    "     band: s ? { x: s.left + s.width / 2, top: s.top, bottom: s.bottom,"
-    "       width: s.width, height: s.height } : null }; }) }; })()"
+# The words the drawn slots are written with, which are the editor's own: a card
+# slot reads "+ Add a card" and the column at the end of the board reads
+# "+ Add a column", so a test can tell a slot from a card by its own text.
+KANBAN_CARD_SLOT = "+ Add a card"
+KANBAN_COLUMN_SLOT = "+ Add a column"
+
+# The drawn slots, with the band each belongs to: a card slot *is* the drawing, so
+# a zoom that rescales the section rects has to keep the two agreeing.
+KANBAN_SLOTS = (
+    "(() => { const box = (el) => { const r = el.getBoundingClientRect();"
+    "   return { x: r.left + r.width / 2, y: r.top + r.height / 2,"
+    "     left: r.left, right: r.right, top: r.top, bottom: r.bottom,"
+    "     width: r.width, height: r.height }; };"
+    " const cards = [...document.querySelectorAll('.mermaid .items > g.node.mermaid-kanban-slot')];"
+    " const column = document.querySelector('.mermaid .sections > g.mermaid-kanban-column-slot');"
+    " return { cards: cards.map((el) => ({ text: (el.textContent || '').trim(), box: box(el) })),"
+    "   column: column ? { text: (column.textContent || '').replace(/\\s+/g, ' ').trim(),"
+    "     box: box(column.querySelector('rect') || column) } : null }; })()"
 )
 
 
-# Every board control in edit mode, with the shape it belongs to. A ✕ that is
-# not inside the card (or the band) it names is the one thing worth catching: the
-# buttons are HTML positioned from those rects, so a stale or mis-scaled rect
-# puts one somewhere else entirely, and the user has no way to tell which card it
-# would take.
-KANBAN_BUTTONS = (
+# The board's chrome, read the way a user meets it: a quiet `⋯` per real column,
+# and a `✕` that is only there for the card under the pointer. Adding is not in
+# the list: the board is *drawn* with somewhere to add, so the slots
+# (`KANBAN_SLOTS`) are the rest of it.
+KANBAN_CHROME = (
     "(() => { const box = (el) => { const r = el.getBoundingClientRect();"
     "   return { x: r.left + r.width / 2, y: r.top + r.height / 2,"
     "     left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };"
@@ -527,13 +711,190 @@ KANBAN_BUTTONS = (
     "   .map((c) => ({ text: (c.textContent || '').trim(), box: box(c) }));"
     " const bands = [...document.querySelectorAll('.mermaid .sections > g')]"
     "   .map((g) => ({ text: (g.textContent || '').replace(/\\s+/g, ' ').trim(),"
-    "     box: box(g.querySelector('rect') || g) }));"
+    "     box: box(g.querySelector('rect') || g),"
+    # The column's own name, which sits in the top of its band and is what a
+    # click there renames — so nothing else may be laid over it.
+    "     name: (() => { const l = g.querySelector('.cluster-label, .cluster-title');"
+    "       return l ? box(l) : null; })() }));"
+    " const shown = (el) => el.classList.contains('is-shown');"
     " const buttons = [...document.querySelectorAll('.mermaid .mermaid-kanban-btn')].map((el) => ({"
     "   kind: [...el.classList].find((c) => c.startsWith('mermaid-kanban-')"
     "     && !c.endsWith('btn')) || '',"
     "   label: el.getAttribute('aria-label'), text: (el.textContent || '').trim(),"
-    "   visible: getComputedStyle(el).opacity !== '0', box: box(el) }));"
+    "   visible: getComputedStyle(el).opacity !== '0', shown: shown(el),"
+    "   clickable: getComputedStyle(el).pointerEvents !== 'none', box: box(el) }));"
     " return { cards, bands, buttons }; })()"
+)
+
+# Only the controls the pointer has revealed, by label: the whole point of the
+# hover is that the rest are *not* there, so a test that read the full inventory
+# would be asserting the set rather than the reveal.
+KANBAN_SHOWN = (
+    "(() => ({ shown: [...document.querySelectorAll('.mermaid .mermaid-kanban-btn.is-shown')]"
+    " .map((el) => ({ kind: [...el.classList].find((c) => c.startsWith('mermaid-kanban-')"
+    "     && !c.endsWith('btn')) || '', label: el.getAttribute('aria-label'),"
+    # Revealed and pressable are two different things, and a control that is
+    # only the first is a control that does nothing when you press it: the press
+    # falls through to the diagram underneath.
+    "     clickable: getComputedStyle(el).pointerEvents !== 'none' })) }))()"
+)
+
+# The open `⋯` menu, with its items: the whole of a column's own actions, which
+# used to be two floating marks in its header.
+KANBAN_MENU = (
+    "(() => { const d = document.querySelector('.mermaid .mermaid-kanban-menu-list');"
+    " const b = d ? [...d.querySelectorAll('.mermaid-kanban-menu-item')] : [];"
+    " const r = d ? d.getBoundingClientRect() : null;"
+    " return { open: !!d, label: d ? d.getAttribute('aria-label') : null,"
+    "   items: b.map((x) => ({ text: (x.textContent || '').trim(),"
+    "     danger: x.classList.contains('is-danger'),"
+    "     focused: x === document.activeElement })),"
+    "   box: r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null }; })()"
+)
+
+
+def _hover(win, selector, index, timeout=10):
+    """Move the pointer onto the ``index``-th ``selector`` element.
+
+    A real `pointerover`, at the element's own centre: the chrome is revealed by
+    where the pointer *is*, not by a class a test sets, so a test that skipped the
+    gesture would be asserting nothing about what a user can see.
+    """
+    out = _dump(
+        win,
+        f"""(() => {{
+          const el = document.querySelectorAll('.mermaid {selector}')[{index}];
+          if (!el) return {{ missing: true }};
+          const r = el.getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          el.dispatchEvent(new PointerEvent('pointerover', {{
+            bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse',
+            isPrimary: true, button: 0, buttons: 0, clientX: x, clientY: y,
+          }}));
+          return {{ at: {{ x: Math.round(x), y: Math.round(y) }} }};
+        }})()""",
+    )
+    assert not out.get("missing"), f"the board had no {selector}[{index}]"
+    return out
+
+
+def _shown(win):
+    """The controls the pointer has revealed, and only those.
+
+    A single read, not a wait: the reveal happens in the handler of the very event
+    the hover dispatched, so there is nothing to wait for — and a wait here would
+    be free to settle on the set from an earlier hover and pass for this one.
+    """
+    return _dump(win, KANBAN_SHOWN)["shown"]
+
+
+def _unhover(win):
+    """Take the pointer off the board, so the reveal is taken back."""
+    return _dump(
+        win,
+        "(() => { const p = document.querySelector('.mermaid-preview');"
+        " p.dispatchEvent(new PointerEvent('pointerleave'));"
+        " return { left: true }; })()",
+    )
+
+
+def _open_kanban_menu(win, column):
+    """Press the ``column``-th `⋯` and report the items of the menu it opened."""
+    out = _dump(
+        win,
+        f"""(() => {{
+          const b = document.querySelectorAll('.mermaid .mermaid-kanban-menu')[{column}];
+          if (!b) return {{ missing: true }};
+          const r = b.getBoundingClientRect();
+          const opts = {{ bubbles: true, button: 0, clientX: r.left + r.width / 2,
+                         clientY: r.top + r.height / 2 }};
+          for (const type of ['mousedown', 'mouseup', 'click']) b.dispatchEvent(new MouseEvent(type, opts));
+          return {{ label: b.getAttribute('aria-label') }};
+        }})()""",
+    )
+    assert not out.get("missing"), "the column had no ⋯"
+    return _wait(win, KANBAN_MENU, lambda d: d["open"], timeout=10)
+
+
+def _click_kanban_menu_item(win, text):
+    """Press the menu item that says ``text``, by its own label.
+
+    The item, not the `⋯`: a menu item is a real control with a real name, and
+    choosing it by what it says is the only way the test can tell a rename from a
+    delete.
+    """
+    out = _dump(
+        win,
+        f"""(() => {{
+          const item = [...document.querySelectorAll('.mermaid .mermaid-kanban-menu-item')]
+            .find((x) => (x.textContent || '').trim() === {json.dumps(text)});
+          if (!item) return {{ missing: true }};
+          item.click();
+          return {{ pressed: (item.textContent || '').trim() }};
+        }})()""",
+    )
+    assert not out.get("missing"), f"the menu had no {text!r} item"
+    return out
+
+
+# The open inline field, with what it says it is for.
+#
+# ``anchor`` is a selector for the thing the field was opened from, read in the
+# *same* snapshot as the field: a board re-renders and the page settles between
+# two reads, so comparing a box taken before the press against one taken after it
+# would be comparing two moments of the layout rather than two boxes. Callers
+# assert ``field.box`` against ``field.anchor`` for that reason.
+def _composer_js(anchor, expression=False):
+    """The open field, read together with whatever it was opened from.
+
+    ``anchor`` is a CSS selector, or — with ``expression`` — a JavaScript
+    expression that evaluates to the element itself: an indexed pick for the
+    drawn slots, which share one selector between them and are told apart by
+    their order on the board.
+    """
+    raw = anchor if expression else json.dumps(anchor)
+    return (
+        "(() => { const i = document.querySelector('.mermaid-edit-input');"
+        f" const raw = {raw};"
+        " const a = raw && raw.nodeType ? raw"
+        "   : (typeof raw === 'string' && raw ? document.querySelector(raw) : null);"
+        " const box = (e) => { const r = e.getBoundingClientRect();"
+        "   return { x: r.left + r.width / 2, y: r.top + r.height / 2,"
+        "     top: r.top, left: r.left, right: r.right, bottom: r.bottom,"
+        "     width: r.width, height: r.height }; };"
+        " return { v: i ? i.value : null, ph: i ? i.placeholder : null,"
+        "   wrap: i ? i.tagName === 'TEXTAREA' : null,"
+        "   box: i ? box(i.closest('.mermaid-edit-field')) : null,"
+        "   input: i ? box(i) : null,"
+        "   anchor: a ? box(a) : null,"
+        "   block: (() => { const b = document.querySelector('.mermaid');"
+        "     return b ? box(b) : null; })() }; })()"
+    )
+
+
+def _composer(win, anchor=None, expression=False):
+    """Wait for the inline field to open, and read it with its anchor.
+
+    ``expression`` passes ``anchor`` to `_composer_js` as JavaScript rather than
+    as a selector, which is how a slot that shares one selector with every other
+    slot is told apart by its order on the board.
+    """
+    return _wait(
+        win, _composer_js(anchor, expression), lambda d: d["v"] is not None, timeout=10
+    )
+
+
+# The open field and the block it is in, which is what "the editor is tall enough
+# for this" is made of: a field is absolutely positioned, so the block around it
+# is the only thing that can make room for one that is taller than its slot.
+COMPOSER_FIT = (
+    "(() => { const f = document.querySelector('.mermaid-edit-field');"
+    " const b = document.querySelector('.mermaid');"
+    " const box = (e) => { const r = e.getBoundingClientRect();"
+    "   return { top: r.top, left: r.left, right: r.right, bottom: r.bottom,"
+    "     width: r.width, height: r.height }; };"
+    " const pad = b ? getComputedStyle(b).paddingBottom : null;"
+    " return { box: f ? box(f) : null, block: b ? box(b) : null, pad: pad }; })()"
 )
 
 # The delete prompt, with its answer: the title names what goes and the note says
@@ -546,6 +907,11 @@ DELETE_PROMPT = (
     "   note: d ? (d.querySelector('.edi-dialog-note') || {}).textContent : null,"
     "   buttons, danger: !!(d && d.querySelector('.toolbar-danger')) }; })()"
 )
+
+
+def _resize_view(win, width, height=None):
+    """Resize the page itself, the way dragging a window edge does."""
+    win._web.resize(width, height or win._web.height())
 
 
 def _click_kanban_button(win, kind, index, timeout=10):
@@ -586,30 +952,70 @@ def _answer_delete_prompt(win, answer, timeout=10):
     )
 
 
-def _click_kanban_add(win, index):
-    """Press the ＋ of column ``index`` the way a mouse does, and report what the
-    editor it opened says it is about to create."""
+def _click_kanban_slot(win, index):
+    """Click the ``index``-th drawn card slot the way a mouse does.
+
+    A slot is part of the drawing rather than a control on top of it, so this one
+    is a click *at* its centre with the hit test, not a dispatched event at the
+    element: a slot nobody can reach is not a place to add a card. The field it
+    opens is read in the same snapshot as the slot it came from, so the two boxes
+    are one moment of the layout.
+    """
     out = _dump(
         win,
         f"""(() => {{
-          const b = document.querySelectorAll('.mermaid .mermaid-kanban-add')[{index}];
+          const b = document.querySelectorAll('.mermaid .items > g.node.mermaid-kanban-slot')[{index}];
           if (!b) return {{ missing: true }};
           const r = b.getBoundingClientRect();
-          const opts = {{ bubbles: true, button: 0, clientX: r.left + r.width / 2,
-                         clientY: r.top + r.height / 2 }};
-          for (const type of ['mousedown', 'mouseup', 'click']) b.dispatchEvent(new MouseEvent(type, opts));
-          return {{ label: b.getAttribute('aria-label') }};
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          const at = document.elementFromPoint(x, y);
+          if (!at || !(at === b || b.contains(at))) return {{
+            reached: false, hit: at ? (at.className || at.tagName) : null }};
+          const opts = {{ bubbles: true, button: 0, clientX: x, clientY: y }};
+          for (const type of ['mousedown', 'mouseup', 'click'])
+            at.dispatchEvent(new MouseEvent(type, opts));
+          return {{ reached: true, slot: {{ x, y }} }};
         }})()""",
     )
-    assert not out.get("missing"), "the column had no ＋"
+    assert not out.get("missing"), f"the board had no card slot[{index}]"
+    assert out.get("reached"), f"the click inside card slot[{index}] reached {out}"
+    # Read against the slot it came from, in the same snapshot: the board settles
+    # between two reads, so two boxes read at two moments are two moments of the
+    # layout rather than two boxes.
+    anchor = (
+        "document.querySelectorAll("
+        f"'.mermaid .items > g.node.mermaid-kanban-slot')[{index}]"
+    )
     return _wait(
         win,
-        "(() => { const i = document.querySelector('.mermaid-edit-input');"
-        " return { v: i ? i.value : null, ph: i ? i.placeholder : null,"
-        "   caption: (document.querySelector('.mermaid-edit-caption') || {}).textContent }; })()",
-        lambda d: d["v"] is not None,
+        _composer_js(anchor, expression=True),
+        lambda d: d["v"] is not None and d["anchor"] is not None,
         timeout=10,
     )
+
+
+def _click_kanban_column_slot(win):
+    """Click the drawn column the board would have next, and read the field its
+    own header opened."""
+    out = _dump(
+        win,
+        """(() => {
+          const b = document.querySelector('.mermaid .sections > g.mermaid-kanban-column-slot');
+          if (!b) return { missing: true };
+          const r = (b.querySelector('rect') || b).getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + 12;
+          const at = document.elementFromPoint(x, y);
+          if (!at || !(at === b || b.contains(at))) return {
+            reached: false, hit: at ? (at.className || at.tagName) : null };
+          const opts = { bubbles: true, button: 0, clientX: x, clientY: y };
+          for (const type of ['mousedown', 'mouseup', 'click'])
+            at.dispatchEvent(new MouseEvent(type, opts));
+          return { reached: true };
+        })()""",
+    )
+    assert not out.get("missing"), "the board had no column slot"
+    assert out.get("reached"), f"the click inside the column slot reached {out}"
+    return _wait(win, _composer_js(None), lambda d: d["v"] is not None, timeout=10)
 
 
 def _dblclick_below_document(win):
