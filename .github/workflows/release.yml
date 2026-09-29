@@ -94,6 +94,9 @@ jobs:
     container:
       image: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
     timeout-minutes: 45
+    permissions:
+      contents: read
+      code-quality: write # GitHub code coverage API (actions/upload-code-coverage)
     defaults:
       run:
         shell: bash --noprofile --norc -e -o pipefail {0}
@@ -113,6 +116,34 @@ jobs:
         run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py scripts/mermaid-label-probe.py run_edi.py -q
       - name: Backend tests + coverage
         run: .venv/bin/pytest tests/ > /tmp/backend-cov.txt 2>&1
+      # GitHub's own coverage dashboard (built in, public preview since
+      # 2026-05): each Cobertura report uploads as its own labelled report and
+      # they render together as one PR summary from github-code-quality[bot],
+      # with uncovered changed lines annotated on the Files-changed tab. No
+      # third-party service and no upload token; needs code-quality: write.
+      # Two knobs keep a reporting hiccup out of the quality gate:
+      #   * fail-on-error: false — the API is in preview, so a 5xx, a rejected
+      #     payload or a processing timeout must not turn a green run red.
+      #   * the `if:` — only the default branch and pull requests, because for
+      #     a push to any *other* branch the action shells out to `gh pr list`
+      #     to look for a PR, and the builder image ships no `gh` (that path
+      #     fails the step). Tags and release/** runs are skipped outright.
+      - name: Upload frontend coverage
+        if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage/cobertura-coverage.xml
+          language: TypeScript
+          label: code-coverage/vitest
+          fail-on-error: 'false'
+      - name: Upload backend coverage
+        if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage-py/cobertura-coverage.xml
+          language: Python
+          label: code-coverage/pytest
+          fail-on-error: 'false'
       - name: npm audit
         run: npm run audit
       - name: pip-audit
