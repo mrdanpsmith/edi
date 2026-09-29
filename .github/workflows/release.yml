@@ -229,8 +229,46 @@ jobs:
           # Native Windows makensis with ABSOLUTE -D defines, because makensis
           # resolves relative File/OutFile against the SCRIPT's directory, not
           # the CWD (the same path quirk the Wine job documented).
-          choco install nsis -y --no-progress | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed: $LASTEXITCODE" }
+          #
+          # makensis is resolved EXPLICITLY rather than just called by name.
+          # Each step is a fresh pwsh whose $env:Path is the runner's, not the
+          # post-install one: `choco install nsis` succeeds, then the very next
+          # line fails with "The term 'makensis' is not recognized", because
+          # nothing re-read the machine/user PATH. (scripts/build-windows.ps1
+          # carries the same fix as an Update-Path helper, for the same
+          # choco-installs-Python case.) So: re-read the PATH, then look in
+          # the real install dirs, and only choco if it is genuinely absent --
+          # the hosted Windows image ships NSIS, so that branch usually won't
+          # run. The failure message lists where it looked, because a silent
+          # "not found" here is what made this fail in the first place.
+          function Refresh-Path {
+            $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                        [System.Environment]::GetEnvironmentVariable('Path', 'User')
+          }
+          $candidates = @(
+            "$env:ProgramFiles\NSIS\makensis.exe",
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+            "C:\ProgramData\chocolatey\bin\makensis.exe"
+          )
+          function Find-Makensis {
+            $cmd = Get-Command makensis -ErrorAction SilentlyContinue
+            if ($cmd) { return $cmd.Source }
+            foreach ($c in $candidates) { if ($c -and (Test-Path $c)) { return $c } }
+            return $null
+          }
+          Refresh-Path
+          $mk = Find-Makensis
+          if (-not $mk) {
+            Write-Host 'makensis not present; installing NSIS via Chocolatey'
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed: $LASTEXITCODE" }
+            Refresh-Path
+            $mk = Find-Makensis
+          }
+          if (-not $mk) {
+            throw "makensis not found. Looked on PATH and in: $($candidates -join ', ')"
+          }
+          Write-Host "using makensis: $mk"
           $v = '${{ env.VER }}'.TrimStart('v')
           $onefile = (Resolve-Path "dist-app/Edi-$v-win64.exe").Path
           $ico = (Resolve-Path 'scripts/assets/app-icon.ico').Path
@@ -239,7 +277,7 @@ jobs:
           # artifact: deleting it here keeps the upload glob to exactly the
           # versioned onefile + the installer.
           Remove-Item 'dist-app/Edi-selftest.exe' -ErrorAction SilentlyContinue
-          & makensis "-DVERSION=$v" "-DSETUPEXE=$onefile" "-DICO=$ico" "-DOUTEXE=$setup" packaging/edi.nsi
+          & $mk "-DVERSION=$v" "-DSETUPEXE=$onefile" "-DICO=$ico" "-DOUTEXE=$setup" packaging/edi.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed: $LASTEXITCODE" }
           Get-ChildItem dist-app | Select-Object Name, Length
       - name: Upload Windows artifacts
