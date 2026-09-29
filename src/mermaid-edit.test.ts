@@ -1838,6 +1838,97 @@ describe('kanban drag', () => {
     expect(svg.querySelector('#K3')!.getAttribute('transform')).toBeNull()
   })
 
+  it('holds a column in a group of its own, above every card on the board', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanban(commit)
+    const section = svg.querySelectorAll('.sections > g')[0]!
+
+    section.dispatchEvent(pointer('pointerdown', 70, 110))
+    window.dispatchEvent(pointer('pointermove', 400, 150))
+
+    // The board is two sibling lists — frames in `.sections`, cards in `.items`,
+    // the frames first — and svg paints in document order, so a frame re-appended
+    // to the end of `.sections` is over the other *frames* and under every card
+    // in `.items`. That is a column in flight drawn with its neighbours' cards
+    // lying across it, which is also how a neighbour's cards come to look like
+    // cards the held column picked up. A thing that is not one element cannot be
+    // put on top by where one element sits, so the whole set is held in a group
+    // of its own, appended last: frame first, then the cards it carries.
+    const layer = svg.querySelector('.kanban-drag-layer')!
+    expect(layer).not.toBeNull()
+    expect(layer.parentElement).toBe(svg)
+    expect(svg.lastElementChild).toBe(layer)
+    expect([...layer.children]).toEqual([section, svg.querySelector('#K1'), svg.querySelector('#K2')])
+    // The card that stays on the board is not in there, and neither is the other
+    // column's frame: the group is this column, not the front of the board.
+    expect(layer.querySelector('#K3')).toBeNull()
+    expect(svg.querySelector('#K3')!.parentElement!.classList.contains('items')).toBe(true)
+    // The indicator is still under the held column, the way a card's is: it is
+    // inserted before `.sections`, and the group is appended after it.
+    expect(dropLine()!.parentElement).toBe(svg)
+    expect(
+      dropLine()!.compareDocumentPosition(layer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+
+    window.dispatchEvent(pointer('pointerup', 400, 150))
+
+    // Nothing of it survives: every element is back in its own list, in its own
+    // place, and the group is gone rather than left empty on the board.
+    for (const selector of ['#K1', '#K2']) {
+      expect(svg.querySelector(selector)!.parentElement!.classList.contains('items')).toBe(true)
+    }
+    expect(svg.querySelector('.sections > g')!.parentElement!.classList.contains('sections')).toBe(true)
+    expect(svg.querySelector('.kanban-drag-layer')).toBeNull()
+    expect(svg.querySelectorAll('.items > .node')[0]).toBe(svg.querySelector('#K1'))
+  })
+
+  it('holds an empty column with its own slot and nothing else', async () => {
+    // The shape that read as a column collecting other columns' cards: the last
+    // column is empty, so the only thing standing in it is the drawn card slot,
+    // and a lift that took the cards *near* it rather than the ones the model
+    // says are in it would carry a neighbour's card across the board.
+    const commit = vi.fn()
+    const source = ['kanban', '  Todo', '    [One]', '  Doing', '  Done'].join('\n')
+    const { svg } = await renderKanbanBoard(
+      commit,
+      source,
+      boardSvg(
+        ['Todo', 'Doing', 'Done', KANBAN_COLUMN_SLOT],
+        ['One', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT, KANBAN_CARD_SLOT],
+      ),
+      [
+        rect(0, 20, 140, 110),
+        rect(200, 20, 140, 80),
+        rect(400, 20, 140, 80),
+        rect(600, 20, 140, 80),
+      ],
+      [
+        rect(10, 40, 120, 24),
+        rect(10, 68, 120, 24),
+        rect(210, 40, 120, 24),
+        rect(410, 40, 120, 24),
+      ],
+    )
+    // The elements are taken by hand *before* the lift: the lift moves them out
+    // of the lists it is found by, which is the point of it.
+    const done = svg.querySelectorAll('.sections > g')[2]!
+    const [, , itsSlot] = cardSlots(svg)
+
+    done.dispatchEvent(pointer('pointerdown', 470, 110))
+    window.dispatchEvent(pointer('pointermove', 200, 200))
+
+    // The empty column is a frame and one slot, and the slot is its own.
+    const layer = svg.querySelector('.kanban-drag-layer')!
+    expect([...layer.children]).toEqual([done, itsSlot])
+    expect(layer.querySelector('.mermaid-kanban-card-remove')).toBeNull()
+    // Everything else is still in `.items`, where it belongs: three cards on the
+    // board and the held column's own slot in the air above them.
+    const left = [...svg.querySelectorAll('.items > g.node')]
+    expect(left).toHaveLength(3)
+    expect(left).not.toContain(itsSlot)
+    expect(layer.textContent).not.toContain('One')
+  })
+
   it('draws the column line under the frames, not over them', async () => {
     const commit = vi.fn()
     const { svg } = await renderKanban(commit)

@@ -1268,10 +1268,17 @@ def test_kanban_column_drag_reorders_the_board(window):
     assert abs(travel["dy"] - travel["py"]) <= 1.0, mid
     assert all(abs(m["dx"] - travel["dx"]) <= 1.0 for m in mid["cardMoved"]), mid
     assert all(abs(m["dy"] - travel["dy"]) <= 1.0 for m in mid["cardMoved"]), mid
-    # Painted on top of what it is passing over: the svg paints in document order,
-    # so a frame left in its place would be drawn under every column it crosses.
-    assert mid["frameOnTop"] is True, mid
-    assert mid["cardsOnTop"] is True, mid
+    # Painted on top of what it is passing over. The board is two sibling lists --
+    # the frames in `.sections`, the cards in `.items`, the frames first -- and the
+    # svg paints in document order, so every card is drawn over every frame: a
+    # frame left in `.sections` is over the other frames and under every card on
+    # the board. A column is not one element, so it is held in a group of its own,
+    # appended last, frame first and then the cards it carries.
+    assert mid["heldInGroup"] is True, mid
+    # This column is released past the last one, over the drawn column slot, which
+    # holds no cards — so there is nothing of the board under it to be in front of.
+    # The drag that *is* over other columns' cards is `test_..._paints_over`.
+    assert mid["fronted"] is None, mid
     # A list that travels off the board is clipped by the svg and the scrolling
     # preview, exactly as a card is.
     assert mid["unclipped"] is True, mid
@@ -1305,6 +1312,74 @@ def test_kanban_column_drag_reorders_the_board(window):
     # undo away, because it is one setNodeMarkup. The column the board is drawn
     # with holds no cards, so it is not in the reading.
     assert [_drawn(c) for c in cols.values()] == [["Three"], ["One", "Two"]], cols
+
+
+# The board the two paint-order bugs were reported on: a last column with nothing
+# in it, so the only thing standing in it is the drawn card slot.
+KANBAN_TRAILING_EMPTY = (
+    "kanban\n"
+    "  col1[Todo]\n"
+    "  col2[Specified]\n"
+    "    [STDIN support for code blocks]\n"
+    "  col3[Doing]\n"
+    "    [Kanban editor]\n"
+    "  col4[Done]"
+)
+
+
+def test_kanban_column_drag_paints_over_the_cards_it_passes(window):
+    """A column in flight is *on top* of the board it is passing over.
+
+    The board is drawn as two sibling lists — the frames in `.sections`, the cards
+    in `.items`, the frames first — and svg paints in document order, so a frame
+    re-appended to the end of `.sections` is over the other frames and still under
+    every card in `.items`. Two things were wrong with that, and both were read as
+    one: a neighbouring column's cards lay *across* the column being dragged, and a
+    column passing over a neighbour's cards looked like it had picked them up —
+    which is how an empty `Done` at the end of a board came to look like it was
+    carrying `Specified`'s card with it. The lift is a group of its own for exactly
+    this, and this asks the rendering which of the two is on top rather than asking
+    the DOM where things are: with a group the answer is the held column, without
+    one the answer is the neighbour's card.
+    """
+    _render(window, KANBAN_TRAILING_EMPTY)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 4, timeout=15)
+
+    # The empty trailing column, dragged left over `Specified` and its card.
+    mid = _pointer_drag_column(window, column=3, slot=1)["mid"]
+    assert mid["lifted"] is True, mid
+    # The group is this column and nothing else: its frame, and the drawn slot
+    # that is all it holds. A card the model does not place in this column is not
+    # in the group, however near it the pointer is.
+    assert mid["heldInGroup"] is True, mid
+    assert mid["cardsLifted"] is True, mid
+    fronted = mid["fronted"]
+    assert fronted is not None, mid
+    assert fronted["under"] == "STDIN support for code blocks", fronted
+    # The question, asked of the page: over the neighbour's card, what is on top?
+    # A held card is `pointer-events: none` so the drop is read off the pointer,
+    # and the helper lifts that for the sample and puts it straight back — so this
+    # is the paint order and not the hit-test order.
+    assert fronted["held"] is True, fronted
+    # And the drop is the real thing: `Done` is now the second column, with
+    # everything still where the board had it.
+    assert _wait(
+        window,
+        LABEL_STATE,
+        lambda d: d.get("source", "").index("col4[Done]") < d.get("source", "").index("col2[Specified]")
+        if d.get("source")
+        else False,
+        timeout=15,
+    )["source"] == (
+        "kanban\n"
+        "  col1[Todo]\n"
+        "  col4[Done]\n"
+        "  col2[Specified]\n"
+        "    [STDIN support for code blocks]\n"
+        "  col3[Doing]\n"
+        "    [Kanban editor]"
+    )
 
 
 def _slot_sits_in_its_band(slot, band):

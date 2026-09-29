@@ -1336,8 +1336,10 @@ body {
 }
 /* Chromium makes SVG nodes natively draggable: a kanban card would start the
    browser's own drag (drag image, no pointer events) before our threshold is
-   crossed, and the card would silently snap back on drop. */
-.ProseMirror .mermaid .items > .node {
+   crossed, and the card would silently snap back on drop. The group a held column
+   is carried in holds cards too, and it is not under `.items` while it is there. */
+.ProseMirror .mermaid .items > .node,
+.ProseMirror .mermaid .kanban-drag-layer .node {
   -webkit-user-drag: none;
 }
 
@@ -1642,8 +1644,13 @@ body {
   cursor: grab;
 }
 
+/* A held column's frame and cards are in the lift's own group rather than in
+   `.sections`/`.items` (see `kanbanDragLayer`), so the rule is named there too —
+   the cursor is inherited, and a column that stops saying "in the air" under the
+   pointer that is holding it says the opposite of what is true. */
 .ProseMirror .mermaid-preview.kanban-dragging .items > g.node,
-.ProseMirror .mermaid-preview.kanban-dragging .sections > g {
+.ProseMirror .mermaid-preview.kanban-dragging .sections > g,
+.ProseMirror .mermaid-preview.kanban-dragging .kanban-drag-layer {
   cursor: grabbing;
 }
 

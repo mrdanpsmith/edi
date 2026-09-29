@@ -649,10 +649,58 @@ def _pointer_drag_column(win, column, slot):
             // place is drawn under every column it is passing over. The cards are
             // re-appended as a block, so it is the *set* that has moved to the end
             // of `.items` — they travel together and never overlap each other.
-            frameOnTop: section.parentElement.lastElementChild === section,
-            cardsOnTop: mine.length > 0
-              && [...mine[0].parentElement.children].slice(-mine.length)
-                   .every((el, i) => el === mine[i]),
+            // Where the held unit *is*, which for a column is a group of its
+            // own rather than a place in either of mermaid's two lists: the board
+            // is drawn as the frames in `.sections` and then the cards in
+            // `.items`, so every card is painted over every frame, and a frame
+            // re-appended to the end of `.sections` is over the other frames and
+            // nothing else. The group is the last child of the svg, so it is over
+            // the whole board, and it holds the frame first and then the cards
+            // the frame carries -- the order the board is itself drawn in.
+            heldInGroup: (() => {{
+              const group = svg.querySelector('.kanban-drag-layer');
+              if (!group || group !== svg.lastElementChild) return false;
+              const kids = [...group.children];
+              return kids[0] === section && kids.length === mine.length + 1
+                && kids.slice(1).every((el, i) => el === mine[i]);
+            }})(),
+            // And the question that is actually about paint: is anything on the
+            // board drawn over the held column? A neighbour's cards on top of the
+            // column passing over them read as cards it picked up, so this is
+            // sampled where the held frame and another column's card overlap, and
+            // asks what is on top *there*. A held card is `pointer-events: none`
+            // so the drop is read off the pointer and not off what it passes
+            // over -- which also makes it invisible to a hit test, so the group is
+            // made hittable for the sample and put straight back. (A screenshot
+            // would not do: the DOM under the offscreen platform is a frame
+            // behind.)
+            fronted: (() => {{
+              const group = svg.querySelector('.kanban-drag-layer');
+              if (!group) return null;
+              const a = frame.getBoundingClientRect();
+              // The card the held column is passing *over* -- not merely the first
+              // one left on the board, which is beside it and answers nothing.
+              // Nothing to compare against is a real answer too: a column released
+              // past the last one overlaps no card, and there is nothing to be in
+              // front of.
+              const over = cards
+                .filter((c) => !group.contains(c))
+                .map((c) => ({{ c, b: c.getBoundingClientRect() }}))
+                .find(({{ b }}) => Math.max(a.left, b.left) < Math.min(a.right, b.right)
+                  && Math.max(a.top, b.top) < Math.min(a.bottom, b.bottom));
+              if (!over) return null;
+              const left = Math.max(a.left, over.b.left);
+              const right = Math.min(a.right, over.b.right);
+              const top = Math.max(a.top, over.b.top);
+              const bottom = Math.min(a.bottom, over.b.bottom);
+              const kids = [...group.children];
+              for (const el of kids) el.style.pointerEvents = 'auto';
+              const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+              for (const el of kids) el.style.pointerEvents = '';
+              return {{ under: (over.c.textContent || '').trim(),
+                        hit: hit ? (hit.getAttribute && hit.getAttribute('class')) || hit.tagName : 'null',
+                        held: !!hit && group.contains(hit) }};
+            }})(),
             // Tracking, as a delta between two points of the drag: the grab offset
             // is constant, so what is held moves with the pointer by the pointer's
             // own distance, whatever the board is scaled to.

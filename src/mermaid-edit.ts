@@ -43,6 +43,11 @@ const DRAG_CONTAINER_CLASS = 'kanban-dragging'
 
 /** On a whole lifted list: the frame, so the list reads as one thing leaving. */
 const DRAG_COLUMN_CLASS = 'kanban-dragging-column'
+/**
+ * On the group a lifted list is held in — the one thing on the board that is
+ * neither a frame nor a card, and exists only while a column is in the air.
+ */
+const DRAG_LAYER_CLASS = 'kanban-drag-layer'
 /** The line drawn in the gap the card will drop into. */
 const DROP_LINE_CLASS = 'kanban-drop-line'
 const DROP_TARGET_CLASS = 'kanban-drop-target'
@@ -2480,6 +2485,13 @@ function kanbanCardAt(event: MouseEvent, svg: SVGSVGElement, family: DiagramFami
  * out. The follower is captured rather than re-walked, because the model→element
  * mapping these callers hold is the captured array.
  *
+ * `into` is for a thing that is not one element: the whole set goes into that
+ * container, in the order given, instead of each into its own parent. Re-appending
+ * each to its own parent is the right answer for a card and cannot answer for a
+ * column, whose frame and cards are two sibling lists that are ordered against
+ * each other — see `kanbanDragLayer`. The restore is the same either way, because
+ * every element's own place was captured before it moved.
+ *
  * A lift grows a *single* thing and only a single thing. `scale` is 1 for a
  * column, and that is not a lesser version of the card's: an svg transform scales
  * about the element's own local origin, and a column's frame and its cards do not
@@ -2492,6 +2504,7 @@ function liftElements(
   elements: readonly SVGElement[],
   cls: string,
   scale = DRAG_LIFT_SCALE,
+  into?: Element | null,
 ): { move: (dx: number, dy: number) => void; restore: () => void } {
   const bases = elements.map((element) => ({
     element,
@@ -2500,7 +2513,8 @@ function liftElements(
     follower: element.nextSibling,
   }))
   for (const { element, parent } of bases) {
-    parent?.appendChild(element)
+    if (into) into.appendChild(element)
+    else parent?.appendChild(element)
     element.classList.add(cls)
   }
   const grow = scale === 1 ? '' : ` scale(${scale})`
@@ -2511,7 +2525,15 @@ function liftElements(
       }
     },
     restore: () => {
-      for (const { element, transform, parent, follower } of bases) {
+      // Backwards. Every element is put back before the *follower* it was
+      // captured with, and that follower is the next element in the same list —
+      // which, when the whole set is held in a group of its own, is another
+      // lifted element still standing in the group. Restored in the order they
+      // were captured, the first card would be asked to go in before a node that
+      // is not in that list any more, which throws and takes the rest of the
+      // restore, and the drop, with it. In reverse, anything still in front of an
+      // element is either where it always was or already back.
+      for (const { element, transform, parent, follower } of [...bases].reverse()) {
         if (transform === null) element.removeAttribute('transform')
         else element.setAttribute('transform', transform)
         element.classList.remove(cls)
@@ -2542,23 +2564,66 @@ function createDropLine(svg: SVGSVGElement, before: Element | null): SVGLineElem
 }
 
 /**
+ * The home of a held column, above the whole board rather than inside either of
+ * mermaid's two lists.
+ *
+ * A board is drawn as two sibling lists — the frames in `.sections`, the cards in
+ * `.items`, the frames *first* — and svg paints in document order, so every card
+ * on the board is painted over every frame. A lift puts a single element on top
+ * by re-appending it to the end of its own parent, which is enough for a card and
+ * cannot be enough for a column: moved to the end of `.sections`, a frame is over
+ * the other frames and still under every card in `.items`, so a column in flight
+ * is drawn with its neighbours' cards lying across it. That is not a cosmetic
+ * slip in one direction only — a neighbouring column's cards on top of a column
+ * that is passing over them read as cards the held column picked up, which is
+ * exactly the second thing a lift has to get right.
+ *
+ * A column is not one element, so where one element sits cannot put it on top of
+ * the board. The frame and the cards it carries are moved into a group of their
+ * own, appended as the last child of the svg, frame first so the column's own
+ * cards stay on top of it — the order the board itself is drawn in. Nothing about
+ * how either element is *painted* changes: mermaid's kanban styles key on the
+ * element's own classes (`.section-N rect`, `.node rect`, `.kanban-label`), never
+ * on the list it happens to be in. And the drop line stays *under* the held
+ * column, the way a card's line stays under the held card.
+ */
+function kanbanDragLayer(svg: SVGSVGElement): SVGElement {
+  const layer = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g')
+  layer.setAttribute('class', DRAG_LAYER_CLASS)
+  svg.appendChild(layer)
+  return layer
+}
+
+/**
+ * How a drag is *presented*: what the lift does to the thing being held, and
+ * where the indicator goes underneath it. Both belong to *what* is being dragged
+ * rather than to how a drag works, which is why they are not in `hooks`.
+ */
+interface DragLift {
+  /** The sibling the indicator is inserted ahead of: a card line runs under the
+   *  cards, a column line under the frames. */
+  before: Element | null
+  /** How much the lift grows. A column is carried, not grown — see `liftElements`. */
+  scale?: number
+  /** A container the whole lifted set is moved into, for a thing that spans two
+   *  sibling lists — see `kanbanDragLayer`. Removed when the drag ends. */
+  layer?: SVGElement | null
+}
+
+/**
  * The machinery a card drag and a column drag share: threshold, lift, indicator,
  * restore. Everything that differs is in `hooks`, because "where does this land"
  * is the only real difference — a card lands in a slot inside a list, a list lands
  * in a gap between two lists.
- *
- * `before` is the sibling the indicator goes ahead of and `scale` how much the
- * lift grows, because both belong to *what* is being dragged rather than to how a
- * drag works: a card line runs under the cards, a column line under the frames.
  */
 function armDragGroup(
   drag: ArmedDrag,
   lifted: readonly SVGElement[],
   cls: string,
   hooks: DragHooks,
-  before: Element | null,
-  scale?: number,
+  lift: DragLift,
 ): void {
+  const { before, scale, layer } = lift
   const { container, svg, down } = drag
   const map = svgMapping(svg)
   let group: ReturnType<typeof liftElements> | null = null
@@ -2578,6 +2643,10 @@ function armDragGroup(
     group?.restore()
     group = null
     container.classList.remove(DRAG_CONTAINER_CLASS)
+    // The group a held column was kept in goes with it, whether the drag ever
+    // started: an empty `g` on the board outliving the drag is one more thing
+    // that has to be accounted for by everything walking it.
+    layer?.remove()
     line?.remove()
     line = null
     over?.classList.remove(DROP_TARGET_CLASS)
@@ -2588,7 +2657,7 @@ function armDragGroup(
     const pointer = event as PointerEvent
     if (!group) {
       if (Math.hypot(pointer.clientX - down.clientX, pointer.clientY - down.clientY) < DRAG_THRESHOLD) return
-      group = liftElements(lifted, cls, scale)
+      group = liftElements(lifted, cls, scale, layer)
       group.move(0, 0)
       container.classList.add(DRAG_CONTAINER_CLASS)
       line = createDropLine(svg, before)
@@ -2687,7 +2756,7 @@ function armCardDrag(drag: ArmedDrag): void {
         if (next !== null) drag.commit(next)
       },
     },
-    svg.querySelector('.items'),
+    { before: svg.querySelector('.items') },
   )
 }
 
@@ -2698,7 +2767,9 @@ function armColumnDrag(drag: ArmedDrag): void {
   if (!frame) return
   // A list is not one element: the frame and its cards are two sibling lists, so
   // the whole list is lifted as the unit it reads as — otherwise the frame would
-  // travel and the cards would stay behind.
+  // travel and the cards would stay behind. The *order* is the board's own, frame
+  // first, and it is what the lift is handed so the group's own paint order is the
+  // same drawing the column had on the board.
   const lifted = [frame, ...cards.filter((_, index) => doc.cards[index]?.column === from)]
 
   armDragGroup(
@@ -2723,8 +2794,10 @@ function armColumnDrag(drag: ArmedDrag): void {
         if (next !== null) drag.commit(next)
       },
     },
-    svg.querySelector('.sections'),
-    1,
+    // Carried, not grown, and held in a group of its own: the frame and its cards
+    // are two lists the svg draws one after the other, so neither one's re-append
+    // can put the column on top of the board.
+    { before: svg.querySelector('.sections'), scale: 1, layer: kanbanDragLayer(svg) },
   )
 }
 
