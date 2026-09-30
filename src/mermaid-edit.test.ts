@@ -2520,10 +2520,11 @@ describe('kanban delete buttons', () => {
     const preview = await renderBoard(vi.fn())
 
     expect(openMenu(preview, 1)).toEqual(['Rename column', 'Delete column'])
-    // The list hangs off the `⋯` it belongs to: right-aligned to it, under it.
+    // The list hangs off the `⋯` it belongs to: right-aligned to it, and flush
+    // with its bottom edge (18 + 18), so there is no gap between the two.
     const list = preview.querySelector<HTMLElement>('.mermaid-kanban-menu-list')!
     expect(list.style.left).toBe('142px')
-    expect(list.style.top).toBe('42px')
+    expect(list.style.top).toBe('36px')
     expect(list.style.width).toBe('190px')
     // One at a time: a second `⋯` takes the first menu away.
     click(menus(preview)[2]!)

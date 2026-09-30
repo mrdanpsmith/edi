@@ -912,14 +912,16 @@ def _open_kanban_menu(win, column):
     return _wait(win, KANBAN_MENU, lambda d: d["open"], timeout=10)
 
 
-def _press_in_the_menu_gap(win):
-    """Press in the gap between a `⋯` and the list it opened, and report the hit.
+def _press_at_the_menu_seam(win):
+    """Report the distance between a `⋯` and the list it opened, and press it.
 
-    The gap is a hole in a popover with the board visible through it, so it is the
-    one place a pointer *aimed* at the menu lands on the board — and a press that
-    reaches the board takes the menu away. The bridge is what closes the hole, and
-    `elementFromPoint` is what says whether it did: a `::before` is not an
-    element, so the hit test reports the list it belongs to.
+    There is no gap: the list is placed at the button's own bottom edge, so the
+    two touch and the menu hangs off the `⋯` that owns it. So the walk down from
+    the button to the items is answered by those two boxes and nothing else, and
+    the sample is what says so — a press on anything that is not the list takes
+    the menu away, so anything else painted between them is a place a pointer
+    aimed at the menu lands on the board instead. That was a 6px strip of it,
+    under a `::before` that closed the hole for a hit test and not for the eye.
     """
     out = _dump(
         win,
@@ -928,20 +930,29 @@ def _press_in_the_menu_gap(win):
           const button = document.querySelector('.mermaid .mermaid-kanban-menu');
           if (!list || !button) return { missing: true };
           const l = list.getBoundingClientRect(), b = button.getBoundingClientRect();
-          const x = Math.round(l.right - 8), y = Math.round((b.bottom + l.top) / 2);
+          const x = Math.round(l.right - 8);
+          // Every pixel from inside the button down into the list's first row, so
+          // the run of answers is the whole way across the join.
+          const seen = [];
+          for (let y = Math.ceil(b.top) + 1; y <= Math.floor(l.top) + 2; y += 1) {
+            const hit = document.elementFromPoint(x, y);
+            const who = hit ? (hit.closest('.mermaid-kanban-menu-list') ? 'the menu'
+              : (hit.closest('.mermaid-kanban-menu') ? 'its button'
+                : (hit.getAttribute('class') || hit.tagName.toLowerCase()))) : null;
+            if (seen[seen.length - 1] !== who) seen.push(who);
+          }
+          const y = Math.round(l.top) + 1;
           const hit = document.elementFromPoint(x, y);
           if (hit) for (const type of ['pointerdown', 'mousedown']) {
             hit.dispatchEvent(new PointerEvent(type, {
               bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse',
               isPrimary: true, button: 0, clientX: x, clientY: y }));
           }
-          return { x, y, gap: Math.round(l.top - b.bottom),
-            hits: hit ? (hit.closest('.mermaid-kanban-menu-list') ? 'the menu'
-              : (hit.getAttribute('class') || hit.tagName.toLowerCase())) : null,
+          return { x, gap: Math.round(l.top - b.bottom), seen,
             stillOpen: !!document.querySelector('.mermaid .mermaid-kanban-menu-list') };
         })()""",
     )
-    assert not out.get("missing"), "no open menu to press the gap of"
+    assert not out.get("missing"), "no open menu to press the seam of"
     return out
 
 

@@ -89,22 +89,14 @@ export const KANBAN_CHROME_CLASS = 'mermaid-kanban-chrome'
 const MENU_ITEM_KIND_CLASS = 'mermaid-kanban-menu-item-'
 const MENU_ITEM_DANGER_CLASS = 'is-danger'
 /**
- * Between a column's `⋯` and the list of items it opens — and how tall the
- * transparent bridge over that gap is, since the gap is a hole in the popover
- * with the board visible through it and the pointer crosses it on its way down
- * every time. The number itself belongs to the stylesheet
- * (`--mermaid-kanban-menu-gap`), which is also what draws the bridge, so where
- * the list is placed and the hole in it are one measurement.
+ * The list is placed flush with the bottom of the `⋯` it belongs to, and this
+ * used to be the distance between them instead. A gap there is a hole in the
+ * popover: the board shows through it, so the menu reads as something floating
+ * under a button rather than hanging off it, and the pointer crosses it on its
+ * way down to the items every single time. Bridging the hole closed it for a hit
+ * test and not for the eye — the `::before` that closed it had no background, so
+ * what the user saw was the board. There is no gap to bridge now.
  */
-const MENU_GAP = 6
-
-/** The gap the list is actually placed at, read off its own stylesheet. */
-const menuGap = (list: HTMLElement): number => {
-  const declared = Number.parseFloat(
-    getComputedStyle(list).getPropertyValue('--mermaid-kanban-menu-gap').trim(),
-  )
-  return Number.isFinite(declared) ? declared : MENU_GAP
-}
 // A column's name is one line of text, and the field that asks for it is placed
 // where a new column will stand — which on a board of empty columns is a band
 // only as tall as its header. A composer taller than the slot it fills hangs off
@@ -3306,7 +3298,20 @@ function attachKanbanChrome(
     const menuBox = (): DOMRect => {
       const rect = sectionRect(section)
       const size = KANBAN_BUTTON_HALF * 2
-      return new DOMRect(rect.right - KANBAN_BUTTON_EDGE - size, rect.top + KANBAN_BUTTON_EDGE, size, size)
+      // Centred on the column's own name, which is what it belongs to and what
+      // the eye lines it up with. The band's top edge is not the header's: the
+      // band is padded and the name is drawn inside that padding, so an inset
+      // from the band puts the mark below the text it is the menu of. The name's
+      // own box is the only thing that knows where the header really is, and a
+      // band is the fallback for a name with none: one that is not offered (a
+      // repeated name, which has no single target) or one that has not been laid
+      // out, which measures as no height at all.
+      const name = headerTarget(section)?.el.getBoundingClientRect()
+      const top =
+        name === undefined || name.height <= 0
+          ? rect.top + KANBAN_BUTTON_EDGE
+          : name.top + name.height / 2 - size / 2
+      return new DOMRect(rect.right - KANBAN_BUTTON_EDGE - size, top, size, size)
     }
 
     // Two items, and both are generic: the menu belongs to the column whose `⋯`
@@ -3361,15 +3366,13 @@ function attachKanbanChrome(
       const list = menuList(`${name} column actions`)
       for (const action of actions) list.appendChild(menuItem(action.text, action.kind, action.danger, action.run))
       layer.appendChild(list)
-      // Read after the list is in the tree, so its own stylesheet is in effect: the
-      // gap and the bridge that covers it are one number, and this is where the
-      // list is placed from it.
-      const gap = menuGap(list)
       placed.push({
         element: list,
         box: () => {
+          // Attached to the `⋯`: the list starts exactly where its own button
+          // ends, and hangs inside the column because it is right-aligned to it.
           const at = menuBox()
-          return { left: at.left + at.width - MENU_WIDTH, top: at.top + at.height + gap, width: MENU_WIDTH }
+          return { left: at.left + at.width - MENU_WIDTH, top: at.top + at.height, width: MENU_WIDTH }
         },
       })
       const at = placed.findIndex((entry) => entry.element === list)
@@ -3494,13 +3497,21 @@ function attachKanbanChrome(
     next?.classList.add(SHOWN_CLASS)
     return next
   }
+  /** The list, or the `⋯` it belongs to: the menu hangs off both, so the
+   * pointer may travel from either to the other. */
+  const isOnMenu = (target: Element): boolean =>
+    target.closest(`.${MENU_LIST_CLASS}`) !== null ||
+    target.closest(`.${MENU_BUTTON_CLASS}`) === openMenuFor
   const onOver = (event: Event): void => {
     const pointer = event as PointerEvent
     // The menu is a popover, not a modal: moving the pointer off it takes it
     // away, because a board is not a dialog and nothing else on it is reachable
-    // while one is open. The `⋯` and the items are chrome, so a pointer over
-    // either of them never gets here to close the list it just opened.
-    if (closeMenu && !(event.target instanceof Element && event.target.closest(`.${MENU_LIST_CLASS}`))) {
+    // while one is open. What is *on* it does not: the list, and the `⋯` it
+    // hangs off, which the walk up from an item to the mark that opened it
+    // crosses on every single pass. The items are chrome, so a pointer over them
+    // never gets here either; and the `⋯` is the one button that is not a move
+    // to a different column, which is what `openMenuFor` is for.
+    if (closeMenu && !(event.target instanceof Element && isOnMenu(event.target))) {
       dismissMenu()
     }
     // A control is revealed by the pointer being *on it*, whatever the diagram

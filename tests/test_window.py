@@ -72,7 +72,7 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _composer,
     _hover,
     _open_kanban_menu,
-    _press_in_the_menu_gap,
+    _press_at_the_menu_seam,
     _click_label,
     _dblclick_below_document,
     _dump,
@@ -1984,7 +1984,8 @@ def test_kanban_menu_and_drawn_add_and_delete_columns(window):
     assert menu["items"][0]["focused"] is True, menu
     # It hangs below its own ⋯ and inside the column, so it is not the next
     # column's menu opened one to the left.
-    band = _dump(window, KANBAN_CHROME)["bands"][0]
+    board = _dump(window, KANBAN_CHROME)
+    band = board["bands"][0]
     assert menu["box"]["top"] >= band["box"]["top"], (menu, band)
     assert menu["box"]["right"] <= band["box"]["right"] + 1.0, (menu, band)
     assert menu["box"]["left"] >= band["box"]["left"] - 1.0, (menu, band)
@@ -1997,13 +1998,36 @@ def test_kanban_menu_and_drawn_add_and_delete_columns(window):
         assert item["box"]["right"] <= menu["box"]["right"] + 0.5, (item, menu)
         assert item["box"]["left"] >= menu["box"]["left"] - 0.5, (item, menu)
 
-    # The gap under the ⋯ is a hole in the popover with the board showing through
-    # it, and the pointer is always travelling across it on its way down. A press
+    # Attached to its own ⋯: the popover starts exactly where the button ends, so
+    # there is no strip of board between the two, and the whole way down from the
+    # button to the first item is answered by the button and the menu. A press
     # there is a press on the menu, so the menu is still there afterwards.
-    gap = _press_in_the_menu_gap(window)
-    assert gap["gap"] > 0, gap
-    assert gap["hits"] == "the menu", gap
-    assert gap["stillOpen"] is True, gap
+    seam = _press_at_the_menu_seam(window)
+    assert seam["gap"] == 0, seam
+    assert seam["seen"] == ["its button", "the menu"], seam
+    assert seam["stillOpen"] is True, seam
+
+    # On the same line as the name it is the menu of, which is what the eye puts
+    # it against: the mark belongs to the header, and the band is padded around
+    # it, so an inset from the band's own top edge sits below the text.
+    name = band["name"]
+    dot = next(b for b in board["buttons"] if b["label"] == "Todo column actions")
+    assert abs(
+        (dot["box"]["top"] + dot["box"]["bottom"]) / 2
+        - (name["top"] + name["bottom"]) / 2
+    ) <= 1.0, (dot, band)
+
+    # The walk back up to the `⋯` that opened it is the other half of the same
+    # gesture, and the menu is still there: the mark the list hangs off is part
+    # of the menu, so leaving the list for it is not leaving the menu.
+    _hover(window, ".mermaid-kanban-menu", 0)
+    assert _dump(window, KANBAN_MENU)["open"] is True
+
+    # A *different* column's `⋯` is a move rather than a return, so it does take
+    # the menu away: only the one that owns it is the menu's own.
+    _hover(window, ".mermaid-kanban-menu", 1)
+    _wait(window, KANBAN_MENU, lambda d: not d["open"], timeout=10)
+    _open_kanban_menu(window, 0)
 
     # Moving the pointer off it takes the menu away again: it is a popover over a
     # board, not a dialog, so it must not keep the rest of the board out of reach.

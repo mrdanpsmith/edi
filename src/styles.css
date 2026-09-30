@@ -1685,11 +1685,8 @@ body {
 /* The menu: right-aligned under its own `⋯`, so it hangs inside the column it
    belongs to and cannot be mistaken for the next column's. */
 .ProseMirror .mermaid .mermaid-kanban-menu-list {
-  /* The one number both halves of the menu's own geometry need: how far below
-     its `⋯` the list hangs, which the bridge below has to cover. It lives here
-     because the bridge is drawn from it; the placement reads it back
-     (`menuGap()` in `src/mermaid-edit.ts`) rather than keeping its own. */
-  --mermaid-kanban-menu-gap: 6px;
+  /* Attached to its own `⋯`: placed at the button's bottom edge, so there is no
+     gap between them and nothing of the board shows through one. */
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -1700,21 +1697,6 @@ body {
   background: var(--surface-raised);
   box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
   pointer-events: auto;
-}
-
-/* The gap between a `⋯` and its list is *in* the menu, not a hole beside it. The
-   pointer has to cross it to get from the button to the items, and a press in it
-   lands on the board underneath — which is a press outside the list, so the list
-   is taken away by the very gesture that was reaching for it. A menu with a
-   bridged gap is a menu you can use, and it is as tall as the distance the list
-   is placed at, because both are the number just above. */
-.ProseMirror .mermaid .mermaid-kanban-menu-list::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(-1 * var(--mermaid-kanban-menu-gap, 6px));
-  height: var(--mermaid-kanban-menu-gap, 6px);
 }
 
 /* Nothing in a menu wraps *out* of it. A column's name is not in any of the items
