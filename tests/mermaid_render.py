@@ -702,15 +702,20 @@ def _pointer_drag_column(win, column, slot):
               if (!group) return null;
               const a = frame.getBoundingClientRect();
               // The card the held column is passing *over* -- not merely the first
-              // one left on the board, which is beside it and answers nothing.
-              // Nothing to compare against is a real answer too: a column released
-              // past the last one overlaps no card, and there is nothing to be in
-              // front of.
-              const over = cards
-                .filter((c) => !group.contains(c))
+              // one left on the board, which is beside it and answers nothing --
+              // and failing that the column it is passing over, which is what a
+              // column released past the last one is: the column the board is drawn
+              // with has no card of its own painted in it, so a frame is the only
+              // thing under the pointer. Nothing to compare against is a real
+              // answer too: a column released onto empty space past the drawn one
+              // overlaps neither, and there is nothing to be in front of.
+              const under = (els) => els
                 .map((c) => ({{ c, b: c.getBoundingClientRect() }}))
-                .find(({{ b }}) => Math.max(a.left, b.left) < Math.min(a.right, b.right)
+                .find(({{ b }}) => b.width > 0 && b.height > 0
+                  && Math.max(a.left, b.left) < Math.min(a.right, b.right)
                   && Math.max(a.top, b.top) < Math.min(a.bottom, b.bottom));
+              const over = under(cards.filter((c) => !group.contains(c)))
+                || under([...svg.querySelectorAll('.sections > g')].filter((c) => !group.contains(c)));
               if (!over) return null;
               const left = Math.max(a.left, over.b.left);
               const right = Math.min(a.right, over.b.right);
@@ -806,27 +811,13 @@ KANBAN_CHROME = (
     # click there renames — so nothing else may be laid over it.
     "     name: (() => { const l = g.querySelector('.cluster-label, .cluster-title');"
     "       return l ? box(l) : null; })() }));"
-    " const shown = (el) => el.classList.contains('is-shown');"
     " const buttons = [...document.querySelectorAll('.mermaid .mermaid-kanban-btn')].map((el) => ({"
     "   kind: [...el.classList].find((c) => c.startsWith('mermaid-kanban-')"
     "     && !c.endsWith('btn')) || '',"
     "   label: el.getAttribute('aria-label'), text: (el.textContent || '').trim(),"
-    "   visible: getComputedStyle(el).opacity !== '0', shown: shown(el),"
+    "   visible: getComputedStyle(el).opacity !== '0',"
     "   clickable: getComputedStyle(el).pointerEvents !== 'none', box: box(el) }));"
     " return { cards, bands, buttons }; })()"
-)
-
-# Only the controls the pointer has revealed, by label: the whole point of the
-# hover is that the rest are *not* there, so a test that read the full inventory
-# would be asserting the set rather than the reveal.
-KANBAN_SHOWN = (
-    "(() => ({ shown: [...document.querySelectorAll('.mermaid .mermaid-kanban-btn.is-shown')]"
-    " .map((el) => ({ kind: [...el.classList].find((c) => c.startsWith('mermaid-kanban-')"
-    "     && !c.endsWith('btn')) || '', label: el.getAttribute('aria-label'),"
-    # Revealed and pressable are two different things, and a control that is
-    # only the first is a control that does nothing when you press it: the press
-    # falls through to the diagram underneath.
-    "     clickable: getComputedStyle(el).pointerEvents !== 'none' })) }))()"
 )
 
 # The open `⋯` menu, with its items: the whole of a column's own actions, which
@@ -872,26 +863,6 @@ def _hover(win, selector, index, timeout=10):
     )
     assert not out.get("missing"), f"the board had no {selector}[{index}]"
     return out
-
-
-def _shown(win):
-    """The controls the pointer has revealed, and only those.
-
-    A single read, not a wait: the reveal happens in the handler of the very event
-    the hover dispatched, so there is nothing to wait for — and a wait here would
-    be free to settle on the set from an earlier hover and pass for this one.
-    """
-    return _dump(win, KANBAN_SHOWN)["shown"]
-
-
-def _unhover(win):
-    """Take the pointer off the board, so the reveal is taken back."""
-    return _dump(
-        win,
-        "(() => { const p = document.querySelector('.mermaid-preview');"
-        " p.dispatchEvent(new PointerEvent('pointerleave'));"
-        " return { left: true }; })()",
-    )
 
 
 def _open_kanban_menu(win, column):
@@ -1054,24 +1025,6 @@ def _resize_view(win, width, height=None):
     win._web.resize(width, height or win._web.height())
 
 
-def _click_kanban_button(win, kind, index, timeout=10):
-    """Press the ``index``-th button of class ``kind`` the way a mouse does."""
-    out = _dump(
-        win,
-        f"""(() => {{
-          const b = document.querySelectorAll('.mermaid .{kind}')[{index}];
-          if (!b) return {{ missing: true }};
-          const r = b.getBoundingClientRect();
-          const opts = {{ bubbles: true, button: 0, clientX: r.left + r.width / 2,
-                         clientY: r.top + r.height / 2 }};
-          for (const type of ['mousedown', 'mouseup', 'click']) b.dispatchEvent(new MouseEvent(type, opts));
-          return {{ label: b.getAttribute('aria-label') }};
-        }})()""",
-    )
-    assert not out.get("missing"), f"the board had no {kind}"
-    return out
-
-
 def _answer_delete_prompt(win, answer, timeout=10):
     """Answer the delete prompt by pressing its own ``Cancel``/``Delete`` button.
 
@@ -1090,6 +1043,167 @@ def _answer_delete_prompt(win, answer, timeout=10):
           return {{ answered: true }};
         }})()""",
     )
+
+
+KANBAN_TRASH = (
+    """(() => {
+  // The bin is the *card slot* the board is drawn with at its end, and the band
+  // it stands in -- two halves, read as two, because they answer to different
+  // halves of the problem: a card in the air covers the card slot it is aimed at
+  // and the band is what is left to read. The card slot is found by the band it is
+  // in rather than by its position in the list, so this says the same thing about
+  // a board however many cards it has.
+  const band = document.querySelector('.mermaid .sections > g.mermaid-kanban-column-slot');
+  if (!band) return { present: false };
+  const box = (n) => { const r = n.getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+  const br = box(band.querySelector('rect') || band);
+  const card = [...document.querySelectorAll('.mermaid .items > g.node.mermaid-kanban-slot')]
+    .find((s) => { const r = box(s);
+      return r.left >= br.left - 1 && r.right <= br.right + 1
+        && r.top >= br.top - 1 && r.bottom <= br.bottom + 1; }) || null;
+  // A screenshot of a just-mutated DOM would not be trusted to say any of this:
+  // what each part says, how it is painted, whether its mark is drawn in it, and
+  // whether the words are *whole*. Mermaid sized the label box to the words it
+  // drew and a foreignObject clips, so a bin with more to say than the
+  // `+ Add a card` it replaced would be saying it half.
+  // Whether something is painted at all, which is not the same as whether it is
+  // in the DOM: the bin at rest is *there* and invisible, and its words are still
+  // the `+ Add a card` the drawing carries. `checkVisibility` is the reading --
+  // a computed `display` on a descendant of a `display: none` ancestor is its own
+  // value, so walking the styles would say the bin was showing.
+  const shown = (el) => (el && el.checkVisibility ? el.checkVisibility() : el != null);
+  const part = (el, label) => {
+    if (!el) return null;
+    const p = el.querySelector(label);
+    const frame = el.querySelector('rect');
+    const style = frame ? getComputedStyle(frame) : null;
+    // The mark is painted by its own paths, and mermaid rules style `path` inside
+    // a board with its palette: those beat an inherited value, so a mark that
+    // read as the danger colour on the element could be drawn in the diagram's.
+    const path = p ? p.querySelector('.mermaid-kanban-bin-mark path') : null;
+    const ink = path ? getComputedStyle(path) : null;
+    return {
+      words: p ? (p.textContent || '').trim() : null,
+      painted: shown(frame),
+      wordsPainted: shown(p),
+      mark: !!(p && p.querySelector('.mermaid-kanban-bin-mark')),
+      markStroke: ink ? ink.stroke : null,
+      markFill: ink ? ink.fill : null,
+      colour: p ? getComputedStyle(p).color : null,
+      fill: style ? style.fill : null,
+      opacity: style ? style.fillOpacity : null,
+      stroke: style ? style.stroke : null,
+      width: style ? style.strokeWidth : null,
+      box: frame ? box(frame) : null,
+      // Both axes, because a `foreignObject` clips in both and the two ways of
+      // overflowing it are two different mistakes: words too wide for the box
+      // mermaid sized for the words it drew, and words on a second line the
+      // one-line box cuts off (which is what a `display: block` mark does).
+      fits: p ? (() => { const host = p.closest('foreignObject');
+        if (!host) return null; const b = box(p), h = box(host);
+        return b.left >= h.left - 0.5 && b.right <= h.right + 0.5
+          && b.top >= h.top - 0.5 && b.bottom <= h.bottom + 0.5; })() : null,
+    };
+  };
+  return { present: true,
+    band: part(band, '.cluster-label .nodeLabel, .cluster-label p'),
+    card: part(card, '.nodeLabel p, .nodeLabel') };
+})()"""
+)
+
+
+def _pointer_drag_to_the_trash(win, card):
+    """Drag kanban card ``card`` onto the board's drawn card slot, and release there.
+
+    The bin is the card slot the board is drawn with at its end -- the same thing
+    a user is aiming at, a place to drop a card on -- so the pointer is aimed at
+    that card's own centre rather than at the middle of the column it stands in.
+
+    Reports the bin as the drawing had it mid-flight, before the release: both
+    halves of it say what it is for, and the card on its way there is painted over
+    both rather than under either.
+    """
+    out = _dump(
+        win,
+        f"""(() => {{
+          const cards = [...document.querySelectorAll('.mermaid .items > g.node')];
+          const band = document.querySelector('.mermaid .sections > g.mermaid-kanban-column-slot');
+          const card = cards[{card}];
+          if (!card || !band) return {{ missing: true }};
+          const cr = card.getBoundingClientRect();
+          const br = (band.querySelector('rect') || band).getBoundingClientRect();
+          // The bin's own card, by the band it is in: the aim is what a release is
+          // read against, so it has to be that thing's own centre.
+          const binned = [...document.querySelectorAll(
+            '.mermaid .items > g.node.mermaid-kanban-slot')].find((s) => {{
+              const r = s.getBoundingClientRect();
+              return r.left >= br.left - 1 && r.right <= br.right + 1
+                && r.top >= br.top - 1 && r.bottom <= br.bottom + 1;
+            }});
+          if (!binned) return {{ missing: true }};
+          const nr = binned.getBoundingClientRect();
+          const from = {{ x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 }};
+          const to = {{ x: nr.left + nr.width / 2, y: nr.top + nr.height / 2 }};
+          const send = (target, type, x, y) => target.dispatchEvent(new PointerEvent(type, {{
+            bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse',
+            isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
+          }}));
+          send(card, 'pointerdown', from.x, from.y);
+          // Past the threshold and onto the column: a release that never travelled
+          // is a rename, however far it was pointing when it ended.
+          for (let i = 1; i <= 8; i++) {{
+            send(window, 'pointermove',
+                 from.x + (to.x - from.x) * i / 8,
+                 from.y + (to.y - from.y) * i / 8);
+          }}
+          const line = document.querySelector('.mermaid .kanban-drop-line');
+          const mid = {{
+            // The bin read the one way a user meets it, and read *now*: the
+            // release takes it off the board with the drag.
+            bin: {KANBAN_TRASH},
+            // Nothing is promised where a card cannot land: a card cannot land on
+            // the bin, and a line here would promise it could.
+            line: line ? {{ shown: line.style.display !== 'none' }} : null,
+            target: band.classList.contains('kanban-drop-target'),
+            // Whether the card on its way to the bin is painted *over* it. A
+            // board is two sibling lists -- the frames in `.sections`, the cards
+            // in `.items`, frames first -- and a lift puts the held card last in
+            // its own list, so the card is in front of the bin by position. The
+            // geometry is the other half: the card has to be under the pointer
+            // and over the band, or the order says nothing about this drag. Read
+            // as position rather than as a hit test, because a held card takes no
+            // pointer events -- the drop is read off the pointer, not off whatever
+            // it passes over -- and is therefore invisible to one.
+            over: (() => {{
+              // Scoped to this board's own drawing: a board left mid-drag by an
+              // earlier test would otherwise answer with *its* held card.
+              const svg = band.ownerSVGElement;
+              const held = svg ? svg.querySelector('.items > g.kanban-dragging-card') : null;
+              const frame = band.querySelector('rect');
+              const sections = svg ? svg.querySelector('.sections') : null;
+              const items = svg ? svg.querySelector('.items') : null;
+              if (!held || !frame || !sections || !items) return null;
+              const within = (r) => r.left <= to.x && to.x <= r.right
+                && r.top <= to.y && to.y <= r.bottom;
+              return {{
+                // The band is drawn before the cards that may be in front of it.
+                order: !!(sections.compareDocumentPosition(items) & 4),
+                // And the card in the air is the last thing painted in its list,
+                // so it is in front of the bin card as well as of the band.
+                last: items.lastElementChild === held,
+                covers: within(held.getBoundingClientRect()),
+                onBand: within(frame.getBoundingClientRect()),
+                onCard: within(nr),
+              }};
+            }})(),
+          }};
+          send(window, 'pointerup', to.x, to.y);
+          return {{ mid }};
+        }})()""",
+    )
+    assert not out.get("missing"), "kanban card or drawn slot column missing"
+    return out
 
 
 def _click_kanban_slot(win, index):

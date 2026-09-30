@@ -1183,10 +1183,11 @@ describe('mermaid visual mode rendering', () => {
 
     enterDiagramEditMode(view, firstBlockPos(view))
     expect(await rendered(view, '.mermaid-kanban-slot')).toBe(true)
-    // One card slot per column, and the column the board would have next: the
-    // places to add are drawn rather than waited for.
-    expect(cardSlots(view)).toHaveLength(3)
-    expect(drawnSlots(view)).toHaveLength(4)
+    // One card slot per column, and the column the board would have next — with a
+    // card slot of its own, which is the bin a card is dropped on to be deleted.
+    // The places to add are drawn rather than waited for.
+    expect(cardSlots(view)).toHaveLength(4)
+    expect(drawnSlots(view)).toHaveLength(5)
 
     cardSlots(view)[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
@@ -1227,11 +1228,12 @@ describe('mermaid visual mode rendering', () => {
         '    id2[Two]',
         '    slotc2[+ Add a card]',
         '  slotn[+ Add a column]',
+        '    slotc3[+ Add a card]',
       ].join('\n'),
     )
     // The render replaced the SVG, and with it the slots, which are re-drawn from
     // the board that was just committed — a slot per column, still.
-    expect(cardSlots(view)).toHaveLength(3)
+    expect(cardSlots(view)).toHaveLength(4)
 
     expect(undo(view.state, view.dispatch)).toBe(true)
     expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + KANBAN_BOARD + '\n```\n')
@@ -1257,7 +1259,7 @@ describe('mermaid visual mode rendering', () => {
 
     expect(await rendered(view, '.mermaid-edit-input', false)).toBe(true)
     expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + KANBAN_BOARD + '\n```\n')
-    expect(cardSlots(view)).toHaveLength(3)
+    expect(cardSlots(view)).toHaveLength(4)
 
     view.destroy()
   })
@@ -1272,7 +1274,7 @@ describe('mermaid visual mode rendering', () => {
 
     enterDiagramEditMode(view, firstBlockPos(view))
     expect(await rendered(view, '.mermaid-kanban-slot')).toBe(true)
-    expect(cardSlots(view)).toHaveLength(3)
+    expect(cardSlots(view)).toHaveLength(4)
 
     editToggle(view).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     expect(editModeOf(view)).toBe(false)

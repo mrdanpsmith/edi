@@ -74,11 +74,6 @@ const MENU_ITEM_CLASS = 'mermaid-kanban-menu-item'
 export const ADD_SLOT_CLASS = 'mermaid-kanban-slot'
 /** Drawn on the board for the column the board is offered next. */
 export const COLUMN_SLOT_CLASS = 'mermaid-kanban-column-slot'
-const CARD_REMOVE_BUTTON_CLASS = 'mermaid-kanban-card-remove'
-/** On the one control that is currently under the pointer. */
-const SHOWN_CLASS = 'is-shown'
-/** On a control that is only there for the thing under the pointer. */
-const CONCEALED_CLASS = 'is-concealed'
 /**
  * The layer every board control is built into, exported because the node view
  * keys its own event handling off it: it holds the buttons *and* the menu list,
@@ -86,6 +81,16 @@ const CONCEALED_CLASS = 'is-concealed'
  * click inside an open menu is a click on a menu, not a request to end the edit.
  */
 export const KANBAN_CHROME_CLASS = 'mermaid-kanban-chrome'
+/** The bin's mark, drawn in the band's own name — see `trashIcon`. */
+const KANBAN_BIN_MARK_CLASS = 'mermaid-kanban-bin-mark'
+/**
+ * The card slot in the drawn column, which is the bin for the length of a card's
+ * drag and nothing at all the rest of the time. It is drawn rather than added on
+ * demand because mermaid laid the board out with it and a drag may not re-render
+ * the drawing out from under the card it is holding, so the class is how it is
+ * *blank* instead — see where it is put on.
+ */
+const KANBAN_BIN_SLOT_CLASS = 'mermaid-kanban-bin-slot'
 const MENU_ITEM_KIND_CLASS = 'mermaid-kanban-menu-item-'
 const MENU_ITEM_DANGER_CLASS = 'is-danger'
 /**
@@ -111,9 +116,7 @@ const FIELD_MARGIN = 8
 const COMPOSER_MAX_HEIGHT = 96
 /** Half a board button's side, in px. */
 const KANBAN_BUTTON_HALF = 9
-/** Half a card's delete button, which is smaller than a corner control. */
-const REMOVE_BUTTON_HALF = 7
-/** From a card's or column's own corner to the edge of its control. */
+/** From a column's own corner to the edge of its control. */
 const KANBAN_BUTTON_EDGE = 8
 /** The menu's own width, in px — it is the width of its longest item. */
 const MENU_WIDTH = 190
@@ -1539,6 +1542,13 @@ function isKanbanSlotLine(line: KanbanLine): boolean {
  * The card slot goes directly after the column's last card — where a new card
  * would land — and keeps that column's own card indent, so a board written with
  * tabs or six spaces is drawn the way it was written.
+ *
+ * The new column is drawn as a column like any other, and that includes a card
+ * slot in it: it is a list, it is the size of one, and a card-shaped thing drawn
+ * in it is what gives a card something to be dropped onto. (That card slot is
+ * also the bin a card is dropped on to be deleted, so it cannot be a place to
+ * add a card — the column it belongs to does not exist yet, and nothing can be
+ * added to it. `onSlotClick` says so, and the whole press names the column.)
  */
 export function kanbanAuthoringSource(source: string): string {
   // Only a board has columns to offer, and the line model is generous enough to
@@ -1551,8 +1561,7 @@ export function kanbanAuthoringSource(source: string): string {
   const columnIndent = doc.lines[first].indent
   const card = doc.cards.find((entry) => entry.column === 0)
   const cardIndent = doc.lines[card?.line ?? -1]?.indent ?? `${columnIndent}  `
-  const cardSlot = (column: number): string =>
-    `${cardIndent}slotc${column}[${KANBAN_CARD_SLOT}]`
+  const cardSlot = (id: number): string => `${cardIndent}slotc${id}[${KANBAN_CARD_SLOT}]`
   const columnSlot = (): string => `${columnIndent}slotn[${KANBAN_COLUMN_SLOT}]`
 
   // Where each column's slot lines go: after the last thing that belongs to it.
@@ -1561,9 +1570,14 @@ export function kanbanAuthoringSource(source: string): string {
     const end = lastColumnLine(doc, column)
     // The board's own slot column is the last one, so the new column is drawn
     // after the last column's card slot — a board read left to right, ending in
-    // the place the next one goes.
+    // the place the next one goes. It carries a card slot of its own, so it is
+    // drawn as the column it is about to become rather than as a bare header, and
+    // that slot's id is the next one along: the drawn column is not a column of
+    // the document, so it has no index of its own to take.
     const lines = [cardSlot(column)]
-    if (column === doc.columns.length - 1) lines.push(columnSlot())
+    if (column === doc.columns.length - 1) {
+      lines.push(columnSlot(), cardSlot(doc.columns.length))
+    }
     after.set(end, [...(after.get(end) ?? []), ...lines])
   })
 
@@ -1634,19 +1648,36 @@ function isKanbanColumnSlot(column: number, doc: KanbanDoc): boolean {
  * this says which of the things they found is a place to add to rather than
  * content: not draggable, not deletable, and not something a drop may land in.
  */
+export interface KanbanSlots {
+  /** Every drawn card slot, in whichever column it stands. */
+  cards: Set<SVGElement>
+  /** The drawn column's index in the model, or `-1` for a board drawn without one. */
+  column: number
+  /**
+   * The card slot *inside* that drawn column. It is the board's own bin: the
+   * column it stands in is a place rather than a list, so nothing can be added
+   * there, and while a card is in the air there is nothing that place would
+   * rather be.
+   */
+  columnCard: SVGElement | null
+}
+
 function kanbanSlotElements(
   svg: SVGSVGElement,
   doc: KanbanDoc,
-): { cards: Set<SVGElement>; column: number } {
+): KanbanSlots {
   const cards = cardElements(svg)
   const sections = sectionElements(svg)
   const slots = new Set<SVGElement>()
+  const column = doc.columns.findIndex((_line, index) => isKanbanColumnSlot(index, doc))
+  let columnCard: SVGElement | null = null
   doc.cards.forEach((card, index) => {
     const el = cards[index]
-    if (el !== undefined && isKanbanCardSlot(card, doc)) slots.add(el)
+    if (el === undefined || !isKanbanCardSlot(card, doc)) return
+    slots.add(el)
+    if (card.column === column) columnCard = el
   })
-  const column = doc.columns.findIndex((_line, index) => isKanbanColumnSlot(index, doc))
-  return { cards: slots, column: sections[column] === undefined ? -1 : column }
+  return { cards: slots, column: sections[column] === undefined ? -1 : column, columnCard }
 }
 
 /**
@@ -2369,7 +2400,13 @@ function attachKanbanDrag(
       // column it stands in is not dragged instead.
       if (slots.cards.has(card)) return
       closeEditor()
-      armCardDrag({ container, svg, source, doc, cards, sections, slots, from: cards.indexOf(card), down, commit })
+      // The board's own bin, standing on its column for the length of a card's
+      // drag: it is put on the board when this press turns out to be a drag, and
+      // taken off it when that drag ends, however it ends.
+      armCardDrag(
+        { container, svg, source, doc, cards, sections, slots, from: cards.indexOf(card), down, commit },
+        kanbanTrash(source, commit, doc, sections, slots),
+      )
       return
     }
     const column = columnAt(down, sections, cards)
@@ -2398,7 +2435,7 @@ interface ArmedDrag {
   cards: SVGElement[]
   sections: SVGElement[]
   /** The board's drawn slots, which are places rather than content. */
-  slots: { cards: Set<SVGElement>; column: number }
+  slots: KanbanSlots
   from: number
   down: PointerEvent
   commit: (source: string) => void
@@ -2426,6 +2463,10 @@ interface DragHooks {
   place: (event: PointerEvent, target: SVGElement | null) => { x1: number; y1: number; x2: number; y2: number } | null
   /** The commit, once the release has been acted on. */
   drop: (event: PointerEvent, target: SVGElement | null, moved: boolean) => void
+  /** Once the press has become a drag, which is not the press itself. */
+  begin?: () => void
+  /** However the drag ended, which is the only moment a drag-only thing goes. */
+  end?: () => void
 }
 
 function cardAt(event: MouseEvent, cards: SVGElement[]): SVGElement | null {
@@ -2624,6 +2665,226 @@ interface DragLift {
 }
 
 /**
+ * The bin a card is dropped on to be deleted: the card slot the board is drawn
+ * with at the end of the board, turned into a bin for the length of one drag.
+ *
+ * It is *the board's own card slot* rather than anything laid over the board, and
+ * that is not a detail of appearance. A card's own corner is its own title —
+ * mermaid lays a label into the whole inner width of a card, so a title long
+ * enough to fill the card runs right up to its edge — so a ✕ in that corner is
+ * drawn over the first line of exactly the cards a user most wants to read, and
+ * there is no padding to move into and no other corner that is not the same
+ * problem. The board already ends in a card slot like every other column, it is
+ * card-shaped, mermaid laid it out and sized it, and while a card is in the air
+ * there is nothing that card would rather be: it cannot be a place to add one,
+ * because the column it stands in is a place rather than a list.
+ *
+ * Being *of* the drawing is also what puts the bin **under** the card being
+ * dragged: a board is two sibling lists, the frames in `.sections` and the cards
+ * in `.items`, painted frames first, and a lift puts its element on top by
+ * re-appending it. Anything laid over the drawing — a positioned panel, a
+ * sibling of the svg — paints above the whole board instead, so the bin came out
+ * over the very card on its way to it.
+ *
+ * The band goes red as well as the card, and the band's own name says what the
+ * card says, because the one thing a card being dragged does is cover the slot it
+ * is being aimed at: the band is taller than a card (it has a header above it),
+ * so the header is what is still readable while the card is over the middle, and
+ * a red column with a red card-shaped thing in it is legible as a whole whether
+ * or not either half can be read on its own.
+ *
+ * At rest the slot says what it is — `+ Add a card` — and the bin is not there at
+ * all, so a board nobody is dragging on is a board to add a column to and not a
+ * board with a delete round it. Two gestures therefore share the one column
+ * without ever being on screen at the same time: a *press* anywhere in the drawn
+ * column, card slot included, names a new column (`onSlotClick` sends it to the
+ * header's own field), and the bin is gone before any press could reach it.
+ */
+interface KanbanTrash {
+  /** Dress the drawn column as a bin, for as long as a card is in the air. */
+  show: () => void
+  /** Take the dressing off, which is what every end of a drag does. */
+  hide: () => void
+  /** Whether a release at this point deletes rather than moves. */
+  over: (event: MouseEvent) => boolean
+  /** The pointer being on it, which is what makes the release a delete. */
+  armed: (on: boolean) => void
+  /** The delete itself, for the card at `from` — asked for, then patched. */
+  drop: (from: number) => void
+}
+
+function kanbanTrash(
+  source: string,
+  commit: (source: string) => void,
+  doc: KanbanDoc,
+  sections: SVGElement[],
+  slots: KanbanSlots,
+): KanbanTrash {
+  const band = slots.column < 0 ? null : sections[slots.column]!
+  // The two things that are dressed: the card the bin is, and the band it stands
+  // in. Mermaid paints both from its own stylesheet, so a bin's colour has to be
+  // inline — a presentation attribute loses to a rule and an inline style does
+  // not — and what was there is kept, because the column has to be itself again
+  // the moment the drag is over. This is a rendering of the drawing, not an edit
+  // to it: nothing is patched until a delete is confirmed.
+  const card = slots.columnCard
+  const parts = [
+    dressable(band?.querySelector('rect') ?? null, labelOf(band), 'Delete card'),
+    // The card says less than the band does, and it is not a whim: mermaid sized
+    // each label box to the words it drew, and a `foreignObject` clips. The band's
+    // box was sized for `+ Add a column` and holds the mark and both words with
+    // room to spare; the card's was sized for `+ Add a card`, and the mark and both
+    // words are wider than that by more than the mark. Both strings are fixed, so
+    // both boxes are the same size on every board -- which means the words that
+    // fit are the same on every board, and a bin never says half of itself.
+    dressable(card?.querySelector('rect') ?? null, labelOf(card), 'Delete'),
+  ]
+  let lit = false
+
+  const paint = (): void => {
+    for (const part of parts) part.paint(lit)
+  }
+
+  return {
+    show: () => {
+      // Off before the words are written, and both in the same turn, so there is
+      // no frame in which the slot is revealed and still says what it said at
+      // rest. Undressing first would do the same, since a hidden label has no
+      // box to measure — the words are the dressing.
+      card?.classList.remove(KANBAN_BIN_SLOT_CLASS)
+      for (const part of parts) part.dress(trashIcon())
+      paint()
+    },
+    hide: () => {
+      for (const part of parts) part.undress()
+      card?.classList.add(KANBAN_BIN_SLOT_CLASS)
+    },
+    // The whole column is the bin, so a release anywhere in it is a release on
+    // it — including the part of the band the card slot does not reach.
+    over: (event) => band !== null && hitTest(event, [band], sectionRect) !== null,
+    // Lit rather than outlined: a bin is a place a pointer is aimed into, and the
+    // aim is the whole answer.
+    armed: (on) => {
+      if (on === lit) return
+      lit = on
+      paint()
+    },
+    drop: (from) => {
+      const card = doc.cards[from]
+      const title = card?.label ?? 'this card'
+      const column = card === undefined ? 'this column' : doc.lines[doc.columns[card.column]]?.label ?? 'this column'
+      const next = removeKanbanCard(source, from)
+      if (next === null) return
+      void promptForKanbanDelete(`“${title}”`, `It is removed from the ${column} column.`).then((confirmed) => {
+        if (confirmed) commit(next)
+      })
+    },
+  }
+}
+
+/** The words a column or a card is drawn with, which are a `p` or a plain label. */
+function labelOf(el: Element | null | undefined): Element | null {
+  const label = el?.querySelector('.cluster-label .nodeLabel, .cluster-title, .nodeLabel') ?? null
+  return label?.querySelector('p') ?? label
+}
+
+/**
+ * One part of the bin — a band or the card in it — and what the drag puts on it
+ * and takes off again. Both are the same two things, so they are one thing: an
+ * inline tint, and a label replaced with the bin's own words. A part with no
+ * label (a renderer that draws its header as bare text, say) is still tinted,
+ * because the colour is the half that never goes missing.
+ *
+ * `label` is this part's own words rather than one pair shared by both, because
+ * the two label boxes are not the same size and a `foreignObject` clips what does
+ * not fit (see `kanbanTrash`). The mark is an inline svg for the same reason: the
+ * drawing's own `svg` rule is `display: block`, and a block mark pushes the words
+ * after it onto a second line that the one-line box then cuts.
+ */
+function dressable(
+  frame: SVGElement | null,
+  words: Element | null,
+  label: string,
+): { dress: (mark: SVGSVGElement) => void; paint: (lit: boolean) => void; undress: () => void } {
+  const was = {
+    fill: frame?.style.fill ?? '',
+    opacity: frame?.style.fillOpacity ?? '',
+    stroke: frame?.style.stroke ?? '',
+    width: frame?.style.strokeWidth ?? '',
+    words: words?.innerHTML ?? '',
+    colour: words instanceof HTMLElement ? words.style.color : '',
+  }
+  let dressed = false
+  return {
+    dress: (mark) => {
+      if (dressed) return
+      dressed = true
+      if (words !== null) {
+        words.innerHTML = mark.outerHTML + label
+        if (words instanceof HTMLElement) words.style.color = 'var(--danger)'
+      }
+    },
+    paint: (lit) => {
+      if (frame === null || !dressed) return
+      frame.style.fill = 'var(--danger)'
+      frame.style.fillOpacity = lit ? '0.28' : '0.14'
+      frame.style.stroke = 'var(--danger)'
+      frame.style.strokeWidth = lit ? '2.5px' : '1.5px'
+    },
+    undress: () => {
+      if (!dressed) return
+      dressed = false
+      if (frame !== null) {
+        frame.style.fill = was.fill
+        frame.style.fillOpacity = was.opacity
+        frame.style.stroke = was.stroke
+        frame.style.strokeWidth = was.width
+      }
+      if (words !== null) {
+        words.innerHTML = was.words
+        if (words instanceof HTMLElement) words.style.color = was.colour
+      }
+    },
+  }
+}
+
+/**
+ * The bin's own mark, drawn rather than typed: there is no text glyph for a
+ * trash can that is not an emoji, and every other mark on a board is drawn or
+ * typographic. It goes inside the label it stands in — the card's own, or the
+ * band's — so it is laid out and clipped by mermaid's label box like any other
+ * word on the board, which is the point: a mark the board laid out cannot end up
+ * outside the thing it is marking.
+ */
+function trashIcon(): SVGSVGElement {
+  const ns = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(ns, 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('class', KANBAN_BIN_MARK_CLASS)
+  svg.setAttribute('aria-hidden', 'true')
+  // Lid, handle, body, and the two ribs inside it. The colour is inline, and
+  // that is not a style preference: mermaid rules style `path` inside a board with
+  // its own palette, and such a rule beats both an inherited value and the
+  // presentation attribute below — so the mark came out in the diagram's
+  // colours, filled rather than drawn, while the words beside it were the
+  // danger colour. An inline style is the only thing that wins. `currentColor` is
+  // the fallback so the mark can never end up with no colour of its own.
+  for (const d of ['M4 7h16', 'M9.5 7V4.5h5V7', 'M6.5 7 7.5 20h9L17.5 7', 'M10 10.5v6', 'M14 10.5v6']) {
+    const path = document.createElementNS(ns, 'path')
+    path.setAttribute('d', d)
+    path.setAttribute('fill', 'none')
+    path.setAttribute('stroke', 'currentColor')
+    path.setAttribute('stroke-width', '1.8')
+    path.setAttribute('stroke-linecap', 'round')
+    path.setAttribute('stroke-linejoin', 'round')
+    path.style.stroke = 'var(--danger, currentColor)'
+    path.style.fill = 'none'
+    svg.appendChild(path)
+  }
+  return svg
+}
+
+/**
  * The machinery a card drag and a column drag share: threshold, lift, indicator,
  * restore. Everything that differs is in `hooks`, because "where does this land"
  * is the only real difference — a card lands in a slot inside a list, a list lands
@@ -2653,6 +2914,9 @@ function armDragGroup(
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onCancel)
+    // Before the restore, so whatever the drag was carrying is back on the board
+    // before the board is told anything about it.
+    hooks.end?.()
     group?.restore()
     group = null
     container.classList.remove(DRAG_CONTAINER_CLASS)
@@ -2674,6 +2938,9 @@ function armDragGroup(
       group.move(0, 0)
       container.classList.add(DRAG_CONTAINER_CLASS)
       line = createDropLine(svg, before)
+      // Not on the press: a press on a card is a rename, and everything a drag
+      // puts on the board has no business being there for one.
+      hooks.begin?.()
     }
     // The drag is ours now, so no text selection or native drag should follow.
     pointer.preventDefault()
@@ -2732,8 +2999,8 @@ function armDragGroup(
   window.addEventListener('pointercancel', onCancel)
 }
 
-/** Drag a card into another column, or to another spot in its own. */
-function armCardDrag(drag: ArmedDrag): void {
+/** Drag a card into another column, to another spot in its own, or to the bin. */
+function armCardDrag(drag: ArmedDrag, trash: KanbanTrash): void {
   const { source, doc, cards, sections, svg, from } = drag
   const card = cards[from]
 
@@ -2742,7 +3009,16 @@ function armCardDrag(drag: ArmedDrag): void {
     [card],
     DRAG_CARD_CLASS,
     {
-      highlight: (event) => liveHit(event, sections, drag.slots.column),
+      highlight: (event) => {
+        // The slot column is a place to *name*, so `liveHit` promises nothing
+        // over it and the drop line goes away there. For a card in the air it is
+        // the bin instead, and the two answers are not in conflict: no line
+        // promises a place, and the lit bin promises the delete.
+        trash.armed(trash.over(event))
+        return liveHit(event, sections, drag.slots.column)
+      },
+      begin: () => trash.show(),
+      end: () => trash.hide(),
       /**
        * Put the line where a release would drop the card. It is placed on every
        * move rather than only on the target changing, because the *index* changes
@@ -2760,6 +3036,12 @@ function armCardDrag(drag: ArmedDrag): void {
         return { x1: at.x, y1: at.y, x2: at.x + at.width, y2: at.y }
       },
       drop: (event, target, moved) => {
+        // The one release that is not a move. A press that never travelled is
+        // not on the bin, however far it happened to be pointing when it ended.
+        if (moved && trash.over(event)) {
+          trash.drop(from)
+          return
+        }
         const column = moved && target ? sections.indexOf(target) : -1
         if (column < 0) return
         const { siblings } = dropColumn(doc, cards, column, from)
@@ -3089,7 +3371,6 @@ function attachKanbanChrome(
   // drawn with a slot in every column, so a card's index among *all* the cards
   // is not its index among the ones that can be deleted — and a slot, having no
   // ✕ at all, is simply not in the map.
-  const cardRemoves = new Map<SVGElement, HTMLButtonElement>()
 
   const layer = document.createElement('div')
   layer.className = KANBAN_CHROME_CLASS
@@ -3282,6 +3563,13 @@ function attachKanbanChrome(
   const slots = kanbanSlotElements(svg, doc)
   for (const el of slots.cards) el.classList.add(ADD_SLOT_CLASS)
   if (slots.column >= 0) sections[slots.column].classList.add(COLUMN_SLOT_CLASS)
+  // The card slot in the drawn column is the bin, and at rest it must be nothing.
+  // It is the one place on the board that invites a card into a column that does
+  // not exist yet, and the press it invites is a press the editor answers with a
+  // *column*, so a card drawn there at rest is a caption over the wrong answer.
+  // The space stays (mermaid sized the band with it, and the band is what the bin
+  // is read against); `kanbanTrash` takes the class off when a card is in the air.
+  if (slots.columnCard !== null) slots.columnCard.classList.add(KANBAN_BIN_SLOT_CLASS)
   /** The box a slot's own composer stands in, given a line's own height. */
   const slotComposerBox = (el: SVGElement, height: number): (() => DOMRect) => {
     return () => {
@@ -3404,33 +3692,6 @@ function attachKanbanChrome(
 
   })
 
-  cards.forEach((card, index) => {
-    const entry = doc.cards[index]
-    // A slot is a place rather than content, so it is nothing to delete.
-    if (entry.column < 0 || slots.cards.has(card)) return
-    const name = entry.label ?? 'this card'
-    const column = columnName(entry.column)
-    const box = (): DOMRect => {
-      const rect = card.getBoundingClientRect()
-      const size = REMOVE_BUTTON_HALF * 2
-      return new DOMRect(rect.right - KANBAN_BUTTON_EDGE - size, rect.top + KANBAN_BUTTON_EDGE, size, size)
-    }
-    const remove = control(
-      CARD_REMOVE_BUTTON_CLASS,
-      '✕',
-      `Delete the card ${name}`,
-      box,
-      () =>
-        confirmDelete(
-          removeKanbanCard(source, index),
-          `“${name}”`,
-          `It is removed from the ${column} column.`,
-        ),
-    )
-    remove.classList.add(CONCEALED_CLASS)
-    cardRemoves.set(card, remove)
-  })
-
   // ── the two drawn slots ──
   //
   // A board's shape is obvious while you are looking at it and not at all once
@@ -3463,7 +3724,10 @@ function attachKanbanChrome(
     // and a band's name are edited.
     if (event.target instanceof Element && event.target.closest(`.${EDITABLE_CLASS}`) !== null) return
     const column = slotOf.get(slot)
-    if (column !== undefined) {
+    // A card slot in a column that exists asks for a card's title. The one in the
+    // drawn column cannot: that column is a place rather than a list, so it has
+    // nothing to put a card in, and the whole press falls through to naming it.
+    if (column !== undefined && column !== slots.column) {
       event.preventDefault()
       composeCard(column, slotComposerBox(slot, COMPOSER_HEIGHT))
       return
@@ -3487,23 +3751,15 @@ function attachKanbanChrome(
 
   // ── what is under the pointer ──
   //
-  // The card you are on shows how to delete it, and nothing else is revealed —
-  // which is the whole answer to a board whose chrome used to be all of it at
-  // once. Adding is not here at all: the board is *drawn* with somewhere to add.
-  let shownRemove: HTMLButtonElement | null = null
-  const swap = (current: HTMLButtonElement | null, next: HTMLButtonElement | null): HTMLButtonElement | null => {
-    if (next === current) return current
-    current?.classList.remove(SHOWN_CLASS)
-    next?.classList.add(SHOWN_CLASS)
-    return next
-  }
+  // Only the menu answers to it now. A card is not covered by a control and is
+  // not deleted by one: it is *picked up* and dragged onto the column the board
+  // is drawn with, which is a bin for the length of that drag.
   /** The list, or the `⋯` it belongs to: the menu hangs off both, so the
    * pointer may travel from either to the other. */
   const isOnMenu = (target: Element): boolean =>
     target.closest(`.${MENU_LIST_CLASS}`) !== null ||
     target.closest(`.${MENU_BUTTON_CLASS}`) === openMenuFor
   const onOver = (event: Event): void => {
-    const pointer = event as PointerEvent
     // The menu is a popover, not a modal: moving the pointer off it takes it
     // away, because a board is not a dialog and nothing else on it is reachable
     // while one is open. What is *on* it does not: the list, and the `⋯` it
@@ -3514,26 +3770,6 @@ function attachKanbanChrome(
     if (closeMenu && !(event.target instanceof Element && isOnMenu(event.target))) {
       dismissMenu()
     }
-    // A control is revealed by the pointer being *on it*, whatever the diagram
-    // underneath says: `columnAt` refuses a press on a column's own name (that is
-    // a rename, and the label editor opens on the click), so a hit-test of the
-    // diagram alone would leave a visible ✕ that no hover can turn on.
-    const hovered =
-      event.target instanceof Element
-        ? (event.target.closest<HTMLElement>(`.${KANBAN_BUTTON_CLASS}`) as HTMLButtonElement | null)
-        : null
-    if (hovered !== null && [...cardRemoves.values()].includes(hovered)) {
-      shownRemove = swap(shownRemove, hovered)
-      return
-    }
-    // A card shows how to delete it, a slot shows nothing at all — it is a place
-    // to add a card, and a ✕ over one would be offering to delete what is not
-    // there yet.
-    const card = cardAt(pointer, cards)
-    shownRemove = swap(shownRemove, card ? cardRemoves.get(card) ?? null : null)
-  }
-  const onLeave = (): void => {
-    shownRemove = swap(shownRemove, null)
   }
   const onEscape = (event: Event): void => {
     if (!(event as KeyboardEvent).key || (event as KeyboardEvent).key !== 'Escape') return
@@ -3542,7 +3778,6 @@ function attachKanbanChrome(
     dismissMenu()
   }
   container.addEventListener('pointerover', onOver as EventListener)
-  container.addEventListener('pointerleave', onLeave)
   // A press anywhere that is not the menu's own list dismisses it. The `⋯` and
   // the items stop the press reaching here, so the `⋯`'s own click is the toggle.
   container.addEventListener('pointerdown', (() => dismissMenu()) as EventListener)
@@ -3575,7 +3810,6 @@ function attachKanbanChrome(
     for (const node of [container, scroller]) node?.removeEventListener('scroll', schedule)
     container.removeEventListener('click', onSlotClick)
     container.removeEventListener('pointerover', onOver as EventListener)
-    container.removeEventListener('pointerleave', onLeave)
     container.removeEventListener('keydown', onEscape as EventListener)
     layer.remove()
   }

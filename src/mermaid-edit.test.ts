@@ -1926,7 +1926,7 @@ describe('kanban drag', () => {
       source,
       boardSvg(
         ['Todo', 'Doing', 'Done', KANBAN_COLUMN_SLOT],
-        ['One', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT, KANBAN_CARD_SLOT],
+        ['One', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT, KANBAN_CARD_SLOT, KANBAN_CARD_SLOT],
       ),
       [
         rect(0, 20, 140, 110),
@@ -1939,6 +1939,7 @@ describe('kanban drag', () => {
         rect(10, 68, 120, 24),
         rect(210, 40, 120, 24),
         rect(410, 40, 120, 24),
+        rect(610, 40, 120, 24),
       ],
     )
     // The elements are taken by hand *before* the lift: the lift moves them out
@@ -1953,10 +1954,12 @@ describe('kanban drag', () => {
     const layer = svg.querySelector('.kanban-drag-layer')!
     expect([...layer.children]).toEqual([done, itsSlot])
     expect(layer.querySelector('.mermaid-kanban-card-remove')).toBeNull()
-    // Everything else is still in `.items`, where it belongs: three cards on the
-    // board and the held column's own slot in the air above them.
+    // Everything else is still in `.items`, where it belongs: the rest of the
+    // board's cards under the held column's own slot, which is in the air above
+    // them — and the drawn column at the end, whose own slot is in a column this
+    // drag is not holding.
     const left = [...svg.querySelectorAll('.items > g.node')]
-    expect(left).toHaveLength(3)
+    expect(left).toHaveLength(4)
     expect(left).not.toContain(itsSlot)
     expect(layer.textContent).not.toContain('One')
   })
@@ -2037,6 +2040,7 @@ const BOARD_CARD_RECTS = [
   rect(210, 50, 120, 24),
   rect(410, 40, 120, 24),
   rect(410, 68, 120, 24),
+  rect(610, 50, 120, 24),
 ]
 
 function kanbanCard(label: string): string {
@@ -2056,10 +2060,12 @@ function boardSvg(columns: string[], cards: string[]): string {
 }
 
 /** The three cards, then the drawn slot of each column, in the order mermaid
- *  walks them: column by column, top to bottom, with the new column last. */
+ *  walks them: column by column, top to bottom, with the new column last — and
+ *  the new column is a column like any other, so it has a card slot of its own
+ *  (which is the bin a card is dropped on to be deleted). */
 const BOARD_SVG = boardSvg(
   ['Todo', 'Doing', 'Done', KANBAN_COLUMN_SLOT],
-  ['One', 'Two', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT, 'Three', KANBAN_CARD_SLOT],
+  ['One', 'Two', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT, 'Three', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT],
 )
 
 /**
@@ -2130,9 +2136,10 @@ describe('kanban drawn slots', () => {
         '    id3[Three]',
         '    slotc2[+ Add a card]',
         '  slotn[+ Add a column]',
+        '    slotc3[+ Add a card]',
       ].join('\n'),
     )
-    expect(cardSlots(svg)).toHaveLength(3)
+    expect(cardSlots(svg)).toHaveLength(4)
     expect(columnSlot(svg)).not.toBeNull()
   })
 
@@ -2318,6 +2325,18 @@ describe('kanban drawn slots', () => {
     )
     clickAt(columnSlot(svg).querySelector<HTMLElement>('.mermaid-editables')!)
     expect(document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.value).toBe('')
+
+    // And the card slot it is drawn with, which is a place to add a card in every
+    // other column and is *not* one here: this column does not exist yet, so it
+    // has no list to put a card in and the press is the column's name to answer.
+    document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    const slots = cardSlots(svg)
+    clickAt(slots[slots.length - 1]!)
+    const fromCard = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(fromCard.value).toBe('')
+    expect(fromCard.placeholder).toBe('Column name')
   })
 
   it('refuses a new column with no name, and says so', async () => {
@@ -2360,14 +2379,14 @@ describe('kanban drawn slots', () => {
 
   it('goes away with the layer, and comes back with the next render', async () => {
     const { host, preview, svg } = await renderKanbanBoard(vi.fn())
-    expect(cardSlots(svg)).toHaveLength(3)
+    expect(cardSlots(svg)).toHaveLength(4)
 
     finishMermaidLabelEditing(host, false)
     expect(preview.querySelectorAll('.mermaid-edit-field')).toHaveLength(0)
     expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(0)
 
     await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host, commit: vi.fn() })
-    expect(cardSlots(preview.querySelector('svg')!)).toHaveLength(3)
+    expect(cardSlots(preview.querySelector('svg')!)).toHaveLength(4)
   })
 
   it('draws no slots on a diagram that is not a board', async () => {
@@ -2380,13 +2399,206 @@ describe('kanban drawn slots', () => {
   })
 })
 
+describe('kanban bin', () => {
+  function pointer(type: string, x: number, y: number): Event {
+    const event = new Event(type, { bubbles: true })
+    Object.assign(event, { clientX: x, clientY: y, button: 0 })
+    return event
+  }
+
+  /** The bin: the card slot drawn in the column at the end of the board. */
+  function binCard(svg: SVGSVGElement): SVGElement {
+    const slots = cardSlots(svg)
+    return slots[slots.length - 1]!
+  }
+
+  /** What a card on the board says, read off its own label. */
+  function words(el: Element): string {
+    return (el.querySelector('.nodeLabel')?.textContent ?? '').trim()
+  }
+
+  /** The band's own name, which is what stays readable under a card in the air. */
+  function binName(svg: SVGSVGElement): string {
+    return words(columnSlot(svg))
+  }
+
+  /** The band's own background, which is what a bin tints. */
+  function binFrame(svg: SVGSVGElement): CSSStyleDeclaration {
+    return columnSlot(svg).querySelector('rect')!.style
+  }
+
+  /** The bin card's own background, which is the other half of the tint. */
+  function binCardFrame(svg: SVGSVGElement): CSSStyleDeclaration {
+    return binCard(svg).querySelector('rect')!.style
+  }
+
+  /** Card 0, from where it sits, onto the drawn slot column at the board's end. */
+  function dragToTheBin(svg: SVGSVGElement): void {
+    svg.querySelectorAll<SVGElement>('.items > g.node')[0]!.dispatchEvent(pointer('pointerdown', 20, 45))
+    window.dispatchEvent(pointer('pointermove', 650, 60))
+  }
+
+  it("is the board's own card slot for the length of a card drag", async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+
+    // Nothing there to begin with: a board nobody is dragging on is a board to
+    // add a column to, and that column is drawn with a card slot like any other.
+    expect(binName(svg)).toBe(KANBAN_COLUMN_SLOT)
+    expect(words(binCard(svg))).toBe(KANBAN_CARD_SLOT)
+    expect(binFrame(svg).fill).toBe('')
+    expect(binCardFrame(svg).fill).toBe('')
+    // …and the slot itself is blank. A card captioned `+ Add a card` standing in a
+    // column captioned `+ Add a column` is the one place on the board that offers
+    // a card to a place, and the press it invites is answered with a *column*. The
+    // space is still drawn — mermaid laid the band out around it, and a drag may
+    // not re-render the drawing out from under the card it is holding — so it is
+    // emptied rather than removed, and this class is the emptying. It is the drawn
+    // column's slot and no other column's: the others are where a card really goes.
+    expect(binCard(svg).classList.contains('mermaid-kanban-bin-slot')).toBe(true)
+    expect(cardSlots(svg).slice(0, -1).some((el) => el.classList.contains('mermaid-kanban-bin-slot'))).toBe(false)
+
+    dragToTheBin(svg)
+
+    // It is a card, and the card is the bin: it says what it is for, it is the
+    // board's own card slot in the board's own list, and it is red — the card and
+    // the column it stands in, because a card in the air covers the card slot it
+    // is aimed at and the band is what is left to read. The card says the one word
+    // its own label box has room for beside the mark, and the band, which mermaid
+    // sized for a longer name, says both.
+    expect(words(binCard(svg))).toBe('Delete')
+    expect(binCard(svg).querySelector('.mermaid-kanban-bin-mark')).not.toBeNull()
+    // Revealed, and revealed by the same turn that writes on it: there is no frame
+    // in which the slot is visible and still says what it says at rest.
+    expect(binCard(svg).classList.contains('mermaid-kanban-bin-slot')).toBe(false)
+    expect(binCardFrame(svg).fill).toBe('var(--danger)')
+    expect(binCardFrame(svg).fillOpacity).toBe('0.28')
+    expect(binName(svg)).toBe('Delete card')
+    expect(binFrame(svg).fill).toBe('var(--danger)')
+    expect(columnSlot(svg).querySelector('.mermaid-kanban-bin-mark')).not.toBeNull()
+    // And it is *of* the drawing, so the card on its way to it paints over the
+    // bin: a frame is in `.sections` and a card is in `.items`, and a lift puts
+    // the held card last in that list.
+    expect(columnSlot(svg).parentElement!.classList.contains('sections')).toBe(true)
+    expect(binCard(svg).parentElement!.classList.contains('items')).toBe(true)
+    // Nothing is promised where a card cannot land otherwise: the line is gone,
+    // and the slot column is not marked as a target either — it is a place to name.
+    expect(document.querySelector<SVGLineElement>('.mermaid .kanban-drop-line')!.style.display).toBe('none')
+    expect(columnSlot(svg).classList.contains('kanban-drop-target')).toBe(false)
+
+    // The release asks, before it takes anything: a drag is a decision with two
+    // answers.
+    window.dispatchEvent(pointer('pointerup', 650, 60))
+    const dialog = document.querySelector<HTMLElement>('.edi-dialog')!
+    expect(dialog.querySelector('.edi-dialog-title')!.textContent).toContain('One')
+    click(Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === 'Delete')!)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(commit).toHaveBeenCalledWith(['kanban', '  Todo', '    id2[Two]', '  Doing', '  Done', '    id3[Three]'].join('\n'))
+    // The bin went with the drag, whichever way the release went: the column is
+    // the column it was before, in every part of itself.
+    expect(binName(svg)).toBe(KANBAN_COLUMN_SLOT)
+    expect(words(binCard(svg))).toBe(KANBAN_CARD_SLOT)
+    expect(binCard(svg).querySelector('.mermaid-kanban-bin-mark')).toBeNull()
+    expect(binCard(svg).classList.contains('mermaid-kanban-bin-slot')).toBe(true)
+    expect(binFrame(svg).fill).toBe('')
+    expect(binFrame(svg).fillOpacity).toBe('')
+    expect(binCardFrame(svg).fill).toBe('')
+    expect(binCardFrame(svg).fillOpacity).toBe('')
+  })
+
+  it('paints the mark where no rule of the diagram can take its colour back', async () => {
+    const { svg } = await renderKanbanBoard(vi.fn())
+    dragToTheBin(svg)
+
+    // Mermaid styles `path` inside a board with its own palette, and such a rule
+    // beats both an inherited value and a presentation attribute — so the mark
+    // came out in the diagram's colours, filled as well as stroked, while the
+    // words beside it were the danger colour. An inline style is the only thing
+    // that wins, and this is the mark on *both* halves.
+    for (const part of [binCard(svg), columnSlot(svg)]) {
+      const paths = Array.from(part.querySelectorAll<SVGPathElement>('.mermaid-kanban-bin-mark path'))
+      expect(paths).toHaveLength(5)
+      expect(paths.map((path) => path.style.stroke)).toEqual(Array<string>(5).fill('var(--danger, currentColor)'))
+      expect(paths.map((path) => path.style.fill)).toEqual(Array<string>(5).fill('none'))
+    }
+  })
+
+  it('is the bin for a pointer on it, and a quieter one for a pointer off it', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+    svg.querySelectorAll<SVGElement>('.items > g.node')[0]!.dispatchEvent(pointer('pointerdown', 20, 45))
+    window.dispatchEvent(pointer('pointermove', 60, 60))
+
+    // A card in the air and the pointer over its own column: the board's last
+    // column says what it is for, without being the answer to this drag.
+    expect(words(binCard(svg))).toBe('Delete')
+    expect(binFrame(svg).fillOpacity).toBe('0.14')
+    expect(binFrame(svg).strokeWidth).toBe('1.5px')
+    expect(binCardFrame(svg).fillOpacity).toBe('0.14')
+
+    window.dispatchEvent(pointer('pointermove', 650, 60))
+
+    // On it. Lit, and nothing else: there is no second border round a bin.
+    expect(binFrame(svg).fillOpacity).toBe('0.28')
+    expect(binFrame(svg).strokeWidth).toBe('2.5px')
+    expect(binCardFrame(svg).fillOpacity).toBe('0.28')
+    expect(columnSlot(svg).classList.contains('kanban-drop-target')).toBe(false)
+  })
+
+  it('cancels a delete like any other, and keeps the card', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+    dragToTheBin(svg)
+    window.dispatchEvent(pointer('pointerup', 650, 60))
+
+    const dialog = document.querySelector<HTMLElement>('.edi-dialog')!
+    expect(dialog.querySelector('.edi-dialog-note')!.textContent).toContain('removed from the Todo column')
+    click(Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === 'Cancel')!)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(binName(svg)).toBe(KANBAN_COLUMN_SLOT)
+    expect(words(binCard(svg))).toBe(KANBAN_CARD_SLOT)
+    expect(binFrame(svg).fill).toBe('')
+    expect(binCardFrame(svg).fill).toBe('')
+  })
+
+  it('is not the bin while the pointer is on a column that takes cards', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+    svg.querySelectorAll<SVGElement>('.items > g.node')[0]!.dispatchEvent(pointer('pointerdown', 20, 45))
+    // The foot of its own column, below the last real card and inside the band.
+    window.dispatchEvent(pointer('pointermove', 60, 125))
+
+    // That is a place a card can go, so the line is back to promising the drop.
+    // The bin is still the bin — the drag is still a card's — but it is not lit.
+    expect(document.querySelector<SVGLineElement>('.mermaid .kanban-drop-line')!.style.display).toBe('')
+    expect(binFrame(svg).fillOpacity).toBe('0.14')
+    expect(binCardFrame(svg).fillOpacity).toBe('0.14')
+  })
+
+  it('leaves a column drag alone: its end is a gap, not a bin', async () => {
+    const commit = vi.fn()
+    const { svg } = await renderKanbanBoard(commit)
+    const band = svg.querySelectorAll<SVGElement>('.sections > g')[0]!
+    // A press on the frame rather than on one of its cards, which is the column
+    // it belongs to: the left strip of the band is the column's own.
+    band.dispatchEvent(pointer('pointerdown', 4, 100))
+    window.dispatchEvent(pointer('pointermove', 300, 100))
+
+    // A column dropped at the end of the board goes before the drawn slot, and
+    // that is a move: nothing is being deleted, so nothing is a bin.
+    expect(binName(svg)).toBe(KANBAN_COLUMN_SLOT)
+    expect(words(binCard(svg))).toBe(KANBAN_CARD_SLOT)
+    expect(binFrame(svg).fill).toBe('')
+    expect(binCardFrame(svg).fill).toBe('')
+  })
+})
+
 describe('kanban delete buttons', () => {
   function renderBoard(commit: (next: string) => void): Promise<HTMLElement> {
     return renderKanbanBoard(commit).then((board) => board.preview)
-  }
-
-  function removeButtons(scope: ParentNode, kind: string): HTMLButtonElement[] {
-    return Array.from(scope.querySelectorAll<HTMLButtonElement>(`.${kind}`))
   }
 
   function menus(scope: ParentNode): HTMLButtonElement[] {
@@ -2415,12 +2627,6 @@ describe('kanban delete buttons', () => {
     click(item!)
   }
 
-  function hover(el: Element, x: number, y: number): void {
-    const event = new Event('pointerover', { bubbles: true })
-    Object.assign(event, { clientX: x, clientY: y, button: 0 })
-    el.dispatchEvent(event)
-  }
-
   function dialog(): HTMLElement {
     const found = document.querySelector<HTMLElement>('.edi-dialog')
     expect(found).not.toBeNull()
@@ -2440,77 +2646,47 @@ describe('kanban delete buttons', () => {
     return new Promise((resolve) => setTimeout(resolve, 0))
   }
 
-  it('offers a ✕ on every card and a ⋯ on every column, and nothing else', async () => {
+  it('offers a ⋯ on every column, and nothing at all on a card', async () => {
     const preview = await renderBoard(vi.fn())
 
-    expect(removeButtons(preview, 'mermaid-kanban-card-remove').map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Delete the card One',
-      'Delete the card Two',
-      'Delete the card Three',
-    ])
     expect(menus(preview).map((b) => b.getAttribute('aria-label'))).toEqual([
       'Todo column actions',
       'Doing column actions',
       'Done column actions',
     ])
-    // A slot is a place rather than content, so it is not deletable — and the
-    // new column is not a column yet, so it has no actions either. Everything a
-    // board can be pressed for is one of these buttons, and each is the editor's
-    // own chrome: a press on any is not a press on the diagram below.
-    expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(6)
-  })
-
-  it('conceals the card ✕ until the pointer asks', async () => {
-    const preview = await renderBoard(vi.fn())
-    const shown = (scope: ParentNode): string[] =>
-      Array.from(scope.querySelectorAll<HTMLElement>('.mermaid-kanban-btn.is-shown')).map(
-        (el) => el.getAttribute('aria-label') ?? '',
-      )
-
-    // The `⋯` belongs to the whole column and is always on screen; the ✕ is the
-    // card's own, and nothing is revealed before the pointer asks.
-    expect(shown(preview)).toEqual([])
-    expect(menus(preview)[0]!.classList.contains('mermaid-kanban-is-concealed')).toBe(false)
-
-    // Hovering a card reveals that card's ✕. The event carries the pointer's
-    // position, and dispatching it *on the card* is what makes the handler's own
-    // `event.target` the card.
-    const card = preview.querySelector<SVGElement>('.items > g.node')!
-    hover(card, 60, 45)
-    expect(shown(preview)).toEqual(['Delete the card One'])
-
-    // ...and taking the pointer off the board takes it away again.
-    preview.dispatchEvent(new Event('pointerleave'))
-    expect(shown(preview)).toEqual([])
+    // A card is not covered by a control: a title long enough to fill its card
+    // runs up against the card's own edge, so anything laid over one is laid over
+    // the words. A card is deleted by being picked up and dropped on the column
+    // the board is drawn with, which is a bin only while it is in the air.
+    expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(3)
+    // A slot is a place rather than content, so it is not deletable — and the new
+    // column is not a column yet, so it has no actions either.
+    expect(preview.querySelector('.mermaid-kanban-column-slot .mermaid-kanban-btn')).toBeNull()
   })
 
   it('follows the diagram when it is resized, as a zoom makes it', async () => {
     const { preview, svg } = await renderKanbanBoard(vi.fn())
-    const remove = removeButtons(preview, 'mermaid-kanban-card-remove')[0]!
+    const menu = menus(preview)[0]!
     // What the zoom toolbar does: the whole diagram gets wider, so the first
-    // column's band and card grow with it and the ✕ has to move.
-    const card = svg.querySelector<SVGElement>('.items > g.node')!
-    card.getBoundingClientRect = () => rect(0, 40, 260, 24)
+    // column's band grows with it and the `⋯` has to move.
+    const section = svg.querySelectorAll<SVGElement>('.sections > g')[0]!
+    section.querySelector('rect')!.getBoundingClientRect = () => rect(0, 20, 260, 110)
     fireResizeCallbacks()
     // The chrome repositions in a frame, and again while the board is still
     // settling, rather than inside the observer callback.
     await flushFrames()
 
-    // The card's own right edge (260) less the button and its 8px inset,
+    // The band's own right edge (260) less the 18px button and its 8px inset,
     // against a preview that sits 10px down the block.
-    expect(remove.style.left).toBe('238px')
-    expect(remove.style.top).toBe('38px')
+    expect(menu.style.left).toBe('234px')
+    expect(menu.style.top).toBe('18px')
   })
 
-  it('puts a card own ✕ in its own top-right corner, and the column two in the header', async () => {
+  it('puts the column own ⋯ in the header, on its name rather than the band', async () => {
     const preview = await renderBoard(vi.fn())
-    // The preview sits 10px down the block, so a card at y=40 is y=30 in it: the
-    // ✕ is 14px wide, 8px in from the card's right edge at 130.
-    const [one] = removeButtons(preview, 'mermaid-kanban-card-remove')
-    expect(one!.style.left).toBe('108px')
-    expect(one!.style.top).toBe('38px')
-
-    // The `⋯` is 18px, 8px in from the band's own top-right corner.
+    // The `⋯` is 18px, 8px in from the band's own top-right corner, and centred on
+    // the name it is the menu of: the band is padded, so the name is not at its
+    // own top edge.
     const column = menus(preview)[0]!
     expect(column.style.left).toBe('114px')
     expect(column.style.top).toBe('18px')
@@ -2530,38 +2706,6 @@ describe('kanban delete buttons', () => {
     click(menus(preview)[2]!)
     expect(preview.querySelectorAll('.mermaid-kanban-menu-list')).toHaveLength(1)
     expect(menuItems(preview)).toEqual(['Rename column', 'Delete column'])
-  })
-
-  it('deletes a card, as one source patch, once the prompt is answered', async () => {
-    const commit = vi.fn()
-    const preview = await renderBoard(commit)
-
-    click(removeButtons(preview, 'mermaid-kanban-card-remove')[0]!)
-    // Nothing is removed on the press itself: the prompt comes first, and it
-    // says which card and which column, so the answer is not a guess.
-    expect(commit).not.toHaveBeenCalled()
-    expect(dialog().querySelector('.edi-dialog-title')!.textContent).toBe('Delete “One”?')
-    expect(dialog().querySelector('.edi-dialog-note')!.textContent).toContain('removed from the Todo column')
-
-    click(dialogButton('Delete'))
-    await settle()
-    expect(commit).toHaveBeenCalledTimes(1)
-    expect(commit).toHaveBeenCalledWith(
-      ['kanban', '  Todo', '    id2[Two]', '  Doing', '  Done', '    id3[Three]'].join('\n'),
-    )
-    expect(document.querySelector('.edi-dialog')).toBeNull()
-  })
-
-  it('keeps the card when the prompt is cancelled', async () => {
-    const commit = vi.fn()
-    const preview = await renderBoard(commit)
-
-    click(removeButtons(preview, 'mermaid-kanban-card-remove')[1]!)
-    click(dialogButton('Cancel'))
-    await settle()
-
-    expect(commit).not.toHaveBeenCalled()
-    expect(document.querySelector('.edi-dialog')).toBeNull()
   })
 
   it('deletes a column with its cards, and says how many go with it', async () => {
@@ -2586,15 +2730,16 @@ describe('kanban delete buttons', () => {
     const { preview } = await renderKanbanBoard(
       vi.fn(),
       'kanban\n  Todo\n    id1[One]',
-      boardSvg(['Todo', KANBAN_COLUMN_SLOT], ['One', KANBAN_CARD_SLOT]),
+      boardSvg(['Todo', KANBAN_COLUMN_SLOT], ['One', KANBAN_CARD_SLOT, KANBAN_CARD_SLOT]),
       [BOARD_BANDS[0]!, BOARD_BANDS[3]!],
-      [BOARD_CARD_RECTS[0]!, BOARD_CARD_RECTS[2]!],
+      [BOARD_CARD_RECTS[0]!, BOARD_CARD_RECTS[2]!, BOARD_CARD_RECTS[6]!],
     )
 
     // The one column still has its own actions, and the delete is not one of them.
     expect(openMenu(preview, 0)).toEqual(['Rename column'])
-    // Its card can still go, so the board is editable without emptying it.
-    expect(removeButtons(preview, 'mermaid-kanban-card-remove')).toHaveLength(1)
+    // Its card can still go — on the bin, which is the column this board is drawn
+    // with — so the board is editable without emptying it.
+    expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(1)
     // And the board is still drawn with the column it would need to get back to
     // two, which is the whole answer to a board of one.
     expect(preview.querySelector('.mermaid-kanban-column-slot')).not.toBeNull()

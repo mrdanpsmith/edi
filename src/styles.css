@@ -1580,22 +1580,6 @@ body {
     background 120ms ease;
 }
 
-/* A control that belongs to one card or one list is not on screen until the
-   pointer is on it. It is also not *clickable* until then, so a concealed ✕ can
-   never eat the press that was meant to drag the card it is hiding on. */
-.ProseMirror .mermaid .mermaid-kanban-btn.is-concealed {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.ProseMirror .mermaid .mermaid-kanban-btn.is-concealed.is-shown {
-  opacity: 1;
-  /* And it is *pressable* again: a revealed control that still took no clicks
-     looked like a control that did nothing, and the press fell through to the
-     label underneath it. */
-  pointer-events: auto;
-}
-
 .ProseMirror .mermaid.mermaid-editing .mermaid-kanban-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
@@ -1616,22 +1600,6 @@ body {
 .ProseMirror .mermaid .mermaid-kanban-menu:hover,
 .ProseMirror .mermaid .mermaid-kanban-menu:focus-visible {
   opacity: 1;
-}
-
-/* A card's ✕ is the smallest thing on the board and hugs its corner, so it covers
-   as little of the card's own title as a pressable target can. */
-.ProseMirror .mermaid .mermaid-kanban-card-remove {
-  font-size: 0.75em;
-  border-radius: 3px;
-  border-color: transparent;
-  background: transparent;
-}
-
-/* A delete asks before it acts, so it is a ✕ and it is the one thing on a card
-   that goes red: the board is the user's document, and this takes something away. */
-.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-card-remove:hover {
-  color: var(--danger);
-  border-color: var(--danger);
 }
 
 /* A card and a column are *held*, and the cursor says so: an open hand over
@@ -1680,6 +1648,38 @@ body {
 .ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot:hover rect,
 .ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot:hover .section-label {
   opacity: 1;
+}
+
+/* The bin a card is dragged onto is the board's own drawn card slot, so there
+   is nothing here to position: its card and the band it stands in are dressed in
+   place, and all the mark needs is to sit on the label's line like a word. That is
+   the one thing an inline svg in a foreignObject does not do on its own, and the
+   reason it was drawn at all — *and* `display` is not optional here: every svg in
+   a diagram is a block (`.ProseMirror .mermaid svg`), and a block mark pushes the
+   words after it onto a line of their own, which a `foreignObject` sized to one
+   line then clips. The bin said "Delete" and showed no "card". */
+.ProseMirror .mermaid .mermaid-kanban-bin-mark {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  margin: 0 0.35em 0 0;
+  vertical-align: -0.2em;
+  stroke: var(--danger);
+  fill: none;
+}
+
+/* The bin at rest: the card slot in the drawn column is the space a card is
+   deleted into, and it is drawn — mermaid sized the band around it and a drag may
+   not re-render the drawing — but it is not *there*. A card captioned `+ Add a
+   card` inside a column captioned `+ Add a column` is a place to add a card to a
+   place, and the press it invites is answered with a new column. So the slot is
+   blank: no frame, no words, no hit target, and the band's own fill is what shows
+   through. `display: none` rather than `visibility: hidden` so a press in the
+   space is a press on the band, which is what names a column. */
+.ProseMirror .mermaid .mermaid-kanban-bin-slot > rect,
+.ProseMirror .mermaid .mermaid-kanban-bin-slot .label,
+.ProseMirror .mermaid .mermaid-kanban-bin-slot foreignObject {
+  display: none;
 }
 
 /* The menu: right-aligned under its own `⋯`, so it hangs inside the column it
