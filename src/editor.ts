@@ -26,6 +26,7 @@ import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
 import { imageNodeView, reResolveImages, type ResolveImage } from './image'
 import { searchPlugin } from './search'
+import { inlineCodeCopyPlugin } from './inlineCodeCopy'
 
 function inlineMarkRules(): InputRule[] {
   function markRule(pattern: RegExp, markType: import('prosemirror-model').MarkType): InputRule {
@@ -262,6 +263,7 @@ export function createBlockEditor(
     blockTypeSelectPlugin(),
     codeBlockNodeViewPlugin,
     searchPlugin(),
+    inlineCodeCopyPlugin(),
     new Plugin({
       props: {
         nodeViews: {
