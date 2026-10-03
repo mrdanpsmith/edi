@@ -188,7 +188,14 @@ export function createPairedDelimiterMark({
   function createInputRule(schema: Schema) {
     const markType: MarkType = schema.marks[name]
     const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const pattern = new RegExp(`${escaped}{${seqLength}}(.*?)${escaped}{${seqLength}}$`)
+    // Both ends of the opening run have to be the whole run. The lookbehind
+    // stops the pattern matching inside a longer one, and the lookahead stops
+    // it *starting* one: without either, typing `~~strike~~` reaches
+    // `~~strike~` first, where an unanchored `~…~$` finds `~strike~` in it and
+    // makes a subscript — the run of `~` belongs to strikethrough until it
+    // closes.
+    const run = `${escaped}{${seqLength}}`
+    const pattern = new RegExp(`(?<!${run})${run}(?!${escaped})(.*?)${run}$`)
     return new InputRule(pattern, (state, match, start, end) => {
       const tr = state.tr
       if (match[1]) {

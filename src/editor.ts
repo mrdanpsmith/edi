@@ -22,6 +22,7 @@ import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { taskClickPlugin, toggleTaskItems, blockTypeSelectPlugin } from './toolbar'
+import { markExitPlugin, stopMarking } from './markExit'
 import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
 import { imageNodeView, reResolveImages, type ResolveImage } from './image'
@@ -29,38 +30,31 @@ import { searchPlugin } from './search'
 
 function inlineMarkRules(): InputRule[] {
   function markRule(pattern: RegExp, markType: import('prosemirror-model').MarkType): InputRule {
-    return new InputRule(pattern, (state, match, start, end) => {
-      if (match[1]) {
-        return state.tr.replaceWith(start, end, state.schema.text(match[1], [markType.create()]))
-      }
-      return state.tr
-    })
+    return stopMarking(
+      new InputRule(pattern, (state, match, start, end) => {
+        if (match[1]) {
+          return state.tr.replaceWith(start, end, state.schema.text(match[1], [markType.create()]))
+        }
+        return state.tr
+      }),
+      markType,
+    )
   }
 
-  /**
-   * A code span ends at its closing backtick, and the caret leaves it there: the
-   * mark is dropped from the stored marks so the rest of the sentence is plain
-   * text. Without that, a finished `code` span drags everything typed after it
-   * into the mark, and there is no way back out — only Mod-b and Mod-i are bound
-   * to a mark shortcut, and the toolbar is not a keyboard.
-   */
-  function codeRule(): InputRule {
-    const mark = schema.marks.code.create()
-    return new InputRule(/`([^`]+)`$/, (state, match, start, end) => {
-      const tr = state.tr.replaceWith(start, end, state.schema.text(match[1], [mark]))
-      tr.setStoredMarks(mark.removeFromSet(state.doc.resolve(start).marks()))
-      return tr
-    })
-  }
-
+  // Every pair of delimiters ends its mark at the closing one, and the caret
+  // leaves it there rather than staying inside the run it just made — see
+  // `markExit.ts`, which owns that rule and the arrow keys that leave a mark
+  // the same way. The lookbehind on each opening delimiter is what keeps a
+  // rule from matching inside a *longer* run of the same character and firing
+  // early, which is how `~~strike~~` used to become a subscript.
   return [
-    markRule(/\*\*([^*]+)\*\*$/, schema.marks.strong),
+    markRule(/(?<!\*)\*\*([^*]+)\*\*$/, schema.marks.strong),
     markRule(/(?<!\*)\*([^*]+)\*(?!\*)$/, schema.marks.em),
-    codeRule(),
-    markRule(/~~([^~]+)~~$/, schema.marks.strikethrough),
-    highlight.createInputRule(schema),
-    subscript.createInputRule(schema),
-    superscript.createInputRule(schema),
+    markRule(/(?<!`)`([^`]+)`$/, schema.marks.code),
+    markRule(/(?<!~)~~([^~]+)~~$/, schema.marks.strikethrough),
+    stopMarking(highlight.createInputRule(schema), schema.marks.highlight),
+    stopMarking(subscript.createInputRule(schema), schema.marks.sub),
+    stopMarking(superscript.createInputRule(schema), schema.marks.sup),
   ]
 }
 
@@ -102,6 +96,7 @@ const listKeymap = keymap({
 const formattingKeymap = keymap({
   'Mod-b': toggleMark(schema.marks.strong),
   'Mod-i': toggleMark(schema.marks.em),
+  'Alt-Mod-c': toggleMark(schema.marks.code),
 })
 
 const blockToggleKeymap = keymap({
@@ -246,6 +241,7 @@ export function createBlockEditor(
     listKeymap,
     keymap(baseKeymap),
     formattingKeymap,
+    markExitPlugin,
     createInputRules(),
     blockToggleKeymap,
     gapCursor(),

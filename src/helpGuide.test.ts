@@ -31,6 +31,13 @@ describe('buildHelpGuideMarkdown', () => {
     expect(guide).toContain('removes the link and keeps the text')
   })
 
+  it('documents the formatting shortcuts and the arrow keys that leave a mark', () => {
+    expect(guide).toContain('`Ctrl+B`, italic `Ctrl+I`, inline code `Ctrl+Alt+C`')
+    expect(guide).toContain('`→` at the end of one and')
+    expect(guide).toContain('The text')
+    expect(guide).toContain('already written keeps its formatting.')
+  })
+
   it('covers the spreadsheet essentials', () => {
     expect(guide).toContain('`Insert → Table…`')
     expect(guide).toContain('`Insert → Spreadsheet…`')

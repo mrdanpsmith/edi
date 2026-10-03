@@ -52,4 +52,26 @@ describe('formatting keyboard shortcuts', () => {
     expect(proseToMarkdown(view.state.doc)).toContain('*hello*')
     editor.destroy()
   })
+
+  it('toggles inline code with Ctrl+Alt+C', () => {
+    const editor = createBlockEditor(document.body, 'hello world')
+    const view = editor.getView()
+    selectText(view, 'hello')
+
+    const handled = dispatchKeydown(view, 'c', { ctrlKey: true, altKey: true })
+    expect(handled).toBe(true)
+    expect(proseToMarkdown(view.state.doc)).toContain('`hello`')
+    editor.destroy()
+  })
+
+  it('leaves Ctrl+Alt+C to the browser when only one of its modifiers is held', () => {
+    const editor = createBlockEditor(document.body, 'hello world')
+    const view = editor.getView()
+    selectText(view, 'hello')
+
+    expect(dispatchKeydown(view, 'c', { ctrlKey: true })).toBe(false)
+    expect(dispatchKeydown(view, 'c', { altKey: true })).toBe(false)
+    expect(proseToMarkdown(view.state.doc).trim()).toBe('hello world')
+    editor.destroy()
+  })
 })
