@@ -5,6 +5,7 @@ import { EditorView as CMEditorView } from '@codemirror/view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
 import { BLOCK_PLUGIN_KEY, getSourceBlockState, placeCaretInText } from './blockplugin'
 import { markdownToProse, serializeBlock } from './markdown'
+import { headingSlug } from './schema'
 
 function createHandleDOM(pos: number): HTMLElement {
   const handle = document.createElement('div')
@@ -95,6 +96,8 @@ function createSemanticWrapper(node: ProseNode): HTMLElement | null {
     }
     case 'heading': {
       const el = document.createElement(`h${node.attrs.level as number}`)
+      const id = headingSlug(node.textContent)
+      if (id) el.id = id
       return el
     }
     case 'blockquote': {
@@ -237,6 +240,12 @@ class BlockVisualNodeView implements NodeView {
   update(node: ProseNode): boolean {
     if (node.attrs._source) return false
     if (visualSignature(node) !== this.sig) return false
+    // The heading's id derives from its text, so a text edit within the same
+    // level keeps the node view alive but must refresh the anchor.
+    if (node.type.name === 'heading') {
+      const id = headingSlug(node.textContent) ?? ''
+      if (this.contentDOM.id !== id) this.contentDOM.id = id
+    }
     return true
   }
 

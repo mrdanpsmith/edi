@@ -251,6 +251,11 @@ export function serializeDocToHtml(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV
     return ['pre', ['code', markdown]]
   }
 
+  nodes.heading = (node) => {
+    const level = node.attrs.level as number
+    return [`h${level}`, 0]
+  }
+
   nodes.table = (node) => {
     const rows = parsePipes(String(node.attrs.value ?? ''))
     if (rows.length === 0) {

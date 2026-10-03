@@ -48,6 +48,7 @@ import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
 import { enterDiagramEditMode, exitDiagramEditMode, insertKanbanBoard } from './node/mermaid'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
+import { headingSlug } from './schema'
 import { HomeScreen } from './home'
 import { addRecentFile, getRecentFiles } from './recents'
 import { promptForLink, promptForRename } from './urlDialog'
@@ -402,6 +403,25 @@ function resolveImageFileUrl(src: string): string {
   return new URL(`file://${path}`).href
 }
 
+function scrollToFragment(fragment: string): void {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(fragment)
+  } catch {
+    decoded = fragment
+  }
+  const candidates = [decoded]
+  const slugged = headingSlug(decoded)
+  if (slugged && slugged !== decoded) candidates.push(slugged)
+  for (const id of candidates) {
+    const el = document.getElementById(id)
+    if (el) {
+      el.scrollIntoView({ block: 'start' })
+      return
+    }
+  }
+}
+
 async function openLink(href: string, text: string): Promise<void> {
   if (isMisleadingLink(href, text)) {
     const go = await confirmAction(
@@ -413,10 +433,21 @@ async function openLink(href: string, text: string): Promise<void> {
     void openUrl(href)
     return
   }
+  const hashIndex = href.indexOf('#')
+  const fragment = hashIndex >= 0 ? href.slice(hashIndex + 1) : ''
+  if (hashIndex === 0) {
+    // Fragment-only link: an anchor within the same document.
+    if (fragment) scrollToFragment(fragment)
+    return
+  }
   const target = resolveInternalPath(href)
   if (!target) return
   if (isSupportedFile(target)) {
-    void openDocument(target)
+    await openDocument(target)
+    if (fragment) {
+      // Wait for the swapped-in document to render before scrolling.
+      requestAnimationFrame(() => requestAnimationFrame(() => scrollToFragment(fragment)))
+    }
   } else {
     void openUrl(target)
   }

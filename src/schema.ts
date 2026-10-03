@@ -2,6 +2,14 @@ import { Schema } from 'prosemirror-model'
 import type { SchemaSpec } from 'prosemirror-model'
 import { domTableToPipes } from './spreadsheet-util'
 
+export function headingSlug(text: string): string | undefined {
+  const id = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return id === '' ? undefined : id
+}
+
 const nodes: SchemaSpec['nodes'] = {
   doc: {
     content: 'block+',
@@ -30,7 +38,11 @@ const nodes: SchemaSpec['nodes'] = {
       { tag: 'h6', attrs: { level: 6 } },
     ],
     toDOM(node) {
-      return [`h${node.attrs.level as number}`, 0]
+      const level = node.attrs.level as number
+      const text = node.textContent
+      let id: string | undefined
+      if (text) id = headingSlug(text)
+      return id ? [`h${level}`, { id }, 0] : [`h${level}`, 0]
     },
   },
 
