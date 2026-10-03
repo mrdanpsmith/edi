@@ -670,14 +670,23 @@ class MainWindow(QMainWindow):
         dialog = QFileDialog(self, "Save document")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
         dialog.setNameFilter("Markdown documents (*.md *.markdown *.txt *.mermaid);;All files (*)")
-        dialog.selectFile(f"{default_name}.md")
+        if not default_name.lower().endswith((".md", ".markdown", ".txt", ".mermaid")):
+            default_name = f"{default_name}.md"
+        dialog.selectFile(default_name)
         self._run_dialog(dialog, callback)
 
     def pick_export_path(self, default_name, callback=None) -> None:
         dialog = QFileDialog(self, "Export HTML")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
         dialog.setNameFilter("HTML documents (*.html *.htm);;All files (*)")
-        dialog.selectFile(f"{default_name}.html")
+        stem = default_name
+        for ext in (".markdown", ".mermaid", ".md", ".txt"):
+            if stem.lower().endswith(ext):
+                stem = stem[: -len(ext)]
+                break
+        if not stem.lower().endswith((".html", ".htm")):
+            stem = f"{stem}.html"
+        dialog.selectFile(stem)
         self._run_dialog(dialog, callback)
 
     def pick_image_save_path(self, default_name, callback=None) -> None:
@@ -685,7 +694,9 @@ class MainWindow(QMainWindow):
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
         dialog.setNameFilter("PNG images (*.png);;All files (*)")
         dialog.setDefaultSuffix("png")
-        dialog.selectFile(f"{default_name}.png")
+        if not default_name.lower().endswith(".png"):
+            default_name = f"{default_name}.png"
+        dialog.selectFile(default_name)
         self._run_dialog(dialog, callback)
 
     def pick_import_path(self, callback=None) -> None:

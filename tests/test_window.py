@@ -913,6 +913,26 @@ def test_pick_save_path_cancel_returns_none(visible, qtbot):
     assert result["path"] is None
 
 
+def test_pick_save_path_does_not_double_the_extension(visible, qtbot, monkeypatch):
+    window = visible
+    proposed = {}
+    real_select_file = QFileDialog.selectFile
+
+    def capture(dialog, name):
+        proposed["name"] = name
+        real_select_file(dialog, name)
+
+    monkeypatch.setattr(QFileDialog, "selectFile", capture)
+    result = {}
+    window.pick_save_path("notes.md", lambda path: result.__setitem__("path", path))
+    qtbot.waitUntil(
+        lambda: isinstance(QApplication.activeModalWidget(), QFileDialog), timeout=3000
+    )
+    QApplication.activeModalWidget().reject()
+    qtbot.waitUntil(lambda: "path" in result, timeout=3000)
+    assert proposed["name"] == "notes.md"
+
+
 def test_pick_export_path_cancel_returns_none(visible, qtbot):
     window = visible
     result = {}
