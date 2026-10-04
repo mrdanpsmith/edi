@@ -3,7 +3,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
 import { decryptField, encryptFieldVerified } from '../crypto'
-import { promptForPassword, promptForSecretCreate } from '../crypto-dialog'
+import { promptForNewPassword, promptForPassword, promptForSecretCreate } from '../crypto-dialog'
 
 export const MASKED_TYPE = 'masked_field'
 
@@ -554,15 +554,6 @@ class MaskedFieldNodeView implements NodeView {
       present: () => this.render(),
     })
 
-    // A freshly-inserted field is left revealed until the user hides it:
-    // the user just typed the value and the password.
-    const initial = String(this.node.attrs.content ?? '')
-    if (primedFieldReveal && primedFieldReveal.content === initial) {
-      const primed = primedFieldReveal
-      primedFieldReveal = null
-      this.interactions.unlockSilently(primed.value, primed.password, primed.content)
-    }
-
     this.dom = document.createElement('span')
     this.dom.className = 'masked-field'
     this.dom.addEventListener('mousedown', (e) => e.preventDefault())
@@ -582,6 +573,15 @@ class MaskedFieldNodeView implements NodeView {
       void this.interactions.startEdit()
     })
     this.render()
+
+    // A freshly-inserted field is left revealed until the user hides it:
+    // the user just typed the value and the password.
+    const initial = String(this.node.attrs.content ?? '')
+    if (primedFieldReveal && primedFieldReveal.content === initial) {
+      const primed = primedFieldReveal
+      primedFieldReveal = null
+      this.interactions.unlockSilently(primed.value, primed.password, primed.content)
+    }
   }
 
   private scheduleToggle(): void {
@@ -757,21 +757,21 @@ export interface NewSecret {
   label: string
   password: string
   value: string
+  showValueInitially: boolean
 }
 
 /** One prompt to create a brand-new secret: name it, type the value, set its password. */
-export async function promptForNewSecret(): Promise<NewSecret | null> {
-  const created = await promptForSecretCreate()
+export async function promptForNewSecret(initialValue = ''): Promise<NewSecret | null> {
+  const created = await promptForSecretCreate(initialValue)
   if (!created) return null
-  const password = await promptForPassword(
-    created.label || 'encrypted field',
-    undefined,
-    { okText: 'Encrypt', title: `Set password for ${created.label || 'this field'}` },
-  )
+  const password = await promptForNewPassword(created.label || 'encrypted field', {
+    okText: 'Encrypt',
+    title: `Set password for ${created.label || 'this field'}`,
+  })
   if (password === null) return null
   try {
     const envelope = await encryptFieldVerified(created.value, password)
-    return { envelope, label: created.label, password, value: created.value }
+    return { envelope, label: created.label, password, value: created.value, showValueInitially: created.showValueInitially }
   } catch {
     return null
   }
@@ -785,7 +785,11 @@ export function primeMaskedFieldReveal(content: string, password: string, value:
 }
 
 export async function insertMaskedFieldCommand(view: EditorView): Promise<boolean> {
-  const secret = await promptForNewSecret()
+  // If the user has text selected, offer it as the default secret value
+  // (the node ends up replacing that selection).
+  const { from, to } = view.state.selection
+  const selected = from < to ? view.state.doc.textBetween(from, to, '\n') : ''
+  const secret = await promptForNewSecret(selected)
   if (!secret) return false
   const node = view.state.schema.nodes[MASKED_TYPE].create({
     content: secret.envelope,
@@ -799,10 +803,11 @@ export async function insertMaskedFieldCommand(view: EditorView): Promise<boolea
   }
   const tr = state.tr
   tr.replaceSelectionWith(node, false)
+  // The user just typed the value and the password: render it revealed
+  // until they explicitly hide it (no prompt on first insert). Prime
+  // before the dispatch so the new node's view consumes it.
+  if (secret.showValueInitially) primeMaskedFieldReveal(secret.envelope, secret.password, secret.value)
   view.dispatch(tr)
   view.focus()
-  // The user just typed the value and the password: render it revealed
-  // until they explicitly hide it (no prompt on first insert).
-  primeMaskedFieldReveal(secret.envelope, secret.password ?? '', secret.value)
   return true
 }

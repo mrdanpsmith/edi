@@ -3,6 +3,7 @@ import { validateMaskedLabel } from './node/masked'
 export interface SecretCreateResult {
   label: string
   value: string
+  showValueInitially: boolean
 }
 
 function createDialog(): {
@@ -306,7 +307,7 @@ export function promptForEncryptedBlockLabel(blockType: string): Promise<string 
  * with ``{ label, value }`` (label already sanitized/validated) or ``null`` on
  * cancel.
  */
-export function promptForSecretCreate(): Promise<SecretCreateResult | null> {
+export function promptForSecretCreate(initialValue = ''): Promise<SecretCreateResult | null> {
   return new Promise((resolve) => {
     const { overlay, box, close } = createDialog()
 
@@ -331,11 +332,36 @@ export function promptForSecretCreate(): Promise<SecretCreateResult | null> {
     valueText.textContent = 'Secret value'
     box.append(valueText)
 
+    const row = document.createElement('div')
+    row.className = 'edi-dialog-input-row'
     const valueInput = document.createElement('input')
     valueInput.className = 'edi-dialog-input'
-    valueInput.type = 'text'
+    valueInput.type = 'password'
     valueInput.placeholder = 'value stored encrypted'
-    box.append(valueInput)
+    if (initialValue) valueInput.value = initialValue
+    row.append(valueInput)
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'toolbar-btn edi-dialog-reveal-toggle'
+    toggle.textContent = 'Show'
+    toggle.addEventListener('mousedown', (e) => e.preventDefault())
+    toggle.addEventListener('click', () => {
+      const showing = valueInput.type === 'text'
+      valueInput.type = showing ? 'password' : 'text'
+      toggle.textContent = showing ? 'Show' : 'Hide'
+      valueInput.focus()
+    })
+    row.append(toggle)
+    box.append(row)
+
+    const showCheck = document.createElement('label')
+    showCheck.className = 'edi-dialog-label'
+    const showBox = document.createElement('input')
+    showBox.type = 'checkbox'
+    showBox.id = 'edi-masked-show-immediately'
+    showCheck.appendChild(showBox)
+    showCheck.appendChild(document.createTextNode(' Show decrypted value immediately after encryption'))
+    box.append(showCheck)
 
     const error = errorLine()
     box.append(error)
@@ -380,7 +406,7 @@ export function promptForSecretCreate(): Promise<SecretCreateResult | null> {
         fail('Secret value is required', valueInput)
         return
       }
-      finish({ label, value })
+      finish({ label, value, showValueInitially: showBox.checked })
     }
 
     cancel.addEventListener('click', () => finish(null))
@@ -398,8 +424,9 @@ export function promptForSecretCreate(): Promise<SecretCreateResult | null> {
     }
     overlay.addEventListener('mousedown', (event) => {
       if (event.target === overlay) finish(null)
-    })
+    });
 
-    nameInput.focus()
+    (initialValue ? valueInput : nameInput).focus()
+    if (initialValue) valueInput.select()
   })
 }

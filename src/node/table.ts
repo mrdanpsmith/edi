@@ -2269,7 +2269,7 @@ class TableNodeView implements NodeView, InlineCellHost {
 
   /** Put a freshly-created encrypted field into the active cell. */
   private async insertSecret(): Promise<void> {
-    const secret = await promptForNewSecret()
+    const secret = await promptForNewSecret((this.active && this.rows[this.active.row]?.[this.active.col]) || '')
     if (!secret) return
     const row = this.active?.row ?? 0
     const col = this.active?.col ?? 0
@@ -2277,7 +2277,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     const current = next[row]?.[col] ?? ''
     next[row]![col] = current.trim() ? `${current} ${maskedFieldToMarkdown(secret.envelope, secret.label)}` : maskedFieldToMarkdown(secret.envelope, secret.label)
     this.commitRows(next, { row, col }, { row, col })
-    primeMaskedFieldReveal(secret.envelope, secret.password, secret.value)
+    if (secret.showValueInitially) primeMaskedFieldReveal(secret.envelope, secret.password, secret.value)
   }
 
   // --- Clipboard ---

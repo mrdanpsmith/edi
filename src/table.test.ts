@@ -1563,8 +1563,9 @@ describe('TableNodeView grid', () => {
 
     const pwdOverlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
     expect(pwdOverlay).toBeTruthy()
-    const pwdInput = pwdOverlay.querySelector('.edi-dialog-input') as HTMLInputElement
-    pwdInput.value = 'pw3'
+    const pwdInputs = pwdOverlay.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
+    pwdInputs[0]!.value = 'pw3'
+    pwdInputs[1]!.value = 'pw3'
     ;(pwdOverlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       expect(docValue(view)).toContain('!masked[')
