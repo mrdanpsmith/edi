@@ -28,20 +28,20 @@ const nodes: SchemaSpec['nodes'] = {
   heading: {
     group: 'block',
     content: 'inline*',
-    attrs: { level: { default: 1 }, _source: { default: false } },
+    attrs: { level: { default: 1 }, _source: { default: false }, id: { default: null } },
     parseDOM: [
-      { tag: 'h1', attrs: { level: 1 } },
-      { tag: 'h2', attrs: { level: 2 } },
-      { tag: 'h3', attrs: { level: 3 } },
-      { tag: 'h4', attrs: { level: 4 } },
-      { tag: 'h5', attrs: { level: 5 } },
-      { tag: 'h6', attrs: { level: 6 } },
+      { tag: 'h1', getAttrs: (dom: HTMLElement) => ({ level: 1, id: dom.getAttribute('id') }) },
+      { tag: 'h2', getAttrs: (dom: HTMLElement) => ({ level: 2, id: dom.getAttribute('id') }) },
+      { tag: 'h3', getAttrs: (dom: HTMLElement) => ({ level: 3, id: dom.getAttribute('id') }) },
+      { tag: 'h4', getAttrs: (dom: HTMLElement) => ({ level: 4, id: dom.getAttribute('id') }) },
+      { tag: 'h5', getAttrs: (dom: HTMLElement) => ({ level: 5, id: dom.getAttribute('id') }) },
+      { tag: 'h6', getAttrs: (dom: HTMLElement) => ({ level: 6, id: dom.getAttribute('id') }) },
     ],
     toDOM(node) {
       const level = node.attrs.level as number
       const text = node.textContent
-      let id: string | undefined
-      if (text) id = headingSlug(text)
+      let id: string | undefined | null = node.attrs.id as string | null
+      if (!id && text) id = headingSlug(text)
       return id ? [`h${level}`, { id }, 0] : [`h${level}`, 0]
     },
   },

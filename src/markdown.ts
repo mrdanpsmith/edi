@@ -13,6 +13,7 @@ import {
 } from './node/masked'
 import { shebangFromFenceInfo } from './exec'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
+import { headingSlug } from './schema'
 import {
   formatTableCarrier,
   hydrateResolvedTable,
@@ -166,8 +167,27 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
     case 'paragraph':
       return schema.node('paragraph', {}, parseInline(node.children ?? [], schema))
 
-    case 'heading':
-      return schema.node('heading', { level: node.depth ?? 1 }, parseInline(node.children ?? [], schema))
+    case 'heading': {
+      const attrs: Record<string, unknown> = { level: node.depth ?? 1 }
+      const children = parseInline(node.children ?? [], schema)
+      // Pandoc-style explicit id: {#custom-id} at the end of the heading text.
+      const last = children[children.length - 1]
+      if (last && last.isText) {
+        const match = /\s*\{#([^{}\s]+)\}\s*$/.exec(last.text ?? '')
+        if (match) {
+          attrs.id = match[1]
+          const trimmed = (last.text ?? '').slice(0, match.index).replace(/\s+$/, '')
+          if (trimmed === '' && children.length === 1) {
+            // The id marker was the only "text"; keep an empty inline
+            // (headings require inline* content anyway).
+            children.pop()
+          } else {
+            children[children.length - 1] = schema.text(trimmed, last.marks)
+          }
+        }
+      }
+      return schema.node('heading', attrs, children)
+    }
 
     case 'blockquote': {
       const children = mapChildrenWithCarriers(node.children ?? [], schema)
@@ -316,7 +336,12 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
 
     case 'heading': {
       const level = node.attrs.level as number
-      return indent + '#'.repeat(level) + ' ' + serializeContent(node)
+      // An explicit id that matches the text's natural slug is implicit: it
+      // may have been re-derived from the DOM id on a clipboard round-trip and
+      // does not need to be written out.
+      const explicitId = node.attrs.id as string | null | undefined
+      const suffix = explicitId && explicitId !== headingSlug(node.textContent) ? ` {#${explicitId}}` : ''
+      return indent + '#'.repeat(level) + ' ' + serializeContent(node) + suffix
     }
 
     case 'blockquote': {

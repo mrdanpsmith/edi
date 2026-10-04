@@ -481,3 +481,34 @@ describe('inline mark runs across multiple text nodes', () => {
     expect(serialize('***`x` y***')).toBe('***`x` y***\n')
   })
 })
+
+describe('heading custom ids', () => {
+  function docMarkdown(markdown: string): import('prosemirror-model').Node {
+    return markdownToProse(markdown, schema)
+  }
+
+  it('parses a trailing {#id} into the heading id attr and strips it from text', () => {
+    const doc = docMarkdown('### My Great Heading {#custom-id}\n')
+    const h = doc.firstChild!
+    expect(h.type.name).toBe('heading')
+    expect(h.attrs.id).toBe('custom-id')
+    expect(h.textContent).toBe('My Great Heading')
+  })
+
+  it('round-trips a custom id', () => {
+    expect(serialize('### My Great Heading {#custom-id}\n')).toBe(
+      '### My Great Heading {#custom-id}\n',
+    )
+  })
+
+  it('leaves a heading without a marker without an id', () => {
+    const doc = docMarkdown('# Just a Heading\n')
+    expect(doc.firstChild!.attrs.id).toBeNull()
+    expect(doc.firstChild!.textContent).toBe('Just a Heading')
+  })
+
+  it('does not treat a marker mid-word as an id', () => {
+    const doc = docMarkdown('# C#{#not-an-id} code\n')
+    expect(doc.firstChild!.attrs.id).toBeNull()
+  })
+})
