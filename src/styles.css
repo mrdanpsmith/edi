@@ -1802,6 +1802,18 @@ body {
   color: inherit;
 }
 
+/* A block the range covers is selected *as a unit* (its markdown is what is
+   copied), so the block's own outline/tint is the selection — the native
+   highlight is suppressed across the whole block, chrome included. The chrome
+   stays visible; it just is not painted as selected text. (`::selection` alone
+   was not enough for the CodeMirror gutter, which the browser paints as part
+   of the covered line, so `.edi-block-selected *` covers it too.) */
+.ProseMirror .edi-block-selected::selection,
+.ProseMirror .edi-block-selected *::selection {
+  background: transparent;
+  color: inherit;
+}
+
 .ProseMirror .runnable-source {
   margin: 0;
   padding: 12px;

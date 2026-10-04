@@ -265,6 +265,25 @@ export const selectionExpandKeymap = keymap({
   'Meta-Shift-ArrowDown': gesture(1),
 })
 
+/** Does the range pass through a block the gesture treats as special? */
+function selectionHasAtom(state: EditorState): boolean {
+  let found = false
+  state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+    if (isSelectionAtom(node)) {
+      found = true
+      return false
+    }
+    return true
+  })
+  return found
+}
+
+function arrowDir(key: string): Dir | 0 {
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return -1
+  if (key === 'ArrowRight' || key === 'ArrowDown') return 1
+  return 0
+}
+
 /**
  * The retrace memo. Any edit, mouse interaction, or selection change the
  * gesture did not make clears it, so the next press starts a fresh ladder
@@ -279,6 +298,28 @@ export const selectionExpandPlugin = new Plugin<ExpandState>({
       if (meta !== undefined) return meta
       if (tr.docChanged || tr.selectionSet) return EMPTY
       return prev
+    },
+  },
+  props: {
+    handleKeyDown(view, event) {
+      if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false
+      const dir = arrowDir(event.key)
+      if (!dir) return false
+      const sel = view.state.selection
+      if (sel.empty) return false
+      // A plain text selection collapses natively. One that ends on an atomic
+      // block — or is a whole-block `NodeSelection` — does not: the browser
+      // cannot move the caret across a node view, so it stays stuck. Collapse
+      // it ourselves to the leading/trailing side.
+      if (!(sel instanceof NodeSelection) && !selectionHasAtom(view.state)) return false
+      const tr = view.state.tr
+      const target = dir < 0 ? sel.from : sel.to
+      const $target = tr.doc.resolve(Math.min(Math.max(target, 0), tr.doc.content.size))
+      tr.setSelection(TextSelection.near($target, dir))
+      tr.setMeta(SELECTION_EXPAND_KEY, EMPTY)
+      view.dispatch(tr)
+      view.focus()
+      return true
     },
   },
 })

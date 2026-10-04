@@ -393,6 +393,70 @@ describe('cross-block keyboard selection', () => {
     destroy()
   })
 
+  it('collapses a selection containing a special block on a plain arrow', () => {
+    const { view, destroy } = editorOn('one\n\n---\n\ntwo')
+    const blocks = textBlocks(view)
+    caretAt(view, blocks[0]!.start + 1)
+    gesture(view, 'ArrowDown')
+    gesture(view, 'ArrowDown')
+    expect(view.dom.querySelector('.edi-block-selected')).not.toBeNull()
+
+    const event = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })
+    let handled = false
+    view.someProp('handleKeyDown', (fn) => {
+      if (fn(view, event)) {
+        handled = true
+        return true
+      }
+      return false
+    })
+    expect(handled).toBe(true)
+    expect(view.state.selection).toBeInstanceOf(TextSelection)
+    expect(view.state.selection.empty).toBe(true)
+    // Memo cleared: the next grow starts fresh from the collapsed caret.
+    expect(SELECTION_EXPAND_KEY.getState(view.state)?.rungs.length ?? 0).toBe(0)
+    destroy()
+  })
+
+  it('collapses a whole-block selection on a plain arrow', () => {
+    const { view, destroy } = editorOn('before\n\n---\n\nafter')
+    const hrPos = posOf(view, (n) => n === 'horizontal_rule')
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, hrPos)))
+
+    const event = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
+    let handled = false
+    view.someProp('handleKeyDown', (fn) => {
+      if (fn(view, event)) {
+        handled = true
+        return true
+      }
+      return false
+    })
+    expect(handled).toBe(true)
+    expect(view.state.selection).toBeInstanceOf(TextSelection)
+    expect(view.state.selection.empty).toBe(true)
+    destroy()
+  })
+
+  it('leaves a text-only selection to the browser on a plain arrow', () => {
+    const { view, destroy } = editorOn('one\n\ntwo')
+    const blocks = textBlocks(view)
+    caretAt(view, blocks[0]!.start + 1)
+    gesture(view, 'ArrowDown')
+
+    const event = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })
+    let handled = false
+    view.someProp('handleKeyDown', (fn) => {
+      if (fn(view, event)) {
+        handled = true
+        return true
+      }
+      return false
+    })
+    expect(handled).toBe(false)
+    destroy()
+  })
+
   it('no-ops at the document edges', () => {
     const { view, destroy } = editorOn('only block')
     const blocks = textBlocks(view)
