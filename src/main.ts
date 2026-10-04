@@ -46,6 +46,7 @@ import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
+import welcomeMarkdown from './docs/welcome.md?raw'
 import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
@@ -63,60 +64,7 @@ const IS_SELFTEST = new URLSearchParams(window.location.search).has('selftest')
  * registry so the list can never drift from what the evaluator supports. */
 const WELCOME_FUNCTIONS = BUILTIN_FORMULAS.map((fn) => `\`${fn.name}\``).join(', ')
 
-const WELCOME_DOCUMENT = `# Welcome to Edi
-
-Edi is a fast markdown editor with Mermaid diagrams, in-line spreadsheets, executable code blocks, and more.
-
-## Getting started
-
-- Click the handle on the left of any block or press \`Ctrl+Shift+E\` to toggle that block's source view.
-- Use the **File** and **View** menus for document actions.
-- Open several documents side by side in tabs (\`Ctrl+N\` for a new tab, \`Ctrl+W\` to close one).
-- Insert a spreadsheet, text file, or image with \`Insert → …\`.
-
-## Mermaid diagrams
-
-\`\`\`mermaid
-graph TD
-    A[Start] --> B{Preview on?}
-    B -->|Yes| C[Render diagram]
-    B -->|No| D[Show source]
-    C --> E[Looks great!]
-    D --> E
-\`\`\`
-
-## Spreadsheet tables
-
-Start a cell with \`=\` to compute it from other cells:
-
-| Item | Q1 | Q2 | Total |
-| --- | --- | --- | --- |
-| Widget | 120 | 180 | =SUM(B2:C2) |
-| Gadget | 90 | 110 | =B3+C3 |
-| **Total** | =SUM(B2:B3) | =SUM(C2:C3) | =SUM(D2:D3) |
-
-Supports ${WELCOME_FUNCTIONS}, cell references like \`B2\` and \`$B$2\`, and ranges like \`B2:C4\`.
-
-## Executable code blocks
-
-Add a shebang line like a shell script to make a code block runnable:
-
-\`\`\`
-#!/usr/bin/env python3
-print("Hello from Python!")
-\`\`\`
-
-## Tasks
-
-- [x] Fast editing
-- [x] Spreadsheet tables
-- [x] Executable code blocks
-- [x] HTML export
-- [x] Multiple tabs
-- [x] Spreadsheet import
-- [x] Text-file import
-- [x] Image insertion
-`
+const WELCOME_DOCUMENT = welcomeMarkdown.replace('{{BUILTIN_FUNCTIONS}}', WELCOME_FUNCTIONS)
 
 const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
 const toolbarEl = document.querySelector<HTMLElement>('#toolbar')!

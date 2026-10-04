@@ -1,0 +1,147 @@
+# Edi Guide
+
+Edi is a fast markdown editor in a desktop window. Markdown is the source;
+the preview renders it live — and a few block types go much further.
+
+## Tabs, menus, and shortcuts
+
+- Documents open in tabs: `Ctrl+N` new, `Ctrl+W` close, `Ctrl+O` open,
+  `Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+Q` quit.
+- File actions also live as toolbar buttons; hide that row with
+  `View → Toolbar`.
+- Click the small handle on a block's left edge to toggle its source view.
+- Click a link to open it; right-click one to edit its address. Clearing
+  the address removes the link and keeps the text.
+- Bold `Ctrl+B`, italic `Ctrl+I`, inline code `Ctrl+Alt+C`.
+- Every mark also has an end you can walk out of: `→` at the end of one and
+  `←` at the start leave it, so what you type next is plain text. The text
+  already written keeps its formatting.
+
+## Spreadsheet tables
+
+`Insert → Table…` (or the toolbar's **Table** button) drops a spreadsheet
+grid into the document; `Insert → Spreadsheet…` imports a CSV/TSV/ODS/XLSX
+file as a table.
+
+A cell whose text starts with `=` is a formula:
+
+- References (`B2`, or freeze an axis with `$` — `$B$2`) and ranges
+  (`B2:C4`)
+- Functions such as `SUM`, `AVERAGE`, `IF`, `VLOOKUP`, `TODAY`, or `UUID` —
+  the `fx` bar above the grid edits the active cell and autocompletes names
+- Values recompute live; `Help → Formula Reference…` lists every function
+
+**Use values** freezes the selected cells' formulas to their computed
+values (handy for volatile cells like `RAND`/`UUID`). **Resolve formulas?**
+does the same for the whole table: each value is stored in the cell with the
+formula kept in a comment and restored when the document reopens.
+
+Right-click a cell for undo/redo, cut, copy, paste, select all, clear
+contents, and inserting a row above or a column left; the block's
+`Table view` and `Edit source` sit below them. A right-click inside the
+current selection keeps it, and a column letter or row number offers to
+delete that column or row.
+
+Wrap a formula in inline marks to style the result without breaking the
+calculation: `**=SUM(B2:B3)**`, `*…*`, `` `…` ``, `==…==`, `~…~`, `^…^`.
+
+## Defining your own functions
+
+A fenced code block tagged `edi-formula` defines document-wide functions,
+one per line:
+
+````
+```edi-formula
+TAX(amount) = ROUND(amount * 0.2, 2)
+```
+````
+
+Call them like any built-in: `=TAX(B2)`. A parameter can be a number, a
+cell, or a range (delivered to `SUM`/`AVERAGE`/… as its values). Names may
+not collide with built-ins, repeat, or form a loop.
+
+## Masked fields
+
+The toolbar's **Insert encrypted field** stores a value as ciphertext — the
+markdown holds only `!masked[…]{label="…"}`, rendered as a masked pill.
+Click a pill to reveal, copy, or edit it (single password prompt per
+session), and the plaintext never appears in the document source.
+
+## Mermaid diagrams
+
+A fenced code block tagged `mermaid` renders as a diagram in the preview.
+
+To edit the picture, press **Edit** on the diagram's hover toolbar or
+double-click it; the right-click menu has **Edit diagram** too. The button
+reads **Done** while you are in edit mode, and only one diagram is editable
+at a time.
+
+Click a label to retype it — the source is patched in place. `Enter` or a
+click elsewhere commits, `Esc` cancels. In a **kanban** diagram the board is
+drawn with somewhere to add: every column holds an empty **+ Add a card** and
+an empty **+ Add a column** stands at the right, where the next column goes.
+A click on a card's own place turns it into a field that writes the title, and
+the new column is named through its own header. A place to add is not a card,
+so pressing one asks for a title rather than lifting anything.
+
+A field taller than the column it fills grows the document to hold it, so the
+bottom of it is never cut off, and a card title is written rather than
+replaced, so the field grows as you type.
+
+A card is dragged by its text: point at it and a **✕** appears on the card
+itself, and goes again when the pointer leaves. A dragged card is the real
+one, lifted out of the board under your pointer, with a line in the slot it
+will drop into. A column is dragged by its header or its cards and moves
+whole, cards and all.
+
+A column's own actions live in its **⋯**: add a column after it, rename it,
+or delete it with every card in it. The last column on a board is not
+offered a delete, because it would leave no board. The drawn column at the
+right is not a column yet, so it has no **⋯** of its own.
+
+A **✕** asks first, naming what goes and how many cards go with it — it is
+one edit, so **undo** brings it all back.
+
+Only labels that can be rewritten are clickable. Anything Mermaid computed
+rather than read — a treemap's totals, a packet field's bit range, an xy
+chart's axis ticks, a card's assignee, a stereotype — stays put, and so
+does a label the source repeats with no way to tell the copies apart.
+Renaming a name the diagram uses elsewhere (an ER entity, a state, a class,
+a branch, a requirement) renames the references with it.
+
+The source is always the document: open the block with its handle to edit
+it as text. A diagram that stops parsing keeps its last good rendering plus
+a short note, so nothing disappears while you type.
+
+`Insert → Kanban Board…` (or the toolbar's **Kanban** button) starts a new
+board: name the columns, one per line, `Ctrl+Enter` to add it. It arrives
+open in edit mode, drawn with its places to add, so the cards can be typed
+straight into it.
+
+Card and column titles are free text. A title holding a character Mermaid
+cannot read in a plain label — a bracket or a parenthesis — is quoted in the
+source for you and drawn without the quotes; a title with a `"` in it is
+refused, with a note, because no quoting can carry one.
+
+Right-click the diagram for Copy image / Save image…
+
+## Runnable code blocks
+
+A fenced code block whose first line is a shebang becomes runnable:
+
+````
+```python
+#!/usr/bin/env python3
+print("Hello from Edi!")
+```
+````
+
+The preview shows a **Run** button; output lands beneath the block and
+**Stop** cancels a hung run.
+
+## Export
+
+`Ctrl+Shift+E` exports the rendered preview — Mermaid diagrams, computed
+spreadsheet values, and code output included — as one self-contained HTML
+file you can share or archive.
+
