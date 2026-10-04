@@ -424,8 +424,20 @@ export function getFormattingButtons(_ctx: ToolbarContext): ButtonSpec[] {
       inline: 'highlight',
       run: (view) => toggleMarkCmd(view.state.schema.marks.highlight)(view),
     },
-    { label: 'Sub', title: 'Subscript', inline: 'sub', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view) },
-    { label: 'Sup', title: 'Superscript', inline: 'sup', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view) },
+    {
+      label: 'Sub', title: 'Subscript', inline: 'sub', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view),
+      markup: icon(
+        '<text x="5" y="11.5" text-anchor="middle" font-size="10" font-family="var(--font-sans)" stroke="none" fill="currentColor">x</text>' +
+        '<text x="12" y="14.5" text-anchor="middle" font-size="7" font-family="var(--font-sans)" stroke="none" fill="currentColor">2</text>',
+      ),
+    },
+    {
+      label: 'Sup', title: 'Superscript', inline: 'sup', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view),
+      markup: icon(
+        '<text x="5" y="13.5" text-anchor="middle" font-size="10" font-family="var(--font-sans)" stroke="none" fill="currentColor">x</text>' +
+        '<text x="12" y="8.5" text-anchor="middle" font-size="7" font-family="var(--font-sans)" stroke="none" fill="currentColor">2</text>',
+      ),
+    },
     {
       label: 'Normal', title: 'Heading', className: 'toolbar-heading',
       run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch),
