@@ -253,7 +253,13 @@ export function promptForPassword(
 }
 
 /** Prompt for an encrypted block's optional label (asks for the type first for context). */
-export function promptForEncryptedBlockLabel(blockType: string): Promise<string | null> {
+export interface EncryptedBlockLabelResult {
+  label: string
+  /** true = render the block locked (blank). default false: unlocked, like a masked inline field. */
+  lockImmediately: boolean
+}
+
+export function promptForEncryptedBlockLabel(blockType: string): Promise<EncryptedBlockLabelResult | null> {
   return new Promise((resolve) => {
     const { overlay, box, close } = createDialog()
     const title = document.createElement('div')
@@ -269,6 +275,13 @@ export function promptForEncryptedBlockLabel(blockType: string): Promise<string 
     nameInput.type = 'text'
     nameInput.placeholder = 'e.g. API keys table'
     box.append(nameInput)
+    const blockShowCheck = document.createElement('label')
+    blockShowCheck.className = 'edi-dialog-label'
+    const blockShowBox = document.createElement('input')
+    blockShowBox.type = 'checkbox'
+    blockShowCheck.appendChild(blockShowBox)
+    blockShowCheck.appendChild(document.createTextNode(' Lock immediately'))
+    box.append(blockShowCheck)
     const actions = document.createElement('div')
     actions.className = 'edi-dialog-actions'
     const cancel = document.createElement('button')
@@ -282,12 +295,12 @@ export function promptForEncryptedBlockLabel(blockType: string): Promise<string 
     ok.textContent = 'Encrypt'
     actions.append(ok)
     box.append(actions)
-    function finish(value: string | null): void {
+    function finish(value: { label: string; lockImmediately: boolean } | null): void {
       close()
       resolve(value)
     }
     function submit(): void {
-      finish(nameInput.value.trim())
+      finish({ label: nameInput.value.trim(), lockImmediately: blockShowBox.checked })
     }
     cancel.addEventListener('click', () => finish(null))
     ok.addEventListener('click', () => submit())
@@ -359,8 +372,9 @@ export function promptForSecretCreate(initialValue = ''): Promise<SecretCreateRe
     const showBox = document.createElement('input')
     showBox.type = 'checkbox'
     showBox.id = 'edi-masked-show-immediately'
+    showBox.checked = true
     showCheck.appendChild(showBox)
-    showCheck.appendChild(document.createTextNode(' Show decrypted value immediately after encryption'))
+    showCheck.appendChild(document.createTextNode(' Lock immediately'))
     box.append(showCheck)
 
     const error = errorLine()
@@ -406,7 +420,7 @@ export function promptForSecretCreate(initialValue = ''): Promise<SecretCreateRe
         fail('Secret value is required', valueInput)
         return
       }
-      finish({ label, value, showValueInitially: showBox.checked })
+      finish({ label, value, showValueInitially: !showBox.checked })
     }
 
     cancel.addEventListener('click', () => finish(null))
@@ -426,7 +440,6 @@ export function promptForSecretCreate(initialValue = ''): Promise<SecretCreateRe
       if (event.target === overlay) finish(null)
     });
 
-    (initialValue ? valueInput : nameInput).focus()
-    if (initialValue) valueInput.select()
+    nameInput.focus()
   })
 }

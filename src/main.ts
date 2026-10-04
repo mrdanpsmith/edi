@@ -1136,8 +1136,10 @@ function encryptBlockCommand(): void {
 async function encryptBlockAt(view: ReturnType<BlockEditor['getView']>, pos: number): Promise<void> {
   const node = view.state.doc.nodeAt(pos)
   if (!node) return
-  const label = await promptForEncryptedBlockLabel(node.type.name)
-  if (label === null) return
+  const labelResult = await promptForEncryptedBlockLabel(node.type.name)
+  if (labelResult === null) return
+  const label = labelResult.label
+  const lockImmediately = labelResult.lockImmediately
   const password = await promptForNewPassword(label || node.type.name, { okText: 'Encrypt', title: 'Set password' })
   if (password === null) return
   const markdown = serializeBlock(node, formulaEnvFor(view.state))
@@ -1145,11 +1147,14 @@ async function encryptBlockAt(view: ReturnType<BlockEditor['getView']>, pos: num
   const encrypted = view.state.schema.nodes.encrypted_block.create({ type: node.type.name, label, content: envelope })
   view.dispatch(view.state.tr.replaceWith(pos, pos + node.nodeSize, encrypted))
   view.focus()
-  // Freshly encrypted blocks arrive unlocked (no second lock), per UX request.
-  primeEncryptedBlockShow(password)
-  const nodeDom = view.nodeDOM(pos) ?? view.dom.querySelector('.encrypted-block')
-  const toggle = nodeDom instanceof HTMLElement ? nodeDom.querySelector<HTMLButtonElement>('.encrypted-block-toggle') : null
-  toggle?.click()
+  // Unless "Lock immediately" was chosen, freshly encrypted blocks arrive
+  // unlocked (no second lock).
+  if (!lockImmediately) {
+    primeEncryptedBlockShow(password)
+    const nodeDom = view.nodeDOM(pos) ?? view.dom.querySelector('.encrypted-block')
+    const toggle = nodeDom instanceof HTMLElement ? nodeDom.querySelector<HTMLButtonElement>('.encrypted-block-toggle') : null
+    toggle?.click()
+  }
 }
 
 function init(): void {
