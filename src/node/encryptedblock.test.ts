@@ -33,6 +33,20 @@ async function editorWithEncrypted(innerMarkdown: string) {
 const tick = () => new Promise((r) => setTimeout(r, 120))
 
 describe('encrypted_block', () => {
+  it('shows the block type in the chrome with underscores replaced by spaces', async () => {
+    const editor = await (async () => {
+      const envelope = await encryptField('x', password)
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      const md = '```encrypted type="code_block" label="Keys"\n' + envelope + '\n```'
+      return createBlockEditor(host, md, {})
+    })()
+    const chip = document.querySelector('.encrypted-block-label')!
+    expect(chip.textContent).toBe('🔒 encrypted · code block · Keys')
+    expect(chip.textContent).not.toContain('_')
+    editor.destroy()
+  })
+
   it('Show decrypts into an inline editable render without touching the document', async () => {
     const editor = await editorWithEncrypted('hello **secret**')
     const view = editor.getView()
@@ -45,6 +59,17 @@ describe('encrypted_block', () => {
     expect(reveal.textContent).toContain('secret')
     expect(view.state.doc.childCount).toBe(docBefore)
     expect(promptForPassword).toHaveBeenCalled()
+    editor.destroy()
+  })
+
+  it('gives the password dialog a validator that flags a wrong password', async () => {
+    const editor = await editorWithEncrypted('hello **secret**')
+    const viewBtn = document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!
+    viewBtn.click()
+    await tick()
+    const validate = vi.mocked(promptForPassword).mock.calls[0]![1]!
+    await expect(validate('wrong-password')).resolves.toBe('Incorrect password')
+    await expect(validate(password)).resolves.toBe(true)
     editor.destroy()
   })
 

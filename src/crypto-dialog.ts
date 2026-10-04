@@ -51,7 +51,58 @@ export interface PasswordPromptOptions {
  * (the default "Unlock" does not fit the create/re-encrypt flows).
  */
 
-/** Set a brand-new password: the dialog asks twice and only accepts a match. */
+/**
+ * Warn about a blank password and require an explicit opt-in. Defaults to No:
+ * Escape, backdrop click and plain Enter all bounce back to the password
+ * fields, so a real password is the path of least resistance.
+ */
+function confirmBlankPassword(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const { overlay, box, close } = createDialog()
+    const title = document.createElement('div')
+    title.className = 'edi-dialog-title'
+    title.textContent = 'Use a blank password?'
+    box.append(title)
+    const msg = document.createElement('p')
+    msg.className = 'edi-dialog-label'
+    msg.textContent =
+      'The content will still be encrypted, but there is no password to guess — anyone opening this document can decrypt it with an empty password. Continue with a blank password, or go back and set a real one?'
+    box.append(msg)
+    const actions = document.createElement('div')
+    actions.className = 'edi-dialog-actions'
+    const useBlank = document.createElement('button')
+    useBlank.type = 'button'
+    useBlank.className = 'toolbar-btn toolbar-danger'
+    useBlank.textContent = 'Use blank password'
+    const setReal = document.createElement('button')
+    setReal.type = 'button'
+    setReal.className = 'toolbar-btn toolbar-primary'
+    setReal.textContent = 'Set a real password'
+    actions.append(useBlank, setReal)
+    box.append(actions)
+
+    function done(value: boolean): void {
+      close()
+      resolve(value)
+    }
+
+    useBlank.addEventListener('click', () => done(true))
+    setReal.addEventListener('click', () => done(false))
+    overlay.addEventListener('mousedown', (event) => {
+      if (event.target === overlay) done(false)
+    })
+    for (const btn of [useBlank, setReal]) {
+      btn.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); btn.click() }
+        else if (event.key === 'Escape') { event.preventDefault(); done(false) }
+      })
+    }
+    setReal.focus()
+  })
+}
+
+/**
+ * Set a brand-new password: the dialog asks twice and only accepts a match. */
 export function promptForNewPassword(
   context: string,
   opts?: PasswordPromptOptions,
@@ -109,17 +160,21 @@ export function promptForNewPassword(
     function submit(): void {
       const a = input1.value
       const b = input2.value
-      if (a === '') {
-        error.textContent = 'Password cannot be empty'
-        error.hidden = false
-        input1.focus()
-        return
-      }
       if (a !== b) {
         error.textContent = 'Passwords do not match'
         error.hidden = false
         input2.value = ''
         input2.focus()
+        return
+      }
+      if (a === '') {
+        void confirmBlankPassword().then((allow) => {
+          if (allow) {
+            finish('')
+          } else {
+            input1.focus()
+          }
+        })
         return
       }
       finish(a)

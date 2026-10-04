@@ -114,3 +114,60 @@ describe('promptForEncryptedBlockLabel', () => {
     await expect(p2).resolves.toEqual({ label: '', lockImmediately: true })
   })
 })
+
+describe('promptForNewPassword blank guard', () => {
+  async function openBlankPrompt() {
+    const p = promptForNewPassword('field', {})
+    await vi.waitFor(() => {
+      expect(document.querySelector('.edi-dialog-overlay')).toBeTruthy()
+    })
+    const overlays = document.querySelectorAll<HTMLElement>('.edi-dialog-overlay')
+    const first = overlays[0]!
+    const inputs = first.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
+    inputs[0]!.value = ''
+    inputs[1]!.value = ''
+    ;(first.querySelector('.toolbar-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.edi-dialog-overlay').length).toBe(2)
+    })
+    return { p, first, inputs }
+  }
+
+  it('warns on a blank password and defaults to a real one; yes only on explicit opt-in', async () => {
+    const { p, first, inputs } = await openBlankPrompt()
+    const warn = document.querySelectorAll<HTMLElement>('.edi-dialog-overlay')[1]!
+    expect(warn.textContent?.toLowerCase()).toContain('blank password')
+    const safe = [...warn.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Set a real password')!
+    expect(document.activeElement).toBe(safe)
+    safe.click()
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.edi-dialog-overlay').length).toBe(1)
+    })
+    expect(await Promise.race([p, Promise.resolve('pending')])).toBe('pending')
+
+    inputs[0]!.value = ''
+    inputs[1]!.value = ''
+    ;(first.querySelector('.toolbar-primary') as HTMLButtonElement).click()
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.edi-dialog-overlay').length).toBe(2)
+    })
+    const warn2 = document.querySelectorAll<HTMLElement>('.edi-dialog-overlay')[1]!
+    const useBlank = [...warn2.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Use blank password')!
+    expect(useBlank.className).toContain('toolbar-danger')
+    useBlank.click()
+    await expect(p).resolves.toBe('')
+  })
+
+  it('lets the user type a real password after the warning', async () => {
+    const { p, first, inputs } = await openBlankPrompt()
+    const warn = document.querySelectorAll<HTMLElement>('.edi-dialog-overlay')[1]!
+    ;[...warn.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Set a real password')!.click()
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.edi-dialog-overlay').length).toBe(1)
+    })
+    inputs[0]!.value = 'hunter2'
+    inputs[1]!.value = 'hunter2'
+    ;(first.querySelector('.toolbar-primary') as HTMLButtonElement).click()
+    await expect(p).resolves.toBe('hunter2')
+  })
+})

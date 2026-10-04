@@ -32,6 +32,11 @@ interface EncryptedBlockAttrs {
   _source: boolean | undefined
 }
 
+function encryptedBlockChipText(attrs: EncryptedBlockAttrs): string {
+  const type = attrs.type.replace(/_/g, ' ') || 'block'
+  return `🔒 encrypted · ${type}${attrs.label ? ' · ' + attrs.label : ''}`
+}
+
 function getAttrs(node: ProseNode): EncryptedBlockAttrs {
   return {
     type: String(node.attrs.type ?? ''),
@@ -91,7 +96,7 @@ class EncryptedBlockNodeView implements NodeView {
     }
     if (this.revealHost && this.wordsEl) {
       const a = getAttrs(node)
-      this.wordsEl.textContent = `🔒 encrypted · ${a.type || 'block'}${a.label ? ' · ' + a.label : ''}`
+      this.wordsEl.textContent = encryptedBlockChipText(a)
       if (this.toggleBtn) this.toggleBtn.textContent = 'Lock ▾'
     }
     return true
@@ -122,7 +127,7 @@ class EncryptedBlockNodeView implements NodeView {
     if (this.toggleBtn) this.toggleBtn.textContent = 'Unlock ▸'
     if (this.wordsEl) {
       const a = getAttrs(this.node)
-      this.wordsEl.textContent = `🔒 encrypted · ${a.type || 'block'}${a.label ? ' · ' + a.label : ''}`
+      this.wordsEl.textContent = encryptedBlockChipText(a)
     }
   }
 
@@ -134,7 +139,7 @@ class EncryptedBlockNodeView implements NodeView {
 
     const words = document.createElement('span')
     words.className = 'encrypted-block-label'
-    words.textContent = `🔒 encrypted · ${attrs.type || 'block'}${attrs.label ? ' · ' + attrs.label : ''}`
+    words.textContent = encryptedBlockChipText(attrs)
     this.wordsEl = words
     pill.appendChild(words)
 
@@ -165,13 +170,23 @@ class EncryptedBlockNodeView implements NodeView {
     }
     const primed = pendingUnlockPassword
     pendingUnlockPassword = null
-    const password = primed ?? await promptForPassword(getAttrs(this.node).label || 'encrypted block', undefined, { title: 'Show encrypted block' })
+    let plaintext: string | null = null
+    const password = primed ?? await promptForPassword(getAttrs(this.node).label || 'encrypted block', async (pw) => {
+      try {
+        plaintext = await decryptField(getAttrs(this.node).content, pw)
+        return true
+      } catch {
+        plaintext = null
+        return 'Incorrect password'
+      }
+    }, { title: 'Show encrypted block' })
     if (password === null) return
-    let plaintext: string
-    try {
-      plaintext = await decryptField(getAttrs(this.node).content, password)
-    } catch {
-      return
+    if (plaintext === null) {
+      try {
+        plaintext = await decryptField(getAttrs(this.node).content, password)
+      } catch {
+        return
+      }
     }
     this.closeReveal()
     const host = document.createElement('div')
@@ -189,7 +204,7 @@ class EncryptedBlockNodeView implements NodeView {
     if (this.toggleBtn) this.toggleBtn.textContent = 'Lock ▾'
     if (this.wordsEl) {
       const a = getAttrs(this.node)
-      this.wordsEl.textContent = `🔒 encrypted · ${a.type || 'block'}${a.label ? ' · ' + a.label : ''}`
+      this.wordsEl.textContent = encryptedBlockChipText(a)
     }
   }
 
@@ -230,13 +245,23 @@ class EncryptedBlockNodeView implements NodeView {
   private async unmask_(): Promise<void> {
     const attrs = getAttrs(this.node)
     if (!attrs.content) return
-    const password = await promptForPassword(attrs.label || 'encrypted block', undefined, { title: 'Decrypt block' })
+    let plaintext: string | null = null
+    const password = await promptForPassword(attrs.label || 'encrypted block', async (pw) => {
+      try {
+        plaintext = await decryptField(attrs.content, pw)
+        return true
+      } catch {
+        plaintext = null
+        return 'Incorrect password'
+      }
+    }, { title: 'Decrypt block' })
     if (password === null) return
-    let plaintext: string
-    try {
-      plaintext = await decryptField(attrs.content, password)
-    } catch {
-      return
+    if (plaintext === null) {
+      try {
+        plaintext = await decryptField(attrs.content, password)
+      } catch {
+        return
+      }
     }
     const ok = await confirmAction('This replaces the encrypted block with its decrypted contents. Undo can reverse this.')
     if (!ok) return
