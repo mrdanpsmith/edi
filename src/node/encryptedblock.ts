@@ -21,6 +21,32 @@ export function setEncryptedBlockImageResolver(fn: ResolveImage | undefined): vo
 }
 
 let pendingUnlockPassword: string | null = null
+
+let activeRevealView: EditorView | null = null
+
+/** The editor view of the focused encrypted-block reveal, if any. Toolbar
+ * commands target this instead of the collapsing document editor while an
+ * unlocked encrypted block holds the caret. */
+export function getActiveEncryptedBlockView(): EditorView | null {
+  return activeRevealView
+}
+
+/** Forget the reveal editor — focus returned to the document proper. */
+export function clearActiveEncryptedBlockView(): void {
+  activeRevealView = null
+}
+
+// The reveal editor is a nested editor inside the main document's DOM, so a
+// plain "main view got focusin" listener would also fire for the reveal. Only
+// clear when focus lands somewhere that is not an unlocked block or the
+// toolbar (toolbar button presses must keep the reveal as the format target).
+document.addEventListener('focusin', (event) => {
+  if (activeRevealView === null) return
+  const target = event.target
+  if (target instanceof Element && (target.closest('.encrypted-block-reveal') !== null || target.closest('#toolbar') !== null)) return
+  clearActiveEncryptedBlockView()
+})
+
 export function primeEncryptedBlockShow(password: string): void {
   pendingUnlockPassword = password
 }
@@ -107,17 +133,22 @@ class EncryptedBlockNodeView implements NodeView {
   }
 
   private destroyTransient(): void {
+    if (activeRevealView === this.revealEditor) clearActiveEncryptedBlockView()
     this.revealEditor?.destroy()
     this.revealEditor = null
     this.revealHost = null
   }
 
-  private closeReveal(): void {
+  private async closeReveal(): Promise<void> {
+    if (activeRevealView === this.revealEditor) clearActiveEncryptedBlockView()
     if (this.persistTimer !== null) {
       clearTimeout(this.persistTimer)
       this.persistTimer = null
-      void this.persist()
     }
+    // Commit any pending plaintext back into the envelope BEFORE tearing the
+    // reveal down: persist awaits subtle-crypto and one saved-editor serialisation
+    // otherwise outruns it and silently reverts the document to the old envelope.
+    await this.persist()
     this.revealEditor?.destroy()
     this.revealEditor = null
     this.revealInner = null
@@ -165,7 +196,7 @@ class EncryptedBlockNodeView implements NodeView {
   /** Show: render the decrypted markdown inline, editable; never into the document. */
   private async toggleShow_(): Promise<void> {
     if (this.revealHost) {
-      this.closeReveal()
+      await this.closeReveal()
       return
     }
     const primed = pendingUnlockPassword
@@ -188,7 +219,7 @@ class EncryptedBlockNodeView implements NodeView {
         return
       }
     }
-    this.closeReveal()
+    await this.closeReveal()
     const host = document.createElement('div')
     host.className = 'encrypted-block-reveal'
     this.dom.appendChild(host)
@@ -201,6 +232,13 @@ class EncryptedBlockNodeView implements NodeView {
     })
     this.revealEditor = this.revealInner.getView()
     this.revealEditor.dom.classList.add('encrypted-block-reveal-editor')
+    this.revealEditor.dom.addEventListener('focusin', () => {
+      activeRevealView = this.revealEditor
+    })
+    host.addEventListener('mousedown', () => {
+      activeRevealView = this.revealEditor
+    })
+    this.revealEditor.focus()
     if (this.toggleBtn) this.toggleBtn.textContent = 'Lock ▾'
     if (this.wordsEl) {
       const a = getAttrs(this.node)
@@ -214,7 +252,7 @@ class EncryptedBlockNodeView implements NodeView {
   }
 
   private async persist(): Promise<void> {
-    if (!this.revealPassword || !this.revealInner) return
+    if (this.revealPassword === null || !this.revealInner) return
     const markdown = this.revealInner.getMarkdown()
     if (markdown === this.lastRevealedMd) return
     const a = getAttrs(this.node)
@@ -226,8 +264,8 @@ class EncryptedBlockNodeView implements NodeView {
         this.view.dispatch(tr)
         this.lastRevealedMd = markdown
       }
-    } catch {
-      /* drop: a corrupt write would strand the user's content */
+    } catch (e) {
+      console.error('PERSIST FAILED', e)
     }
   }
 

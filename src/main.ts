@@ -52,7 +52,7 @@ import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import welcomeMarkdown from './docs/welcome.md?raw'
 import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
-import { setEncryptedBlockImageResolver, primeEncryptedBlockShow } from './node/encryptedblock'
+import { setEncryptedBlockImageResolver, primeEncryptedBlockShow, getActiveEncryptedBlockView } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
 import { enterDiagramEditMode, exitDiagramEditMode, insertKanbanBoard } from './node/mermaid'
@@ -1164,7 +1164,7 @@ function init(): void {
     onChange: () => setActiveDirty(true),
     resolveImageSrc: resolveImageFileUrl,
   })
-  toolbar = new Toolbar(toolbarEl, { getView: () => blockEditor!.getView() }, [
+  toolbar = new Toolbar(toolbarEl, { getView: () => getActiveEncryptedBlockView() ?? blockEditor!.getView() }, [
     { label: 'New', title: 'New (Ctrl+N)', markup: NEW_ICON, action: openNewTab },
     { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => void openFile() },
     { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => void saveFile() },

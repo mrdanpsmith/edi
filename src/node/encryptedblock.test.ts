@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createBlockEditor } from '../editor'
-import { encryptField } from '../crypto'
+import { decryptField, encryptField } from '../crypto'
 import { promptForPassword } from '../crypto-dialog'
 import { confirmAction } from '../bridge'
+import { getActiveEncryptedBlockView } from './encryptedblock'
 
 vi.mock('../crypto-dialog', () => ({
   promptForPassword: vi.fn(),
@@ -59,6 +60,57 @@ describe('encrypted_block', () => {
     expect(reveal.textContent).toContain('secret')
     expect(view.state.doc.childCount).toBe(docBefore)
     expect(promptForPassword).toHaveBeenCalled()
+    editor.destroy()
+  })
+
+  it('registers the reveal editor for the toolbar and releases it on outside focus / destroy', async () => {
+    const editor = await editorWithEncrypted('hello')
+    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    await tick()
+    const reveal = getActiveEncryptedBlockView()
+    expect(reveal).not.toBeNull()
+    expect(reveal!.dom.classList.contains('encrypted-block-reveal-editor')).toBe(true)
+    expect(document.activeElement).toBe(reveal!.dom)
+
+    editor.getView().dom.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    expect(getActiveEncryptedBlockView()).toBeNull()
+    editor.destroy()
+  })
+
+  it('commits reveal edits back into the encrypted envelope on change and on lock', async () => {
+    const editor = await editorWithEncrypted('hello')
+    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    await tick()
+    const reveal = getActiveEncryptedBlockView()!
+    reveal.dispatch(reveal.state.tr.insertText(' world'))
+    await new Promise((r) => setTimeout(r, 800))
+    let md = editor.getMarkdown()
+    let m = md.match(/```encrypted[^\n]*\n([^\n]*)\n```/)
+    expect(await decryptField(m![1]!, password)).toContain('world')
+
+    reveal.dispatch(reveal.state.tr.insertText(' again'))
+    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    await new Promise((r) => setTimeout(r, 800))
+    md = editor.getMarkdown()
+    m = md.match(/```encrypted[^\n]*\n([^\n]*)\n```/)
+    expect(await decryptField(m![1]!, password)).toContain('again')
+    editor.destroy()
+  })
+
+  it('commits edits for blocks with a blank password', async () => {
+    const envelope = await encryptField('hello', '')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const md = '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```\n\nafter'
+    const editor = createBlockEditor(host, md, {})
+    vi.mocked(promptForPassword).mockResolvedValue('')
+    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    await tick()
+    const reveal = getActiveEncryptedBlockView()!
+    reveal.dispatch(reveal.state.tr.insertText(' again'))
+    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    await new Promise((r) => setTimeout(r, 800))
+    expect(await decryptField((editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)!)[1]!, '')).toContain('again')
     editor.destroy()
   })
 
