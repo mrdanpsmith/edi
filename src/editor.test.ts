@@ -384,3 +384,35 @@ describe('BlockEditor public API', () => {
     editor.destroy()
   })
 })
+describe('scroller caret fallback', () => {
+  it('moves the caret to the end of the document when clicking empty space below it', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const editor = createBlockEditor(host, 'one\n\ntwo\n\nthree')
+    const view = editor.getView()
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1)))
+
+    host.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+
+    expect(view.state.selection.empty).toBe(true)
+    expect(view.state.selection.$from.parent.type.name).toBe('paragraph')
+    expect(view.state.selection.$from.parentOffset).toBe(5) // end of "three"
+    expect(document.activeElement).toBe(view.dom)
+    editor.destroy()
+  })
+
+  it('ignores clicks that land on content inside the host', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const editor = createBlockEditor(host, 'hello')
+    const view = editor.getView()
+    const before = view.state.selection.from
+    // A click on a sibling outside view.dom bubbles through the host, but
+    // must not trigger the fallback.
+    const sibling = document.createElement('div')
+    host.appendChild(sibling)
+    sibling.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+    expect(view.state.selection.from).toBe(before)
+    editor.destroy()
+  })
+})

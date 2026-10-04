@@ -1,4 +1,4 @@
-import { EditorState, Plugin, PluginKey } from 'prosemirror-state'
+import { EditorState, Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
 import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
@@ -311,6 +311,7 @@ export function createBlockEditor(
   view.dom.addEventListener('click', onNodeViewLinkClick)
 
   attachBlockHandles(view)
+  const onScrollerMouseDown = attachScrollerCaretFallback(view, parent)
 
   return {
     getView() {
@@ -355,9 +356,27 @@ export function createBlockEditor(
     },
     destroy() {
       view.dom.removeEventListener('click', onNodeViewLinkClick)
+      parent.removeEventListener('mousedown', onScrollerMouseDown)
       view.destroy()
     },
   }
+}
+
+/**
+ * Clicks in the scroller's empty space (below the editor's own box, which is
+ * only as tall as its content) never reach ProseMirror, so nothing wrote a
+ * caret. Redirect them into the document: focus and place the caret at the
+ * end — the natural target of a click below the content.
+ */
+function attachScrollerCaretFallback(view: EditorView, parent: HTMLElement): (event: MouseEvent) => void {
+  const onScrollerMouseDown = (event: MouseEvent): void => {
+    if (event.button !== 0 || event.target !== parent) return
+    event.preventDefault()
+    view.focus()
+    view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)))
+  }
+  parent.addEventListener('mousedown', onScrollerMouseDown)
+  return onScrollerMouseDown
 }
 
 function linkMarkAt(doc: import('prosemirror-model').Node, pos: number): import('prosemirror-model').Mark | null {
