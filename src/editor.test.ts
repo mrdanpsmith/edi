@@ -401,6 +401,25 @@ describe('scroller caret fallback', () => {
     editor.destroy()
   })
 
+  it('opens a new paragraph after a trailing special block', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    // A code fence has no caret position after it, so clicking below it opens a
+    // paragraph to put the caret in — the half of Ctrl+Shift+Up/Down that makes
+    // the block selectable from below.
+    const editor = createBlockEditor(host, 'text\n\n```js\nconst x = 1\n```')
+    const view = editor.getView()
+    expect(view.state.doc.childCount).toBe(2)
+
+    host.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+
+    expect(view.state.doc.childCount).toBe(3)
+    expect(view.state.doc.lastChild?.type.name).toBe('paragraph')
+    expect(view.state.selection.empty).toBe(true)
+    expect(view.state.selection.$from.parent.type.name).toBe('paragraph')
+    editor.destroy()
+  })
+
   it('ignores clicks that land on content inside the host', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)

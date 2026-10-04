@@ -164,6 +164,7 @@ the old file in one step, so it is never left under both names.
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste |
 | `Ctrl+A` | Select all |
+| `Ctrl+Shift+Up` / `Ctrl+Shift+Down` | Extend / shrink selection across blocks |
 | `Ctrl+F` | Find in current document |
 | `Ctrl+H` | Find & replace in current document |
 | `Ctrl+Q` | Quit |

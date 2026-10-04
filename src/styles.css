@@ -615,6 +615,19 @@ body {
   display: block;
 }
 
+/* ── Keyboard block selection ── */
+/* A special (atomic) block reached by Ctrl/Cmd+Shift+Up/Down is selected whole
+   (a NodeSelection, which the view tags `.ProseMirror-selectednode`) or is
+   bracketed by a text range (tagged `.edi-block-selected` by the selection
+   plugin). Both get the same unmistakable accent treatment. */
+.ProseMirror .ProseMirror-selectednode,
+.ProseMirror .edi-block-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 /* ── Headings ── */
 
 .ProseMirror h1,
@@ -1763,6 +1776,30 @@ body {
 .ProseMirror .runnable-block.edi-formula-invalid {
   border-color: var(--danger);
   box-shadow: inset 3px 0 0 var(--danger);
+}
+
+/* Block chrome is not content: a Ctrl/Cmd+Shift range that passes through or
+   brackets the block must not paint the language badge, the Copy button, the
+   line-number gutter or the block handle as if they were selected text. Both
+   the pointer (`user-select`) and the selection highlight (`::selection`) are
+   suppressed on those elements. */
+.ProseMirror .runnable-block .code-copy,
+.ProseMirror .runnable-block .code-lang-bar,
+.ProseMirror .block-handle {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.ProseMirror .runnable-block .code-copy::selection,
+.ProseMirror .runnable-block .code-copy *::selection,
+.ProseMirror .runnable-block .code-lang-bar::selection,
+.ProseMirror .runnable-block .code-lang-bar *::selection,
+.ProseMirror .runnable-block .cm-gutters::selection,
+.ProseMirror .runnable-block .cm-gutters *::selection,
+.ProseMirror .block-handle::selection,
+.ProseMirror .block-handle *::selection {
+  background: transparent;
+  color: inherit;
 }
 
 .ProseMirror .runnable-source {

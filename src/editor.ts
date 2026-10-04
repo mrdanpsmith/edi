@@ -24,6 +24,7 @@ import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { taskClickPlugin, toggleTaskItems, blockTypeSelectPlugin } from './toolbar'
 import { markExitPlugin, stopMarking } from './markExit'
+import { selectionExpandKeymap, selectionExpandPlugin, selectionHighlightPlugin, clipboardTextPlugin, isSelectionAtom } from './selectionExpand'
 import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
 import { imageNodeView, reResolveImages, type ResolveImage } from './image'
@@ -241,10 +242,14 @@ export function createBlockEditor(
     // splitBlock and listKeymap's splitListItem.
     blockStartKeymap(),
     undoKeymap,
+    selectionExpandKeymap,
     listKeymap,
     keymap(baseKeymap),
     formattingKeymap,
     markExitPlugin,
+    selectionExpandPlugin,
+    selectionHighlightPlugin,
+    clipboardTextPlugin,
     createInputRules(),
     blockToggleKeymap,
     gapCursor(),
@@ -378,7 +383,20 @@ function attachScrollerCaretFallback(view: EditorView, parent: HTMLElement): (ev
     if (event.button !== 0 || event.target !== parent) return
     event.preventDefault()
     view.focus()
-    view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)))
+    const doc = view.state.doc
+    const last = doc.lastChild
+    // A trailing special block (a board, a table, a code fence) has no
+    // caret-capable position after it, so clicking below it opens a new
+    // paragraph to put the caret in. That is the only way to then select the
+    // block itself from below — a range from above always includes the text
+    // before it.
+    if (last && isSelectionAtom(last)) {
+      const tr = view.state.tr.insert(doc.content.size, view.state.schema.nodes.paragraph.create())
+      tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
+      view.dispatch(tr)
+    } else {
+      view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(doc)))
+    }
   }
   parent.addEventListener('mousedown', onScrollerMouseDown)
   return onScrollerMouseDown
