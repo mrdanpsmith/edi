@@ -346,8 +346,11 @@ export class MaskedFieldInteractions {
   }
 
   hide(): void {
+    // Nothing retained between reveals: hiding ends the session and forgets
+    // both the plaintext and the password.
     this.plaintext = null
     this.unlockedContent = ''
+    this.password = null
     this.backend.present()
   }
 
@@ -364,8 +367,6 @@ export class MaskedFieldInteractions {
     const password = await promptForPassword(label || 'encrypted field', async (pw) => {
       try {
         const value = await decryptField(content, pw)
-        this.plaintext = value
-        this.unlockedContent = content
         copied = await copyToClipboard(value)
         return true
       } catch {
@@ -373,10 +374,7 @@ export class MaskedFieldInteractions {
         return 'Incorrect password'
       }
     })
-    if (password !== null) {
-      this.password = password
-      if (copied) this.flashCopied()
-    }
+    if (password !== null && copied) this.flashCopied()
   }
 
   async startEdit(): Promise<boolean> {
@@ -393,6 +391,10 @@ export class MaskedFieldInteractions {
     this.editActive = false
     // Unchanged value (or no unlock password available) just closes the edit.
     if (value === this.plaintext || this.password === null) {
+      // Still closes the session: the field stays hidden once closed.
+      this.plaintext = null
+      this.unlockedContent = ''
+      this.password = null
       this.backend.present()
       return
     }
@@ -400,14 +402,17 @@ export class MaskedFieldInteractions {
     this.awaitingPassword = true
     try {
       const envelope = await encryptFieldVerified(value, this.password)
-      this.plaintext = value
       this.unlockedContent = envelope
       await this.backend.commit(envelope, label)
     } catch {
-      this.plaintext = null
-      this.unlockedContent = ''
+      // fall through to cleanup
     } finally {
       this.awaitingPassword = false
+      // The edit session ends here: forget the password and the plaintext so
+      // the next reveal/copy/edit prompts again.
+      this.plaintext = null
+      this.unlockedContent = ''
+      this.password = null
     }
     this.backend.present()
   }
@@ -415,6 +420,9 @@ export class MaskedFieldInteractions {
   cancelEdit(): void {
     this.editCancelled = true
     this.editActive = false
+    this.plaintext = null
+    this.unlockedContent = ''
+    this.password = null
     this.backend.present()
   }
 
