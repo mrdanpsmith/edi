@@ -102,11 +102,11 @@ jobs:
       - name: Install frontend deps (for vitest)
         run: npm ci --no-audit --no-fund
       - name: Frontend unit tests + coverage
-        run: npm run coverage > /tmp/frontend-cov.txt 2>&1
+        run: npm run coverage > /tmp/frontend-cov.txt 2>&1 || { tail -n 200 /tmp/frontend-cov.txt; exit 1; }
       - name: Bandit (source-security scan)
         run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py scripts/mermaid-label-probe.py run_edi.py -q
       - name: Backend tests + coverage
-        run: .venv/bin/pytest tests/ > /tmp/backend-cov.txt 2>&1
+        run: .venv/bin/pytest tests/ > /tmp/backend-cov.txt 2>&1 || { tail -n 200 /tmp/backend-cov.txt; exit 1; }
       # One artifact carries the whole coverage story: the browsable HTML
       # reports (what a human opens) and the two Cobertura files the `badges`
       # job below reads its numbers from. Default branch only — a badge should

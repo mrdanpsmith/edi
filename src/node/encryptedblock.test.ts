@@ -31,7 +31,7 @@ async function editorWithEncrypted(innerMarkdown: string) {
   return createBlockEditor(host, md, {})
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 120))
+const tick = () => new Promise((r) => setTimeout(r, 800))
 
 describe('encrypted_block', () => {
   it('shows the block type in the chrome with underscores replaced by spaces', async () => {
