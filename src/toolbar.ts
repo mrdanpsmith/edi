@@ -127,7 +127,7 @@ interface ButtonSpec {
   markup?: string
   run(view: EditorView): boolean | Promise<boolean>
   options?: { label: string; run(view: EditorView): boolean | Promise<boolean> }[]
-  kind?: 'menu'
+  kind?: 'menu' | 'divider'
   /** When set, the button targets the active spreadsheet cell if one exists. */
   inline?: InlineCellKind
 }
@@ -410,34 +410,14 @@ export function getFileButtons(): FileActionSpec[] {
   ]
 }
 
-export function getFormattingButtons(_ctx: ToolbarContext): ButtonSpec[] {
+interface DividerSpec {
+  kind: 'divider'
+}
+
+export type ToolbarEntry = ButtonSpec | DividerSpec
+
+export function getFormattingButtons(_ctx: ToolbarContext): ToolbarEntry[] {
   return [
-    { label: 'B', title: 'Bold (Ctrl+B)', className: 'toolbar-bold', inline: 'bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
-    { label: 'I', title: 'Italic (Ctrl+I)', className: 'toolbar-italic', inline: 'italic', run: (view) => toggleMarkCmd(view.state.schema.marks.em)(view) },
-    { label: 'S', title: 'Strikethrough', className: 'toolbar-strike', inline: 'strike', run: (view) => toggleMarkCmd(view.state.schema.marks.strikethrough)(view) },
-    { label: 'Link', title: 'Hyperlink', markup: LINK_ICON, inline: 'link', run: hyperlinkRun },
-    {
-      label: 'Highlight', title: 'Highlight', markup: icon(
-        '<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#fde047" stroke="none"/>' +
-        '<text x="8" y="12" text-anchor="middle" font-size="11" font-family="var(--font-sans)" stroke="none" fill="currentColor">a</text>',
-      ),
-      inline: 'highlight',
-      run: (view) => toggleMarkCmd(view.state.schema.marks.highlight)(view),
-    },
-    {
-      label: 'Sub', title: 'Subscript', inline: 'sub', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view),
-      markup: icon(
-        '<text x="5" y="11.5" text-anchor="middle" font-size="10" font-family="var(--font-sans)" stroke="none" fill="currentColor">x</text>' +
-        '<text x="12" y="14.5" text-anchor="middle" font-size="7" font-family="var(--font-sans)" stroke="none" fill="currentColor">2</text>',
-      ),
-    },
-    {
-      label: 'Sup', title: 'Superscript', inline: 'sup', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view),
-      markup: icon(
-        '<text x="5" y="13.5" text-anchor="middle" font-size="10" font-family="var(--font-sans)" stroke="none" fill="currentColor">x</text>' +
-        '<text x="12" y="8.5" text-anchor="middle" font-size="7" font-family="var(--font-sans)" stroke="none" fill="currentColor">2</text>',
-      ),
-    },
     {
       label: 'Normal', title: 'Heading', className: 'toolbar-heading',
       run: (view) => setBlockType(view.state.schema.nodes.paragraph)(view.state, view.dispatch),
@@ -449,6 +429,21 @@ export function getFormattingButtons(_ctx: ToolbarContext): ButtonSpec[] {
         })),
       ],
     },
+    { label: 'B', title: 'Bold (Ctrl+B)', className: 'toolbar-bold', inline: 'bold', run: (view) => toggleMarkCmd(view.state.schema.marks.strong)(view) },
+    { label: 'I', title: 'Italic (Ctrl+I)', className: 'toolbar-italic', inline: 'italic', run: (view) => toggleMarkCmd(view.state.schema.marks.em)(view) },
+    { label: 'S', title: 'Strikethrough', className: 'toolbar-strike', inline: 'strike', run: (view) => toggleMarkCmd(view.state.schema.marks.strikethrough)(view) },
+    {
+      label: 'Highlight', title: 'Highlight', markup: icon(
+        '<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#fde047" stroke="none"/>' +
+        '<text x="8" y="12" text-anchor="middle" font-size="11" font-family="var(--font-sans)" stroke="none" fill="currentColor">a</text>',
+      ),
+      inline: 'highlight',
+      run: (view) => toggleMarkCmd(view.state.schema.marks.highlight)(view),
+    },
+    { label: 'Link', title: 'Hyperlink', markup: LINK_ICON, inline: 'link', run: hyperlinkRun },
+    { label: 'Quote', title: 'Blockquote', markup: icon(
+      '<text x="8" y="15" text-anchor="middle" font-size="17" font-family="var(--font-sans)" stroke="none" fill="currentColor">"</text>',
+    ), run: (view) => wrapIn(view.state.schema.nodes.blockquote)(view.state, view.dispatch) },
     {
       label: 'Horizontal rule', title: 'Horizontal rule', markup: icon('<path d="M2.5 8h11"/>'),
       run: (view) => {
@@ -463,20 +458,27 @@ export function getFormattingButtons(_ctx: ToolbarContext): ButtonSpec[] {
         return true
       },
     },
-    { label: 'Quote', title: 'Blockquote', markup: icon(
-      '<text x="8" y="15" text-anchor="middle" font-size="17" font-family="var(--font-sans)" stroke="none" fill="currentColor">"</text>',
-    ), run: (view) => wrapIn(view.state.schema.nodes.blockquote)(view.state, view.dispatch) },
     {
-      label: 'Code', title: 'Inline code', markup: icon('<path d="M5 4 2 8l3 4"/><path d="M11 4l3 4-3 4"/><path d="M9.5 3l-3 10"/>'),
-      run: (view) => toggleMarkCmd(view.state.schema.marks.code)(view),
-      inline: 'code',
+      label: 'Sup', title: 'Superscript', inline: 'sup', run: (view) => toggleMarkCmd(view.state.schema.marks.sup)(view),
+      markup: icon(
+        '<text x="5" y="13.5" text-anchor="middle" font-size="10" font-family="var(--font-sans)" stroke="none" fill="currentColor">x</text>' +
+        '<text x="12" y="8.5" text-anchor="middle" font-size="7" font-family="var(--font-sans)" stroke="none" fill="currentColor">2</text>',
+      ),
     },
     {
-      label: 'Code block', title: 'Code block', markup: icon(
-        '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>' +
-        '<path d="M4.5 6l2.5 2.5L4.5 11"/><path d="M9 10.5h2.5"/>',
+      label: 'Sub', title: 'Subscript', inline: 'sub', run: (view) => toggleMarkCmd(view.state.schema.marks.sub)(view),
+      markup: icon(
+        '<text x="5" y="11.5" text-anchor="middle" font-size="10" font-family="var(--font-sans)" stroke="none" fill="currentColor">x</text>' +
+        '<text x="12" y="14.5" text-anchor="middle" font-size="7" font-family="var(--font-sans)" stroke="none" fill="currentColor">2</text>',
       ),
-      run: insertCodeBlock,
+    },
+    { kind: 'divider' },
+    {
+      label: 'Task list', title: 'Task list', markup: icon(
+        '<rect x="1.5" y="2.5" width="13" height="13" fill="#3b82f6" stroke="none"/>' +
+        '<path d="M4.5 8l2.5 2.5 4.5-4.5" stroke="white" stroke-width="2"/>',
+      ),
+      run: toggleTaskList,
     },
     {
       label: 'Bullet list', title: 'Bullet list', markup: icon(
@@ -490,13 +492,20 @@ export function getFormattingButtons(_ctx: ToolbarContext): ButtonSpec[] {
       ),
       run: toggleList('ordered_list'),
     },
+    { kind: 'divider' },
     {
-      label: 'Task list', title: 'Task list', markup: icon(
-        '<rect x="1.5" y="2.5" width="13" height="13" fill="#3b82f6" stroke="none"/>' +
-        '<path d="M4.5 8l2.5 2.5 4.5-4.5" stroke="white" stroke-width="2"/>',
-      ),
-      run: toggleTaskList,
+      label: 'Code', title: 'Inline code', markup: icon('<path d="M5 4 2 8l3 4"/><path d="M11 4l3 4-3 4"/><path d="M9.5 3l-3 10"/>'),
+      run: (view) => toggleMarkCmd(view.state.schema.marks.code)(view),
+      inline: 'code',
     },
+    {
+      label: 'Code block', title: 'Code block', markup: icon(
+        '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>' +
+        '<path d="M4.5 6l2.5 2.5L4.5 11"/><path d="M9 10.5h2.5"/>',
+      ),
+      run: insertCodeBlock,
+    },
+    { kind: 'divider' },
     {
       label: 'Encrypted field', title: 'Insert encrypted field', markup: icon(
         '<rect x="3.25" y="7" width="9.5" height="6.5" rx="1.2"/>' +
@@ -585,6 +594,13 @@ export class Toolbar {
       this.bar.append(separator)
     }
     for (const spec of getFormattingButtons(this.ctx)) {
+      if (spec.kind === 'divider') {
+        const separator = document.createElement('span')
+        separator.className = 'toolbar-separator'
+        separator.setAttribute('aria-hidden', 'true')
+        this.bar.append(separator)
+        continue
+      }
       if (spec.kind === 'menu') {
         const host = document.createElement('span')
         host.className = 'toolbar-menu-host'

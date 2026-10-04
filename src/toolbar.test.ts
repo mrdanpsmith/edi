@@ -4,6 +4,7 @@ import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
 import { Toolbar, getFormattingButtons, getFileButtons, toggleTaskItems, applyLink, blockTypeSelectPlugin } from './toolbar'
 import type { ToolbarContext } from './toolbar'
+import type { ToolbarEntry } from './toolbar'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { promptForLink } from './urlDialog'
 import { getActiveCellHost, setActiveCellHost } from './inline-format'
@@ -12,7 +13,7 @@ vi.mock('./urlDialog')
 
 async function runLinkButton(view: EditorView): Promise<boolean | undefined> {
   const ctx: ToolbarContext = { getView: () => view }
-  const link = getFormattingButtons(ctx).find((b) => b.title === 'Hyperlink')!
+  const link = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Hyperlink')!
   return link.run(view)
 }
 
@@ -145,15 +146,15 @@ describe('Toolbar', () => {
     const separator = children[4]
     expect(separator.classList.contains('toolbar-separator')).toBe(true)
     expect(separator.getAttribute('aria-hidden')).toBe('true')
-    expect((children[5] as HTMLButtonElement).title).toBe('Bold (Ctrl+B)')
+    expect((children[5] as HTMLButtonElement).title).toBe('Heading')
   })
 
-  it('renders no separator without file actions', () => {
+  it('starts with the heading dropdown and still shows format-group separators', () => {
     const { bar, ctx } = makeFixture()
     new Toolbar(bar, ctx)
-    expect(bar.querySelector('.toolbar-separator')).toBeNull()
     const first = bar.querySelector<HTMLButtonElement>('.toolbar-btn')!
-    expect(first.title).toBe('Bold (Ctrl+B)')
+    expect(first.title).toBe('Heading')
+    expect(bar.querySelectorAll('.toolbar-separator').length).toBe(3)
   })
 
   it('file buttons invoke their action without focusing the editor', () => {
@@ -204,7 +205,7 @@ describe('Toolbar', () => {
 
   it('inserts a horizontal rule via run function', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const hrBtn = getFormattingButtons(ctx).find((b) => b.title === 'Horizontal rule')!
+    const hrBtn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Horizontal rule')!
     const result = hrBtn.run(view)
     expect(result).toBe(true)
     expect(view.state.doc.childCount).toBe(2)
@@ -267,7 +268,7 @@ describe('Toolbar', () => {
 
   it('wraps paragraph in bullet list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
     const result = btn.run(view)
     expect(result).toBe(true)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
@@ -276,7 +277,7 @@ describe('Toolbar', () => {
 
   it('wraps paragraph in numbered list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Numbered list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Numbered list')!
     const result = btn.run(view)
     expect(result).toBe(true)
     expect(view.state.doc.firstChild!.type.name).toBe('ordered_list')
@@ -285,7 +286,7 @@ describe('Toolbar', () => {
 
   it('toggles off bullet list when clicking bullet list again', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     btn.run(view)
@@ -295,7 +296,7 @@ describe('Toolbar', () => {
 
   it('preserves cursor position when toggling off a list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     btn.run(view)
@@ -306,7 +307,7 @@ describe('Toolbar', () => {
 
   it('preserves selection range when toggling off a list', () => {
     const { view, ctx } = makeFixture()
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
     const doc = view.state.doc
     const sel = TextSelection.create(doc, 2, 7)
     view.dispatch(view.state.tr.setSelection(sel))
@@ -322,8 +323,8 @@ describe('Toolbar', () => {
 
   it('switches bullet list to numbered list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const bullet = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
-    const numbered = getFormattingButtons(ctx).find((b) => b.title === 'Numbered list')!
+    const bullet = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
+    const numbered = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Numbered list')!
     bullet.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     numbered.run(view)
@@ -333,7 +334,7 @@ describe('Toolbar', () => {
 
   it('wraps multiple blocks into a single list', () => {
     const { view, ctx } = makeMultiBlockFixture()
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
     btn.run(view)
     const doc = view.state.doc
     expect(doc.childCount).toBe(1)
@@ -347,7 +348,7 @@ describe('Toolbar', () => {
 
   it('toggles off multi-block bullet list', () => {
     const { view, ctx } = makeMultiBlockFixture()
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     btn.run(view)
@@ -359,7 +360,7 @@ describe('Toolbar', () => {
 
   it('wraps paragraph in task list', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
     const result = btn.run(view)
     expect(result).toBe(true)
     const doc = view.state.doc
@@ -370,7 +371,7 @@ describe('Toolbar', () => {
 
   it('toggles off task list when clicking task list again', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
     btn.run(view)
     expect(view.state.doc.firstChild!.type.name).toBe('bullet_list')
     expect(view.state.doc.firstChild!.child(0).attrs.checked).toBe(false)
@@ -429,7 +430,7 @@ describe('Toolbar', () => {
 
   it('wraps multiple blocks into a task list', () => {
     const { view, ctx } = makeMultiBlockFixture()
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
     btn.run(view)
     const doc = view.state.doc
     expect(doc.childCount).toBe(1)
@@ -449,7 +450,7 @@ describe('hyperlink', () => {
 
   it('offers a Hyperlink toolbar button', () => {
     const { ctx } = makeFixture()
-    const link = getFormattingButtons(ctx).find((b) => b.title === 'Hyperlink')!
+    const link = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Hyperlink')!
     expect(link).toBeDefined()
     expect(link.markup).toContain('<svg')
   })
@@ -682,7 +683,7 @@ describe('command buttons', () => {
 
   function runTitle(title: string, view: EditorView): boolean | Promise<boolean> {
     const ctx: ToolbarContext = { getView: () => view }
-    const spec = getFormattingButtons(ctx).find((b) => b.title === title)!
+    const spec = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === title)!
     return spec.run(view)
   }
 
@@ -710,7 +711,7 @@ describe('command buttons', () => {
       state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
     })
     const ctx: ToolbarContext = { getView: () => view }
-    const heading = getFormattingButtons(ctx).find((b) => b.title === 'Heading')!
+    const heading = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Heading')!
     expect(heading.options).toHaveLength(7)
     for (const [label, level] of [['Heading 1', 1], ['Heading 2', 2], ['Heading 3', 3], ['Heading 4', 4], ['Heading 5', 5], ['Heading 6', 6]] as const) {
       const option = heading.options!.find((o) => o.label === label)!
@@ -745,7 +746,7 @@ describe('insertCodeBlock', () => {
 
   function runCodeBlock(view: EditorView): boolean | Promise<boolean> {
     const ctx: ToolbarContext = { getView: () => view }
-    const spec = getFormattingButtons(ctx).find((b) => b.title === 'Code block')!
+    const spec = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Code block')!
     return spec.run(view)
   }
 
@@ -811,7 +812,7 @@ describe('task and list toggles', () => {
     document.body.appendChild(host)
     const view = makeListView('- item')
     const ctx: ToolbarContext = { getView: () => view }
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
     btn.run(view)
     expect(view.state.doc.firstChild?.type.name).toBe('bullet_list')
     expect(view.state.doc.firstChild?.child(0).attrs.checked).toBe(false)
@@ -827,7 +828,7 @@ describe('task and list toggles', () => {
       state: EditorState.create({ doc, selection: TextSelection.create(doc, 2) }),
     })
     const ctx: ToolbarContext = { getView: () => view }
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Task list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
     btn.run(view)
     const item = view.state.doc.firstChild!.child(0)
     expect(item.type.name).toBe('list_item')
@@ -844,7 +845,7 @@ describe('task and list toggles', () => {
       state: EditorState.create({ doc, selection: TextSelection.create(doc, 4) }),
     })
     const ctx: ToolbarContext = { getView: () => view }
-    const btn = getFormattingButtons(ctx).find((b) => b.title === 'Bullet list')!
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Bullet list')!
     btn.run(view)
     expect(view.state.doc.childCount).toBe(1)
     expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
