@@ -1,9 +1,27 @@
 import type { EditorView } from 'prosemirror-view'
 import { Slice, Fragment } from 'prosemirror-model'
 import type { Node as ProseNode, Schema } from 'prosemirror-model'
+import { markdownToProse } from './markdown'
 
 const URL_TOKEN = /^(https?:\/\/|ftp:\/\/|mailto:|www\.)[^\s]+$/i
 const NEWLINE_RE = /\r\n?/g
+
+/**
+ * Parse clipboard text as markdown and insert it as real structure (headings,
+ * lists, fences, tables — everything `markdownToProse` produces) in a single
+ * transaction, so one undo restores the pre-paste document.
+ *
+ * Returns false when the clipboard holds no usable text, so the caller can
+ * fall back to the normal paste path (which handles HTML and images).
+ */
+export function pasteAsMarkdown(view: EditorView, text: string | null): boolean {
+  if (!text || text.trim() === '') return false
+  const doc = markdownToProse(text.replace(NEWLINE_RE, '\n'), view.state.schema)
+  if (doc.content.size === 0) return false
+  const slice = new Slice(Fragment.from(doc.content), 0, 0)
+  view.dispatch(view.state.tr.replaceSelection(slice))
+  return true
+}
 
 export function isRawUrl(text: string): boolean {
   return URL_TOKEN.test(text.trim())

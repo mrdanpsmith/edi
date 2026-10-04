@@ -4,7 +4,7 @@ import { EditorView } from 'prosemirror-view'
 import { DOMParser as ProseMirrorDOMParser } from 'prosemirror-model'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { isRawUrl, containsRawUrl, insertPastedText } from './paste'
+import { isRawUrl, containsRawUrl, insertPastedText, pasteAsMarkdown } from './paste'
 
 function linkifySerialized(pasted: string): string {
   // Paste at a position strictly inside a paragraph ("abc" text spans 1-3),
@@ -90,5 +90,67 @@ describe('rich-text HTML paste', () => {
     tmp.innerHTML = 'See <a href="https://example.com">link</a> here'
     const pm = ProseMirrorDOMParser.fromSchema(schema).parse(tmp)
     expect(proseToMarkdown(pm)).toBe('See [link](https://example.com) here\n')
+  })
+})
+
+describe('pasteAsMarkdown', () => {
+  function pasteAtStartOf(markdown: string, pasted: string): EditorView {
+    const doc = markdownToProse(markdown, schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, selection: new TextSelection(doc.resolve(1)) }),
+    })
+    pasteAsMarkdown(view, pasted)
+    return view
+  }
+
+  it('inserts real markdown structure, not plain text', () => {
+    const view = pasteAtStartOf('abc', '# Title\n\n- one\n- two\n\n> quoted')
+    const types = view.state.doc.content.content.map((n) => n.type.name)
+    expect(types.slice(0, 4)).toEqual(['heading', 'bullet_list', 'blockquote', 'paragraph'])
+    expect(view.state.doc.firstChild?.textContent).toBe('Title')
+    view.destroy()
+  })
+
+  it('parses fenced code blocks', () => {
+    const view = pasteAtStartOf('abc', '```\nconst x = 1\n```')
+    expect(view.state.doc.firstChild?.type.name).toBe('code_block')
+    expect(view.state.doc.firstChild?.textContent).toBe('const x = 1')
+    view.destroy()
+  })
+
+  it('is a no-op for empty or whitespace-only clipboard text', () => {
+    const view = pasteAtStartOf('abc', '   \n ')
+    expect(proseToMarkdown(view.state.doc)).toBe('abc\n')
+    view.destroy()
+  })
+
+  it('returns false for empty input so callers can fall back', async () => {
+    const { pasteAsMarkdown } = await import('./paste')
+    const doc = markdownToProse('abc', schema)
+    const host = document.createElement('div')
+    const view = new EditorView(host, { state: EditorState.create({ doc }) })
+    expect(pasteAsMarkdown(view, null)).toBe(false)
+    expect(pasteAsMarkdown(view, '')).toBe(false)
+    view.destroy()
+  })
+})
+
+describe('pasteAsMarkdown undo', () => {
+  it('a single undo restores the pre-paste document', async () => {
+    const { history, undo } = await import('prosemirror-history')
+    const doc = markdownToProse('abc', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const view = new EditorView(host, {
+      state: EditorState.create({ doc, plugins: [history()], selection: new TextSelection(doc.resolve(1)) }),
+    })
+    pasteAsMarkdown(view, '# Title\n\n- one\n- two')
+    expect(proseToMarkdown(view.state.doc)).toContain('# Title')
+    undo(view.state, view.dispatch)
+    expect(proseToMarkdown(view.state.doc)).toBe('abc\n')
+    view.destroy()
+    host.remove()
   })
 })

@@ -475,6 +475,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "Cu&t\tCtrl+X" in edit_labels
     assert "&Copy\tCtrl+C" in edit_labels
     assert "&Paste\tCtrl+V" in edit_labels
+    assert "Paste as &Markdown\tCtrl+Shift+V" in edit_labels
     assert "Select &All\tCtrl+A" in edit_labels
     assert "&Find…\tCtrl+F" in edit_labels
     assert "&Replace…\tCtrl+H" in edit_labels

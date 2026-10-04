@@ -30,7 +30,7 @@ import {
   writeTextFile,
 } from './files'
 import { parseTableFile, toMarkdownTable } from './import'
-import { insertPastedText } from './paste'
+import { insertPastedText, pasteAsMarkdown } from './paste'
 import { EditorView } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import { undo as cmUndo, redo as cmRedo } from '@codemirror/commands'
@@ -594,6 +594,17 @@ function registerShortcuts(): void {
     } else if (key === 'h') {
       event.preventDefault()
       openSearch(true)
+    } else if (key === 'v' && event.shiftKey) {
+      // While a dialog or a CodeMirror source editor owns focus, its own paste
+      // belongs there — never steal it.
+      const active = document.activeElement
+      const inforeign =
+        active instanceof HTMLElement &&
+        !!active.closest('.edi-dialog-overlay, .cm-editor, input, textarea')
+      if (!inforeign) {
+        event.preventDefault()
+        void pasteAsMarkdownCommand()
+      }
     }
   })
 }
@@ -694,6 +705,14 @@ async function editPaste(): Promise<void> {
   } else if (text && text.trim() !== '') {
     insertPastedText(view, text)
   }
+}
+
+async function pasteAsMarkdownCommand(): Promise<void> {
+  const view = blockEditor?.getView()
+  if (!view) return
+  view.focus()
+  const text = await readText()
+  if (!pasteAsMarkdown(view, text)) await editPaste()
 }
 
 function pasteEvent(): ClipboardEvent {
@@ -895,6 +914,7 @@ function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
       onSelect: () => editCopy(),
     },
     { type: 'item', label: 'Paste', onSelect: () => void editPaste() },
+    { type: 'item', label: 'Paste as Markdown', onSelect: () => void pasteAsMarkdownCommand() },
     { type: 'item', label: 'Select all', onSelect: () => editSelectAll() },
   ]
   // A right-click on a link is how it is edited: a left-click opens it, and
@@ -1123,6 +1143,7 @@ function init(): void {
     cut: () => editCut(),
     copy: () => editCopy(),
     paste: () => void editPaste(),
+    pasteAsMarkdown: () => void pasteAsMarkdownCommand(),
     selectAll: () => editSelectAll(),
     find: () => openSearch(),
     replace: () => openSearch(true),

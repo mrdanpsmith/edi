@@ -1271,7 +1271,7 @@ describe('context menu', () => {
     const labels = Array.from(document.querySelectorAll('.edi-menu-item'))
       .map((button) => (button as HTMLButtonElement).textContent ?? '')
     expect(labels).toEqual([
-      'Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Select all', 'Find…', 'Replace…',
+      'Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Paste as Markdown', 'Select all', 'Find…', 'Replace…',
     ])
     // Repeated right-clicks replace the open menu instead of stacking menus.
     editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 30, clientY: 30 }))
@@ -1361,6 +1361,43 @@ describe('context menu', () => {
     sourceMenuItem('Copy').click()
     await flushAsync()
     expect(mainState.copyText).toHaveBeenCalledWith('hunter2')
+  })
+
+  it('Paste as Markdown parses clipboard text into real nodes', async () => {
+    const { view } = await mountLinkDoc('Hello')
+    mainState.readText.mockResolvedValue('# Title\n\n- one\n- two')
+
+    clickMenuItem(view.dom, 'Paste as Markdown')
+    await flushAsync()
+    expect(view.state.doc.firstChild?.type.name).toBe('heading')
+    expect(view.state.doc.firstChild?.textContent).toBe('Title')
+    expect(view.state.doc.childCount).toBeGreaterThanOrEqual(3)
+    view.destroy()
+  })
+
+  it('Mod-Shift-V parses clipboard text as markdown', async () => {
+    const { view } = await mountLinkDoc('Hello')
+    mainState.readText.mockResolvedValue('## Heading from shortcut')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'V', code: 'KeyV', ctrlKey: true, shiftKey: true }))
+    await flushAsync()
+    expect(view.state.doc.firstChild?.type.name).toBe('heading')
+    expect(view.state.doc.firstChild?.textContent).toBe('Heading from shortcut')
+    view.destroy()
+  })
+
+  it('Mod-Shift-V does not steal paste from a focused input', async () => {
+    const { view } = await mountLinkDoc('Hello')
+    mainState.readText.mockResolvedValue('# Should not appear')
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'V', code: 'KeyV', ctrlKey: true, shiftKey: true }))
+    await flushAsync()
+    expect(view.state.doc.textContent).toBe('Hello')
+    input.remove()
+    view.destroy()
   })
 
   /** Right-click `target` and press the menu's item named `label`. */

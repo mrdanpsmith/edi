@@ -19,6 +19,7 @@ export interface MenuCommands {
   cut: () => void
   copy: () => void
   paste: () => void
+  pasteAsMarkdown: () => void
   selectAll: () => void
   find: () => void
   replace: () => void

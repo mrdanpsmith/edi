@@ -398,6 +398,7 @@ class MainWindow(QMainWindow):
             ("Cu&t\tCtrl+X", "cut"),
             ("&Copy\tCtrl+C", "copy"),
             ("&Paste\tCtrl+V", "paste"),
+            ("Paste as &Markdown\tCtrl+Shift+V", "pasteAsMarkdown"),
         ):
             action = QAction(label, self)
             action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
