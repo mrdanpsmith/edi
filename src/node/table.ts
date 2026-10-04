@@ -18,7 +18,7 @@ import {
   type InlineCellHost,
   type InlineCellKind,
 } from '../inline-format'
-import { bindCellMaskedField, maskedFieldToMarkdown, promptForNewSecret } from './masked'
+import { bindCellMaskedField, maskedFieldToMarkdown, primeMaskedFieldReveal, promptForNewSecret } from './masked'
 import { ContextMenu, type ContextMenuEntry } from '../contextmenu'
 
 interface CellRef {
@@ -2277,6 +2277,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     const current = next[row]?.[col] ?? ''
     next[row]![col] = current.trim() ? `${current} ${maskedFieldToMarkdown(secret.envelope, secret.label)}` : maskedFieldToMarkdown(secret.envelope, secret.label)
     this.commitRows(next, { row, col }, { row, col })
+    primeMaskedFieldReveal(secret.envelope, secret.password, secret.value)
   }
 
   // --- Clipboard ---

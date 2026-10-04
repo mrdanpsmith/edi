@@ -1847,6 +1847,7 @@ describe('context menu', () => {
       'Select all',
       'Table view',
       'Edit source',
+      'Encrypt block…',
     ])
 
     teardown()
@@ -1864,7 +1865,7 @@ describe('context menu', () => {
     const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
-    expect(menuLabels()).toEqual(['Table view', 'Edit source'])
+    expect(menuLabels()).toEqual(['Table view', 'Edit source', 'Encrypt block…'])
 
     teardown()
   })
@@ -1887,7 +1888,7 @@ describe('context menu', () => {
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     expect(mainState.spreadsheetMenuEntries).toHaveBeenCalledWith(cell)
-    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Table view', 'Edit source'])
+    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Table view', 'Edit source', 'Encrypt block…'])
 
     findMenuItem('Cut').click()
     expect(cut).toHaveBeenCalledTimes(1)

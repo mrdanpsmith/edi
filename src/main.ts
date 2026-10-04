@@ -39,15 +39,20 @@ import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
 import { toggleSourceMode } from './blockplugin'
 import { commitSourceMode } from './blockview'
+import { findBlockPosForHandle } from './blockhandle'
 import { isMisleadingLink } from './linkSecurity'
 import { applyLink, NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
 import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
+import { serializeBlock } from './markdown'
+import { promptForEncryptedBlockLabel, promptForNewPassword } from './crypto-dialog'
+import { encryptFieldVerified } from './crypto'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import welcomeMarkdown from './docs/welcome.md?raw'
 import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
+import { setEncryptedBlockImageResolver, primeEncryptedBlockShow } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
 import { enterDiagramEditMode, exitDiagramEditMode, insertKanbanBoard } from './node/mermaid'
@@ -1022,6 +1027,13 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
         void copyText(text)
       })
     }
+    const handle = runnable.querySelector<HTMLElement>(':scope > .block-handle[data-block-pos], :scope > div > .block-handle[data-block-pos]') ?? runnable.querySelector<HTMLElement>('.block-handle[data-block-pos]')
+    let rPos = handle ? findBlockPosForHandle(view, handle) : null
+    if (rPos === null && handle) {
+      const p = Number(handle.dataset.blockPos)
+      if (Number.isInteger(p)) rPos = p
+    }
+    if (rPos !== null) addItem('Encrypt block…', () => { void encryptBlockAt(view, rPos) })
     return entries
   }
 
@@ -1035,10 +1047,37 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
     return entries
   }
 
-  const visual = target.closest('.mermaid, .block-visual-mode, .spreadsheet, .ss-plain')
-  if (visual) {
-    const img = visual.querySelector<HTMLImageElement>('.mermaid-img')
-    const svg = visual.querySelector<SVGSVGElement>('.mermaid svg[id]')
+  // Right-clicking text inside nested blocks (lists, blockquotes) must still
+  // find the *visible* top-level wrapper: walk up to the enclosing block
+  // surface and use its own block handle.
+  let wrapper: Element | null = null
+  let handleEl: HTMLElement | null = null
+  let handlePos: number | null = null
+  {
+    let el: Element | null = target
+    while (el) {
+      if (el.matches('.mermaid, .block-visual-mode, .spreadsheet, .ss-plain, .runnable-block, .encrypted-block')) {
+        const h = el.querySelector<HTMLElement>(':scope > .block-handle[data-block-pos]') ?? el.querySelector<HTMLElement>('.block-handle[data-block-pos]')
+        if (h) {
+          wrapper = el
+          handleEl = h
+          break
+        }
+      }
+      el = el.parentElement
+    }
+  }
+
+  if (wrapper && handleEl) {
+    handlePos = findBlockPosForHandle(view, handleEl)
+    if (handlePos === null) {
+      const p = Number(handleEl.dataset.blockPos)
+      if (Number.isInteger(p)) handlePos = p
+      else handlePos = null
+    }
+    if (handlePos === null) return entries
+    const img = wrapper.querySelector<HTMLImageElement>('.mermaid-img')
+    const svg = wrapper.querySelector<SVGSVGElement>('.mermaid svg[id]')
     if (img ?? svg) {
       addItem('Copy image', () => {
         void copyMermaidAsImage(img ?? (svg as SVGSVGElement)).then((result) => {
@@ -1057,29 +1096,64 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
         })
       })
     }
-    const handle = visual.querySelector<HTMLElement>('.block-handle[data-block-pos]')
-    const pos = handle ? Number(handle.dataset.blockPos) : NaN
-    if (Number.isInteger(pos) && pos >= 0 && pos < view.state.doc.content.size) {
-      if (visual.classList.contains('spreadsheet')) {
-        addItem('Table view', () => enterPlainMode(view, pos))
-      } else if (visual.classList.contains('ss-plain')) {
-        addItem('Spreadsheet mode', () => enterSpreadsheetMode(view, pos))
-      } else if (visual.classList.contains('mermaid')) {
-        if (visual.classList.contains('mermaid-editing')) {
-          addItem('Done editing', () => exitDiagramEditMode(view, pos))
-        } else {
-          addItem('Edit diagram', () => enterDiagramEditMode(view, pos))
-        }
+    if (wrapper.classList.contains('spreadsheet')) {
+      addItem('Table view', () => enterPlainMode(view, handlePos!))
+    } else if (wrapper.classList.contains('ss-plain')) {
+      addItem('Spreadsheet mode', () => enterSpreadsheetMode(view, handlePos!))
+    } else if (wrapper.classList.contains('mermaid')) {
+      if (wrapper.classList.contains('mermaid-editing')) {
+        addItem('Done editing', () => exitDiagramEditMode(view, handlePos!))
+      } else {
+        addItem('Edit diagram', () => enterDiagramEditMode(view, handlePos!))
       }
-      addItem('Edit source', () => {
-        view.dispatch(toggleSourceMode(view.state, pos))
-      })
+    }
+    addItem('Edit source', () => {
+      view.dispatch(toggleSourceMode(view.state, handlePos!))
+    })
+    const blockNode = view.state.doc.nodeAt(handlePos!)
+    if (blockNode && blockNode.type.name !== 'encrypted_block') {
+      addItem('Encrypt block…', () => { void encryptBlockAt(view, handlePos!) })
     }
   }
   return entries
 }
 
+
+
+function encryptBlockCommand(): void {
+  const view = blockEditor?.getView()
+  if (!view) return
+  const selPos = view.state.selection.from
+  let blockPos = -1
+  view.state.doc.forEach((node, offset) => {
+    if (blockPos >= 0) return
+    if (selPos >= offset && selPos <= offset + node.nodeSize) blockPos = offset
+  })
+  if (blockPos < 0) return
+  void encryptBlockAt(view, blockPos)
+}
+
+async function encryptBlockAt(view: ReturnType<BlockEditor['getView']>, pos: number): Promise<void> {
+  const node = view.state.doc.nodeAt(pos)
+  if (!node) return
+  const label = await promptForEncryptedBlockLabel(node.type.name)
+  if (label === null) return
+  const password = await promptForNewPassword(label || node.type.name, { okText: 'Encrypt', title: 'Set password' })
+  if (password === null) return
+  const markdown = serializeBlock(node, formulaEnvFor(view.state))
+  const envelope = await encryptFieldVerified(markdown, password)
+  const encrypted = view.state.schema.nodes.encrypted_block.create({ type: node.type.name, label, content: envelope })
+  view.dispatch(view.state.tr.replaceWith(pos, pos + node.nodeSize, encrypted))
+  view.focus()
+  // Freshly encrypted blocks arrive unlocked (no second lock), per UX request.
+  primeEncryptedBlockShow(password)
+  const nodeDom = view.nodeDOM(pos) ?? view.dom.querySelector('.encrypted-block')
+  const toggle = nodeDom instanceof HTMLElement ? nodeDom.querySelector<HTMLButtonElement>('.encrypted-block-toggle') : null
+  toggle?.click()
+}
+
 function init(): void {
+  setEncryptedBlockImageResolver(resolveImageFileUrl)
   blockEditor = createBlockEditor(editorContainer, '', {
     onOpenLink: openLink,
     onChange: () => setActiveDirty(true),
@@ -1145,6 +1219,7 @@ function init(): void {
     paste: () => void editPaste(),
     pasteAsMarkdown: () => void pasteAsMarkdownCommand(),
     selectAll: () => editSelectAll(),
+    encryptBlock: () => void encryptBlockCommand(),
     find: () => openSearch(),
     replace: () => openSearch(true),
     openRecent: (path) => {

@@ -512,3 +512,8 @@ describe('heading custom ids', () => {
     expect(doc.firstChild!.attrs.id).toBeNull()
   })
 })
+
+it('round-trips an encrypted_block fence', () => {
+  const md = '```encrypted type="paragraph" label="Secret"\nYWJjMTIz\n```\n\nafter\n'
+  expect(serialize(md)).toBe(md)
+})

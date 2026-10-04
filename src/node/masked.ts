@@ -354,6 +354,14 @@ export class MaskedFieldInteractions {
     this.backend.present()
   }
 
+  /** Reveal a just-created field whose password the user just typed. */
+  unlockSilently(value: string, password: string, content: string): void {
+    this.password = password
+    this.plaintext = value
+    this.unlockedContent = content
+    this.backend.present()
+  }
+
   async copy(): Promise<void> {
     if (this.editActive) return
     if (this.plaintext !== null) {
@@ -546,6 +554,15 @@ class MaskedFieldNodeView implements NodeView {
       present: () => this.render(),
     })
 
+    // A freshly-inserted field is left revealed until the user hides it:
+    // the user just typed the value and the password.
+    const initial = String(this.node.attrs.content ?? '')
+    if (primedFieldReveal && primedFieldReveal.content === initial) {
+      const primed = primedFieldReveal
+      primedFieldReveal = null
+      this.interactions.unlockSilently(primed.value, primed.password, primed.content)
+    }
+
     this.dom = document.createElement('span')
     this.dom.className = 'masked-field'
     this.dom.addEventListener('mousedown', (e) => e.preventDefault())
@@ -672,6 +689,12 @@ export function bindCellMaskedField(
     },
   })
 
+  if (primedFieldReveal && primedFieldReveal.content === content) {
+    const primed = primedFieldReveal
+    primedFieldReveal = null
+    it.unlockSilently(primed.value, primed.password, primed.content)
+  }
+
   pill.classList.add('masked-field-cell')
   pill.addEventListener('mousedown', (e) => {
     e.preventDefault()
@@ -732,6 +755,8 @@ export const maskedFieldNodeViewPlugin = new Plugin({
 export interface NewSecret {
   envelope: string
   label: string
+  password: string
+  value: string
 }
 
 /** One prompt to create a brand-new secret: name it, type the value, set its password. */
@@ -746,10 +771,17 @@ export async function promptForNewSecret(): Promise<NewSecret | null> {
   if (password === null) return null
   try {
     const envelope = await encryptFieldVerified(created.value, password)
-    return { envelope, label: created.label }
+    return { envelope, label: created.label, password, value: created.value }
   } catch {
     return null
   }
+}
+
+/** One pending reveal injected right after a masked field is inserted. */
+let primedFieldReveal: { content: string; password: string; value: string } | null = null
+
+export function primeMaskedFieldReveal(content: string, password: string, value: string): void {
+  primedFieldReveal = { content, password, value }
 }
 
 export async function insertMaskedFieldCommand(view: EditorView): Promise<boolean> {
@@ -769,5 +801,8 @@ export async function insertMaskedFieldCommand(view: EditorView): Promise<boolea
   tr.replaceSelectionWith(node, false)
   view.dispatch(tr)
   view.focus()
+  // The user just typed the value and the password: render it revealed
+  // until they explicitly hide it (no prompt on first insert).
+  primeMaskedFieldReveal(secret.envelope, secret.password ?? '', secret.value)
   return true
 }

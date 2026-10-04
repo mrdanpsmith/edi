@@ -238,6 +238,36 @@ const nodes: SchemaSpec['nodes'] = {
     },
   },
 
+  encrypted_block: {
+    group: 'block',
+    marks: '',
+    code: true,
+    atom: true,
+    attrs: {
+      type: { default: '' },
+      label: { default: '' },
+      content: { default: '' },
+      _source: { default: false },
+    },
+    parseDOM: [{
+      tag: '[data-encrypted-block]',
+      getAttrs(dom: HTMLElement) {
+        return {
+          type: dom.getAttribute('data-type') ?? '',
+          label: dom.getAttribute('data-label') ?? '',
+          content: dom.querySelector('pre')?.textContent ?? '',
+        }
+      },
+    }],
+    toDOM(node) {
+      return ['div', {
+        'data-encrypted-block': 'true',
+        'data-type': node.attrs.type as string,
+        'data-label': node.attrs.label as string,
+      }, ['pre', { style: 'white-space:pre-wrap' }, node.attrs.content as string]]
+    },
+  },
+
   source_block: {
     group: 'block',
     marks: '',

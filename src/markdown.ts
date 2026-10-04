@@ -216,6 +216,17 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       if (lang === 'mermaid') {
         return schema.node('mermaid_block', { value: node.value ?? '' })
       }
+      if (lang === 'encrypted') {
+        const info: Record<string, string> = {}
+        for (const match of (node.meta ?? '').matchAll(/(\w+)="([^"]*)"/g)) {
+          info[match[1]!] = match[2]!
+        }
+        return schema.node('encrypted_block', {
+          type: info['type'] ?? '',
+          label: info['label'] ?? '',
+          content: node.value ?? '',
+        })
+      }
       const value = node.value ?? ''
       const infoShebang = shebangFromFenceInfo(lang, node.meta ?? '')
       if (infoShebang) {
@@ -360,6 +371,14 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
 
     case 'list_item':
       return serializeListItem(node, indent, env)
+
+    case 'encrypted_block': {
+      const content = node.attrs.content as string
+      const typeAttr = node.attrs.type ? ` type="${node.attrs.type as string}"` : ''
+      const labelAttr = node.attrs.label ? ` label="${(node.attrs.label as string).replace(/"/g, '')}"` : ''
+      const fence = codeFence(content)
+      return indent + fence + 'encrypted' + typeAttr + labelAttr + '\n' + content + '\n' + indent + fence
+    }
 
     case 'code_block': {
       const lang = (node.attrs.language as string) ?? ''

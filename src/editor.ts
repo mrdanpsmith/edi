@@ -18,6 +18,7 @@ import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import { formulaDefsPlugin, formulaEnvFor } from './formulaDefs'
 import { maskedFieldNodeViewPlugin } from './node/masked'
+import { encryptedBlockNodeViewPlugin } from './node/encryptedblock'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
@@ -157,6 +158,8 @@ export interface BlockEditorOptions {
   onOpenLink?: (href: string, text: string) => void
   onChange?: () => void
   resolveImageSrc?: ResolveImage
+  /** Render as a read-only view (selection/copy allowed, typing disabled). */
+  readonly?: boolean
 }
 
 /** One link in the document, as the range of linked text it covers. */
@@ -253,6 +256,7 @@ export function createBlockEditor(
     formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,
+    encryptedBlockNodeViewPlugin,
     tableNodeViewPlugin,
     taskClickPlugin(),
     blockTypeSelectPlugin(),
@@ -291,6 +295,7 @@ export function createBlockEditor(
   const view = new EditorView(parent, {
     state: createState(initialMarkdown),
     dispatchTransaction,
+    ...(options.readonly ? { editable: () => false } : {}),
   })
   viewRef.current = view
 

@@ -381,6 +381,7 @@ export function taskClickPlugin(): Plugin {
           event.preventDefault()
           const { state, dispatch } = view
           const liPos = view.posAtDOM(li, 0)
+          if (liPos < 0) return false
           const $li = state.doc.resolve(liPos)
           const liRes = findListItemAncestor($li)
           if (!liRes) return false

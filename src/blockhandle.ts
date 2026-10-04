@@ -1,7 +1,7 @@
 import type { EditorView } from 'prosemirror-view'
 import { getSourceBlockState, toggleSourceMode } from './blockplugin'
 
-function findBlockPosForHandle(view: EditorView, handleEl: Element): number | null {
+export function findBlockPosForHandle(view: EditorView, handleEl: Element): number | null {
   let wrapper: Element | null = handleEl.parentElement
   while (wrapper && wrapper !== view.dom) {
     if (wrapper.parentElement === view.dom) break

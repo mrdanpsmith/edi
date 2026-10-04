@@ -2604,3 +2604,51 @@ body {
 .ss-ac-item-summary {
   color: var(--text-secondary);
 }
+
+/* Encrypted blocks */
+
+.encrypted-block {
+  box-sizing: border-box;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  margin: 1em 0;
+  margin-left: 24px;
+  font-size: 13px;
+}
+
+.encrypted-block-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.encrypted-block-label {
+  color: var(--text-muted);
+}
+
+.encrypted-block-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.encrypted-block-reveal {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  background: var(--editor-bg);
+  font-size: 14px;
+  white-space: normal;
+}
+
+/* The reveal editor is a full ProseMirror: strip its outer padding so the
+   plaintext starts right at the reveal frame's own padding. */
+.encrypted-block-reveal .ProseMirror {
+  padding: 0;
+  padding-bottom: 0;
+  font-size: inherit;
+}

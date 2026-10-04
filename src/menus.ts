@@ -21,6 +21,7 @@ export interface MenuCommands {
   paste: () => void
   pasteAsMarkdown: () => void
   selectAll: () => void
+  encryptBlock: () => void
   find: () => void
   replace: () => void
   openRecent: (path?: string) => void

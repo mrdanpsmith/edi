@@ -412,6 +412,12 @@ class MainWindow(QMainWindow):
 
         edit_menu.addSeparator()
 
+        encrypt_block_action = QAction("&Encrypt Block…", self)
+        encrypt_block_action.triggered.connect(lambda _checked=False: self._menu_command("encryptBlock"))
+        edit_menu.addAction(encrypt_block_action)
+
+        edit_menu.addSeparator()
+
         for label, command in (
             ("&Find…\tCtrl+F", "find"),
             ("&Replace…\tCtrl+H", "replace"),
