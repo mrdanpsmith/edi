@@ -83,17 +83,20 @@ describe('encrypted_block', () => {
     await tick()
     const reveal = getActiveEncryptedBlockView()!
     reveal.dispatch(reveal.state.tr.insertText(' world'))
-    await new Promise((r) => setTimeout(r, 800))
-    let md = editor.getMarkdown()
-    let m = md.match(/```encrypted[^\n]*\n([^\n]*)\n```/)
-    expect(await decryptField(m![1]!, password)).toContain('world')
-
+    await vi.waitFor(async () => {
+      const md = editor.getMarkdown()
+      const m = md.match(/```encrypted[^\n]*\n([^\n]*)\n```/)
+      expect(await decryptField(m![1]!, password)).toContain('world')
+    }, { timeout: 10000, interval: 200 })
     reveal.dispatch(reveal.state.tr.insertText(' again'))
     document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
-    await new Promise((r) => setTimeout(r, 800))
-    md = editor.getMarkdown()
-    m = md.match(/```encrypted[^\n]*\n([^\n]*)\n```/)
-    expect(await decryptField(m![1]!, password)).toContain('again')
+    await vi.waitFor(async () => {
+      const inner = await decryptField(
+        editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)![1]!,
+        password,
+      )
+      expect(inner).toContain('again')
+    }, { timeout: 10000, interval: 200 })
     editor.destroy()
   })
 
@@ -109,8 +112,13 @@ describe('encrypted_block', () => {
     const reveal = getActiveEncryptedBlockView()!
     reveal.dispatch(reveal.state.tr.insertText(' again'))
     document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
-    await new Promise((r) => setTimeout(r, 800))
-    expect(await decryptField((editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)!)[1]!, '')).toContain('again')
+    await vi.waitFor(async () => {
+      const inner = await decryptField(
+        (editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)!)[1]!,
+        '',
+      )
+      expect(inner).toContain('again')
+    }, { timeout: 10000, interval: 200 })
     editor.destroy()
   })
 
