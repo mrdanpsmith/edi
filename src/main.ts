@@ -31,6 +31,9 @@ import {
 } from './files'
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText } from './paste'
+import { EditorView } from '@codemirror/view'
+import { EditorSelection } from '@codemirror/state'
+import { undo as cmUndo, redo as cmRedo } from '@codemirror/commands'
 import { copyText, readText, writeClipboard } from './clipboard'
 import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
@@ -781,10 +784,12 @@ function hasEditorSelection(): boolean {
  */
 function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
   const target = event.target instanceof Element ? event.target : null
-  const input = target?.closest<HTMLInputElement>('.ss-edit-input, .ss-fx-input') ?? null
+  const input = target?.closest<HTMLInputElement | HTMLTextAreaElement>('.ss-edit-input, .ss-fx-input, .masked-field-input, .mermaid-edit-input') ?? null
   let entries: ContextMenuEntry[]
   if (input) {
     entries = buildInputMenu(input)
+  } else if (target?.closest('.cm-editor')) {
+    entries = buildSourceEditorMenu(target)
   } else if (target?.closest('.spreadsheet, .ss-plain')) {
     // The node view owns the grid's editing commands; the plain/read-only
     // view has none, so it falls through to the block actions alone.
@@ -803,7 +808,7 @@ function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
 }
 
 /** Standard editing commands scoped to the focused spreadsheet input. */
-function buildInputMenu(input: HTMLInputElement): ContextMenuEntry[] {
+function buildInputMenu(input: HTMLInputElement | HTMLTextAreaElement): ContextMenuEntry[] {
   const hasSelection = input.selectionStart !== input.selectionEnd
   const canUndo = typeof document.execCommand === 'function'
   return [
@@ -837,23 +842,23 @@ function buildInputMenu(input: HTMLInputElement): ContextMenuEntry[] {
   ]
 }
 
-function inputSelection(input: HTMLInputElement): { text: string; start: number; end: number } {
+function inputSelection(input: HTMLInputElement | HTMLTextAreaElement): { text: string; start: number; end: number } {
   const start = input.selectionStart ?? 0
   const end = input.selectionEnd ?? start
   return { text: input.value.slice(start, end), start, end }
 }
 
-function runInputHistory(input: HTMLInputElement, command: 'undo' | 'redo'): void {
+function runInputHistory(input: HTMLInputElement | HTMLTextAreaElement, command: 'undo' | 'redo'): void {
   input.focus()
   if (typeof document.execCommand === 'function') document.execCommand(command)
 }
 
-function copyInput(input: HTMLInputElement): void {
+function copyInput(input: HTMLInputElement | HTMLTextAreaElement): void {
   const { text } = inputSelection(input)
   if (text) void copyText(text)
 }
 
-function cutInput(input: HTMLInputElement): void {
+function cutInput(input: HTMLInputElement | HTMLTextAreaElement): void {
   const { text, start, end } = inputSelection(input)
   if (!text) return
   void copyText(text)
@@ -862,7 +867,55 @@ function cutInput(input: HTMLInputElement): void {
   input.focus()
 }
 
-async function pasteIntoInput(input: HTMLInputElement): Promise<void> {
+/** Standard editing commands scoped to the right-clicked CodeMirror source editor. */
+function buildSourceEditorMenu(target: Element): ContextMenuEntry[] {
+  const el = target.closest<HTMLElement>('.cm-editor')
+  const cmView = el ? EditorView.findFromDOM(el) : null
+  const sel = cmView?.state.selection.main
+  const hasSelection = !!sel && !sel.empty
+  return [
+    { type: 'item', label: 'Undo', onSelect: () => { if (cmView) cmUndo(cmView) } },
+    { type: 'item', label: 'Redo', onSelect: () => { if (cmView) cmRedo(cmView) } },
+    { type: 'separator' },
+    {
+      type: 'item',
+      label: 'Cut',
+      disabled: !hasSelection,
+      onSelect: () => {
+        if (!cmView || !sel || sel.empty) return
+        void copyText(cmView.state.sliceDoc(sel.from, sel.to))
+        cmView.dispatch({ changes: { from: sel.from, to: sel.to, insert: '' } })
+        cmView.focus()
+      },
+    },
+    {
+      type: 'item',
+      label: 'Copy',
+      disabled: !hasSelection,
+      onSelect: () => {
+        if (!cmView || !sel || sel.empty) return
+        void copyText(cmView.state.sliceDoc(sel.from, sel.to))
+        cmView.focus()
+      },
+    },
+    {
+      type: 'item',
+      label: 'Paste',
+      onSelect: () => {
+        if (!cmView) return
+        void readText().then((text) => {
+          if (text === null) return
+          const range = cmView.state.selection.main
+          cmView.dispatch({ changes: { from: range.from, to: range.to, insert: text } })
+          cmView.focus()
+        })
+      },
+    },
+    { type: 'item', label: 'Select all', onSelect: () => cmView?.dispatch({ selection: EditorSelection.single(0, cmView.state.doc.length) }) },
+  ]
+}
+
+async function pasteIntoInput(input: HTMLInputElement | HTMLTextAreaElement): Promise<void> {
   const text = await readText()
   if (text === null || text === '') return
   const { start, end } = inputSelection(input)

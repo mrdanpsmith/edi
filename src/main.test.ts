@@ -3,6 +3,8 @@ import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { history, undo } from 'prosemirror-history'
 import { schema } from './schema'
+import { EditorView as CMEditorView } from '@codemirror/view'
+import { EditorState as CMEditorState } from '@codemirror/state'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { type ContextMenuEntry } from './contextmenu'
 
@@ -1274,6 +1276,91 @@ describe('context menu', () => {
     // Repeated right-clicks replace the open menu instead of stacking menus.
     editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 30, clientY: 30 }))
     expect(document.querySelectorAll('.edi-context-menu')).toHaveLength(1)
+  })
+
+  /** A real CodeMirror editor mounted where the masked-field input branch looks. */
+  async function mountCodeMirror(doc: string): Promise<CMEditorView> {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const host = document.createElement('div')
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(host)
+    const view = new CMEditorView({
+      state: CMEditorState.create({ doc }),
+      parent: host,
+    })
+    return view
+  }
+
+  function sourceMenuLabels(): string[] {
+    return Array.from(document.querySelectorAll('.edi-menu-item'))
+      .map((button) => (button as HTMLButtonElement).textContent ?? '')
+  }
+
+  function sourceMenuItem(label: string): HTMLButtonElement {
+    const item = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .find((button) => button.textContent === label)
+    expect(item, `menu item ${label}`).toBeDefined()
+    return item!
+  }
+
+  it('offers the input menu (with selection-aware cut/copy) in a source editor', async () => {
+    const cm = await mountCodeMirror('Hello world')
+    cm.dom.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    expect(sourceMenuLabels()).toEqual(['Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Select all'])
+    // No selection in the CM editor: cut/copy disabled, not the ProseMirror
+    // document menu's stale state.
+    expect(sourceMenuItem('Cut').disabled).toBe(true)
+    expect(sourceMenuItem('Copy').disabled).toBe(true)
+
+    cm.dispatch({ selection: { anchor: 0, head: 5 } })
+    cm.dom.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    expect(sourceMenuItem('Cut').disabled).toBe(false)
+    expect(sourceMenuItem('Copy').disabled).toBe(false)
+
+    mainState.copyText.mockResolvedValue(true)
+    sourceMenuItem('Copy').click()
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('Hello')
+  })
+
+  it('cut in a source editor removes the selected text', async () => {
+    const cm = await mountCodeMirror('Hello world')
+    cm.dispatch({ selection: { anchor: 0, head: 5 } })
+    mainState.copyText.mockResolvedValue(true)
+    clickMenuItem(cm.dom, 'Cut')
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('Hello')
+    expect(cm.state.doc.toString()).toBe(' world')
+  })
+
+  it('paste in a source editor inserts at the selection', async () => {
+    const cm = await mountCodeMirror('world')
+    mainState.readText.mockResolvedValue('Hello ')
+    clickMenuItem(cm.dom, 'Paste')
+    await flushAsync()
+    expect(cm.state.doc.toString()).toBe('Hello world')
+  })
+
+  it('gives masked-field inputs the real input menu instead of the document menu', async () => {
+    await loadMain()
+    window.ediSetContent?.('Hello')
+    await flushAsync()
+    const input = document.createElement('input')
+    input.className = 'masked-field-input'
+    input.value = 'hunter2'
+    input.selectionStart = 0
+    input.selectionEnd = 7
+    document.querySelector<HTMLElement>('#editor-container')!.appendChild(input)
+
+    input.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    expect(sourceMenuLabels()).toEqual(['Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Select all'])
+    expect(sourceMenuItem('Cut').disabled).toBe(false)
+
+    mainState.copyText.mockResolvedValue(true)
+    sourceMenuItem('Copy').click()
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('hunter2')
   })
 
   /** Right-click `target` and press the menu's item named `label`. */
