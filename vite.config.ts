@@ -5,6 +5,9 @@ export default defineConfig({
   clearScreen: false,
   base: './',
   build: {
+    // Single bundle by design (see codeSplitting below): it already exceeds
+    // the 500 kB default, so raise the limit rather than code-split.
+    chunkSizeWarningLimit: 6500,
     rolldownOptions: {
       output: {
         codeSplitting: false,
