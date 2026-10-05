@@ -2,7 +2,7 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 import remarkGfm from 'remark-gfm'
-import type { Node as ProseNode, Schema, Mark } from 'prosemirror-model'
+import type { Fragment, Node as ProseNode, Schema, Mark } from 'prosemirror-model'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
@@ -594,6 +594,21 @@ export function proseToMarkdown(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV): 
 
 export function serializeBlock(node: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {
   return serializeNode(node, '', env)
+}
+
+/**
+ * Markdown for the content of a selection (`view.state.selection.content()`),
+ * so "Copy as Markdown" copies exactly the selected blocks/inlines. The slice's
+ * fragment is wrapped in a throwaway doc and serialized with the same path the
+ * document itself saves through.
+ */
+export function sliceMarkdown(
+  content: Fragment,
+  mdSchema: Schema,
+  env: FormulaEnv = BUILTIN_ENV,
+): string {
+  const doc = mdSchema.nodes.doc.create(null, content)
+  return serializeNode(doc, '', env).trim()
 }
 
 export function extractBlockMarkdown(

@@ -2343,3 +2343,44 @@ describe('TableNodeView formula point mode', () => {
     view.destroy()
   })
 })
+describe('emoji autocomplete in a spreadsheet cell', () => {
+  it('offers emoji for a `:` token in the fx bar and accepts it', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 0, 0))
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    fx.value = ':rocket'
+    fx.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(document.body.querySelector('.emoji-suggest')).not.toBeNull()
+
+    // The emoji card owns Enter while it is open.
+    fx.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(fx.value).toBe('🚀')
+    expect(document.body.querySelector('.emoji-suggest')).toBeNull()
+    view.destroy()
+  })
+
+  it('never offers emoji inside a formula or a range reference', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 0, 0))
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    for (const draft of ['=SUM(A1:', '=A1:']) {
+      fx.value = draft
+      fx.dispatchEvent(new Event('input', { bubbles: true }))
+      expect(document.body.querySelector('.emoji-suggest')).toBeNull()
+    }
+    view.destroy()
+  })
+
+  it('offers emoji in the in-cell editor and strips back to the glyph', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    mousedown(cell(view, 0, 0))
+    gridkey(view, ':')
+    const input = view.dom.querySelector('.ss-edit-input') as HTMLInputElement
+    input.value = ':tada'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(document.body.querySelector('.emoji-suggest')).not.toBeNull()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(input.value).toBe('🎉')
+    view.destroy()
+  })
+})

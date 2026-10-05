@@ -112,6 +112,12 @@ holds only `!masked[…]{label="…"}` and renders a masked pill. Click one to
 reveal, copy or edit it (one password prompt per session) — the plaintext never
 enters the document.
 
+### Emoji
+
+Type `:` in body text, a table cell or the block source editor to search
+Unicode emoji by name (`:smile`, `:+1`, `:tada`); Enter/Tab accepts, Esc
+dismisses and leaves what you typed.
+
 ### Find and replace
 
 `Ctrl+F` / `Ctrl+H` search the document's own text, including the markup of
@@ -140,9 +146,9 @@ toggles markdown formatting on the selection. Hide the row with
 | Menu | Items |
 | --- | --- |
 | **File** | New, Open, Open Recent, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Quit |
-| **Edit** | Undo, Redo, Cut, Copy, Paste, Select All, Find…, Replace… |
+| **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
-| **View** | Toolbar |
+| **View** | Toolbar, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
 | **Help** | Edi Guide…, Formula Reference…, About Edi… |
 
 `Revert` and `Rename…` need a document that has been saved somewhere; renaming
@@ -158,12 +164,15 @@ the old file in one step, so it is never left under both names.
 | `Ctrl+O` | Open file (in a new tab) |
 | `Ctrl+S` | Save |
 | `Ctrl+Shift+S` | Save As |
-| `Ctrl+Shift+C` | Copy file path |
+| `Ctrl+Shift+C` | Copy selection as Markdown |
+| `Ctrl+Alt+Shift+C` | Copy file path |
+| `Ctrl+Shift+V` | Paste as Markdown |
 | `Ctrl+Shift+E` | Export preview as HTML |
 | `Ctrl+B` / `Ctrl+I` | Bold / italic |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste |
 | `Ctrl+A` | Select all |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom document in / out / reset |
 | `Ctrl+Shift+Up` / `Ctrl+Shift+Down` | Extend / shrink selection across blocks |
 | `Ctrl+F` | Find in current document |
 | `Ctrl+H` | Find & replace in current document |

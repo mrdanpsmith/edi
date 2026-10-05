@@ -66,6 +66,7 @@ const mainState = vi.hoisted(() => {
       () => null,
     ),
     markdown: 'Welcome',
+    selectionMarkdown: 'Welcome',
     editorView,
     editorOptions: undefined as { onChange?: () => void } | undefined,
   }
@@ -114,6 +115,7 @@ vi.mock('./editor', async (importOriginal) => ({
     return {
       getView: () => mainState.editorView,
       getMarkdown: () => mainState.markdown,
+      getSelectionMarkdown: () => mainState.selectionMarkdown,
       setMarkdown: (value: string) => { mainState.markdown = value },
       insertMarkdown: (value: string) => {
         mainState.markdown += value
@@ -220,6 +222,7 @@ const DOM_TEMPLATE = `
     </main>
     <footer id="statusbar">
       <span id="status-left"></span>
+      <button type="button" id="status-zoom" hidden></button>
       <span id="status-right"></span>
     </footer>
   </div>
@@ -316,6 +319,7 @@ beforeEach(() => {
   mainState.readText.mockReset().mockResolvedValue('PASTED')
   mainState.spreadsheetMenuEntries.mockReset().mockReturnValue(null)
   mainState.markdown = 'Welcome'
+  mainState.selectionMarkdown = 'Welcome'
   mainState.editorView = mainState.defaultEditorView
   mainState.editorOptions = undefined
   for (const mock of FILE_MOCKS) {
@@ -928,10 +932,10 @@ describe('copy file path', () => {
     expect(mainState.copyText).not.toHaveBeenCalled()
   })
 
-  it('is bound to Ctrl+Shift+C', async () => {
+  it('is bound to Ctrl+Alt+Shift+C', async () => {
     await openNotes()
     mainState.copyText.mockClear()
-    press('c', { shiftKey: true })
+    press('c', { shiftKey: true, altKey: true })
     await flushAsync()
     expect(mainState.copyText).toHaveBeenCalledWith('/tmp/notes.md')
   })
@@ -1383,6 +1387,32 @@ describe('context menu', () => {
     await flushAsync()
     expect(view.state.doc.firstChild?.type.name).toBe('heading')
     expect(view.state.doc.firstChild?.textContent).toBe('Heading from shortcut')
+    view.destroy()
+  })
+
+  it('Copy as Markdown puts the selection markdown on the clipboard', async () => {
+    const { view } = await mountLinkDoc('Hello **world**')
+    mainState.selectionMarkdown = 'Hello **world**'
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, view.state.doc.content.size - 1)),
+    )
+    mainState.copyText.mockClear()
+    menu('copyAsMarkdown')
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('Hello **world**')
+    view.destroy()
+  })
+
+  it('Mod-Shift-C copies as markdown', async () => {
+    const { view } = await mountLinkDoc('Hello **world**')
+    mainState.selectionMarkdown = '# Selected'
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, view.state.doc.content.size - 1)),
+    )
+    mainState.copyText.mockClear()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true }))
+    await flushAsync()
+    expect(mainState.copyText).toHaveBeenCalledWith('# Selected')
     view.destroy()
   })
 
@@ -1912,5 +1942,74 @@ describe('quit', () => {
     press('q')
     await flushAsync()
     expect(close).toHaveBeenCalled()
+  })
+})
+
+describe('document zoom', () => {
+  const applied = (): string => document.documentElement.style.getPropertyValue('--doc-zoom')
+
+  it('applies a saved level at boot', async () => {
+    localStorage.setItem('edi.zoom', '1.25')
+    await loadMain()
+    expect(applied()).toBe('1.25')
+  })
+
+  it('zooms from the View commands and the shortcut, and resets', async () => {
+    await loadMain()
+    expect(applied()).toBe('1')
+    menu('zoomIn')
+    await flushAsync()
+    expect(applied()).toBe('1.1')
+    menu('zoomTo', '2')
+    await flushAsync()
+    expect(applied()).toBe('2')
+    menu('zoomOut')
+    await flushAsync()
+    expect(applied()).toBe('1.75')
+    press('=', {})
+    await flushAsync()
+    expect(applied()).toBe('2')
+    menu('zoomReset')
+    await flushAsync()
+    expect(applied()).toBe('1')
+  })
+
+  it('zooms from Ctrl+wheel anywhere, not only over the editor', async () => {
+    await loadMain()
+    const status = document.querySelector('#statusbar')!
+    // Dispatched on the status bar (outside the editor surface): the listener
+    // has to be on `window`, or a Ctrl+wheel here would fall through to
+    // Chromium's whole-page zoom and scale the chrome.
+    status.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true }),
+    )
+    await flushAsync()
+    expect(applied()).toBe('1.1')
+
+    // A plain wheel is left to scroll.
+    status.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }))
+    await flushAsync()
+    expect(applied()).toBe('1.1')
+
+    // The throttle is time-based; step past it, then zoom back down.
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    status.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: 120, ctrlKey: true, bubbles: true, cancelable: true }),
+    )
+    await flushAsync()
+    expect(applied()).toBe('1')
+  })
+
+  it('shows the status indicator only away from 100%', async () => {
+    await loadMain()
+    const indicator = document.querySelector<HTMLButtonElement>('#status-zoom')!
+    expect(indicator.hidden).toBe(true)
+    menu('zoomIn')
+    await flushAsync()
+    expect(indicator.hidden).toBe(false)
+    expect(indicator.textContent).toBe('110%')
+    menu('zoomReset')
+    await flushAsync()
+    expect(indicator.hidden).toBe(true)
   })
 })

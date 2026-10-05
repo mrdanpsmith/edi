@@ -435,3 +435,25 @@ describe('scroller caret fallback', () => {
     editor.destroy()
   })
 })
+
+describe('getSelectionMarkdown', () => {
+  it('copies only the selected block as markdown', () => {
+    const editor = createBlockEditor(document.body, '# Title\n\npara **bold**\n\n- a\n- b')
+    const view = editor.getView()
+    const doc = view.state.doc
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, 1, doc.child(0).nodeSize - 1)))
+    expect(editor.getSelectionMarkdown()).toBe('# Title')
+    editor.destroy()
+  })
+
+  it('copies several selected blocks', () => {
+    const editor = createBlockEditor(document.body, '# Title\n\npara **bold**')
+    const view = editor.getView()
+    const doc = view.state.doc
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(doc, 1, doc.content.size - 1)),
+    )
+    expect(editor.getSelectionMarkdown()).toBe('# Title\n\npara **bold**')
+    editor.destroy()
+  })
+})

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { schema } from './schema'
-import { markdownToProse, proseToMarkdown, buildBlockOffsets, extractBlockMarkdown } from './markdown'
+import { markdownToProse, proseToMarkdown, sliceMarkdown, buildBlockOffsets, extractBlockMarkdown } from './markdown'
 import { encryptField } from './crypto'
 
 function serialize(markdown: string): string {
@@ -516,4 +516,17 @@ describe('heading custom ids', () => {
 it('round-trips an encrypted_block fence', () => {
   const md = '```encrypted type="paragraph" label="Secret"\nYWJjMTIz\n```\n\nafter\n'
   expect(serialize(md)).toBe(md)
+})
+
+describe('sliceMarkdown', () => {
+  it('serializes exactly the blocks a slice covers', () => {
+    const doc = markdownToProse('# Title\n\npara **bold**\n\n- a\n- b', schema)
+    const slice = doc.slice(0, doc.child(0).nodeSize + doc.child(1).nodeSize)
+    expect(sliceMarkdown(slice.content, schema)).toBe('# Title\n\npara **bold**')
+  })
+
+  it('serializes a partial paragraph', () => {
+    const doc = markdownToProse('hello world', schema)
+    expect(sliceMarkdown(doc.slice(1, 6).content, schema)).toBe('hello')
+  })
 })

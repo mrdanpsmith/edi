@@ -9,7 +9,7 @@ import { gapCursor } from 'prosemirror-gapcursor'
 import { dropCursor } from 'prosemirror-dropcursor'
 import { blockStartKeymap, blockStartRules } from './blockstart'
 import { schema } from './schema'
-import { markdownToProse, proseToMarkdown } from './markdown'
+import { markdownToProse, proseToMarkdown, sliceMarkdown } from './markdown'
 import { blockPlugin, getSourceBlockState, toggleSourceMode, BLOCK_PLUGIN_KEY } from './blockplugin'
 import { blockNodeView, BLOCK_NODE_TYPES, commitSourceMode } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
@@ -25,6 +25,7 @@ import { superscript } from './remark/sup'
 import { taskClickPlugin, toggleTaskItems, blockTypeSelectPlugin } from './toolbar'
 import { markExitPlugin, stopMarking } from './markExit'
 import { selectionExpandKeymap, selectionExpandPlugin, selectionHighlightPlugin, clipboardTextPlugin, isSelectionAtom } from './selectionExpand'
+import { emojiPlugin } from './emojiPlugin'
 import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
 import { imageNodeView, reResolveImages, type ResolveImage } from './image'
@@ -142,6 +143,8 @@ const blockToggleKeymap = keymap({
 export interface BlockEditor {
   getView(): EditorView
   getMarkdown(): string
+  /** Markdown source of the current selection ("Copy as Markdown"). */
+  getSelectionMarkdown(): string
   setMarkdown(markdown: string): void
   insertMarkdown(markdown: string): void
   commitSource(): boolean
@@ -236,6 +239,9 @@ export function createBlockEditor(
 
   const plugins = [
     history(),
+    // Before every keymap, so an open emoji card owns Enter/Tab/Esc instead of
+    // `baseKeymap` splitting the block or inserting a newline first.
+    emojiPlugin(),
     // Block-start markers convert on Enter as well. Can't go after the base
     // keymap: prosemirror-view iterates plugins from index 0, so an earlier
     // plugin wins. Right after history() outranks baseKeymap's undoInputRule /
@@ -329,6 +335,9 @@ export function createBlockEditor(
     },
     getMarkdown() {
       return proseToMarkdown(view.state.doc, formulaEnvFor(view.state))
+    },
+    getSelectionMarkdown() {
+      return sliceMarkdown(view.state.selection.content().content, view.state.schema, formulaEnvFor(view.state))
     },
     setMarkdown(markdown: string) {
       // A swapped-in document is a fresh editing context: build a brand-new

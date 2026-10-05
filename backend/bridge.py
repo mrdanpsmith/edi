@@ -393,6 +393,9 @@ class Bridge(QObject):
             can_copy_path=bool(args.get("canCopyPath")),
             toolbar_visible=bool(args.get("toolbarVisible")),
             can_rename=bool(args.get("canRename")),
+            zoom_factor=float(args.get("zoomFactor") or 1.0),
+            can_zoom_in=bool(args.get("canZoomIn", True)),
+            can_zoom_out=bool(args.get("canZoomOut", True)),
         )
         self._reply(request_id, None)
 

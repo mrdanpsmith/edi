@@ -14,6 +14,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QItemSelectionModel, QPoint, QPointF, QSettings, QSize, QUrl, Qt
 from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QImage, QMouseEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
     QApplication,
@@ -454,7 +455,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "&Save\tCtrl+S" in file_labels
     assert "Save &As…\tCtrl+Shift+S" in file_labels
     assert "&Revert" in file_labels
-    assert "Copy File &Path\tCtrl+Shift+C" in file_labels
+    assert "Copy File &Path\tCtrl+Alt+Shift+C" in file_labels
     assert "&Export HTML…\tCtrl+Shift+E" in file_labels
     assert "&Quit\tCtrl+Q" in file_labels
     # Open Recent belongs directly under Open.
@@ -474,6 +475,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "&Redo\tCtrl+Shift+Z" in edit_labels
     assert "Cu&t\tCtrl+X" in edit_labels
     assert "&Copy\tCtrl+C" in edit_labels
+    assert "Copy as &Markdown\tCtrl+Shift+C" in edit_labels
     assert "&Paste\tCtrl+V" in edit_labels
     assert "Paste as &Markdown\tCtrl+Shift+V" in edit_labels
     assert "Select &All\tCtrl+A" in edit_labels
@@ -588,6 +590,71 @@ def test_view_menu_toolbar_action_invokes_js_command(visible, qtbot):
     _assert_menu_action_sends_command(
         visible, qtbot, _menu_action(visible._view_menu, "&Toolbar"), "toggleToolbar"
     )
+
+
+def _read_zoom(window):
+    out = {}
+
+    def got(v):
+        out.update(json.loads(v) if isinstance(v, str) else {})
+
+    window._web.page().runJavaScript(
+        "JSON.stringify((() => { const pm = document.querySelector('.ProseMirror');"
+        " const tab = document.querySelector('#tabbar');"
+        " const home = document.querySelector('#home-screen');"
+        " return { zoom: getComputedStyle(pm).zoom,"
+        " home: getComputedStyle(home).zoom,"
+        " p: Math.round(pm.querySelector('p').getBoundingClientRect().height),"
+        " tab: Math.round(tab.getBoundingClientRect().height) }; })())",
+        got,
+    )
+    assert _pump_until(lambda: bool(out), timeout=5), "no zoom probe"
+    return out
+
+
+def test_document_zoom_scales_the_editor_not_the_chrome(visible, qtbot):
+    window = visible
+    window._web.page().runJavaScript("window.ediSetContent('Hello world'); true")
+    time.sleep(0.4)
+
+    # The level is global and persisted, so normalise to 100% first.
+    QTest.keyClick(window, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
+    assert _pump_until(lambda: _read_zoom(window)["zoom"] == "1", timeout=5)
+    base = _read_zoom(window)
+
+    # Ctrl+= is a real QAction shortcut: the editor grows, the chrome does not.
+    QTest.keyClick(window, Qt.Key.Key_Equal, Qt.KeyboardModifier.ControlModifier)
+    assert _pump_until(lambda: _read_zoom(window)["zoom"] == "1.1", timeout=5)
+    zoomed = _read_zoom(window)
+    assert zoomed["p"] > base["p"], (base, zoomed)
+    assert zoomed["tab"] == base["tab"], (base, zoomed)
+    # The start screen is a document surface too.
+    assert zoomed["home"] == "1.1", (base, zoomed)
+
+    QTest.keyClick(window, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
+    assert _pump_until(lambda: _read_zoom(window)["zoom"] == "1", timeout=5)
+    assert _read_zoom(window)["p"] == base["p"]
+
+
+def test_document_zoom_view_menu_has_levels_and_reset(visible, qtbot):
+    window = visible
+    labels = [action.text() for action in window._view_menu.actions()]
+    assert "Zoom &In" in labels
+    assert "Zoom &Out" in labels
+    assert "&Reset Zoom" in labels
+    assert "&Zoom" in labels
+    # The in/out actions are disabled at the ends of the ladder.
+    window.update_menu_state(
+        can_revert=False,
+        can_copy_path=False,
+        toolbar_visible=True,
+        zoom_factor=3.0,
+        can_zoom_in=False,
+        can_zoom_out=True,
+    )
+    assert window._zoom_in_action.isEnabled() is False
+    assert window._zoom_out_action.isEnabled() is True
+    assert window._zoom_actions[3.0].isChecked() is True
 
 
 def test_help_menu_edi_guide_action_invokes_js_command(visible, qtbot):

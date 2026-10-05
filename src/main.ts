@@ -43,6 +43,19 @@ import { findBlockPosForHandle } from './blockhandle'
 import { isMisleadingLink } from './linkSecurity'
 import { applyLink, NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
+import {
+  applyZoom,
+  canZoomIn,
+  canZoomOut,
+  clampZoom,
+  DEFAULT_ZOOM,
+  formatZoom,
+  isDefaultZoom,
+  loadZoom,
+  saveZoom,
+  zoomIn,
+  zoomOut,
+} from './zoom'
 import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
 import { serializeBlock } from './markdown'
@@ -75,9 +88,13 @@ const editorContainer = document.querySelector<HTMLElement>('#editor-container')
 const toolbarEl = document.querySelector<HTMLElement>('#toolbar')!
 const statusLeft = document.querySelector<HTMLElement>('#status-left')!
 const statusRight = document.querySelector<HTMLElement>('#status-right')!
+const statusZoom = document.querySelector<HTMLButtonElement>('#status-zoom')!
 const tabbar = document.querySelector<HTMLElement>('#tabbar')!
 
 let lastNativeTitle = ''
+
+/** The current document zoom (see `src/zoom.ts`). */
+let documentZoom = DEFAULT_ZOOM
 
 let blockEditor: BlockEditor | null = null
 let toolbar: Toolbar | null = null
@@ -155,6 +172,41 @@ function updateStatus(): void {
   statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
 }
 
+function updateZoomIndicator(): void {
+  statusZoom.textContent = formatZoom(documentZoom)
+  statusZoom.hidden = isDefaultZoom(documentZoom)
+}
+
+function setZoom(factor: number): void {
+  documentZoom = clampZoom(factor)
+  applyZoom(documentZoom)
+  saveZoom(documentZoom)
+  updateZoomIndicator()
+  syncMenuState()
+}
+
+function zoomTo(level?: string): void {
+  const factor = Number(level)
+  if (Number.isFinite(factor)) setZoom(factor)
+}
+
+let lastZoomWheel = 0
+
+/**
+ * Ctrl+wheel / trackpad pinch zooms the document. It is throttled so a single
+ * gesture is a step, not a burst, and `preventDefault` keeps Chromium's
+ * whole-page zoom (which would scale the tab bar too) from firing.
+ */
+function onZoomWheel(event: WheelEvent): void {
+  if (!(event.ctrlKey || event.metaKey)) return
+  event.preventDefault()
+  const now = Date.now()
+  if (now - lastZoomWheel < 100) return
+  lastZoomWheel = now
+  if (event.deltaY < 0) setZoom(zoomIn(documentZoom))
+  else if (event.deltaY > 0) setZoom(zoomOut(documentZoom))
+}
+
 function afterActivate(): void {
   updateTitle()
   updateStatus()
@@ -173,6 +225,9 @@ function syncMenuState(): void {
     canCopyPath: Boolean(active?.path),
     canRename: Boolean(active?.path),
     toolbarVisible: toolbar?.isVisible() ?? true,
+    zoomFactor: documentZoom,
+    canZoomIn: canZoomIn(documentZoom),
+    canZoomOut: canZoomOut(documentZoom),
   }).catch(() => undefined)
 }
 
@@ -580,9 +635,21 @@ function registerShortcuts(): void {
     } else if (key === 'q') {
       event.preventDefault()
       void requestQuit()
-    } else if (key === 'c' && event.shiftKey) {
+    } else if (key === '=' || key === '+') {
+      event.preventDefault()
+      setZoom(zoomIn(documentZoom))
+    } else if (key === '-' || key === '_') {
+      event.preventDefault()
+      setZoom(zoomOut(documentZoom))
+    } else if (key === '0') {
+      event.preventDefault()
+      setZoom(DEFAULT_ZOOM)
+    } else if (key === 'c' && event.shiftKey && event.altKey) {
       event.preventDefault()
       copyFilePath()
+    } else if (key === 'c' && event.shiftKey) {
+      event.preventDefault()
+      copyAsMarkdown()
     } else if (key === 'a' && !event.defaultPrevented) {
       // Focus the editor and select all. When the editor already had focus,
       // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
@@ -673,6 +740,14 @@ function editCopy(): void {
   view.focus()
   const { dom, text } = view.serializeForClipboard(view.state.selection.content())
   void writeClipboard({ html: dom.innerHTML, text })
+}
+
+function copyAsMarkdown(): void {
+  const editor = blockEditor
+  const view = editor?.getView()
+  if (!editor || !view || view.state.selection.empty) return
+  view.focus()
+  void copyText(editor.getSelectionMarkdown())
 }
 
 async function editPaste(): Promise<void> {
@@ -1158,6 +1233,10 @@ async function encryptBlockAt(view: ReturnType<BlockEditor['getView']>, pos: num
 }
 
 function init(): void {
+  // Document zoom is global and applied before the first paint of the editor.
+  documentZoom = loadZoom()
+  applyZoom(documentZoom)
+  updateZoomIndicator()
   setEncryptedBlockImageResolver(resolveImageFileUrl)
   blockEditor = createBlockEditor(editorContainer, '', {
     onOpenLink: openLink,
@@ -1173,6 +1252,11 @@ function init(): void {
   homeScreen = buildHomeScreen()
   searchPanel = new SearchPanel({ getView: () => blockEditor?.getView() ?? null })
   registerShortcuts()
+  // On `window`, not `#editor-container`: the start screen has no editor and
+  // must zoom too, and a wheel that reached neither would fall through to
+  // Chromium's whole-page zoom (which scales the status bar with it).
+  window.addEventListener('wheel', onZoomWheel, { passive: false })
+  statusZoom.addEventListener('click', () => setZoom(DEFAULT_ZOOM))
   // Right-click opens a custom menu (the browser's native one is suppressed by
   // the desktop shell). On the home screen there is no document to act on.
   editorContainer.addEventListener('contextmenu', (event) => {
@@ -1215,12 +1299,17 @@ function init(): void {
     insertKanban: () => void insertKanban(),
     export: () => void exportHtml(),
     toggleToolbar: () => toggleToolbar(),
+    zoomIn: () => setZoom(zoomIn(documentZoom)),
+    zoomOut: () => setZoom(zoomOut(documentZoom)),
+    zoomReset: () => setZoom(DEFAULT_ZOOM),
+    zoomTo: (level) => zoomTo(level),
     formulaReference: () => openFunctionReference(),
     helpGuide: () => openHelpGuide(),
     undo: () => editUndoNoScroll(),
     redo: () => editRedoNoScroll(),
     cut: () => editCut(),
     copy: () => editCopy(),
+    copyAsMarkdown: () => copyAsMarkdown(),
     paste: () => void editPaste(),
     pasteAsMarkdown: () => void pasteAsMarkdownCommand(),
     selectAll: () => editSelectAll(),

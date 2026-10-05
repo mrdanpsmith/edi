@@ -8,6 +8,8 @@ import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
 import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
 import { getSearchState, searchMatchesInText, subscribeSearchChanges } from '../search'
 import { FormulaAutocomplete } from '../formulaAutocomplete'
+import { EmojiAutocomplete } from '../emojiPlugin'
+import { emojiTokenAt } from '../emojiToken'
 import { undoNoScroll, redoNoScroll, undoDepth, redoDepth } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText, readText } from '../clipboard'
@@ -154,6 +156,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   private readonly onDocCut = (event: Event): void => this.onClipboardCut(event as ClipboardEvent)
   private readonly onDocPaste = (event: Event): void => this.onClipboardPaste(event as ClipboardEvent)
   private readonly autocomplete = new FormulaAutocomplete(() => this.formulaFunctions())
+  private readonly emojiAutocomplete = new EmojiAutocomplete()
   private unsubscribeFormulaEnv: (() => void) | null = null
   private unsubscribeSearchChanges: (() => void) | null = null
 
@@ -465,6 +468,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     fxInput.addEventListener('keydown', (event) => this.onFxInputKeydown(event))
     fxInput.addEventListener('blur', () => {
       this.autocomplete.close()
+      this.emojiAutocomplete.close()
       this.commitFxEdit()
     })
     fxInput.addEventListener('focus', () => {
@@ -473,7 +477,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     })
     fxInput.addEventListener('input', () => {
       this.updatePointCursor()
-      this.autocomplete.refresh(fxInput)
+      this.refreshAutocomplete(fxInput)
     })
     fxbar.appendChild(fxInput)
     this.fxInput = fxInput
@@ -485,6 +489,24 @@ class TableNodeView implements NodeView, InlineCellHost {
    * functions defined in the current document. */
   private formulaFunctions(): readonly FormulaFunction[] {
     return [...BUILTIN_FORMULAS, ...documentFunctionsFor(this.view.state)]
+  }
+
+  /**
+   * The fx bar and the in-cell editor share one suggestion slot. A `=` draft is
+   * a formula, so the formula list owns it; a `:name` token is emoji, so the
+   * emoji card takes over; otherwise both close. `emojiTokenAt` already refuses
+   * formula drafts and cell-range references, so the two never both want it.
+   */
+  private refreshAutocomplete(input: HTMLInputElement): void {
+    const caret = input.selectionStart ?? input.value.length
+    const token = emojiTokenAt(input.value.slice(0, caret), caret)
+    if (token) {
+      this.autocomplete.close()
+      this.emojiAutocomplete.refresh(input)
+    } else {
+      this.emojiAutocomplete.close()
+      this.autocomplete.refresh(input)
+    }
   }
 
   // --- Grid ---
@@ -1822,6 +1844,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     const caret = start + ref.length
     input.setSelectionRange(caret, caret)
     this.autocomplete.close()
+    this.emojiAutocomplete.close()
     if (input === this.editOverlay) this.fitEditColumn(input)
     this.pointInsert = { input, start, end: caret, snapshot: input.value }
     this.mirrorToFx(input)
@@ -1860,6 +1883,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     drag.replaceEnd = drag.replaceStart + ref.length
     drag.input.setSelectionRange(drag.replaceEnd, drag.replaceEnd)
     this.autocomplete.close()
+    this.emojiAutocomplete.close()
     if (drag.input === this.editOverlay) this.fitEditColumn(drag.input)
     this.pointInsert = {
       input: drag.input,
@@ -1907,7 +1931,7 @@ class TableNodeView implements NodeView, InlineCellHost {
       this.fitEditColumn(input)
       this.mirrorToFx(input)
       this.updatePointCursor()
-      this.autocomplete.refresh(input)
+      this.refreshAutocomplete(input)
     })
     cell.appendChild(input)
     this.editOverlay = input
@@ -1957,6 +1981,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private onEditKeydown(event: KeyboardEvent): void {
+    if (this.emojiAutocomplete.handleKeydown(event)) return
     if (this.autocomplete.handleKeydown(event)) return
     if (event.key === 'Enter') {
       event.preventDefault()
@@ -2030,6 +2055,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.editing = null
     overlay?.remove()
     this.autocomplete.close()
+    this.emojiAutocomplete.close()
     this.clearPointRange()
   }
 
@@ -2092,6 +2118,7 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private onFxInputKeydown(event: KeyboardEvent): void {
+    if (this.emojiAutocomplete.handleKeydown(event)) return
     if (this.autocomplete.handleKeydown(event)) return
     const mod = event.metaKey || event.ctrlKey
     if (mod && (event.key === 'b' || event.key === 'i')) {
@@ -2468,6 +2495,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.unsubscribeSearchChanges?.()
     this.unsubscribeSearchChanges = null
     this.autocomplete.close()
+    this.emojiAutocomplete.close()
   }
 }
 

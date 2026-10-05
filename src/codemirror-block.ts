@@ -1,11 +1,18 @@
 import { EditorState, EditorSelection, type Extension } from '@codemirror/state'
 import { EditorView, keymap, placeholder as cmPlaceholder, lineNumbers } from '@codemirror/view'
 import { history, historyKeymap } from '@codemirror/commands'
+import {
+  autocompletion,
+  type CompletionContext,
+  type CompletionResult,
+} from '@codemirror/autocomplete'
 import { markdown } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
+import { EMOJI_ENTRIES, matchEmoji } from './emoji'
+import { emojiTokenAt } from './emojiToken'
 
 export const highlight = HighlightStyle.define([
   { tag: tags.heading, color: 'var(--md-heading)', fontWeight: '600' },
@@ -57,6 +64,27 @@ export const blockTheme = EditorView.theme({
     },
 })
 
+/**
+ * The `:` emoji source for the block source editor. It reuses `emojiTokenAt`
+ * (so the trigger rules match the body editor), and turns off CodeMirror's own
+ * filtering because the options are already the matched set — the filter text
+ * would otherwise be `:sm`, which no emoji name starts with.
+ */
+function emojiCompletion(context: CompletionContext): CompletionResult | null {
+  const line = context.state.doc.lineAt(context.pos)
+  const before = context.state.sliceDoc(line.from, context.pos)
+  const token = emojiTokenAt(before, before.length)
+  if (!token) return null
+  const options = matchEmoji(EMOJI_ENTRIES, token.query).map((entry) => ({
+    label: entry.name,
+    displayLabel: `${entry.emoji} :${entry.name}:`,
+    apply: entry.emoji,
+    type: 'text',
+  }))
+  if (options.length === 0) return null
+  return { from: line.from + token.from, options, filter: false }
+}
+
 export interface BlockCodeMirror {
   view: EditorView
   getValue(): string
@@ -76,6 +104,9 @@ export function createBlockCodeMirror(
       doc,
       extensions: [
         history(),
+        // Before the Escape exit below, so an open emoji card owns Escape
+        // instead of the card closing *and* the source editor exiting.
+        autocompletion({ override: [emojiCompletion] }),
         keymap.of([
           ...defaultKeymap,
           ...historyKeymap,

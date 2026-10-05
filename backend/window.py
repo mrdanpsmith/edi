@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QPoint, QSettings, QUrl, Qt
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QKeySequence, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -32,6 +32,11 @@ DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 CONFIRM_QUIT_MESSAGE = "Unsaved changes will be lost. Quit anyway?"
 
 RECENT_LIMIT = 8
+
+# Mirrors ``ZOOM_LEVELS`` in ``src/zoom.ts``; used to build the View > Zoom
+# submenu. The frontend is the source of truth for clamping, this is only the
+# menu's list of rungs.
+ZOOM_LEVELS = (0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3)
 
 _QWEBCHANNEL_JS = Path(__file__).resolve().parent / "qwebchannel.js"
 
@@ -288,6 +293,9 @@ class MainWindow(QMainWindow):
         self._rename_action = None
         self._toolbar_action = None
         self._insert_actions = None
+        self._zoom_in_action = None
+        self._zoom_out_action = None
+        self._zoom_actions: dict[float, QAction] = {}
 
         self._bridge = Bridge(self, pending_files)
         self._web = _AppWebView()
@@ -363,7 +371,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._revert_action)
 
         # Enabled by the frontend only while the document in view has a path.
-        self._copy_path_action = QAction("Copy File &Path\tCtrl+Shift+C", self)
+        self._copy_path_action = QAction("Copy File &Path\tCtrl+Alt+Shift+C", self)
         self._copy_path_action.setEnabled(False)
         self._copy_path_action.triggered.connect(
             lambda _checked=False: self._menu_command("copyFilePath")
@@ -397,6 +405,7 @@ class MainWindow(QMainWindow):
         for label, command in (
             ("Cu&t\tCtrl+X", "cut"),
             ("&Copy\tCtrl+C", "copy"),
+            ("Copy as &Markdown\tCtrl+Shift+C", "copyAsMarkdown"),
             ("&Paste\tCtrl+V", "paste"),
             ("Paste as &Markdown\tCtrl+Shift+V", "pasteAsMarkdown"),
         ):
@@ -465,6 +474,51 @@ class MainWindow(QMainWindow):
         )
         view_menu.addAction(self._toolbar_action)
 
+        view_menu.addSeparator()
+
+        # Zoom shortcuts are registered as *real* QAction shortcuts, unlike the
+        # rest of the menus whose `\t...` text is only a label and whose keys the
+        # frontend handles. A real shortcut is consumed by Qt before the webview
+        # sees it, which is what stops Chromium's whole-page zoom from scaling
+        # the tab bar and toolbar along with the document.
+        self._zoom_in_action = QAction("Zoom &In", self)
+        self._zoom_in_action.setShortcuts(
+            [QKeySequence(QKeySequence.StandardKey.ZoomIn), QKeySequence("Ctrl+=")]
+        )
+        self._zoom_in_action.triggered.connect(
+            lambda _checked=False: self._menu_command("zoomIn")
+        )
+        view_menu.addAction(self._zoom_in_action)
+
+        self._zoom_out_action = QAction("Zoom &Out", self)
+        self._zoom_out_action.setShortcut(QKeySequence(QKeySequence.StandardKey.ZoomOut))
+        self._zoom_out_action.triggered.connect(
+            lambda _checked=False: self._menu_command("zoomOut")
+        )
+        view_menu.addAction(self._zoom_out_action)
+
+        reset_zoom_action = QAction("&Reset Zoom", self)
+        reset_zoom_action.setShortcut(QKeySequence("Ctrl+0"))
+        reset_zoom_action.triggered.connect(
+            lambda _checked=False: self._menu_command("zoomReset")
+        )
+        view_menu.addAction(reset_zoom_action)
+
+        view_menu.addSeparator()
+
+        zoom_menu = view_menu.addMenu("&Zoom")
+        zoom_group = QActionGroup(self)
+        zoom_group.setExclusive(True)
+        for level in ZOOM_LEVELS:
+            level_action = QAction(f"{round(level * 100)}%", self)
+            level_action.setCheckable(True)
+            level_action.triggered.connect(
+                lambda _checked=False, value=level: self._menu_command("zoomTo", str(value))
+            )
+            zoom_group.addAction(level_action)
+            zoom_menu.addAction(level_action)
+            self._zoom_actions[level] = level_action
+
         self._help_menu = menubar.addMenu("&Help")
         help_menu = self._help_menu
         guide_action = QAction("&Edi Guide…", self)
@@ -531,6 +585,9 @@ class MainWindow(QMainWindow):
         can_copy_path: bool,
         toolbar_visible: bool,
         can_rename: bool = False,
+        zoom_factor: float = 1.0,
+        can_zoom_in: bool = True,
+        can_zoom_out: bool = True,
     ) -> None:
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
@@ -543,6 +600,13 @@ class MainWindow(QMainWindow):
         if self._insert_actions is not None:
             for action in self._insert_actions:
                 action.setEnabled(True)
+        if self._zoom_in_action is not None:
+            self._zoom_in_action.setEnabled(can_zoom_in)
+        if self._zoom_out_action is not None:
+            self._zoom_out_action.setEnabled(can_zoom_out)
+        if self._zoom_actions:
+            nearest = min(self._zoom_actions, key=lambda level: abs(level - zoom_factor))
+            self._zoom_actions[nearest].setChecked(True)
 
     def set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty

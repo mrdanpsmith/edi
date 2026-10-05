@@ -30,6 +30,10 @@
   --exec-bg: #0d1117;
   --exec-fg: #e6edf3;
 
+  /* Document zoom. `applyZoom` overwrites this on `documentElement`; the chrome
+     lives outside `#editor-container`, so only the document scales. */
+  --doc-zoom: 1;
+
   color-scheme: light;
 }
 
@@ -403,6 +407,15 @@ body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+/* Document zoom (see `src/zoom.ts`): the editor content scales, the chrome
+   around it does not. The start screen is a document surface too — there is no
+   editor when it is showing, and zooming it is the only way to make the app
+   legible on a projector before a file is open. */
+#editor-container .ProseMirror,
+#home-screen {
+  zoom: var(--doc-zoom);
 }
 
 /* ── Home / start screen ── */
@@ -2085,6 +2098,23 @@ body {
   flex: none;
 }
 
+/* Shown only while the document is zoomed (hidden at 100%). */
+#status-zoom {
+  margin-left: auto;
+  padding: 0 6px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#status-zoom:hover {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+
 .md-preview {
   max-width: 46rem;
   margin: 0 auto;
@@ -2652,6 +2682,56 @@ body {
 
 .ss-ac-item-summary {
   color: var(--text-secondary);
+}
+
+/* Emoji `:` autocomplete (same card as the formula list, emoji rows) */
+.emoji-suggest {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  padding: 4px;
+  font-family: var(--font-sans);
+  font-size: 0.85em;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+}
+
+.emoji-suggest-items {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.emoji-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.emoji-row.is-selected {
+  background: var(--selection);
+}
+
+.emoji-row-glyph {
+  flex: none;
+  width: 1.5em;
+  font-size: 1.35em;
+  line-height: 1;
+  text-align: center;
+}
+
+.emoji-row-name {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
 }
 
 /* Encrypted blocks */

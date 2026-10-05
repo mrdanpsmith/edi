@@ -12,12 +12,17 @@ export interface MenuCommands {
   insertKanban: () => void
   export: () => void
   toggleToolbar: () => void
+  zoomIn: () => void
+  zoomOut: () => void
+  zoomReset: () => void
+  zoomTo: (level?: string) => void
   formulaReference: () => void
   helpGuide: () => void
   undo: () => void
   redo: () => void
   cut: () => void
   copy: () => void
+  copyAsMarkdown: () => void
   paste: () => void
   pasteAsMarkdown: () => void
   selectAll: () => void
