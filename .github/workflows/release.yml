@@ -422,7 +422,8 @@ jobs:
           RANGE="${GITHUB_REF_NAME}"
           [ -n "$PREV_TAG" ] && RANGE="${PREV_TAG}..${GITHUB_REF_NAME}"
           printf '## Changes in %s\n\n' "$GITHUB_REF_NAME" > /tmp/CHANGELOG.md
-          git log --pretty=format:'- %h %s' "$RANGE" >> /tmp/CHANGELOG.md
+          # Commits marked `[skip changelog]` / `[no changelog]` are dropped.
+          ./scripts/changelog.sh "$RANGE" >> /tmp/CHANGELOG.md
           printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
           printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: replace `Edi-%s-win64.exe`); settings and documents are untouched. Linux: upgrade via your package manager. macOS: replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" >> /tmp/CHANGELOG.md
       - name: Create GitHub release
