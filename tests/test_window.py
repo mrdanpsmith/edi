@@ -14,7 +14,6 @@ from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QItemSelectionModel, QPoint, QPointF, QSettings, QSize, QUrl, Qt
 from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QImage, QMouseEvent
-from PySide6.QtTest import QTest
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
     QApplication,
@@ -602,10 +601,12 @@ def _read_zoom(window):
         "JSON.stringify((() => { const pm = document.querySelector('.ProseMirror');"
         " const tab = document.querySelector('#tabbar');"
         " const home = document.querySelector('#home-screen');"
+        " const status = document.querySelector('#statusbar');"
         " return { zoom: getComputedStyle(pm).zoom,"
         " home: getComputedStyle(home).zoom,"
         " p: Math.round(pm.querySelector('p').getBoundingClientRect().height),"
-        " tab: Math.round(tab.getBoundingClientRect().height) }; })())",
+        " tab: Math.round(tab.getBoundingClientRect().height),"
+        " status: Math.round(status.getBoundingClientRect().height) }; })())",
         got,
     )
     assert _pump_until(lambda: bool(out), timeout=5), "no zoom probe"
@@ -618,20 +619,27 @@ def test_document_zoom_scales_the_editor_not_the_chrome(visible, qtbot):
     time.sleep(0.4)
 
     # The level is global and persisted, so normalise to 100% first.
-    QTest.keyClick(window, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
+    window._menu_command("zoomReset")
     assert _pump_until(lambda: _read_zoom(window)["zoom"] == "1", timeout=5)
     base = _read_zoom(window)
 
-    # Ctrl+= is a real QAction shortcut: the editor grows, the chrome does not.
-    QTest.keyClick(window, Qt.Key.Key_Equal, Qt.KeyboardModifier.ControlModifier)
+    # Zoom In carries a real Qt shortcut (so Qt consumes Ctrl+= before Chromium's
+    # whole-page zoom ever sees it). Triggering the action is the same path the
+    # shortcut takes; key delivery depends on window activation, which the
+    # offscreen platform does not guarantee, so the action is the reliable half
+    # and the ctrl-wheel probe covers the input plumbing separately.
+    shortcuts = [sequence.toString() for sequence in window._zoom_in_action.shortcuts()]
+    assert any("Ctrl+=" in sequence for sequence in shortcuts), shortcuts
+    window._zoom_in_action.trigger()
     assert _pump_until(lambda: _read_zoom(window)["zoom"] == "1.1", timeout=5)
     zoomed = _read_zoom(window)
     assert zoomed["p"] > base["p"], (base, zoomed)
     assert zoomed["tab"] == base["tab"], (base, zoomed)
+    assert zoomed["status"] == base["status"], (base, zoomed)
     # The start screen is a document surface too.
     assert zoomed["home"] == "1.1", (base, zoomed)
 
-    QTest.keyClick(window, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
+    window._menu_command("zoomReset")
     assert _pump_until(lambda: _read_zoom(window)["zoom"] == "1", timeout=5)
     assert _read_zoom(window)["p"] == base["p"]
 
