@@ -33,6 +33,9 @@ npm install
 print_step "Generating app icon"
 node scripts/generate-icon.mjs
 
+print_step "Installing git hooks"
+./scripts/install-hooks.sh
+
 print_step "All dependencies installed."
 printf '\nNext steps:\n'
 printf '  npm run build         build the frontend into dist/\n'

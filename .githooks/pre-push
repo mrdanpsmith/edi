@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#
+# Run the full CI simulation before anything leaves the machine.
+#
+# `pre-push` (not `pre-commit`): the simulation is heavy — Docker, `npm ci`,
+# the frontend build, bandit, the whole pytest suite — so it belongs at the
+# share point, not on every commit. It also fires for tag pushes
+# (`git push origin v1.2.3`), which is exactly when the release pipeline runs.
+#
+# Skip a single push with `git push --no-verify`, or set `SKIP_CI_SIM=1`.
+# Installed by `scripts/install-hooks.sh` (which `install-deps.sh` runs).
+set -euo pipefail
+
+# Git writes the refs being pushed to the hook's stdin; drain them so a large
+# push can't block on a full pipe while the long simulation runs.
+cat >/dev/null
+
+if [[ "${SKIP_CI_SIM:-0}" == "1" ]]; then
+  echo "pre-push: SKIP_CI_SIM=1 set — skipping the CI simulation"
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# The simulation needs Docker. Rather than block work on a machine that could
+# never run it, warn and let the push through — CI still runs the gate.
+if ! command -v docker >/dev/null 2>&1; then
+  echo "pre-push: docker not found — skipping the CI simulation (CI will still run it)" >&2
+  echo "          install docker, or push with --no-verify to silence this." >&2
+  exit 0
+fi
+
+echo "==> pre-push: running the full CI simulation (./scripts/simulate-ci-test.sh)"
+exec "$ROOT/scripts/simulate-ci-test.sh"
