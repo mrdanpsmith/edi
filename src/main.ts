@@ -993,6 +993,12 @@ function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
       disabled: !hasEditorSelection(),
       onSelect: () => editCopy(),
     },
+    {
+      type: 'item',
+      label: 'Copy as Markdown',
+      disabled: !hasEditorSelection(),
+      onSelect: () => copyAsMarkdown(),
+    },
     { type: 'item', label: 'Paste', onSelect: () => void editPaste() },
     { type: 'item', label: 'Paste as Markdown', onSelect: () => void pasteAsMarkdownCommand() },
     { type: 'item', label: 'Select all', onSelect: () => editSelectAll() },

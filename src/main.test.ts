@@ -1275,7 +1275,7 @@ describe('context menu', () => {
     const labels = Array.from(document.querySelectorAll('.edi-menu-item'))
       .map((button) => (button as HTMLButtonElement).textContent ?? '')
     expect(labels).toEqual([
-      'Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Paste as Markdown', 'Select all', 'Find…', 'Replace…',
+      'Undo', 'Redo', 'Cut', 'Copy', 'Copy as Markdown', 'Paste', 'Paste as Markdown', 'Select all', 'Find…', 'Replace…',
     ])
     // Repeated right-clicks replace the open menu instead of stacking menus.
     editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 30, clientY: 30 }))
