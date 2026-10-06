@@ -657,6 +657,9 @@ function wholeWordSpans(
   return spans
 }
 
+/** A label that is one whole emphasis run, e.g. `*italic*`, `**bold**`. */
+const EMPHASIS_WRAP = /^(\*\*|\*|~~|`)([\s\S]+)\1$/
+
 /** The label mermaid draws from a source spelling: inline emphasis and code
  * markers render as elements, so the board shows the text without them. */
 function renderedText(label: string): string {
@@ -676,8 +679,17 @@ function kanbanSpans(source: string, label: string): MapperResult {
     // The board draws a label's inline markdown, so the text on screen is the
     // source's spelling minus its markers — match either spelling.
     if (line.label !== label && renderedText(line.label) !== label) continue
-    if (source[line.labelStart] === '"' && source[line.labelEnd - 1] === '"') quoted = true
-    spans.push({ start: line.labelStart, end: line.labelEnd })
+    const isQuoted = source[line.labelStart] === '"' && source[line.labelEnd - 1] === '"'
+    if (isQuoted) quoted = true
+    const marks = EMPHASIS_WRAP.exec(line.label)
+    if (marks) {
+      // The markers are drawn as elements, so when the user edits the inner
+      // text they stay in the source and the emphasis survives the rename.
+      const innerOffset = (isQuoted ? 1 : 0) + marks[1].length
+      spans.push({ start: line.labelStart + innerOffset, end: line.labelEnd - innerOffset })
+    } else {
+      spans.push({ start: line.labelStart, end: line.labelEnd })
+    }
   }
   // A label the source already spells as a quoted run keeps its quotes:
   // mermaid draws a quoted label exactly as it draws a bare one, so the quotes
