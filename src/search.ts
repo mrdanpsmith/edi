@@ -67,14 +67,13 @@ function collectSpanMatches(
   text: string,
   push: (from: number, to: number) => void,
 ): void {
-  re.lastIndex = 0
-  let match: RegExpExecArray | null
-  while ((match = re.exec(text)) !== null) {
-    const { index } = match
+  // matchAll iterates a clone and, per spec, advances past a zero-width match
+  // by a whole code point. A hand-rolled exec loop resets lastIndex to 0 when
+  // the next start position lands mid-surrogate-pair, spinning forever on any
+  // query that can match empty (e.g. the empty query) over text with emoji.
+  for (const match of text.matchAll(re)) {
     const length = match[0].length
-    if (length > 0) push(index, index + length)
-    if (length === 0) re.lastIndex++ // zero-length regexes must advance or they loop forever
-    if (re.lastIndex > text.length) break
+    if (length > 0) push(match.index, match.index + length)
   }
 }
 

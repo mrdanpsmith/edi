@@ -69,6 +69,11 @@ describe('findSearchMatches', () => {
     expect(found.filter((m) => m.kind === 'doc')).toHaveLength(3)
   })
 
+  it('does not hang on emoji when the query can match zero-width', () => {
+    expect(matches('# T\n\nx \u{1F4AF} y', '')).toEqual([])
+    expect(matches('# T\n\nx \u{1F4AF} y', 'a*', { regex: true })).toEqual([])
+  })
+
   it('respects case sensitivity', () => {
     const found = matches('# Hello\n\nhello', 'hello', { caseSensitive: true })
     expect(found).toHaveLength(1)
