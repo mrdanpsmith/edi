@@ -410,7 +410,8 @@ function editable(
       // no rule of its own.
       const spelled = source.slice(first.start, first.end).trim()
       const shown = squeeze(target.text).text.toLowerCase()
-      if (spelled && spelled !== target.text && shown.endsWith(squeeze(spelled).text.toLowerCase())) {
+      const spelledShown = squeeze(renderedText(spelled)).text.toLowerCase()
+      if (spelled && spelled !== target.text && (shown.endsWith(squeeze(spelled).text.toLowerCase()) || shown === spelledShown)) {
         target.sourceText = spelled
       }
     }
@@ -656,12 +657,25 @@ function wholeWordSpans(
   return spans
 }
 
+/** The label mermaid draws from a source spelling: inline emphasis and code
+ * markers render as elements, so the board shows the text without them. */
+function renderedText(label: string): string {
+  return label
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+}
+
 function kanbanSpans(source: string, label: string): MapperResult {
   const spans: Span[] = []
   let quoted = false
   for (const line of parseKanban(source).lines) {
     if (line.kind !== 'column' && line.kind !== 'card') continue
-    if (line.label !== label) continue
+    if (!line.label) continue
+    // The board draws a label's inline markdown, so the text on screen is the
+    // source's spelling minus its markers — match either spelling.
+    if (line.label !== label && renderedText(line.label) !== label) continue
     if (source[line.labelStart] === '"' && source[line.labelEnd - 1] === '"') quoted = true
     spans.push({ start: line.labelStart, end: line.labelEnd })
   }

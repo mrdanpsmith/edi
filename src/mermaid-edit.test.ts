@@ -278,6 +278,13 @@ describe('patchLabel: kanban', () => {
     expect(card?.label).toBeNull()
   })
 
+  it('renames a card whose label carries inline markdown', () => {
+    // Mermaid draws `*italic*` as <em>, so the clicked text is `italic`;
+    // the span to patch is the source's own spelling of it.
+    const board = 'kanban\n  Todo\n    id1[*italic*]'
+    expect(patchLabel(board, family, 'italic', 'plain')).toEqual(ok('kanban\n  Todo\n    id1[plain]'))
+  })
+
   it('falls back to the rendered text for a shape mermaid renders verbatim', () => {
     // The mapper reports no label for `id6>Ang Label]`, so the edit goes
     // through the unique-substring rule rather than guessing a shape span.
