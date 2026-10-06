@@ -1014,19 +1014,6 @@ function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
       { type: 'item', label: 'Edit link…', onSelect: () => editLink(link) },
     )
   }
-  entries.push(
-    { type: 'separator' },
-    {
-      type: 'item',
-      label: 'Find…',
-      onSelect: () => openSearch(),
-    },
-    {
-      type: 'item',
-      label: 'Replace…',
-      onSelect: () => openSearch(true),
-    },
-  )
   return entries
 }
 
