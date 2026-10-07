@@ -211,8 +211,8 @@ def _click_label(win, text):
     assert not found.get("missing"), f"no editable label {text!r}"
     return _wait(
         win,
-        "(() => { const i = document.querySelector('.mermaid-edit-input');"
-        " return { v: i ? i.value : null }; })()",
+        "(() => { const i = document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]');"
+        " return { v: i ? (i.value ?? i.textContent) : null }; })()",
         lambda d: d["v"] is not None,
         timeout=10,
     )["v"]
@@ -226,9 +226,9 @@ def _press_enter(win, value):
     typed = _dump(
         win,
         f"""(() => {{
-          const i = document.querySelector('.mermaid-edit-input');
+          const i = document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]');
           if (!i) return {{ missing: true }};
-          i.value = {json.dumps(value)};
+          if ('value' in i) i.value = {json.dumps(value)}; else i.textContent = {json.dumps(value)};
           i.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
           return {{ typed: true }};
         }})()""",
@@ -241,7 +241,7 @@ def _type_and_confirm(win, value, timeout=15):
     _press_enter(win, value)
     _wait(
         win,
-        "(() => ({ gone: !document.querySelector('.mermaid-edit-input') }))()",
+        "(() => ({ gone: !document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]') }))()",
         lambda d: d["gone"],
         timeout=timeout,
     )
@@ -258,13 +258,13 @@ def _press_key(win, key, shift=False):
     out = _dump(
         win,
         f"""(() => {{
-          const i = document.querySelector('.mermaid-edit-input');
+          const i = document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]');
           if (!i) return {{ missing: true }};
           i.dispatchEvent(new KeyboardEvent('keydown', {{
             key: {json.dumps(key)}, shiftKey: {json.dumps(bool(shift))},
             bubbles: true, cancelable: true,
           }}));
-          return {{ value: i.value }};
+          return {{ value: i.value ?? i.textContent }};
         }})()""",
     )
     assert not out.get("missing"), "no field was open"
@@ -277,11 +277,11 @@ def _type(win, value):
     typed = _dump(
         win,
         f"""(() => {{
-          const i = document.querySelector('.mermaid-edit-input');
+          const i = document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]');
           if (!i) return {{ missing: true }};
-          i.value = {json.dumps(value)};
+          if ('value' in i) i.value = {json.dumps(value)}; else i.textContent = {json.dumps(value)};
           i.dispatchEvent(new Event('input', {{ bubbles: true }}));
-          return {{ typed: i.value }};
+          return {{ typed: i.value ?? i.textContent }};
         }})()""",
     )
     assert not typed.get("missing"), "no label editor was open"
@@ -325,7 +325,7 @@ LABEL_STATE = (
     "   ? [...svg.querySelectorAll('text, .nodeLabel, .edgeLabel, .labelText, .loopText,"
     "      .titleText, .sectionTitle, .taskText')].map((e) => e.textContent.trim())"
     "   : [],"
-    "  input: !!document.querySelector('.mermaid-edit-input'),"
+    "  input: !!document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]'),"
     "  editing: !!document.querySelector('.mermaid-editing'),"
     "  editable: !!document.querySelector('.mermaid-editables'),"
     "  invalid: !!document.querySelector('.mermaid-edit-invalid'),"
@@ -377,8 +377,8 @@ def _click_first_offered(win, startswith=None, index=None):
     assert not out.get("missing"), "no offered label matched"
     return _wait(
         win,
-        "(() => { const i = document.querySelector('.mermaid-edit-input');"
-        " return { v: i ? i.value : null }; })()",
+        "(() => { const i = document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]');"
+        " return { v: i ? (i.value ?? i.textContent) : null }; })()",
         lambda d: d["v"] is not None,
         timeout=10,
     )["v"]
@@ -965,17 +965,17 @@ def _composer_js(anchor, expression=False):
     """
     raw = anchor if expression else json.dumps(anchor)
     return (
-        "(() => { const i = document.querySelector('.mermaid-edit-input');"
+        "(() => { const i = document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]');"
         f" const raw = {raw};"
         " const a = raw && raw.nodeType ? raw"
         "   : (typeof raw === 'string' && raw ? document.querySelector(raw) : null);"
-        " const box = (e) => { const r = e.getBoundingClientRect();"
+        " const box = (e) => { if (!e) return null; const r = e.getBoundingClientRect();"
         "   return { x: r.left + r.width / 2, y: r.top + r.height / 2,"
         "     top: r.top, left: r.left, right: r.right, bottom: r.bottom,"
         "     width: r.width, height: r.height }; };"
-        " return { v: i ? i.value : null, ph: i ? i.placeholder : null,"
+        " return { v: i ? (i.value ?? i.textContent) : null, ph: i ? (i.placeholder ?? i.dataset.placeholder ?? null) : null,"
         "   wrap: i ? i.tagName === 'TEXTAREA' : null,"
-        "   box: i ? box(i.closest('.mermaid-edit-field')) : null,"
+        "   box: i ? box(i.closest('.mermaid-edit-field') ?? i) : null,"
         "   input: i ? box(i) : null,"
         "   anchor: a ? box(a) : null,"
         "   block: (() => { const b = document.querySelector('.mermaid');"
@@ -1001,7 +1001,7 @@ def _composer(win, anchor=None, expression=False):
 COMPOSER_FIT = (
     "(() => { const f = document.querySelector('.mermaid-edit-field');"
     " const b = document.querySelector('.mermaid');"
-    " const box = (e) => { const r = e.getBoundingClientRect();"
+    " const box = (e) => { if (!e) return null; const r = e.getBoundingClientRect();"
     "   return { top: r.top, left: r.left, right: r.right, bottom: r.bottom,"
     "     width: r.width, height: r.height }; };"
     " const pad = b ? getComputedStyle(b).paddingBottom : null;"

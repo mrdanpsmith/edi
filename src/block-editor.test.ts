@@ -1190,7 +1190,7 @@ describe('mermaid visual mode rendering', () => {
     expect(drawnSlots(view)).toHaveLength(5)
 
     cardSlots(view)[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
-    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    const input = view.dom.querySelector<HTMLTextAreaElement>('.mermaid-edit-input')!
     expect(input.value).toBe('')
     expect(input.placeholder).toBe('Card title')
 
@@ -1253,11 +1253,11 @@ describe('mermaid visual mode rendering', () => {
     expect(await rendered(view, '.mermaid-kanban-slot')).toBe(true)
 
     cardSlots(view)[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
-    const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    const input = view.dom.querySelector<HTMLTextAreaElement>('.mermaid-edit-input')!
     input.value = 'Discarded'
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
 
-    expect(await rendered(view, '.mermaid-edit-input', false)).toBe(true)
+    expect(await rendered(view, '.mermaid-edit-input, .mermaid [contenteditable="true"]', false)).toBe(true)
     expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\n' + KANBAN_BOARD + '\n```\n')
     expect(cardSlots(view)).toHaveLength(4)
 

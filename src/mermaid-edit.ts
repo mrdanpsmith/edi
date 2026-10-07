@@ -670,6 +670,80 @@ function renderedText(label: string): string {
     .replace(/`([^`]+)`/g, '$1')
 }
 
+/**
+ * A card's title edits where the card is drawn — Trello-style, not a field
+ * laid over it. The card's own label element becomes the input, so the font,
+ * the padding and the wrapping are the card's by construction and nothing
+ * jumps when editing starts. Enter commits, Esc restores the original
+ * spelling, blur commits, and Esc outside (another editor, Done, the diagram
+ * going away) cancels through the same resolver the overlay field has. Every
+ * path restores the label's text first: the result of a successful commit is
+ * the re-render, so the DOM is never the record.
+ */
+/**
+ * A card's title edited over the card itself: a wrapping textarea that stands
+ * where the card is drawn, in the block-level slot the same margins produce,
+ * so it drapes consecutive content at once rather than scrolling after a
+ * section off the screen.
+ *
+ * Extends the slot's card height as the title wraps longer than the drawn
+ * slot — until commit, the treatment is that this IS the new card.
+ */
+function editCardTitleOver(
+  container: HTMLElement,
+  labelEl: HTMLElement,
+  value: string,
+  tone: 'label' | 'new',
+  placeholder: string | undefined,
+  onAccept: (value: string) => boolean | string,
+): (accept: boolean) => void {
+  const hostCard = labelEl.closest('g.node')
+  const rectEl = hostCard?.querySelector<SVGRectElement>('rect')
+  const frameEl = hostCard?.querySelector<SVGForeignObjectElement>('foreignObject')
+  const startHeight = rectEl
+    ? Number(rectEl.getAttribute('height')) || rectEl.getBoundingClientRect().height
+    : 0
+  hostCard?.classList.add('mermaid-node-editing')
+  let hadListener = false
+  return openInlineInput({
+    host: container,
+    rect: () => {
+      const at = hostCard?.getBoundingClientRect()
+      return at ?? labelEl.getBoundingClientRect()
+    },
+    value,
+    tone,
+    placeholder,
+    multiline: true,
+    minWidth: 0,
+    onPlaced: (field) => {
+      hostCard?.classList.add('mermaid-node-editing')
+      const inputEl = field.querySelector<HTMLElement>('.mermaid-edit-input')
+      if (inputEl) {
+        if (!hadListener) {
+          hadListener = true
+          inputEl.addEventListener('input', () => {
+            if (!rectEl) return
+            const h = Math.ceil((inputEl as HTMLTextAreaElement).scrollHeight) + 8
+            if (h > startHeight) {
+              rectEl.setAttribute('height', String(h))
+              frameEl?.setAttribute('height', String(h))
+            }
+          })
+        }
+      }
+      new MutationObserver(() => {
+        if (field.isConnected) return
+        hostCard?.classList.remove('mermaid-node-editing')
+        if (rectEl) rectEl.setAttribute('height', String(startHeight))
+        if (frameEl) frameEl.setAttribute('height', String(startHeight))
+      }).observe(field.parentElement ?? container, { childList: true })
+    },
+    onAccept: (typed) => onAccept(typed),
+    onCancel: () => undefined,
+  })
+}
+
 function kanbanSpans(source: string, label: string): MapperResult {
   const spans: Span[] = []
   let quoted = false
@@ -1979,9 +2053,22 @@ export function attachMermaidEditing(
   // diagram stops being editable, so a new card's title commits or cancels with
   // every other edit.
   let closeEditor: ((accept: boolean) => void) | null = null
-  const openEditor = (finish: (accept: boolean) => void): void => {
+  let editing: { el: HTMLElement | null; close: (accept: boolean) => void } | null = null
+  const openEditor = (finish: (accept: boolean) => void, el: HTMLElement | null = null): void => {
     closeEditor?.(false)
-    closeEditor = finish
+    const wrapped = (accept: boolean): void => {
+      if (closeEditor === wrapped) {
+        closeEditor = null
+        editing = null
+      }
+      finish(accept)
+    }
+    closeEditor = wrapped
+    editing = { el, close: wrapped }
+  }
+  const clearEditor = (): void => {
+    closeEditor = null
+    editing = null
   }
 
   // Diagram glyphs are never natively draggable, and a press on a label must
@@ -1991,6 +2078,13 @@ export function attachMermaidEditing(
   on(container, 'dragstart', (event) => event.preventDefault())
   on(container, 'mousedown', ((event: MouseEvent) => {
     if (event.button !== 0) return
+    // A press on the text being edited is the caret's own business — canceling
+    // it would swallow the caret placement and the blur.
+    if (editing !== null && editing.el !== null) {
+      const hit = labelTargetAt(event, targets)
+      if (hit !== null && (editing.el.contains(hit.el) || hit.el.contains(editing.el))) return
+      if (editing.el.contains(event.target as Node)) return
+    }
     if (!labelTargetAt(event, targets) && !kanbanCardAt(event, svg, family)) return
     event.preventDefault()
     event.stopPropagation()
@@ -2000,18 +2094,31 @@ export function attachMermaidEditing(
     if (event.button !== 0) return
     const target = labelTargetAt(event, targets)
     if (!target) return
+    if (editing !== null && editing.el !== null && (editing.el.contains(target.el) || target.el.contains(editing.el))) return
+    if (family === 'kanban' && target.el.closest('.items > .node') !== null) {
+      const labelEl = target.el as HTMLElement
+      openEditor(editCardTitleOver(container, labelEl, target.sourceText ?? target.text, 'label', undefined, (value) => {
+        if (value === (target.sourceText ?? target.text).trim()) return true
+        if (!usableKanbanLabel(value)) return kanbanLabelRefusal(value)
+        const outcome = patchLabel(source, family, target.text, value, target)
+        if (outcome.status !== 'ok') return false
+        commit(outcome.text)
+        return true
+      }), labelEl)
+      return
+    }
     const fresh = slotBand !== null && slotBand.contains(target.el) ? columnField(slotBand) : undefined
     openEditor(openLabelEditor(host, target, source, family, commit, fresh))
   }) as EventListener)
 
   if (family === 'kanban') {
-    dispose.push(attachKanbanDrag(container, svg, source, commit, () => closeEditor?.(false)))
-    dispose.push(attachKanbanChrome(container, svg, source, commit, () => closeEditor?.(false), targets))
+    dispose.push(attachKanbanDrag(container, svg, source, commit, () => closeEditor?.(false), () => editing !== null))
+    dispose.push(attachKanbanChrome(container, svg, source, commit, openEditor, targets))
   }
 
   editingLayers.set(host, (accept) => {
     closeEditor?.(accept)
-    closeEditor = null
+    clearEditor()
     for (const off of dispose.splice(0)) off()
     for (const target of targets) target.el.classList.remove(EDITABLE_CLASS)
   })
@@ -2109,6 +2216,13 @@ interface InlineInputSpec {
    */
   multiline?: boolean
   /**
+   * Match the editor's typography to the element the text currently lives in,
+   * so an edit reads as the card itself being edited rather than a field laid
+   * over it: same font, size, colour, alignment and padding, with the field's
+   * own chrome (border, background, shadow) taken off.
+   */
+  styleFrom?: Element | null
+  /**
    * Enter, or a blur. Return `true` when the caller is done with the input
    * either way, `false` to refuse the value quietly, and a string to refuse it
    * *and* say why in a notice — the way an unusable card title is refused. A
@@ -2155,12 +2269,31 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
   input.value = value
   if (placeholder) input.placeholder = placeholder
   input.style.height = `${box().height || 20}px`
+  if (spec.styleFrom) {
+    const cs = getComputedStyle(spec.styleFrom)
+    input.style.fontFamily = cs.fontFamily
+    input.style.fontSize = cs.fontSize
+    input.style.fontWeight = cs.fontWeight
+    input.style.fontStyle = cs.fontStyle
+    input.style.color = cs.color
+    input.style.lineHeight = cs.lineHeight
+    input.style.textAlign = cs.textAlign
+    input.style.padding = cs.paddingTop + ' ' + cs.paddingRight + ' ' + cs.paddingBottom + ' ' + cs.paddingLeft
+    input.style.background = 'transparent'
+    input.style.border = 'none'
+    input.style.boxShadow = 'none'
+    input.style.borderRadius = '0'
+  }
   // A wrapping field is sized by its own content, not by the slot it replaced:
   // a card title is longer than the card-shaped place it was opened from more
   // often than not, and a fixed box either scrolls the rest of the title out of
   // sight or covers the columns behind it with a field nothing is being typed
   // into.
   if (spec.multiline) {
+    // The field is at least the box it stands in for, and grows with what is
+    // typed past that — a rename covers the whole card it replaces, and a new
+    // card's composer the drawn slot.
+    input.style.minHeight = `${box().height || 20}px`
     input.style.height = 'auto'
     input.addEventListener('input', () => {
       input.style.height = 'auto'
@@ -2353,9 +2486,18 @@ function openLabelEditor(
   // (`Verification: Test`) and only its value is rewritten, so passing the
   // edited text instead would leave it nothing to find.
   const current = target.sourceText ?? target.text
+  // A card rename stands over the whole card, not just its text — so the field
+  // is the same box the "add a card" composer fills, and the label it replaces
+  // is hidden rather than left readable beside the field it became.
+  const rect = fresh ? fresh.rect() : target.el.getBoundingClientRect()
+  const labelEl = target.el as HTMLElement
+  if (!fresh) labelEl.style.visibility = 'hidden'
+  const reveal = (): void => {
+    labelEl.style.visibility = ''
+  }
   return openInlineInput({
     host,
-    rect: fresh ? fresh.rect() : target.el.getBoundingClientRect(),
+    rect,
     // A rename holds the name it is replacing, selected, so typing replaces it.
     // A field that adds holds nothing, and says what it is for instead.
     value: fresh ? '' : current,
@@ -2365,11 +2507,20 @@ function openLabelEditor(
     // cannot tell them apart is being asked to type over a name they did not
     // write.
     tone: fresh ? 'new' : 'label',
+    // A card title is written once and read forever, and it is usually longer
+    // than the card-shaped box it sits in — so kanban labels edit in the same
+    // wrapping textarea the "add a card" composer uses. Other diagrams' labels
+    // are short and stay one line.
+    multiline: family === 'kanban',
     // A card's own box is sized for the card, so a short label would otherwise
     // be retyped in a field too narrow to see it in. A band is sized for the
     // board, so it is wide enough on its own and needs no floor.
     minWidth: fresh ? 0 : RENAME_FIELD_WIDTH,
     onAccept: (value) => {
+      // Every path that leaves this field closed leaves the old label back on
+      // screen: an unchanged value is a cancel, a refusal is a refusal, and a
+      // successful patch replaces the diagram anyway.
+      reveal()
       if (value === current) return true
       // A kanban label that cannot be written at all is refused here rather
       // than committed: the patch would land, mermaid would refuse the source,
@@ -2385,7 +2536,7 @@ function openLabelEditor(
       }
       return outcome.status === 'ambiguous'
     },
-    onCancel: () => undefined,
+    onCancel: () => reveal(),
   })
 }
 
@@ -2407,10 +2558,13 @@ function attachKanbanDrag(
   source: string,
   commit: (source: string) => void,
   closeEditor: () => void,
+  isEditing?: () => boolean,
 ): () => void {
   const onPointerDown = (event: Event): void => {
     const down = event as PointerEvent
     if (down.button !== 0) return
+    // A press on a card whose title is being edited is the caret's, not a drag.
+    if (isEditing?.() === true) return
     const cards = cardElements(svg)
     const sections = sectionElements(svg)
     const doc = parseKanban(source)
@@ -3366,7 +3520,7 @@ function attachKanbanChrome(
   svg: SVGSVGElement,
   source: string,
   commit: (source: string) => void,
-  openEditor: (finish: (accept: boolean) => void) => void,
+  openEditor: (finish: (accept: boolean) => void, el?: HTMLElement | null) => void,
   targets: LabelTarget[],
 ): () => void {
   const sections = sectionElements(svg)
@@ -3387,12 +3541,6 @@ function attachKanbanChrome(
   const slotAt = (column: number): number =>
     doc.cards.filter((card) => card.column === column).length - 1
   const placed: Array<{ element: HTMLElement; box: () => ChromeBox }> = []
-  // An open composer is positioned from the control it replaced, so it has to be
-  // placed again whenever the board is: left behind, it stands in the past while
-  // the control it covers has gone somewhere else. Dropped as soon as the field
-  // it
-  // belongs to is gone, which is the only signal that it is closed.
-  const repositions: Array<{ field: HTMLElement; reposition: () => boolean }> = []
   // A card's ✕ is reached by the card itself, never by a position: the board is
   // drawn with a slot in every column, so a card's index among *all* the cards
   // is not its index among the ones that can be deleted — and a slot, having no
@@ -3444,49 +3592,6 @@ function attachKanbanChrome(
     })
   }
 
-  /**
-   * An open composer is positioned from the slot it stands in, so it has to be
-   * placed again whenever the board is: left behind, it stands in the past while
-   * the slot it covers has gone somewhere else. Dropped as soon as the field it
-   * belongs to is gone, which is the only signal that it is closed.
-   */
-  const trackComposer = (
-    field: HTMLElement,
-    reposition: () => boolean,
-  ): void => void repositions.push({ field, reposition })
-
-  /**
-   * A new card's title, typed over the slot the board drew for it. The field
-   * stands exactly where the slot is, which is what makes the slot read as
-   * turning into a card rather than as opening a field elsewhere, and the block
-   * is grown for it if it is taller than the slot — on a board of empty columns
-   * a card does not fit its own band.
-   */
-  const composeCard = (column: number, box: () => DOMRect): void =>
-    openEditor(
-      openInlineInput({
-        host: container,
-        rect: box,
-        onPlaced: trackComposer,
-        value: '',
-        placeholder: 'Card title',
-        tone: 'new',
-        // A card title is still a title: it wraps as it is typed so the whole of
-        // what is being written is visible, and Enter is the one key that commits
-        // it, so the composer is a textarea rather than a taller one-line input.
-        multiline: true,
-        onAccept: (value) => {
-          // Into the slot's own place, so the slot stays the place the *next*
-          // card would go and the board is still drawn with a way to add one.
-          const next = addKanbanCard(source, column, slotAt(column), value)
-          if (next === null) return kanbanLabelRefusal(value)
-          commit(next)
-          return true
-        },
-        onCancel: () => undefined,
-      }),
-    )
-
   /** Whether any control actually moved — what the settle loop below is run by. */
   const place = (): boolean => {
     const base = container.getBoundingClientRect()
@@ -3503,11 +3608,6 @@ function attachKanbanChrome(
       element.style.top = top
       if (at.width !== undefined) element.style.width = `${at.width}px`
       if (at.height !== undefined) element.style.height = `${at.height}px`
-    }
-    for (let index = repositions.length - 1; index >= 0; index -= 1) {
-      const entry = repositions[index]
-      if (!entry.field.isConnected) repositions.splice(index, 1)
-      else if (entry.reposition()) moved = true
     }
     return moved
   }
@@ -3596,14 +3696,6 @@ function attachKanbanChrome(
   // The space stays (mermaid sized the band with it, and the band is what the bin
   // is read against); `kanbanTrash` takes the class off when a card is in the air.
   if (slots.columnCard !== null) slots.columnCard.classList.add(KANBAN_BIN_SLOT_CLASS)
-  /** The box a slot's own composer stands in, given a line's own height. */
-  const slotComposerBox = (el: SVGElement, height: number): (() => DOMRect) => {
-    return () => {
-      const at = el.getBoundingClientRect()
-      return new DOMRect(at.left, at.top, at.width, height)
-    }
-  }
-
   sections.forEach((section, column) => {
     // The new column at the end of the board has no menu: it is a place to type a
     // name, and it is not yet a column to add to, rename or delete.
@@ -3755,7 +3847,20 @@ function attachKanbanChrome(
     // nothing to put a card in, and the whole press falls through to naming it.
     if (column !== undefined && column !== slots.column) {
       event.preventDefault()
-      composeCard(column, slotComposerBox(slot, COMPOSER_HEIGHT))
+      const label = slot.querySelector<HTMLElement>(LABEL_SELECTOR)
+      if (label === null) return
+      // The slot's own caption becomes the input, so a new card is typed where
+      // the card will stand — the same in-place edit an existing card gets.
+      openEditor(
+        editCardTitleOver(container, label, '', 'new', 'Card title', (value) => {
+          if (value === '') return true
+          const next = addKanbanCard(source, column, slotAt(column), value)
+          if (next === null) return kanbanLabelRefusal(value)
+          commit(next)
+          return true
+        }),
+        label,
+      )
       return
     }
     // The new column is named through its own header, which the label editor

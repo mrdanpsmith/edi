@@ -1045,6 +1045,19 @@ function typeAndConfirm(value: string, key = 'Enter'): void {
   field.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
 }
 
+/** The card title now edits in the card's own label element. */
+function inPlaceField(): HTMLTextAreaElement | HTMLInputElement {
+  const found = document.querySelector<HTMLTextAreaElement | HTMLInputElement>('.mermaid-edit-input')
+  expect(found).not.toBeNull()
+  return found!
+}
+
+function typeAndConfirmInPlace(value: string, key = 'Enter'): void {
+  const field = inPlaceField()
+  field.value = value
+  field.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+}
+
 describe('renderDiagram', () => {
   it('renders, decorates and wires up visual editing', async () => {
     hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
@@ -1780,8 +1793,8 @@ describe('kanban drag', () => {
     card.dispatchEvent(
       new MouseEvent('click', { bubbles: true, button: 0, clientX: 20, clientY: 45 }),
     )
-    const input = document.querySelector<HTMLInputElement>('.mermaid-edit-input')
-    expect(input?.value).toBe('One')
+    const field = inPlaceField()
+    expect(field.value).toBe('One')
     expect(commit).not.toHaveBeenCalled()
   })
 
@@ -2013,7 +2026,10 @@ describe('kanban drag', () => {
     const commit = vi.fn()
     const { svg } = await renderKanban(commit)
     click(editables(svg)[2]!)
-    typeAndConfirm('Renamed')
+    // The card's own label becomes the editor — same DOM, same place.
+    const field = inPlaceField()
+    expect(field.value).toBe('One')
+    typeAndConfirmInPlace('Renamed')
 
     expect(commit).toHaveBeenCalledWith(
       ['kanban', '  Todo', '    id1[Renamed]', '    id2[Two]', '  Doing', '    id3[Three]'].join('\n'),
@@ -2187,20 +2203,9 @@ describe('kanban drawn slots', () => {
     const { svg } = await renderKanbanBoard(vi.fn())
 
     clickAt(cardSlots(svg)[1]!)
-    const field = input()
+    const field = inPlaceField()
     expect(field.placeholder).toBe('Card title')
-    // The field stands exactly where the slot is, which is what makes the slot
-    // read as turning into a card rather than as opening a field elsewhere. The
-    // preview sits 10px down the block, so a slot at y=50 is y=40 in it.
-    const box = document.querySelector<HTMLElement>('.mermaid-edit-field')!
-    expect(box.style.left).toBe('210px')
-    expect(box.style.top).toBe('40px')
-    // Nothing is said above the field: the slot it fills already says what it is,
-    // and a heading that repeated it was a caption explaining the obvious. The
-    // field is the input and nothing else, so a second child would be a caption.
-    expect(box.children.length).toBe(1)
-    // A field that is about to *add* is drawn as one, not as a rename.
-    expect(box.className).toContain('mermaid-edit-field-new')
+    expect(field.value).toBe('')
   })
 
   it('creates the card in the column its slot is in, and the board keeps its slots', async () => {
@@ -2208,7 +2213,7 @@ describe('kanban drawn slots', () => {
     const { svg } = await renderKanbanBoard(commit)
 
     clickAt(cardSlots(svg)[1]!)
-    typeAndConfirm('Fresh')
+    typeAndConfirmInPlace('Fresh')
 
     expect(commit).toHaveBeenCalledTimes(1)
     expect(commit).toHaveBeenCalledWith(
@@ -2216,7 +2221,7 @@ describe('kanban drawn slots', () => {
         '\n',
       ),
     )
-    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(document.querySelector('[contenteditable="true"]')).toBeNull()
   })
 
   it('leaves the board alone on Esc', async () => {
@@ -2224,10 +2229,12 @@ describe('kanban drawn slots', () => {
     const { svg } = await renderKanbanBoard(commit)
 
     clickAt(cardSlots(svg)[0]!)
-    typeAndConfirm('Discarded', 'Escape')
+    typeAndConfirmInPlace('Discarded', 'Escape')
 
     expect(commit).not.toHaveBeenCalled()
-    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(document.querySelector('[contenteditable="true"]')).toBeNull()
+    // The slot caption is restored, so the board is exactly as it was.
+    expect(cardSlots(svg)[0]!.querySelector('.nodeLabel')!.textContent).toBe(KANBAN_CARD_SLOT)
   })
 
   it('accepts a title holding a delimiter, quoting it in the source', async () => {
@@ -2235,13 +2242,13 @@ describe('kanban drawn slots', () => {
     const { svg } = await renderKanbanBoard(commit)
 
     clickAt(cardSlots(svg)[0]!)
-    typeAndConfirm('Fix (the bug)')
+    typeAndConfirmInPlace('Fix (the bug)')
 
     // The card lands; the quotes are how the source spells it, not what the
     // user typed, and mermaid draws it without them.
     expect(commit).toHaveBeenCalledTimes(1)
     expect(commit.mock.calls[0]![0]).toContain('    ["Fix (the bug)"]')
-    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(document.querySelector('[contenteditable="true"]')).toBeNull()
   })
 
   it('refuses a title no quoting can carry, and says so', async () => {
@@ -2249,11 +2256,13 @@ describe('kanban drawn slots', () => {
     const { svg } = await renderKanbanBoard(commit)
 
     clickAt(cardSlots(svg)[0]!)
-    typeAndConfirm('one\ntwo')
+    typeAndConfirmInPlace('one\ntwo')
 
-    // Flashed, not silently dropped — and the board is untouched.
-    expect(input().classList.contains('mermaid-edit-invalid')).toBe(true)
+    // Said, not silently dropped — and the title stays in the open editor, to
+    // correct rather than to retype.
+    expect(document.querySelector('.mermaid-edit-notice')).not.toBeNull()
     expect(commit).not.toHaveBeenCalled()
+    expect(inPlaceField().value).toBe('one\ntwo')
   })
 
   it('is not a label, so a card slot is never offered for renaming', async () => {
