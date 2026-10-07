@@ -32,6 +32,44 @@ const MERMAID_THEME_DARK: Record<string, string> = {
 // mode while every text label had turned light.
 const MERMAID_DARK_BACKGROUND = '#0d1117'
 
+/**
+ * Where a label with nowhere to break may break.
+ *
+ * Mermaid measures a label *before* it draws it, and it measures with the
+ * wrapping rules it ships with: `white-space: break-spaces`, which breaks at
+ * whitespace and nowhere else. A run with no whitespace in it — a long
+ * identifier, a URL, an acronym somebody pasted — is therefore measured as one
+ * unbroken line, and everything is then sized from that measurement. On a board,
+ * whose card width is fixed by `kanban.sectionWidth`, the consequence is that the
+ * label's `foreignObject` comes out several times the card's width and the title
+ * paints *outside* the card it is in, over its neighbours.
+ *
+ * This is the rule that gives a label somewhere else to break, and it belongs in
+ * `themeCSS` rather than in our own stylesheet for a reason that is the whole of
+ * the bug: `themeCSS` goes into the stylesheet mermaid embeds in the drawing it
+ * is measuring, so the label is already wrapped when mermaid measures it and the
+ * card, the column and the board are sized from what the reader will see. A rule
+ * applied after the render fixes the overflow and leaves every one of those boxes
+ * the height of the un-wrapped text — the text is inside the card and sticking out
+ * of the bottom of it instead.
+ *
+ * It is also additive by construction: `overflow-wrap` only permits a break at a
+ * point where there was none, so a label that fits, or that already breaks at a
+ * space, is laid out exactly as before.
+ */
+const MERMAID_LABEL_WRAP_CSS = `
+.nodeLabel,
+.nodeLabel p,
+.edgeLabel,
+.edgeLabel p,
+.cluster-label,
+.cluster-label p,
+.cluster-label span,
+.labelText,
+.labelText p {
+  overflow-wrap: anywhere;
+}`
+
 export function mermaidThemeVariables(dark: boolean): Record<string, string> {
   return dark ? { ...MERMAID_THEME_DARK, background: MERMAID_DARK_BACKGROUND } : MERMAID_THEME_LIGHT
 }
@@ -52,6 +90,7 @@ function baseMermaidConfig(
       fontFamily: 'var(--font-sans)',
       ...themeVariables,
     },
+    themeCSS: MERMAID_LABEL_WRAP_CSS,
   }
 }
 

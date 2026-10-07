@@ -1744,6 +1744,88 @@ def _column_slot_past_the_board(board, slots):
     )
 
 
+# A title and a column name with nowhere in them to break: one run of letters
+# with no space in it, which is what an identifier, a URL or an acronym pasted
+# into a board actually looks like.
+UNBREAKABLE = "VERY LONG TEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEXT"
+
+
+def test_unbreakable_kanban_titles_stay_inside_their_cards(window):
+    """A card is a fixed width, so its title has to wrap inside it.
+
+    Real browser only, and layout only: jsdom computes no boxes at all. Mermaid
+    measures a label with ``white-space: break-spaces`` — it breaks at whitespace
+    and nowhere else — and a run with no whitespace in it is therefore measured
+    as one line several times the card's width. A board's card width is fixed by
+    ``kanban.sectionWidth``, so nothing downstream can absorb that: the card is
+    drawn at the width it was told to be and the title paints outside it, over
+    the columns next door.
+
+    The rule that lets a label break has to be in the stylesheet mermaid
+    measures with (``themeCSS``), not in ours: applied after the render it puts
+    the text inside the card and leaves the card the height of the *un*-wrapped
+    text, so the last line sticks out of the bottom instead.
+    """
+    _render(window, "kanban\n  %s\n    id1[%s]\n    id2[Second]\n  Doing\n    id3[Short]"
+            % (UNBREAKABLE, UNBREAKABLE))
+
+    board = _dump(
+        window,
+        """(() => {
+          // A label is a `foreignObject` with text in it; the empty ones mermaid
+          // draws alongside it (a card's spacer and assignee, a section's spare)
+          // are what the first test in the file calls "the empty labels".
+          const labelOf = (scope) => [...scope.querySelectorAll('foreignObject')]
+            .find(fo => (fo.textContent || '').trim().length > 0);
+          const cards = [];
+          for (const card of document.querySelectorAll('.mermaid .items > g.node')) {
+            const fo = labelOf(card);
+            if (!fo) continue;
+            const frame = card.querySelector('rect').getBoundingClientRect();
+            const box = fo.getBoundingClientRect();
+            cards.push({
+              text: fo.textContent.trim().slice(0, 10),
+              insideWidth: box.left >= frame.left - 1 && box.right <= frame.right + 1,
+              insideHeight: box.top >= frame.top - 1 && box.bottom <= frame.bottom + 1,
+              overflow: Math.round(Math.max(0, box.right - frame.right)),
+            });
+          }
+          const band = document.querySelector('.mermaid .sections > g');
+          const b = band ? band.querySelector('rect').getBoundingClientRect() : null;
+          const bandLabel = band ? labelOf(band) : null;
+          const bandBox = bandLabel ? bandLabel.getBoundingClientRect() : null;
+          const lowest = [...document.querySelectorAll('.mermaid .items > g.node')]
+            .map(c => c.getBoundingClientRect().bottom).reduce((a, x) => Math.max(a, x), 0);
+          return {
+            cards,
+            band: b ? {
+              bottom: Math.round(b.bottom),
+              lowest: Math.round(lowest),
+              insideWidth: bandBox ? bandBox.left >= b.left - 1 && bandBox.right <= b.right + 1 : false,
+              label: bandBox ? bandLabel.textContent.trim().slice(0, 10) : '',
+            } : null,
+          };
+        })()""",
+    )
+    assert board["cards"], board
+
+    long_card, short_card = board["cards"][0], board["cards"][1]
+    assert long_card["text"] == "VERY LONG ", long_card
+    assert long_card["insideWidth"] is True, long_card
+    assert long_card["overflow"] == 0, long_card
+    # And the card is tall enough for the wrapped title, which is the half a
+    # post-render rule cannot do: mermaid only knows the height if it measured
+    # the wrapped label, and the next card down sits below that.
+    assert long_card["insideHeight"] is True, long_card
+    assert short_card["insideWidth"] and short_card["insideHeight"], short_card
+    # The column's own name is a label too, and the band around it is just as
+    # fixed a width as a card is.
+    assert board["band"]["label"] == "VERY LONG ", board["band"]
+    assert board["band"]["insideWidth"] is True, board["band"]
+    # Nothing is left hanging below the board it is in.
+    assert board["band"]["lowest"] <= board["band"]["bottom"] + 1, board["band"]
+
+
 def test_kanban_card_editor_grows_with_its_text_and_only_with_it(window):
     """A composer stands in for a card, so it has to be the card's size.
 
