@@ -1077,8 +1077,11 @@ describe('renderDiagram', () => {
       { host, commit: vi.fn() },
     )
 
+    // The newer render's editing layer, not the older one's: the older source
+    // offers one label and the newer three, so three says which of the two the
+    // block is now built from.
     expect(preview.querySelector('svg')).not.toBeNull()
-    expect(preview.querySelectorAll('.mermaid-editables')).toHaveLength(3)
+    expect(editables(preview).map((el) => el.textContent?.trim())).toEqual(['Alpha', 'Beta', 'Yes'])
   })
 
   it('offers no label it could not map back to the source', async () => {
@@ -1252,18 +1255,21 @@ describe('label editing', () => {
     expect(editables(preview)).toHaveLength(0)
   })
 
-  it('cancels an open editor when a re-render replaces the layer', async () => {
+  it('carries an open editor through a re-render, and commits nothing on its own', async () => {
     const commit = vi.fn()
     const { host, preview } = await renderFlowchart(commit)
 
     click(editables(preview)[0]!)
     input().value = 'A1'
-    // The re-render was not asked for by the editor holding a source snapshot
-    // that has since moved on, so its value is dropped rather than committed.
+    // The same source, rendered again: nothing in the document moved, so the
+    // field is still editing the same label and carries on with what was typed.
+    // A render is not an answer, and it must not quietly commit either.
     await renderDiagram(preview, source, { host, commit })
 
     expect(commit).not.toHaveBeenCalled()
-    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(input().value).toBe('A1')
+    typeAndConfirm('A1')
+    expect(commit).toHaveBeenCalledWith('graph TD\n  A[A1]\n  B[Beta]\n  A -->|Yes| B')
   })
 
   it('ignores a finish for a block that has no editing layer', () => {
@@ -2804,5 +2810,383 @@ describe('kanban delete buttons', () => {
 
     finishMermaidLabelEditing(host, false)
     expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(0)
+  })
+})
+// ── the session that owns a diagram ─────────────────────────────────────────
+
+describe('the editing session', () => {
+  const real = (commit: (next: string) => void) => (patched: string): void => commit(kanbanRealSource(patched))
+
+  /** A board in edit mode with its geometry filled in, and its commit handled. */
+  async function board(
+    commit: (next: string) => void,
+  ): Promise<{ host: HTMLElement; preview: HTMLElement; svg: SVGSVGElement }> {
+    hoisted.render.mockResolvedValue({ svg: BOARD_SVG })
+    const { host, preview } = harness()
+    await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host, commit: real(commit) })
+    const svg = preview.querySelector('svg')!
+    svg.getBoundingClientRect = () => rect(0, 0, 800, 600)
+    svg.querySelectorAll<SVGElement>('.sections > g').forEach((band, index) => {
+      const at = BOARD_BANDS[index] ?? BOARD_BANDS[0]!
+      band.querySelector('rect')!.getBoundingClientRect = () => at
+      band.getBoundingClientRect = () => at
+    })
+    svg.querySelectorAll<SVGElement>('.items > .node').forEach((card, index) => {
+      card.getBoundingClientRect = () => BOARD_CARD_RECTS[index] ?? BOARD_CARD_RECTS[0]!
+    })
+    preview.getBoundingClientRect = () => rect(0, 10, 800, 600)
+    return { host, preview, svg }
+  }
+
+  function pointer(type: string, x: number, y: number): Event {
+    const event = new Event(type, { bubbles: true })
+    Object.assign(event, { clientX: x, clientY: y, button: 0 })
+    return event
+  }
+
+  /** How many listeners of a type the element is carrying right now. */
+  function liveListeners(el: HTMLElement, type: string): () => number {
+    const live = new Set<string>()
+    const add = el.addEventListener.bind(el)
+    const remove = el.removeEventListener.bind(el)
+    el.addEventListener = ((kind: string, handler: unknown, options?: unknown) => {
+      live.add(`${kind}:${String(handler)}`)
+      add(kind, handler as EventListener, options as AddEventListenerOptions)
+    }) as typeof el.addEventListener
+    el.removeEventListener = ((kind: string, handler: unknown, options?: unknown) => {
+      live.delete(`${kind}:${String(handler)}`)
+      remove(kind, handler as EventListener, options as EventListenerOptions)
+    }) as typeof el.removeEventListener
+    return () => [...live].filter((key) => key.startsWith(`${type}:`)).length
+  }
+
+  it('keeps the newer of two renders asked for at once', async () => {
+    // Rendering is awaited in two places and requested from three, so two renders
+    // of one block really are in flight together. The older one resolving *last*
+    // used to leave the block showing a board the document had already moved
+    // past — with an editing layer built from that older source behind it.
+    const slow: Array<(svg: { svg: string }) => void> = []
+    hoisted.render.mockImplementation(() => new Promise((resolve) => slow.push(resolve)) as never)
+    const { host, preview } = harness()
+
+    const commit = vi.fn()
+    const stale = renderDiagram(preview, 'graph TD\n  A[Alpha]', { host, commit })
+    const fresh = renderDiagram(preview, 'graph TD\n  A[Alpha]\n  B[Beta]\n  A -->|Yes| B', { host, commit })
+    // Both are waiting on mermaid rather than on the mock yet.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    slow[1]!({ svg: FLOWCHART_SVG })
+    await fresh
+    slow[0]!({ svg: FLOWCHART_SVG })
+    await stale
+
+    // The newer render's editing layer, not the older one's: the older source
+    // offers one label and the newer three, so three says which of the two the
+    // block is now built from.
+    expect(preview.querySelector('svg')).not.toBeNull()
+    expect(editables(preview).map((el) => el.textContent?.trim())).toEqual(['Alpha', 'Beta', 'Yes'])
+  })
+
+  it('carries an open field through a render that replaces the drawing', async () => {
+    const commit = vi.fn()
+    hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
+    const { host, preview } = harness()
+    const source = 'graph TD\n  A[Alpha]\n  B[Beta]'
+    await renderDiagram(preview, source, { host, commit })
+
+    click(editables(preview)[0]!)
+    input().value = 'Gamma'
+    // A theme change, a zoom and a re-layout are all just this: the same source
+    // rendered again, with every element of the drawing replaced.
+    await renderDiagram(preview, source, { host, commit })
+
+    // The same field, with what was typed in it — a render nobody asked for is not
+    // a reason to throw half a label away.
+    expect(document.querySelectorAll('.mermaid-edit-input')).toHaveLength(1)
+    expect(input().value).toBe('Gamma')
+    typeAndConfirm('Gamma')
+    expect(commit).toHaveBeenCalledWith('graph TD\n  A[Gamma]\n  B[Beta]')
+  })
+
+  it('finishes an open field whose subject a render has taken away', async () => {
+    const commit = vi.fn()
+    hoisted.render.mockResolvedValue({ svg: FLOWCHART_SVG })
+    const { host, preview } = harness()
+    await renderDiagram(preview, 'graph TD\n  A[Alpha]\n  B[Beta]', { host, commit })
+
+    click(editables(preview)[0]!)
+    input().value = 'Gamma'
+    // The label the field is standing in for is not on the board any more.
+    await renderDiagram(preview, 'graph TD\n  B[Beta]', { host, commit })
+
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('lets a new card title survive a redraw, and commits it to the right column', async () => {
+    const commit = vi.fn()
+    const { host, preview, svg } = await board(commit)
+
+    clickAt(cardSlots(svg)[1]!)
+    input().value = 'Written'
+    await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host, commit: real(commit) })
+
+    expect(input().value).toBe('Written')
+    typeAndConfirm('Written')
+    expect(commit).toHaveBeenCalledWith(
+      ['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '    [Written]', '  Done', '    id3[Three]'].join(
+        '\n',
+      ),
+    )
+  })
+
+  it('puts a card in the column its slot was pressed in, not the one a stale index names', async () => {
+    const commit = vi.fn()
+    const { svg } = await board(commit)
+    // Doing's own slot, second of the board's four.
+    clickAt(cardSlots(svg)[1]!)
+    input().value = 'Later'
+    typeAndConfirm('Later')
+    expect(commit).toHaveBeenCalledWith(
+      ['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '    [Later]', '  Done', '    id3[Three]'].join(
+        '\n',
+      ),
+    )
+  })
+
+  it('is idle again once a field has closed, so a drag can arm on the same card', async () => {
+    const commit = vi.fn()
+    const { svg } = await board(commit)
+
+    clickAt(cardSlots(svg)[0]!)
+    typeAndConfirm('', 'Escape')
+    // A field that closed but still held the phase would make every later press
+    // on a card look like a press on a field, and nothing would lift.
+    const card = svg.querySelectorAll<SVGElement>('.items > .node')[0]!
+    card.dispatchEvent(pointer('pointerdown', 20, 45))
+    window.dispatchEvent(pointer('pointermove', 260, 50))
+    expect(card.classList.contains('kanban-dragging-card')).toBe(true)
+
+    window.dispatchEvent(pointer('pointerup', 240, 40))
+    expect(commit).toHaveBeenCalledWith(
+      ['kanban', '  Todo', '    id2[Two]', '  Doing', '    id1[One]', '  Done', '    id3[Three]'].join('\n'),
+    )
+  })
+
+  it('abandons an armed drag when the block stops being editable', async () => {
+    const commit = vi.fn()
+    const { host, svg } = await board(commit)
+    const card = svg.querySelectorAll<SVGElement>('.items > .node')[0]!
+    card.dispatchEvent(pointer('pointerdown', 20, 45))
+
+    // A render lands between the press and the first movement: the drag is
+    // measured against elements the render has thrown away, so it goes rather
+    // than going on moving them and committing a move from a board that is gone.
+    finishMermaidLabelEditing(host, false)
+    window.dispatchEvent(pointer('pointermove', 260, 50))
+
+    expect(card.classList.contains('kanban-dragging-card')).toBe(false)
+    expect(document.querySelector('.kanban-drop-line')).toBeNull()
+    window.dispatchEvent(pointer('pointerup', 240, 40))
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('takes the board and an open field down with it', async () => {
+    const commit = vi.fn()
+    const { host, preview, svg } = await board(commit)
+    clickAt(cardSlots(svg)[0]!)
+    expect(document.querySelectorAll('.mermaid-edit-input')).toHaveLength(1)
+
+    finishMermaidLabelEditing(host, false)
+
+    // No field, no controls, no slots, and the block's own padding for the field
+    // put back: one teardown, and nothing of the session left on the board.
+    expect(preview.querySelectorAll('.mermaid-edit-field')).toHaveLength(0)
+    expect(preview.querySelectorAll('.mermaid-kanban-btn')).toHaveLength(0)
+    expect(preview.querySelectorAll('.mermaid-kanban-slot')).toHaveLength(0)
+    expect((preview.closest('.mermaid') as HTMLElement).style.paddingBottom).toBe('')
+  })
+
+  it('leaves no listener behind on the preview, however many renders it has been through', async () => {
+    const commit = vi.fn()
+    hoisted.render.mockResolvedValue({ svg: BOARD_SVG })
+    const { host, preview } = harness()
+    const pointerdowns = liveListeners(preview, 'pointerdown')
+    const clicks = liveListeners(preview, 'click')
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host, commit })
+    }
+
+    // Every render takes the previous layer down before building the next one, so
+    // a preview that has been through several renders carries one layer's worth
+    // of listeners rather than one per render.
+    expect(pointerdowns()).toBeGreaterThan(0)
+    expect(pointerdowns()).toBeLessThanOrEqual(3)
+    expect(clicks()).toBeLessThanOrEqual(2)
+  })
+
+  it('offers nothing to click once the block is a preview again', async () => {
+    const commit = vi.fn()
+    hoisted.render.mockResolvedValue({ svg: BOARD_SVG })
+    const { host, preview } = harness()
+    await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host, commit })
+
+    // Done. The drawing is the same board, drawn without the places to add and
+    // with every label left as content — and none of it editable, because a
+    // preview is a preview and a patch from it would reach a document the user
+    // has said they are done with.
+    finishMermaidLabelEditing(host, false)
+    await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host })
+
+    const svg = preview.querySelector('svg')!
+    expect(cardSlots(svg)).toHaveLength(0)
+    expect(editables(svg)).toHaveLength(0)
+    expect(svg.querySelector('.mermaid-kanban-btn')).toBeNull()
+    clickAt(svg.querySelector('.items > .node')!)
+    expect(document.querySelector('.mermaid-edit-input')).toBeNull()
+    expect(commit).not.toHaveBeenCalled()
+  })
+})
+describe('the shape of a field', () => {
+  async function board(
+    commit: (next: string) => void,
+  ): Promise<{ host: HTMLElement; preview: HTMLElement; svg: SVGSVGElement }> {
+    hoisted.render.mockResolvedValue({ svg: BOARD_SVG })
+    const { host, preview } = harness()
+    const real = (patched: string): void => commit(kanbanRealSource(patched))
+    await renderDiagram(preview, kanbanAuthoringSource(BOARD_SOURCE), { host, commit: real })
+    const svg = preview.querySelector('svg')!
+    svg.getBoundingClientRect = () => rect(0, 0, 800, 600)
+    svg.querySelectorAll<SVGElement>('.sections > g').forEach((band, index) => {
+      const at = BOARD_BANDS[index] ?? BOARD_BANDS[0]!
+      band.querySelector('rect')!.getBoundingClientRect = () => at
+      band.getBoundingClientRect = () => at
+    })
+    svg.querySelectorAll<SVGElement>('.items > g.node').forEach((card, index) => {
+      card.getBoundingClientRect = () => BOARD_CARD_RECTS[index] ?? BOARD_CARD_RECTS[0]!
+    })
+    preview.getBoundingClientRect = () => rect(0, 10, 800, 600)
+    return { host, preview, svg }
+  }
+
+  /** Type into a field the way a sentence arrives, and report how tall the card got. */
+  function typeInto(field: HTMLInputElement | HTMLTextAreaElement, text: string): number {
+    const card = document.querySelector('.items > g.node.mermaid-node-editing')
+    for (const ch of text) {
+      field.value += ch
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    return Number(card?.querySelector('rect')?.getAttribute('height') ?? 0)
+  }
+
+  it('grows a card with its title, and only with its title', async () => {
+    const commit = vi.fn()
+    const { svg } = await board(commit)
+    clickAt(cardSlots(svg)[0]!)
+
+    const field = inPlaceField() as HTMLTextAreaElement
+    // jsdom computes no layout, so the field's own content height is what it is:
+    // the claim under test is about the *floor* not feeding back, not about where
+    // a real browser puts the wrap.
+    Object.defineProperty(field, 'scrollHeight', { value: 24, configurable: true })
+    const drawn = Number(cardSlots(svg)[0]!.querySelector('rect')?.getAttribute('height') ?? 0)
+
+    // One keystroke, one placement, and the card has taken the title's height plus
+    // its own padding. Re-reading the card's box as the field's floor and then
+    // re-reading the field's content height into the card is what made this climb
+    // a line per character.
+    const afterOne = typeInto(field, 'a')
+    await flushFrames()
+    typeInto(field, 'bbbbbbbb')
+    await flushFrames()
+
+    expect(afterOne).toBe(drawn === 0 ? 32 : afterOne)
+    expect(Number(cardSlots(svg)[0]!.querySelector('rect')?.getAttribute('height'))).toBe(afterOne)
+    expect(afterOne).toBe(32)
+  })
+
+  it('edits a column name and a new column with the same field', async () => {
+    const commit = vi.fn()
+    const { svg } = await board(commit)
+
+    // A column that already has a name: its own band, at one line. The band is
+    // x 0..140, y 20..130 against a preview at y 10, where the words of the name
+    // have no box of their own at all — so the placement is the claim.
+    click(editables(svg)[0]!)
+    const rename = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(rename.tagName).toBe('INPUT')
+    expect(rename.value).toBe('Todo')
+    const over = document.querySelector<HTMLElement>('.mermaid-edit-field')!
+    expect(over.style.left).toBe('0px')
+    expect(over.style.top).toBe('10px')
+    expect(over.style.width).toBe('140px')
+    typeAndConfirm('TodoX')
+
+    // The column the board is drawn with: the same field, in the same band's
+    // geometry, with nothing in it because there is no name to replace.
+    const slot = columnSlot(svg)
+    clickAt(slot)
+    const fresh = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(fresh.tagName).toBe('INPUT')
+    expect(fresh.value).toBe('')
+    expect(fresh.placeholder).toBe('Column name')
+    // The drawn column's band is 140 wide at x 600, against a preview at y 10.
+    expect(document.querySelector<HTMLElement>('.mermaid-edit-field')!.style.left).toBe('600px')
+    expect(document.querySelector<HTMLElement>('.mermaid-edit-field')!.style.top).toBe('10px')
+    typeAndConfirm('Archive')
+
+    expect(commit).toHaveBeenCalledTimes(2)
+    expect(commit.mock.calls[0]![0]).toBe(
+      ['kanban', '  TodoX', '    id1[One]', '    id2[Two]', '  Doing', '  Done', '    id3[Three]'].join('\n'),
+    )
+    // The second edit is made on top of the first even though no render has come
+    // back between them, because the source a patch is made from is the session's
+    // own and a patch updates it the moment it is made.
+    expect(commit.mock.calls[1]![0]).toBe(
+      [
+        'kanban',
+        '  TodoX',
+        '    id1[One]',
+        '    id2[Two]',
+        '  Doing',
+        '  Done',
+        '    id3[Three]',
+        '  col1[Archive]',
+      ].join('\n'),
+    )
+  })
+
+  it('renames a column from its menu with that same field', async () => {
+    const commit = vi.fn()
+    const { preview } = await board(commit)
+    click(preview.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-menu')[0]!)
+    const rename = Array.from(preview.querySelectorAll<HTMLButtonElement>('.mermaid-kanban-menu-item'))
+      .find((item) => item.textContent === 'Rename column')
+    expect(rename).toBeDefined()
+    click(rename!)
+
+    const field = document.querySelector<HTMLInputElement>('.mermaid-edit-input')!
+    expect(field.tagName).toBe('INPUT')
+    expect(field.value).toBe('Todo')
+    typeAndConfirm('TodoY')
+    expect(commit.mock.calls[0]![0]).toBe(
+      ['kanban', '  TodoY', '    id1[One]', '    id2[Two]', '  Doing', '  Done', '    id3[Three]'].join('\n'),
+    )
+  })
+
+  it('keeps a card title a composer and a column name a line', async () => {
+    const commit = vi.fn()
+    const { svg } = await board(commit)
+
+    clickAt(cardSlots(svg)[0]!)
+    const card = inPlaceField()
+    expect(card.tagName).toBe('TEXTAREA')
+    expect(card.placeholder).toBe('Card title')
+    typeAndConfirm('One', 'Escape')
+
+    click(editables(svg)[0]!)
+    expect(document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.tagName).toBe('INPUT')
+    expect(document.querySelector<HTMLInputElement>('.mermaid-edit-input')!.placeholder).toBe('')
   })
 })

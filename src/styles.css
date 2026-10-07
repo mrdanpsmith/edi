@@ -1766,11 +1766,9 @@ body {
   color: var(--danger);
 }
 
-/* A card in flight is not where it was, so the ✕ that was hiding on it would sit
-   in the gap it left, offering to delete a slot. Hidden for the length of the
-   drag, and back with the render that follows the drop. The column `⋯` has the
-   same problem, one column out, and the same answer. */
-.ProseMirror .mermaid-preview.kanban-dragging .mermaid-kanban-card-remove,
+/* A card in flight is not where it was, so a column's `⋯` stands in the gap it
+   left, offering the actions of whatever took its place. Hidden for the length of
+   the drag, and back with the render that follows the drop. */
 .ProseMirror .mermaid-preview.kanban-dragging .mermaid-kanban-menu {
   visibility: hidden;
 }

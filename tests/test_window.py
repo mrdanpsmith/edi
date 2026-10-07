@@ -1744,6 +1744,99 @@ def _column_slot_past_the_board(board, slots):
     )
 
 
+def test_kanban_card_editor_grows_with_its_text_and_only_with_it(window):
+    """A composer stands in for a card, so it has to be the card's size.
+
+    Real browser only: the whole of this is layout, and jsdom computes none of
+    it. The card is stretched to the title -- its own height plus the card's
+    padding -- and *that* is the whole of what a title may do to it. The field's
+    floor used to be read back off the very card the field was stretching, so the
+    two fed each other and the card grew by a line for every character typed: a
+    sentence left a composer taller than the board it was standing on.
+    """
+    title = (
+        "A title long enough that mermaid has to wrap it across several lines "
+        "of the card it is drawn in"
+    )
+
+    def measure():
+        return _dump(
+            window,
+            """(() => {
+              const card = document.querySelector('.mermaid .items > g.node.mermaid-node-editing');
+              const input = document.querySelector('.mermaid-edit-input');
+              if (!card || !input) return { missing: true };
+              const height = Number(card.querySelector('rect').getAttribute('height'));
+              return {
+                card: height,
+                field: Math.round(input.getBoundingClientRect().height),
+                text: input.value.length,
+              };
+            })()""",
+        )
+
+    def settled():
+        _wait(
+            window,
+            "(() => { const c = document.querySelector('.mermaid .items > g.node.mermaid-node-editing');"
+            " return { h: c ? Number(c.querySelector('rect').getAttribute('height')) : 0 }; })()",
+            lambda d: d["h"] > 0,
+        )
+
+    _render(window, KANBAN)
+    _enter_edit_mode(window)
+
+    # The whole title at once: the height it actually needs.
+    _click_kanban_slot(window, 0)
+    drawn = measure()["card"]
+    _type_into(window, title)
+    settled()
+    whole = measure()
+    assert not whole.get("missing"), whole
+    # The card ends up the composer's content plus the card's own 8px of padding,
+    # so it is taller than the slot it replaces and no taller than that.
+    assert whole["card"] > drawn, (whole, drawn)
+    assert whole["card"] <= whole["field"] + 8 + 1, whole
+
+    # The same title, arriving in pieces rather than at once. Feeding each other,
+    # each chunk would leave the card a line taller than the one before it, so the
+    # two would not agree on a height the text has already settled at.
+    _type_and_confirm(window, "One")
+    _click_kanban_slot(window, 0)
+    for chunk in (title[:20], title[:60], title[:100], title):
+        _type_into(window, chunk)
+    settled()
+    piecemeal = measure()
+    assert piecemeal["text"] == len(title), piecemeal
+    assert piecemeal["card"] == pytest.approx(whole["card"], abs=1.0), (piecemeal, whole)
+
+    # Confirm what is in the field, which `_type_and_confirm` cannot do: it sets
+    # the value before pressing Enter, and the value is the thing under test.
+    _press_key(window, "Enter")
+    _wait(
+        window,
+        "(() => ({ gone: !document.querySelector('.mermaid-edit-input') }))()",
+        lambda d: d["gone"],
+    )
+    assert _wait_text(window, [title]), "the title did not reach the source"
+
+
+def _type_into(win, value):
+    """Fill the open field with ``value`` and let the editor react to it."""
+    _dump(
+        win,
+        """(() => {
+          const input = document.querySelector('.mermaid-edit-input');
+          if (!input) return { missing: true };
+          input.value = %s;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          return { ok: true };
+        })()"""
+        % json.dumps(value),
+    )
+    return value
+
+
 def test_kanban_drawn_slot_creates_a_card(window):
     """The place a card is added is drawn in the board, and it adds one there.
 
