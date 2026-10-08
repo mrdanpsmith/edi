@@ -754,35 +754,42 @@ body {
  * These classes are also what makes a mode flip reach the node views at all:
  * ProseMirror compares a node's decorations by value and skips the tree walk when
  * they match, so the rule has to be distinct per mode (see `BLOCK_MODE_CLASS`). */
-.ProseMirror .edi-block-mode-source {
+/* **One bar, one colour, for whichever block holds the record.** §7.2 drew it in
+   three: `--warning` for visual, `--accent` for source, `--danger` for editing, on
+   the reasoning that three states deserve three colours.
+
+   They do not, and two of the three were actively wrong:
+
+   - `--danger` is this app's colour for *destructive* things — the delete dialog's
+     button, the kanban bin's dressing. Using it for "you are editing this diagram"
+     made the most ordinary state in the app look like a fault, and it was reported
+     as an artifact twice. Editing a board is the point of the mode.
+   - `--warning` for a plain view was the same mistake in amber, and it is why an
+     open spreadsheet grew an amber rule down its left edge.
+
+   And the encoding was never doing any work: **only one block holds the record at
+   a time** (§2.1), so a bar can never be one colour because another block is
+   another colour — there is never another bar. The bar answers *which* block; the
+   chip answers *what* mode, and it can afford to, because it has the room.
+
+   A form-only mode wears no bar at all (see below), so this fires on the two
+   states that are genuinely alternate renderings of a block: its source form, and
+   a diagram being edited. */
+.ProseMirror :is(.edi-block-mode-source, .edi-block-mode-editing) {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-/* The interaction axis, a third colour so a board being edited inside a Source
-   form still reads as the thing being worked on. */
-.ProseMirror .edi-block-mode-editing {
-  box-shadow: inset 3px 0 0 var(--danger);
-}
+/* **A block whose only non-default state is a rendered form** — a table as a sheet
+   — wears no bar, because it is not an alternate *document*: it is a spreadsheet,
+   which is what you edit a table in, and §5.1's vocabulary calls that `Edit` on the
+   button and the chip but the block itself is still plainly a table. What marks it
+   is the chip and the fact that it is unmistakably a spreadsheet.
 
-/* **There is deliberately no rule for `…-visual`.** There was one, in
-   `--warning`, and it is gone for two reasons that turned out to be the same
-   reason.
-
-   A block can only hold the record while it is in *some* non-default state, and
-   since the form moved onto the record (§4.3) those are exactly two: its source
-   form, or a diagram being edited. A table as a sheet is the third — and it is a
-   *rendering*, so it gets no bar: what marks it is the chip, which names it
-   (`Sheet — "…"`), and the fact that it is unmistakably a spreadsheet. So a
-   record that is `visual` and not `editing` and carries no form cannot be reached
-   by any route, and a rule for it would be decoration for a state that does not
-   exist.
-
-   It is also worth saying what the amber bar *looked* like, because the reason it
-   had to go was that it was unreadable rather than merely unwanted: it ran down
-   the left edge of every open spreadsheet and read as a fault. A form-only mode
-   never wore it before the record change, because a form used to be a document
-   attr and a sheet held no record to decorate — which is why the bar appeared at
-   the same moment as §4.3 and looked like a regression from it. */
+   It has to be said that this class is still *decorated* even though it draws
+   nothing. It is what makes a form flip reach the node view at all: a form differs
+   from plain text in nothing else the decoration can see, so without a distinct
+   class `ViewDesc.matchesNode` returns "no change", the tree is not re-walked, and
+   the table keeps drawing as text (§4.3). */
 
 /* A block in its source form already says so with a border of its own. */
 .ProseMirror .block-source-mode {

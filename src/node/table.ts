@@ -138,9 +138,10 @@ function tableFormAt(state: EditorState, pos: number | undefined): string | null
 }
 
 /**
- * The block's **Text** / **Sheet** control, labelled from the descriptor's own
- * form list so the cluster, the context menu and the cycle can never drift into
- * three spellings of the same two words.
+ * The block's **Edit** / **Visual** control — the table's cycle, in the cycle's
+ * own vocabulary (§5.1) — labelled from the descriptor's form list so the cluster,
+ * the context menu and the cycle can never drift into three spellings of the same
+ * two words. The button names the step it *goes to*, as every cluster control does.
  */
 function formControl(
   view: EditorView,
@@ -157,8 +158,8 @@ function formControl(
     const current = tableFormOf(view.state, at)
     button.textContent = other(current)
     button.title = current === 'sheet'
-      ? 'Draw this table as plain text'
-      : 'Open this table as a spreadsheet'
+      ? 'Draw this table as its markdown again'
+      : 'Edit this table in a spreadsheet'
   }
   button.addEventListener('click', (event) => {
     event.preventDefault()
@@ -242,15 +243,8 @@ class TableNodeView implements NodeView, InlineCellHost {
     // One cluster for the block, in the same place every other block's is: its
     // mode buttons, generated from the descriptor, then the block's own actions —
     // here the one control that changes the rendered form.
-    // Built *before* the cluster: `attachBlockControls` copies the action list
-    // into its slot once, so a button added to the array afterwards is a button
-    // that is in no cluster at all — which is what a first attempt did, and it
-    // looked like the alignment controls had been deleted.
-    const actions: HTMLElement[] = [formControl(view, getPos, node)]
-    const tools = this.buildTools(actions)
-    const controls = attachBlockControls(node, view, getPos, actions)
+    const controls = attachBlockControls(node, view, getPos, [formControl(view, getPos, node)])
     if (controls) this.dom.appendChild(controls.dom)
-    this.dom.appendChild(tools)
 
     this.dom.addEventListener('mousedown', (event) => {
       const target = event.target as HTMLElement
@@ -262,6 +256,7 @@ class TableNodeView implements NodeView, InlineCellHost {
       event.stopPropagation()
     })
     this.dom.addEventListener('contextmenu', (event) => this.onGridContextMenu(event))
+    this.dom.appendChild(this.buildTools())
     this.buildFxBar()
     this.buildGrid()
     this.buildInsertGuide()
@@ -464,19 +459,20 @@ class TableNodeView implements NodeView, InlineCellHost {
   // --- Static chrome ---
 
   /**
-   * The sheet's own controls: three alignment buttons and **Use values**, which
-   * are actions and so belong in the block's cluster with the mode buttons
-   * (§6.3) — where the rest of the app keeps its actions and where they stop
-   * competing with them for the same corner.
+   * The sheet's own control row, at the **left** of the sheet's chrome and below
+   * the grid's own header: the three alignment buttons, **Use values**, the status
+   * readout and the "Resolve formulas?" checkbox.
    *
-   * What stays behind is the two things that are **not** actions and cannot be
-   * moved without losing what they are for: the status readout, because a readout
-   * inside a cluster that is `opacity: 0` until the block is hovered is a readout
-   * that vanishes exactly when you look at the thing it describes; and the
-   * "Resolve formulas?" checkbox, because it is a labelled setting and a bare
-   * checkbox in a pill has nowhere to put its words.
+   * These were briefly moved into the block's cluster, on the argument that §6.3
+   * puts a block's actions there. That was the wrong call and it was tried rather
+   * than argued: the sheet's row *is* where the alignment controls have always
+   * lived, they are column-and-cell controls for a grid that is right there, and
+   * putting them in a hover pill at the block's right edge moved three controls a
+   * long way from the columns they act on to sit beside a **Source** button that
+   * has nothing to do with either. The cluster keeps the mode controls, which are
+   * about the block, and nothing else.
    */
-  private buildTools(actions: HTMLElement[]): HTMLElement {
+  private buildTools(): HTMLElement {
     const tools = document.createElement('div')
     tools.className = 'ss-tools'
     for (const [align, title, markup] of [
@@ -486,11 +482,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     ] as const) {
       const button = document.createElement('button')
       button.type = 'button'
-      // `block-control` as well as its own classes: a control that lives in the
-      // cluster is styled by it, so a second border and a second set of metrics
-      // round one button is not what it is there for — and a 21px row of three is
-      // exactly the collision that put these controls in their own bar.
-      button.className = 'block-control ss-tool ss-tool-icon'
+      button.className = 'ss-tool ss-tool-icon'
       button.dataset.align = align
       button.title = title
       button.setAttribute('aria-label', title)
@@ -501,16 +493,12 @@ class TableNodeView implements NodeView, InlineCellHost {
         this.commitFxEdit()
         this.alignColumns(align)
       })
-      actions.push(button)
+      tools.appendChild(button)
       this.alignButtons.push({ align, el: button })
     }
-    const status = document.createElement('span')
-    status.className = 'ss-status'
-    tools.appendChild(status)
-    this.statusEl = status
     const valuesBtn = document.createElement('button')
     valuesBtn.type = 'button'
-    valuesBtn.className = 'block-control ss-tool ss-tool-view'
+    valuesBtn.className = 'ss-tool ss-tool-view'
     valuesBtn.textContent = 'Use values'
     valuesBtn.title =
       'Replace the selected cells’ formulas with their current computed values (they stop recalculating — undo with Ctrl+Z)'
@@ -518,7 +506,16 @@ class TableNodeView implements NodeView, InlineCellHost {
       this.useValues()
     })
     this.valuesButton = valuesBtn
-    actions.push(valuesBtn)
+    // **Before** the status, not after it. `.ss-status` is `margin-left: auto`, so
+    // it takes the slack in the row and shoves everything after it to the far
+    // right — which put "Use values" 970px from the alignment buttons it belongs
+    // beside. The buttons are the left of the row; the readout and the labelled
+    // setting take the right.
+    tools.appendChild(valuesBtn)
+    const status = document.createElement('span')
+    status.className = 'ss-status'
+    tools.appendChild(status)
+    this.statusEl = status
     const resolveLabel = document.createElement('label')
     resolveLabel.className = 'ss-tool ss-tool-check'
     resolveLabel.title =

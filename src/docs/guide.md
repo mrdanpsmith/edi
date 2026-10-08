@@ -12,10 +12,9 @@ the preview renders it live — and a few block types go much further.
 - Hover a block for its controls at the right edge: **Source** shows that
   block's markdown and **Visual** brings the rendering back. `Ctrl+Shift+E`
   does the same for the block the caret is in.
-- `Alt+click` any block to step it through its modes: a diagram goes visual →
-  edit → source, a table goes plain text → spreadsheet → source, everything else
-  goes visual → source. `Alt+Shift+click` goes straight back to the visual form,
-  and `Esc` steps back down one.
+- `Alt+click` any block to step it through its modes — **visual → edit →
+  source** — and `Alt+Shift+click` steps back the same way. A table's edit mode is
+  the spreadsheet. `Esc` leaves a block's source form.
 - Click a link to open it; right-click one to edit its address. Clearing
   the address removes the link and keeps the text.
 - `Ctrl+Shift+V` pastes clipboard text as markdown (parsed into real blocks);

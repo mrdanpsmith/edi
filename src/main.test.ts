@@ -1959,7 +1959,7 @@ describe('context menu', () => {
       'Copy',
       'Paste',
       'Select all',
-      'Text',
+      'Visual',
       'Source',
       'Encrypt block…',
     ])
@@ -1977,7 +1977,7 @@ describe('context menu', () => {
     const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
-    expect(menuLabels()).toEqual(['Text', 'Source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Visual', 'Source', 'Encrypt block…'])
 
     teardown()
   })
@@ -1998,7 +1998,7 @@ describe('context menu', () => {
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     expect(mainState.spreadsheetMenuEntries).toHaveBeenCalledWith(cell)
-    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Text', 'Source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Visual', 'Source', 'Encrypt block…'])
 
     findMenuItem('Cut').click()
     expect(cut).toHaveBeenCalledTimes(1)

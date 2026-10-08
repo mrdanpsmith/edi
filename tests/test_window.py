@@ -2732,7 +2732,7 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
         window,
         "(() => { const b = document.querySelector('.block-control-form');"
         " if (!b) return { missing: true };"
-        " if (b.textContent === 'Sheet') b.click();"
+        " if (b.textContent === 'Edit') b.click();"
         " return { sheet: !!document.querySelector('.spreadsheet'),"
         "  label: b.textContent }; })()",
         lambda d: d.get("sheet") is True,
@@ -2769,7 +2769,7 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
                          " plain: !!document.querySelector('.ss-plain'),"
                          " form: (document.querySelector('.block-control-form') || {}).textContent }))()")
     assert after["sheet"] and not after["plain"], after
-    assert after["form"] == "Text", after
+    assert after["form"] == "Visual", after
 
     # ...and the gesture that *does* advance the block still does, from the cell:
     # a table's cycle is text → sheet → source, so the step on from a sheet is the
@@ -2808,7 +2808,7 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
         lambda d: d.get("sheet") is True,
         timeout=10,
     )
-    assert not back["plain"] and back["form"] == "Text", back
+    assert not back["plain"] and back["form"] == "Visual", back
 
 
 # What a code block's one control row holds, and — the claim this test exists
@@ -3726,30 +3726,31 @@ graph TD
 # moves a block's *actions* into its cluster and this is that rule finishing its
 # job: three alignment buttons and "Use values" were left in a `.ss-tools` row
 # inside the sheet, under the cluster rather than in it.
-SHEET_TOOLS_IN_THE_CLUSTER = """(() => {
+SHEET_CONTROLS = """(() => {
   const sheet = document.querySelector('#editor-container .spreadsheet');
   if (!sheet) return { missing: true };
   const cluster = sheet.querySelector('.block-controls');
   const tools = sheet.querySelector('.ss-tools');
-  const inside = (sel) => {
+  const where = (sel) => {
     const el = sheet.querySelector(sel);
     return {
       present: !!el,
       inCluster: !!(el && cluster && cluster.contains(el)),
       inTools: !!(el && tools && tools.contains(el)),
-      size: el ? [Math.round(el.getBoundingClientRect().width),
-                  Math.round(el.getBoundingClientRect().height)] : null,
+      // Which side of the sheet it sits on, from the sheet's own box.
+      left: el
+        ? Math.round(el.getBoundingClientRect().left
+          - sheet.getBoundingClientRect().left)
+        : null,
     };
   };
   return {
     hasCluster: !!cluster,
     hasTools: !!tools,
-    // Actions: belong in the cluster, with the mode buttons.
-    align: inside('.ss-tool-icon'),
-    values: inside('.ss-tool-view'),
-    // Not actions: the readout and the labelled setting stay in the flow.
-    status: inside('.ss-status'),
-    resolve: inside('.ss-tool-check'),
+    align: where('.ss-tool-icon'),
+    values: where('.ss-tool-view'),
+    status: where('.ss-status'),
+    resolve: where('.ss-tool-check'),
     modeButtons: cluster
       ? [...cluster.querySelectorAll('.block-control-representation, .block-control-form')]
           .map((b) => b.textContent)
@@ -3774,38 +3775,70 @@ def _open_a_sheet(window):
           lambda d: d.get("s") is True, timeout=10)
 
 
-def test_a_sheets_own_actions_are_drawn_in_its_cluster(window):
-    """One bar per block: the mode buttons and the sheet's actions together.
+def test_a_sheets_own_controls_stay_in_its_own_row_at_the_left(window):
+    """The sheet's controls are in the sheet's row, and the cluster is mode-only.
 
-    The alignment buttons and "Use values" were actions drawn in a `.ss-tools` row
-    inside the sheet, so they sat under the cluster and competed with the very
-    controls they sit beside now. What is deliberately *not* moved is the two
-    things that are not actions: the status readout, which would vanish exactly
-    when it was worth reading (the cluster is `opacity: 0` until hover), and the
-    "Resolve formulas?" checkbox, which is a labelled setting with nowhere to put
-    its words in a pill.
+    They were briefly moved into the block's cluster, on the argument that §6.3
+    puts a block's actions there. That was wrong and it was tried rather than
+    argued: the sheet's row is where the alignment controls have always lived,
+    they are column-and-cell controls for a grid that is right there, and putting
+    them in a hover pill at the block's right edge moved three controls a long way
+    from the columns they act on to sit beside a **Source** button that has nothing
+    to do with either.
     """
     _open_a_sheet(window)
-    out = _dump(window, SHEET_TOOLS_IN_THE_CLUSTER)
+    out = _dump(window, SHEET_CONTROLS)
     assert out["hasCluster"], "the sheet has no cluster"
-    assert out["hasTools"], "the sheet has no .ss-tools row left to hold the non-actions"
+    assert out["hasTools"], "the sheet lost its own control row"
 
-    assert out["align"]["present"], "the alignment buttons are gone"
-    assert out["align"]["inCluster"], "the alignment buttons are not in the cluster"
-    assert out["values"]["present"], "Use values is gone"
-    assert out["values"]["inCluster"], "Use values is not in the cluster"
+    for name in ("align", "values"):
+        entry = out[name]
+        assert entry["present"], f"{name} is gone"
+        assert entry["inTools"], f"{name} left the sheet's own row for the cluster"
+        assert not entry["inCluster"], f"{name} is in the cluster again"
+        # Left of the readout, which is `margin-left: auto` and so takes the slack
+        # in the row and pushes whatever follows it to the far right.
+        assert entry["left"] is not None and entry["left"] < out["status"]["left"], (
+            f"{name} is not at the left of the sheet's row: {entry}")
 
+    # The two things that are not controls stay in that row too.
     assert out["status"]["present"] and out["status"]["inTools"], (
-        "the status readout must stay in the flow: a hover-only readout is unreadable")
+        "the status readout belongs in the row: a hover-only readout is unreadable")
     assert out["resolve"]["present"] and out["resolve"]["inTools"], (
-        "the Resolve checkbox must stay in the flow: it is a labelled setting")
+        "the Resolve checkbox belongs in the row: it is a labelled setting")
 
-    # The two mode controls are still there, first, as the cluster is meant to be.
-    assert out["modeButtons"] == ["Source", "Text"], out["modeButtons"]
+    # The cluster is the block's, holds the block's modes and nothing else, and —
+    # being an open sheet — its form control names where it *goes*, so `Visual`.
+    assert out["modeButtons"] == ["Source", "Visual"], out["modeButtons"]
+
+    assert out["modeButtons"] == ["Source", "Visual"], out["modeButtons"]
+
+
+def test_a_plain_tables_cluster_uses_the_cycles_own_vocabulary(window):
+    """`Source`, then `Edit` — the same three words every cycled operation uses.
+
+    The table's forms were `Show as text` / `Show as sheet` and then `Text` /
+    `Sheet`, both of which name the *rendering* and neither of which says where
+    the block is in its cycle. So a table said "Sheet" where a diagram said "Edit",
+    three surfaces had to be taught two vocabularies, and the chip had to
+    special-case which of them it was in. A spreadsheet **is** a table's edit mode
+    — the form you change the table in, as a diagram's editing layer is the form
+    you change a diagram in — so the cycle's own words are the right ones.
+    """
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps("| A | B |\n| --- | --- |\n| 1 | 2 |\n"))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=20)
+    labels = _dump(window, """(() => {
+      const t = document.querySelector('#editor-container .ss-plain');
+      return { labels: [...t.querySelectorAll('.block-control-representation, .block-control-form')]
+        .map((b) => b.textContent) };
+    })()""")['labels']
+    assert labels == ["Source", "Edit"], labels
 
 
 def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
-    """A sheet wears no accent rule, and the chip names it.
+    """A sheet wears no accent rule, and the chip names it as an Edit.
 
     The bar's vocabulary is the two axes — "is this block being shown as something
     other than its document" — and a sheet is a rendering. It used to be marked
@@ -3825,5 +3858,129 @@ def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
     })()""")
     assert out["shadow"] in ("none", ""), (
         f"a sheet must not wear the accent bar: {out['shadow']!r}")
-    assert out["chip"].startswith("Sheet"), (
-        f"the chip must name the form, not the interaction axis: {out['chip']!r}")
+    # A spreadsheet is a table's *Edit* (§5.1), so the chip says the one word every
+    # cycled operation uses — which it could not do while the forms had their own
+    # vocabulary of renderings.
+    assert out["chip"].startswith("Edit"), (
+        f"the chip must use the cycle's vocabulary: {out['chip']!r}")
+
+
+# §7.2's accent rule. It was `--warning` for a plain view, `--accent` for source
+# and `--danger` for editing — three colours for three states, on the reasoning
+# that three states deserve three colours.
+#
+# Two of them were wrong in the same way, and it showed. `--danger` is this app's
+# colour for *destructive* things (the delete dialog's button, the kanban bin's
+# dressing), so the most ordinary state in the app — a diagram you are editing —
+# wore the same red as a delete and was reported as an artifact. `--warning` did the
+# same in amber, which is what put a rule down the left edge of every open
+# spreadsheet.
+#
+# The encoding was doing no work anyway: only one block holds the record at a time
+# (§2.1), so there is never a second bar for a colour to be told apart from. The bar
+# answers *which* block; the chip answers *what*.
+RECORD_BAR_IS_NOT_RED = r"""(() => {
+  const RED = /rgba?\((\d+),\s*(\d+),\s*(\d+)/;
+  const reddish = (value) => {
+    const m = RED.exec(value);
+    if (!m) return false;
+    const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    return r > 110 && r > g + 45 && r > b + 45;
+  };
+  const hits = [];
+  for (const el of document.querySelectorAll('#editor-container *')) {
+    const cs = getComputedStyle(el);
+    for (const prop of ['backgroundColor', 'borderLeftColor', 'borderRightColor',
+                        'borderTopColor', 'borderBottomColor', 'boxShadow',
+                        'outlineColor']) {
+      if (reddish(cs[prop])) {
+        hits.push({ cls: String(el.className).slice(0, 40), prop, v: cs[prop].slice(0, 40) });
+      }
+    }
+  }
+  const bar = (sel) => {
+    const el = document.querySelector(sel);
+    return el ? getComputedStyle(el).boxShadow : null;
+  };
+  return {
+    hits,
+    visualBar: bar('#editor-container .mermaid'),
+    editingBar: bar('#editor-container .mermaid-editing'),
+    plainTableBar: bar('#editor-container .ss-plain'),
+    sheetBar: bar('#editor-container .spreadsheet'),
+  };
+})()"""
+
+
+def test_a_block_holding_the_record_is_never_marked_in_red(window):
+    """Editing a diagram is the point of the mode, not a hazard.
+
+    `--danger` is this app's destructive colour — the delete dialog's button, the
+    kanban bin's dressing — so wearing it for "you are editing this diagram" made an
+    ordinary state look like a fault, and it was reported as an artifact. The bar is
+    now one accent colour for whichever block holds the record, which is the only
+    encoding it can usefully carry: one block holds it at a time, so there is never
+    a second bar to be told apart from.
+    """
+    import json
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true"
+        % json.dumps("```mermaid\ngraph TD\n  A[Alpha] --> B[Beta]\n```\n"))
+    _wait(window,
+          "(() => ({ m: !!document.querySelector('#editor-container .mermaid') }))()",
+          lambda d: d.get("m") is True, timeout=25)
+
+    # Visual, and nothing is marked at all: nothing holds the record.
+    before = _dump(window, RECORD_BAR_IS_NOT_RED)
+    assert before["visualBar"] == "none", before["visualBar"]
+    assert before["editingBar"] is None, before["editingBar"]
+
+    _dump(window, """(() => {
+      const el = document.querySelector('#editor-container .mermaid-preview')
+        || document.querySelector('#editor-container .mermaid');
+      el.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { clicked: true };
+    })()""")
+    _wait(window,
+          "(() => ({ e: !!document.querySelector('#editor-container .mermaid-editing') }))()",
+          lambda d: d.get("e") is True, timeout=15)
+
+    during = _dump(window, RECORD_BAR_IS_NOT_RED)
+    assert during["editingBar"] not in (None, "none"), (
+        f"a diagram being edited should carry the record's bar: {during['editingBar']!r}")
+    assert not during["hits"], f"something in the editor is drawn in red: {during['hits']}"
+
+
+def test_a_table_as_a_sheet_is_not_marked_at_all(window):
+    """A spreadsheet is a rendering, so it wears no bar — and the chip says `Edit`.
+
+    Two halves that are easy to confuse. The sheet must be **unmarked**, because
+    §7.2's rule is about the two alternate *document* states and a sheet is neither;
+    and the chip must still **name** the state, because that is where "what" is
+    answered. The decoration class is kept either way — it is what makes a form
+    flip reach the node view at all (§4.3).
+    """
+    import json
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps("| A | B |\n| --- | --- |\n| 1 | 2 |\n"))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=20)
+    _dump(window, """(() => {
+      const cell = document.querySelector('#editor-container .ss-plain-table td');
+      cell.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
+          lambda d: d.get("s") is True, timeout=10)
+
+    out = _dump(window, RECORD_BAR_IS_NOT_RED)
+    assert out["sheetBar"] in ("none", ""), (
+        f"a sheet must not carry the record's bar: {out['sheetBar']!r}")
+    assert not out["hits"], f"something in the editor is drawn in red: {out['hits']}"
+
+    chip = _dump(window,
+                 "(() => ({ text: (document.querySelector('#status-mode')||{}).textContent || '' }))()")
+    assert chip["text"].startswith("Edit"), (
+        f"the chip must still name the state, in the cycle's vocabulary: {chip['text']!r}")

@@ -1654,7 +1654,8 @@ describe('TableNodeView grid', () => {
     // descriptor's own form list rather than from a per-call-site string.
     const cluster = view.dom.querySelector('.block-controls') as HTMLElement
     expect(cluster.querySelector('.block-control-representation')?.textContent).toBe('Source')
-    expect(cluster.querySelector('.block-control-form')?.textContent).toBe('Sheet')
+    // A table's cycle reads like a diagram's: Source, then Edit.
+    expect(cluster.querySelector('.block-control-form')?.textContent).toBe('Edit')
     view.destroy()
   })
 

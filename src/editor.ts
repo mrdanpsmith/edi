@@ -17,6 +17,7 @@ import {
   keepOneNonVisualBlock,
   enterSourceMode,
   exitBlockMode,
+  leaveBlockMode,
   setBlockMode,
 } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
@@ -116,7 +117,7 @@ const blockToggleKeymap = keymap({
     // different block, and opening *that* one as a side effect of asking to
     // close the first would be a surprise.
     if (currentBlockMode(state) !== null) {
-      if (!exitBlockMode(view)) return false
+      if (!leaveBlockMode(view, currentBlockMode(state)!.pos)) return false
       return true
     }
 
@@ -133,10 +134,16 @@ const blockToggleKeymap = keymap({
     enterSourceMode(view, blockPos)
     return true
   },
-  // The whole ladder is `exitBlockMode` (§5.3): a block in its source form
-  // commits and returns to its rendering, a block in its interaction form goes
-  // to Done, and anything else hands Escape straight on — which is what leaves
-  // selection handling, dialogs and a diagram's own Escape alone.
+  // One rung, and it is the only one (§5.3): a block in its **source** form
+  // commits and returns to its rendering. Everything else hands Escape straight
+  // on — which is what leaves selection handling, dialogs, the spreadsheet's own
+  // cell editor and a diagram's own Escape alone.
+  //
+  // Escape is deliberately **not** a way round the cycle. The other two steps are
+  // moves through it rather than cancellations, so they are the cycle's own
+  // backwards gesture's business (Alt+Shift+click, §5.2) and the controls on the
+  // block's; a key that undid any of them would be answering "cancel" for two
+  // different questions.
   'Escape': (_state, dispatch, view) => {
     if (!dispatch || !view) return false
     return exitBlockMode(view)

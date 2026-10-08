@@ -47,10 +47,9 @@ signature and an example. This section is the short version.
   the rendering back, so the rendered document and the markdown behind it are
   never more than a hover apart. `Ctrl+Shift+E` does the same for the block the
   caret is in.
-- `Alt+click` any block to step it through its modes: a diagram goes
-  visual → edit → source, a table goes plain text → spreadsheet → source, and
-  everything else goes visual → source. `Alt+Shift+click` goes straight back to
-  the visual form, and `Esc` steps back down one.
+- `Alt+click` any block to step it through its modes — **visual → edit →
+  source** — and `Alt+Shift+click` steps back the same way. A table's edit mode is
+  the spreadsheet. `Esc` leaves a block's source form.
 - Click a link to open it, right-click one to edit its address — clearing the
   address leaves the text behind, unlinked. A link whose text and destination
   disagree is underlined, and opening it asks first.
