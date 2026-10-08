@@ -10,8 +10,14 @@ import { dropCursor } from 'prosemirror-dropcursor'
 import { blockStartKeymap, blockStartRules } from './blockstart'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown, sliceMarkdown } from './markdown'
-import { blockPlugin, getSourceBlockState, toggleSourceMode, BLOCK_PLUGIN_KEY } from './blockplugin'
-import { blockNodeView, BLOCK_NODE_TYPES, commitSourceMode } from './blockview'
+import {
+  blockModePlugin,
+  commitSourceMode,
+  currentBlockMode,
+  enterSourceMode,
+  setBlockMode,
+} from './block-modes'
+import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { attachBlockHandles } from './blockhandle'
 import { mermaidNodeViewPlugin } from './node/mermaid'
@@ -105,11 +111,11 @@ const formattingKeymap = keymap({
 const blockToggleKeymap = keymap({
   'Mod-Shift-e': (state, dispatch, view) => {
     if (!dispatch || !view) return false
-    const blockState = getSourceBlockState(state)
-    if (blockState.sourceBlockPos !== null) {
-      const tr = commitSourceMode(view)
-      if (!tr) return false
-      dispatch(tr)
+    // Any open source block is closed, not moved: the caret may well be in a
+    // different block, and opening *that* one as a side effect of asking to
+    // close the first would be a surprise.
+    if (currentBlockMode(state) !== null) {
+      if (!commitSourceMode(view)) return false
       return true
     }
 
@@ -123,20 +129,14 @@ const blockToggleKeymap = keymap({
 
     if (blockPos < 0) return false
 
-    const tr = toggleSourceMode(state, blockPos)
-    dispatch(tr)
+    enterSourceMode(view, blockPos)
     return true
   },
   'Escape': (state, dispatch, view) => {
     if (!dispatch || !view) return false
-    const blockState = getSourceBlockState(state)
-    if (blockState.sourceBlockPos !== null) {
-      const tr = commitSourceMode(view)
-      if (!tr) return false
-      dispatch(tr)
-      return true
-    }
-    return false
+    if (currentBlockMode(state) === null) return false
+    if (!commitSourceMode(view)) return false
+    return true
   },
 })
 
@@ -263,7 +263,7 @@ export function createBlockEditor(
     linkClickPlugin,
     urlPastePlugin,
     misleadingLinkPlugin,
-    blockPlugin,
+    blockModePlugin,
     formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,
@@ -356,16 +356,13 @@ export function createBlockEditor(
       view.dispatch(view.state.tr.insertText(markdown))
       const newDoc = markdownToProse(proseToMarkdown(view.state.doc), view.state.schema)
       const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content)
-      tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
+      setBlockMode(tr, null)
       tr.setMeta('addToHistory', false)
       view.dispatch(tr)
       view.focus()
     },
     commitSource(): boolean {
-      const tr = commitSourceMode(view)
-      if (!tr) return false
-      view.dispatch(tr)
-      return true
+      return commitSourceMode(view)
     },
     resolveImages() {
       if (resolveImageSrc) reResolveImages(view.dom, resolveImageSrc)

@@ -15,7 +15,7 @@ import { EditorView } from 'prosemirror-view'
 import { Plugin } from 'prosemirror-state'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
-import { blockPlugin } from './blockplugin'
+import { blockModePlugin } from './block-modes'
 import { formulaDefsPlugin } from './formulaDefs'
 import { EditorView as CMEditorView } from '@codemirror/view'
 
@@ -31,7 +31,7 @@ function makeView(md: string) {
   return new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, codeBlockNodeViewPlugin, formulaDefsPlugin, generic],
+      plugins: [blockModePlugin, codeBlockNodeViewPlugin, formulaDefsPlugin, generic],
     }),
   })
 }

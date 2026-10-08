@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { EditorView } from 'prosemirror-view'
 import { createBlockEditor } from './editor'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { getSourceBlockState } from './blockplugin'
+import { currentBlockMode } from './block-modes'
+
+/** The position the single block-mode record names, or null. */
+function sourcePos(view: EditorView): number | null {
+  return currentBlockMode(view.state)?.pos ?? null
+}
 
 const mermaidMock = vi.hoisted(() => ({
   render: vi.fn().mockResolvedValue({ svg: '<svg viewBox="0 0 900 300"></svg>' }),
@@ -82,12 +87,12 @@ describe('block-start input rules', () => {
     const block = firstBlock(view)
     expect(block.type.name).toBe('mermaid_block')
     expect(block.attrs._source).toBe(true)
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(0)
+    expect(sourcePos(view)).toBe(0)
 
     expect(dispatchKeydown(view, 'Escape')).toBe(true)
     expect(firstBlock(view).type.name).toBe('mermaid_block')
     expect(firstBlock(view).attrs._source).toBe(false)
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBeNull()
+    expect(sourcePos(view)).toBeNull()
     expect(proseToMarkdown(view.state.doc)).toContain('```mermaid')
   })
 

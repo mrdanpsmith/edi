@@ -7,7 +7,7 @@ import { history } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { parsePipes } from './spreadsheet-util'
-import { blockPlugin, enterSourceMode, exitSourceMode } from './blockplugin'
+import { blockModePlugin, enterSourceMode, exitSourceMode } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode, spreadsheetMenuEntries } from './node/table'
 import { ContextMenu, type ContextMenuEntry } from './contextmenu'
@@ -37,7 +37,7 @@ function createEditor(md: string, withHistory = false): EditorView {
     state: EditorState.create({
       doc,
       plugins: [
-        blockPlugin,
+        blockModePlugin,
         nodeViewPlugin,
         ...(withHistory ? [history()] : []),
         tableNodeViewPlugin,
@@ -71,7 +71,7 @@ function createPlainTable(md: string): EditorView {
   return new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, nodeViewPlugin, tableNodeViewPlugin, formulaDefsPlugin],
+      plugins: [blockModePlugin, nodeViewPlugin, tableNodeViewPlugin, formulaDefsPlugin],
     }),
   })
 }
@@ -840,10 +840,10 @@ describe('TableNodeView grid', () => {
   it('round-trips through source mode', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     const pos = 0
-    view.dispatch(enterSourceMode(view.state, pos))
+    enterSourceMode(view, pos)
     expect(view.dom.querySelector('.spreadsheet')).toBeNull()
     expect(view.dom.querySelector('.cm-content')).toBeTruthy()
-    view.dispatch(exitSourceMode(view.state))
+    exitSourceMode(view)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
     expect(proseToMarkdown(view.state.doc)).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |\n')
     view.destroy()
@@ -852,7 +852,7 @@ describe('TableNodeView grid', () => {
   it('returns to spreadsheet mode after a source edit', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     expect(view.state.doc.child(0).attrs._plain).toBe(false)
-    view.dispatch(enterSourceMode(view.state, 0))
+    enterSourceMode(view, 0)
     const exitBtn = (view.nodeDOM(0) as HTMLElement).querySelector<HTMLElement>('.block-source-exit')
     exitBtn?.click()
     expect(view.state.doc.child(0).attrs._plain).toBe(false)
@@ -864,7 +864,7 @@ describe('TableNodeView grid', () => {
   it('returns to plain view after a source edit when it started there', () => {
     const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
     expect(view.state.doc.child(0).attrs._plain).toBe(true)
-    view.dispatch(enterSourceMode(view.state, 0))
+    enterSourceMode(view, 0)
     const exitBtn = (view.nodeDOM(0) as HTMLElement).querySelector<HTMLElement>('.block-source-exit')
     exitBtn?.click()
     expect(view.state.doc.child(0).attrs._plain).toBe(true)

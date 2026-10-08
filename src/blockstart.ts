@@ -4,7 +4,7 @@ import { TextSelection } from 'prosemirror-state'
 import type { EditorState, Transaction } from 'prosemirror-state'
 import { canJoin } from 'prosemirror-transform'
 import { schema } from './schema'
-import { BLOCK_PLUGIN_KEY } from './blockplugin'
+import { setBlockModeAt } from './block-modes'
 
 const FENCE_RULE = /^```(\S+)?\s$/
 const FENCE_MATCH = /^```(\S+)?$/
@@ -85,7 +85,7 @@ function insertFence(state: EditorState, blockFrom: number, blockTo: number, inf
       })
     }
     if (pos >= 0) {
-      tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: pos })
+      setBlockModeAt(tr, pos, { representation: 'source' })
       tr.setSelection(TextSelection.create(tr.doc, pos + built.node.nodeSize))
     }
     return tr

@@ -1,5 +1,5 @@
 import type { EditorView } from 'prosemirror-view'
-import { getSourceBlockState, toggleSourceMode } from './blockplugin'
+import { currentBlockMode, toggleSourceMode } from './block-modes'
 
 export function findBlockPosForHandle(view: EditorView, handleEl: Element): number | null {
   let wrapper: Element | null = handleEl.parentElement
@@ -29,14 +29,12 @@ export function attachBlockHandles(view: EditorView): void {
     const pos = findBlockPosForHandle(view, target)
     if (pos === null || pos < 0 || pos >= view.state.doc.content.size) return
 
-    const state = view.state
-    const blockState = getSourceBlockState(state)
+    const mode = currentBlockMode(view.state)
 
-    if (blockState.sourceBlockPos === pos) {
+    if (mode !== null && mode.pos === pos) {
       return
     }
 
-    const tr = toggleSourceMode(state, pos)
-    view.dispatch(tr)
+    toggleSourceMode(view, pos)
   })
 }

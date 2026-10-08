@@ -1,4 +1,4 @@
-import { Plugin, PluginKey, TextSelection, type EditorState, type NodeSelection, type Transaction } from 'prosemirror-state'
+import { Plugin, TextSelection, type EditorState, type NodeSelection, type Transaction } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, DELIMITER_CELL, type TableAlign } from '../spreadsheet-util'
@@ -2984,14 +2984,25 @@ class TablePlainView implements NodeView {
   }
 }
 
-export interface TableModeState {
-  spreadPos: number | null
-}
-
-const TABLE_MODE_KEY = new PluginKey<TableModeState>('EDI_TABLE_NODEVIEW')
-
+/**
+ * The open sheet, or null.
+ *
+ * A table's form — text or sheet — is *not* one of the two block-mode axes: it
+ * is per-block and not exclusive (one table can be a sheet while another is
+ * text), and it outlives leaving the block, so a single record cannot hold it.
+ * It therefore lives in the document (`_plain`), which means the sheet position
+ * is read back *from* the document rather than tracked in a registry of its own.
+ * `enterSpreadsheetMode`/`enterPlainMode` keep the invariant that at most one
+ * table is a sheet, so there is at most one to find.
+ */
 function currentSpreadPos(state: EditorState): number | null {
-  return TABLE_MODE_KEY.getState(state)?.spreadPos ?? null
+  let found: number | null = null
+  state.doc.forEach((node, offset) => {
+    if (found === null && node.type.name === TABLE_TYPE && node.attrs._plain === false) {
+      found = offset
+    }
+  })
+  return found
 }
 
 function setTableModeAttr(tr: Transaction, pos: number, plain: boolean): void {
@@ -3020,7 +3031,6 @@ function buildEnterSpreadsheetTr(tr: Transaction, state: EditorState, pos: numbe
   if (sel && sel.node && sel.node.type.name === TABLE_TYPE) {
     tr.setSelection(TextSelection.create(tr.doc, pos))
   }
-  tr.setMeta(TABLE_MODE_KEY, { spreadPos: pos })
 }
 
 function focusSpreadsheetGrid(view: EditorView): void {
@@ -3047,8 +3057,6 @@ export function enterPlainMode(view: EditorView, pos: number | undefined): void 
   const tr = view.state.tr
   setTableModeAttr(tr, pos, true)
   tr.setSelection(TextSelection.create(tr.doc, pos + node.nodeSize))
-  const current = currentSpreadPos(view.state)
-  tr.setMeta(TABLE_MODE_KEY, { spreadPos: current === pos ? null : current })
   view.dispatch(tr)
 }
 
@@ -3079,22 +3087,7 @@ function isSpreadsheetEmptyArea(event: MouseEvent): boolean {
   return event.clientX > grid.getBoundingClientRect().right + EXIT_MARGIN
 }
 
-export const tableNodeViewPlugin = new Plugin<TableModeState>({
-  key: TABLE_MODE_KEY,
-  state: {
-    init: () => ({ spreadPos: null }),
-    apply(tr: Transaction, prev: TableModeState): TableModeState {
-      const meta = tr.getMeta(TABLE_MODE_KEY)
-      if (meta !== undefined) return meta
-      if (prev.spreadPos !== null && tr.docChanged) {
-        if (prev.spreadPos >= tr.doc.content.size) return { spreadPos: null }
-        const node = tr.doc.nodeAt(prev.spreadPos)
-        if (!node || node.type.name !== TABLE_TYPE) return { spreadPos: null }
-        if (node.attrs._plain !== false) return { spreadPos: null }
-      }
-      return prev
-    },
-  },
+export const tableNodeViewPlugin = new Plugin({
   view(view: EditorView) {
     const onDblClick = (event: MouseEvent): void => {
       const target = event.target as HTMLElement | null
@@ -3110,7 +3103,6 @@ export const tableNodeViewPlugin = new Plugin<TableModeState>({
       if (node && node.type.name === TABLE_TYPE) {
         tr.setSelection(TextSelection.create(tr.doc, spreadPos + node.nodeSize))
       }
-      tr.setMeta(TABLE_MODE_KEY, { spreadPos: null })
       view.dispatch(tr)
     }
     document.addEventListener('dblclick', onDblClick)

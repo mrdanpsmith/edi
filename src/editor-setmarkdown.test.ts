@@ -4,7 +4,12 @@ import { markdownToProse, proseToMarkdown } from './markdown'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { createBlockEditor } from './editor'
-import { getSourceBlockState, toggleSourceMode } from './blockplugin'
+import { currentBlockMode, toggleSourceMode } from './block-modes'
+
+/** The position the single block-mode record names, or null. */
+function sourcePos(view: EditorView): number | null {
+  return currentBlockMode(view.state)?.pos ?? null
+}
 
 function createEditor(initialMarkdown: string) {
   const doc = markdownToProse(initialMarkdown, schema)
@@ -75,18 +80,18 @@ describe('source mode is scoped to a single document', () => {
     const view = editor.getView()
     const pos = firstBlockPos(view)
 
-    view.dispatch(toggleSourceMode(view.state, pos))
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(pos)
+    toggleSourceMode(view, pos)
+    expect(sourcePos(view)).toBe(pos)
 
     // Simulate activating a different tab: the whole document is swapped.
     editor.setMarkdown('# Other doc\n\nMore content')
 
     // The lock must not leak into the other document.
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBeNull()
+    expect(sourcePos(view)).toBeNull()
 
     // And opening the editor in the new document must work again.
-    view.dispatch(toggleSourceMode(view.state, pos))
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(pos)
+    toggleSourceMode(view, pos)
+    expect(sourcePos(view)).toBe(pos)
     editor.destroy()
   })
 
@@ -95,11 +100,11 @@ describe('source mode is scoped to a single document', () => {
     const view = editor.getView()
     const pos = firstBlockPos(view)
 
-    view.dispatch(toggleSourceMode(view.state, pos))
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBe(pos)
+    toggleSourceMode(view, pos)
+    expect(sourcePos(view)).toBe(pos)
 
     expect(editor.commitSource()).toBe(true)
-    expect(getSourceBlockState(view.state).sourceBlockPos).toBeNull()
+    expect(sourcePos(view)).toBeNull()
     expect(view.state.doc.child(0).attrs._source).toBe(false)
     editor.destroy()
   })

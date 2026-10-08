@@ -17,7 +17,7 @@ import { EditorView } from 'prosemirror-view'
 import { Plugin } from 'prosemirror-state'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
-import { blockPlugin } from './blockplugin'
+import { blockModePlugin } from './block-modes'
 import { createBlockEditor } from './editor'
 
 const invokeMock = invoke as ReturnType<typeof vi.fn>
@@ -58,7 +58,7 @@ function makeView(md: string) {
   const view = new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockPlugin, codeBlockNodeViewPlugin, generic],
+      plugins: [blockModePlugin, codeBlockNodeViewPlugin, generic],
     }),
   })
   return view

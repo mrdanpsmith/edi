@@ -1,4 +1,4 @@
-import { NodeSelection, Plugin, PluginKey, TextSelection } from 'prosemirror-state'
+import { NodeSelection, Plugin, TextSelection } from 'prosemirror-state'
 import type { EditorState, Transaction } from 'prosemirror-state'
 import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
@@ -16,7 +16,16 @@ import {
   kanbanRealSource,
   renderDiagram,
 } from '../mermaid-edit'
-import { BLOCK_PLUGIN_KEY } from '../blockplugin'
+import {
+  clearModeMirror,
+  currentBlockMode,
+  modeFor,
+  releaseSourceBlock,
+  setBlockMode,
+  setBlockModeAt,
+  setInteractionAttr,
+  type BlockMode,
+} from '../block-modes'
 import { markdownToProse, serializeBlock } from '../markdown'
 import { createBlockCodeMirror } from '../codemirror-block'
 import type { BlockCodeMirror } from '../codemirror-block'
@@ -109,16 +118,23 @@ class MermaidNodeView implements NodeView {
   private view: EditorView
   private getPos: () => number | undefined
   private cm: BlockCodeMirror | null = null
+  /**
+   * The mode this view was built for. The node view cannot ask the record about
+   * *what changed* — `update` is handed the new node while the state is already
+   * the new one — so the old answer is what it has to remember.
+   */
+  private mode: BlockMode | null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     mermaidViews.add(this)
     this.node = node
     this.view = view
     this.getPos = getPos
+    this.mode = modeFor(view.state, getPos())
     this.dom = document.createElement('div')
     this.dom.className = 'mermaid'
 
-    if (node.attrs._source) {
+    if (this.mode?.representation === 'source') {
       this.showSource()
     } else {
       this.currentCode = String(node.attrs.value ?? '')
@@ -127,22 +143,30 @@ class MermaidNodeView implements NodeView {
   }
 
   private get editing(): boolean {
-    return this.node.attrs._edit === true
+    return this.mode?.interaction === 'editing'
+  }
+
+  private get showingSource(): boolean {
+    return this.mode?.representation === 'source'
   }
 
   retheme(): void {
-    if (this.node.attrs._source || this.cm) return
+    if (this.showingSource || this.cm) return
     this.rerender()
   }
 
   update(node: ProseNode): boolean {
-    const modeChanged = node.attrs._edit !== this.node.attrs._edit
-    if (node.attrs._source && !this.node.attrs._source) {
+    const next = modeFor(this.view.state, this.getPos())
+    const wasSource = this.mode?.representation === 'source'
+    const nowSource = next?.representation === 'source'
+    const interactionChanged = next?.interaction !== this.mode?.interaction
+    this.mode = next
+    if (nowSource && !wasSource) {
       this.node = node
       this.showSource()
       return true
     }
-    if (!node.attrs._source && this.node.attrs._source) {
+    if (!nowSource && wasSource) {
       this.node = node
       this.cm?.destroy()
       this.cm = null
@@ -151,8 +175,8 @@ class MermaidNodeView implements NodeView {
       return true
     }
     this.node = node
-    if (modeChanged) this.syncModeClass()
-    if (!node.attrs._source) {
+    if (interactionChanged) this.syncModeClass()
+    if (!nowSource) {
       const newVal = String(node.attrs.value ?? '')
       if (newVal !== this.currentCode) {
         this.currentCode = newVal
@@ -160,7 +184,7 @@ class MermaidNodeView implements NodeView {
         // parses (a visual edit, a paste, an undo of one) has to leave the last
         // good diagram on screen behind a notice instead of an error block.
         this.rerender()
-      } else if (modeChanged) {
+      } else if (interactionChanged) {
         // Entering or leaving edit mode re-renders too: the vector is unbaked
         // while editing so every label is clickable, and baked again after.
         this.rerender()
@@ -221,7 +245,7 @@ class MermaidNodeView implements NodeView {
       tr.delete(pos, pos + this.node.nodeSize)
     }
 
-    tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
+    setBlockMode(tr, null)
     this.view.dispatch(tr)
     this.view.focus()
   }
@@ -329,8 +353,11 @@ class MermaidNodeView implements NodeView {
     // document that neither the preview nor the CodeMirror buffer ever showed.
     const node = this.view.state.doc.nodeAt(pos)
     if (!node || node.type.name !== MERMAID_TYPE) return
+    // The record is deliberately left alone: this is a visual edit to a block
+    // that is still in edit mode, and releasing it here would drop the block out
+    // of editing on its first label rename. A block in the source form cannot
+    // reach this at all — `commit` is only wired up while editing.
     const tr = this.view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, value })
-    tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
     this.view.dispatch(tr)
   }
 
@@ -369,34 +396,28 @@ export function rethemeMermaid(dark: boolean): void {
 
 // ── edit mode ──────────────────────────────────────────────────────────────
 
-interface MermaidEditState {
-  /** The diagram currently in edit mode, or null. At most one, like tables. */
-  editPos: number | null
-}
-
-export const MERMAID_EDIT_KEY = new PluginKey<MermaidEditState>('EDI_MERMAID_EDIT')
-
+/**
+ * The diagram in edit mode, or null. Edit mode is the record's *interaction*
+ * axis, so there is no registry of its own here: at most one block in the
+ * document is in a non-default state, and that is enforced once, in
+ * `block-modes.ts`.
+ */
 function currentEditPos(state: EditorState): number | null {
-  return MERMAID_EDIT_KEY.getState(state)?.editPos ?? null
-}
-
-function setEditAttr(tr: Transaction, pos: number, editing: boolean): void {
-  const node = tr.doc.nodeAt(pos)
-  if (!node || node.type.name !== MERMAID_TYPE) return
-  tr.setNodeMarkup(pos, undefined, { ...node.attrs, _edit: editing })
+  const mode = currentBlockMode(state)
+  return mode !== null && mode.interaction === 'editing' ? mode.pos : null
 }
 
 /**
- * Put the diagram at `pos` into edit mode inside `tr`, dropping whichever other
- * diagram was in it. Everything entering edit mode needs in the *document* lives
- * here, so a board inserted with the edit already on is one transaction — and one
- * undo — rather than an insert followed by a second mode change.
+ * Put the diagram at `pos` into edit mode inside `tr`. Everything entering edit
+ * mode needs in the *document* lives here, so a board inserted with the edit
+ * already on is one transaction — and one undo — rather than an insert followed
+ * by a second mode change.
  */
 function openDiagramEditIn(state: EditorState, tr: Transaction, pos: number): void {
   const open = currentEditPos(state)
-  if (open !== null && open !== pos) setEditAttr(tr, tr.mapping.map(open), false)
-  setEditAttr(tr, pos, true)
-  tr.setMeta(MERMAID_EDIT_KEY, { editPos: pos })
+  if (open !== null && open !== pos) clearModeMirror(tr, currentBlockMode(state))
+  setInteractionAttr(tr, pos, true)
+  setBlockModeAt(tr, pos, { interaction: 'editing' })
 }
 
 /**
@@ -406,12 +427,10 @@ function openDiagramEditIn(state: EditorState, tr: Transaction, pos: number): vo
  */
 export function enterDiagramEditMode(view: EditorView, pos: number | undefined): void {
   if (pos === undefined) return
-  const node = view.state.doc.nodeAt(pos)
-  if (!node || node.type.name !== MERMAID_TYPE) return
-  // Read before anything is built: finishing the dropped diagram dispatches, and
-  // a transaction built before that would land on a document that has moved on.
-  const open = currentEditPos(view.state)
-  const dropped = open !== null && open !== pos ? open : null
+  if (view.state.doc.nodeAt(pos)?.type.name !== MERMAID_TYPE) return
+  // Read before anything is built: both of the steps below dispatch, and a
+  // transaction built before them would land on a document that has moved on.
+  const dropped = currentEditPos(view.state)
   // The diagram about to drop out of edit mode finishes its pending field *before*
   // the transaction lands, not after it. A dispatch re-renders the block
   // synchronously as far as the first `await`, which is far enough to rebind its
@@ -420,17 +439,26 @@ export function enterDiagramEditMode(view: EditorView, pos: number | undefined):
   // half-typed label would be dropped on the floor. Accepting first lets the
   // commit's own render happen in edit mode, and the mode change then renders over
   // it; the two are ordered, so the mode is what is left on screen.
-  if (dropped !== null) finishMermaidLabelEditing(view.nodeDOM(dropped), true)
+  if (dropped !== null && dropped !== pos) {
+    finishMermaidLabelEditing(view.nodeDOM(dropped), true)
+  }
+  // A block in the *source* form is released by committing it, and a commit is
+  // a document edit — so the position to open is wherever that block moved to,
+  // not the one this call was handed.
+  const at = releaseSourceBlock(view, pos)
+  if (view.state.doc.nodeAt(at)?.type.name !== MERMAID_TYPE) return
 
   const tr = view.state.tr
-  openDiagramEditIn(view.state, tr, pos)
+  clearModeMirror(tr, currentBlockMode(view.state))
+  setInteractionAttr(tr, at, true)
+  setBlockModeAt(tr, at, { interaction: 'editing' })
   const sel = tr.selection
   if (sel instanceof NodeSelection && sel.node.type.name === MERMAID_TYPE) {
     // `between` lands on the nearest real text position (or a selection over a
     // neighbouring block, for a document with no text at all). The document end
     // is not a text position, and building a TextSelection there directly only
     // warns and leaves the selection where it was.
-    const $end = tr.doc.resolve(Math.min(pos + sel.node.nodeSize, tr.doc.content.size))
+    const $end = tr.doc.resolve(Math.min(at + sel.node.nodeSize, tr.doc.content.size))
     tr.setSelection(TextSelection.between($end, $end, 1))
   }
   // The diagram about to drop out of edit mode finishes its pending field
@@ -452,8 +480,9 @@ export function exitDiagramEditMode(view: EditorView, pos: number | undefined): 
   // before the mode goes, for the reason `enterDiagramEditMode` gives.
   finishMermaidLabelEditing(view.nodeDOM(pos), true)
   const tr = view.state.tr
-  setEditAttr(tr, pos, false)
-  tr.setMeta(MERMAID_EDIT_KEY, { editPos: currentEditPos(view.state) === pos ? null : currentEditPos(view.state) })
+  setInteractionAttr(tr, pos, false)
+  const mode = currentBlockMode(view.state)
+  setBlockMode(tr, mode !== null && mode.pos !== pos ? mode : null)
   view.dispatch(tr)
 }
 
@@ -461,7 +490,7 @@ export function toggleDiagramEditMode(view: EditorView, pos: number | undefined)
   if (pos === undefined) return
   const node = view.state.doc.nodeAt(pos)
   if (!node || node.type.name !== MERMAID_TYPE) return
-  if (node.attrs._edit) {
+  if (modeFor(view.state, pos)?.interaction === 'editing') {
     exitDiagramEditMode(view, pos)
   } else {
     enterDiagramEditMode(view, pos)
@@ -484,6 +513,10 @@ export function insertKanbanSource(view: EditorView, source: string): boolean {
   // built before that would land on a document that has moved on.
   const dropped = currentEditPos(view.state)
   if (dropped !== null) finishMermaidLabelEditing(view.nodeDOM(dropped), true)
+  // Likewise a block in the source form: committing it is a document edit, so
+  // the selection — and therefore the insertion point — has to be read after it
+  // rather than before.
+  releaseSourceBlock(view, view.state.selection.from)
   const { $from } = view.state.selection
   const tr = view.state.tr
   let boardPos: number
@@ -542,26 +575,7 @@ function chromeHandlesDoubleClick(event: MouseEvent): boolean {
   )
 }
 
-export const mermaidNodeViewPlugin = new Plugin<MermaidEditState>({
-  key: MERMAID_EDIT_KEY,
-  state: {
-    init: (): MermaidEditState => ({ editPos: null }),
-    apply(tr: Transaction, prev: MermaidEditState): MermaidEditState {
-      const meta = tr.getMeta(MERMAID_EDIT_KEY)
-      if (meta !== undefined) return meta
-      if (prev.editPos === null) return prev
-      // Mapped, always: a paragraph typed above the diagram shifts it, and a
-      // position that is not mapped silently comes to mean a *different*
-      // diagram — so the double click that finishes edit mode ends the wrong one
-      // while two blocks carry `_edit: true`.
-      const pos = tr.mapping.map(prev.editPos, -1)
-      if (pos >= tr.doc.content.size) return { editPos: null }
-      const node = tr.doc.nodeAt(pos)
-      if (!node || node.type.name !== MERMAID_TYPE) return { editPos: null }
-      if (node.attrs._edit !== true) return { editPos: null }
-      return pos === prev.editPos ? prev : { editPos: pos }
-    },
-  },
+export const mermaidNodeViewPlugin = new Plugin({
   view(view: EditorView) {
     const onDblClick = (event: MouseEvent): void => {
       const pos = diagramEditTogglePos(event)

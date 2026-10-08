@@ -1,10 +1,8 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
-import type { Transaction } from 'prosemirror-state'
-import { EditorView as CMEditorView } from '@codemirror/view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
-import { BLOCK_PLUGIN_KEY, getSourceBlockState, placeCaretInText } from './blockplugin'
-import { markdownToProse, serializeBlock } from './markdown'
+import { commitSourceBlock } from './block-modes'
+import { serializeBlock } from './markdown'
 import { headingSlug } from './schema'
 
 function createHandleDOM(pos: number): HTMLElement {
@@ -32,59 +30,6 @@ function visualSignature(node: ProseNode): string {
   if (type === 'ordered_list') return `ordered_list:${node.attrs.order as number}`
   if (type === 'code_block') return `code_block:${node.attrs.language as string}`
   return type
-}
-
-function buildSourceCommitTransaction(
-  view: EditorView,
-  pos: number,
-  nodeSize: number,
-  markdown: string,
-): Transaction {
-  const tr = view.state.tr
-  const original = view.state.doc.nodeAt(pos)
-  const newDoc = markdownToProse(markdown, view.state.schema)
-  const nodes: ProseNode[] = []
-  newDoc.forEach((child) => nodes.push(child))
-  // A table's view-mode preference (`_plain`) is not part of its markdown, so
-  // re-parsing resets it to the plain default. Carry it onto the reparsed table
-  // when the block is still a table, so a table edited in source returns to the
-  // spreadsheet (or plain) view it was opened from.
-  if (original?.type.name === 'table') {
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i]!
-      if (node.type.name === 'table' && node.attrs._plain !== original.attrs._plain) {
-        nodes[i] = node.type.create(
-          { ...node.attrs, _plain: original.attrs._plain },
-          node.content,
-          node.marks,
-        )
-      }
-    }
-  }
-  if (nodes.length > 0) {
-    tr.replaceWith(pos, pos + nodeSize, nodes)
-    const insertedSize = nodes.reduce((sum, n) => sum + n.nodeSize, 0)
-    placeCaretInText(tr, pos + insertedSize - 1, pos + 1, pos + insertedSize)
-  } else {
-    tr.delete(pos, pos + nodeSize)
-    placeCaretInText(tr, pos, 0, tr.doc.content.size)
-  }
-  tr.setMeta(BLOCK_PLUGIN_KEY, { sourceBlockPos: null })
-  return tr
-}
-
-export function commitSourceMode(view: EditorView): Transaction | null {
-  const blockState = getSourceBlockState(view.state)
-  const pos = blockState.sourceBlockPos
-  if (pos === null || pos >= view.state.doc.content.size) return null
-  const node = view.state.doc.nodeAt(pos)
-  if (!node) return null
-  const dom = view.nodeDOM(pos)
-  const cmEl = dom instanceof HTMLElement ? dom.querySelector('.cm-editor') : null
-  const cmView = cmEl instanceof HTMLElement ? CMEditorView.findFromDOM(cmEl) : undefined
-  const value = cmView?.state.doc.toString()
-  if (value === undefined) return null
-  return buildSourceCommitTransaction(view, pos, node.nodeSize, value)
 }
 
 function createSemanticWrapper(node: ProseNode): HTMLElement | null {
@@ -183,9 +128,7 @@ class BlockSourceNodeView implements NodeView {
   private exitSource(value: string): void {
     const pos = this.getPos()
     if (pos === undefined) return
-
-    const tr = buildSourceCommitTransaction(this.view, pos, this.node.nodeSize, value)
-    this.view.dispatch(tr)
+    commitSourceBlock(this.view, pos, value)
     this.view.focus()
   }
 

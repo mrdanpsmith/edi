@@ -37,8 +37,7 @@ import { undo as cmUndo, redo as cmRedo } from '@codemirror/commands'
 import { copyText, readText, writeClipboard } from './clipboard'
 import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
-import { toggleSourceMode } from './blockplugin'
-import { commitSourceMode } from './blockview'
+import { commitSourceMode, toggleSourceMode } from './block-modes'
 import { findBlockPosForHandle } from './blockhandle'
 import { isMisleadingLink } from './linkSecurity'
 import { applyLink, NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
@@ -1109,8 +1108,7 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
     // Source/visual (Mermaid) mode: commit the edited source back to the
     // document and leave source mode, exactly like the toolbar exit button.
     addItem('Visual mode', () => {
-      const tr = commitSourceMode(view)
-      if (tr) view.dispatch(tr)
+      commitSourceMode(view)
     })
     return entries
   }
@@ -1176,7 +1174,7 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
       }
     }
     addItem('Edit source', () => {
-      view.dispatch(toggleSourceMode(view.state, handlePos!))
+      toggleSourceMode(view, handlePos!)
     })
     const blockNode = view.state.doc.nodeAt(handlePos!)
     if (blockNode && blockNode.type.name !== 'encrypted_block') {
