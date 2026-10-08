@@ -54,11 +54,20 @@ async function copyPlainText(text: string): Promise<void> {
   textarea.remove()
 }
 
-function createCopyButton(
-  getText: () => string,
-  root: HTMLElement,
-  revealSelector: string,
-): HTMLButtonElement {
+/**
+ * A **Copy** button: it copies and says so.
+ *
+ * This is the whole of it, and deliberately so. It used to float over the block's
+ * source with a JS-driven `:hover` reveal, which meant it and the block's control
+ * cluster both sat in the same corner — and made room for itself by pushing
+ * `padding-right` onto the source. A control that lives *in* the cluster needs
+ * none of that: the cluster already reveals itself and already holds a row of
+ * buttons, so Copy is one of them and the collision cannot happen.
+ *
+ * `revealedCopyButton` below is the floating kind, for the one control that
+ * genuinely floats over something the reader is looking at.
+ */
+function copyButton(getText: () => string, onCopied?: () => void): HTMLButtonElement {
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.className = 'code-copy'
@@ -67,12 +76,49 @@ function createCopyButton(
   // Keep the caret out of the button's label and stop the editor from treating
   // the click as a selection change.
   btn.addEventListener('mousedown', (e) => e.preventDefault())
+  btn.addEventListener('click', () => {
+    void copyPlainText(getText()).then(() => {
+      btn.textContent = 'Copied!'
+      // **The label is the whole of the feedback.** Fading the button out was a
+      // floating control getting out of the reader's way, and in the cluster it
+      // did the opposite: the row kept the button's width, so it left a hole with
+      // nothing in it and the row jumped back when the label came back. Only the
+      // floating kind fades, and it asks for that itself.
+      onCopied?.()
+      window.setTimeout(() => {
+        btn.textContent = 'Copy'
+      }, 500)
+    })
+  })
+  return btn
+}
 
-  // Visibility is JS-driven instead of CSS `:hover` so that, after a copy, the
-  // button stays hidden (even while the cursor is still over the area) until the
-  // user leaves and hovers the copiable area again. `elementFromPoint` lets us
-  // tell source from output even though the button floats over the source.
+/**
+ * A Copy button that floats over the area it copies, revealed by hovering that
+ * area — which is the run output, and only the run output: it appears over text
+ * the reader is in the middle of, so it must not sit there once its job is done.
+ *
+ * The reveal is JS-driven rather than CSS `:hover` so that after a copy the button
+ * stays hidden even while the cursor is still over the area, until the pointer
+ * leaves and comes back. `elementFromPoint` is what tells the output apart from
+ * the source, since the button itself floats over it.
+ */
+function revealedCopyButton(
+  getText: () => string,
+  root: HTMLElement,
+  revealSelector: string,
+): HTMLButtonElement {
   let locked = false
+  const btn = copyButton(getText, () => {
+    btn.classList.add('code-copy-fade')
+    btn.classList.remove('code-copy-show')
+    locked = true
+    window.setTimeout(() => {
+      btn.classList.remove('code-copy-fade')
+      locked = false
+    }, 500)
+  })
+  btn.classList.add('code-copy-float')
   let x = 0
   let y = 0
   const refresh = (): void => {
@@ -89,20 +135,6 @@ function createCopyButton(
     refresh()
   })
   root.addEventListener('mouseleave', () => btn.classList.remove('code-copy-show'))
-
-  btn.addEventListener('click', () => {
-    void copyPlainText(getText()).then(() => {
-      btn.textContent = 'Copied!'
-      btn.classList.add('code-copy-fade')
-      btn.classList.remove('code-copy-show')
-      locked = true
-      window.setTimeout(() => {
-        btn.classList.remove('code-copy-fade')
-        btn.textContent = 'Copy'
-        locked = false
-      }, 500)
-    })
-  })
   return btn
 }
 
@@ -127,7 +159,6 @@ class RunnableBlockNodeView implements NodeView {
   private getPos: () => number | undefined
   private editor: BlockCodeMirror | null = null
   private editorBusy = false
-  private sourceHost: HTMLElement | null = null
   private langBar: HTMLElement | null = null
   private formulaErrors: HTMLElement | null = null
   private unsubscribeEnv: (() => void) | null = null
@@ -175,7 +206,6 @@ class RunnableBlockNodeView implements NodeView {
     if (info) {
       const host = document.createElement('div')
       host.className = 'code-editor-host'
-      this.sourceHost = host
       this.editor = createCodeEditor(host, node.textContent, info.extension, (value) => {
         this.commitEditorText(value)
       })
@@ -187,11 +217,8 @@ class RunnableBlockNodeView implements NodeView {
       if (langTag && !langTag.startsWith('#')) code.className = `language-${langTag}`
       this.contentDOM = code
       pre.appendChild(code)
-      this.sourceHost = pre
       this.dom.appendChild(pre)
     }
-
-    this.appendSourceCopyButton()
 
     this.attachControls()
     if (info?.formula) this.buildFormulaStatus()
@@ -207,7 +234,9 @@ class RunnableBlockNodeView implements NodeView {
    */
   private attachControls(): void {
     const shebang = this.shebang
-    const actions: HTMLElement[] = []
+    // Copy before Run, which is the order the block reads in: its source, then
+    // what you can do with it.
+    const actions: HTMLElement[] = [this.sourceCopyButton()]
     if (shebang !== null) {
       const button = document.createElement('button')
       button.type = 'button'
@@ -235,7 +264,11 @@ class RunnableBlockNodeView implements NodeView {
 
     const outputWrap = document.createElement('div')
     outputWrap.className = 'exec-output-wrap'
-    this.outputCopy = createCopyButton(() => output.textContent ?? '', this.dom, '.exec-output-wrap')
+    this.outputCopy = revealedCopyButton(
+      () => output.textContent ?? '',
+      this.dom,
+      '.exec-output-wrap',
+    )
     outputWrap.append(output, this.outputCopy)
     this.outputCopy.style.display = 'none'
 
@@ -293,13 +326,15 @@ class RunnableBlockNodeView implements NodeView {
     errors.hidden = issues.length === 0
   }
 
-  private appendSourceCopyButton(): void {
-    const source = this.sourceHost
-    if (!source) return
-    source.classList.add('source-has-copy')
-    const btn = createCopyButton(() => this.node.textContent, this.dom, '.runnable-source, .code-editor-host')
-    btn.classList.add('code-copy-source')
-    this.dom.appendChild(btn)
+  /**
+   * Copy the block's source. It is one of the cluster's actions rather than a
+   * button floating over the code: two controls in the block's top-right corner
+   * is one too many, and the cluster is where a block's own controls live.
+   */
+  private sourceCopyButton(): HTMLButtonElement {
+    const btn = copyButton(() => this.node.textContent)
+    btn.classList.add('block-control', 'code-copy-source')
+    return btn
   }
 
   private clearControls(): void {

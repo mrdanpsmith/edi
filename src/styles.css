@@ -601,13 +601,26 @@ body {
  * handle ended up as three different things in three different corners. */
 .block-controls {
   position: absolute;
-  top: 6px;
+  /* Level with the block's first row of chrome, not below it. A code block's
+     language bar is 25px tall and starts 1px down (the block's border), so 6px
+     put the cluster across the bar *and* 11px of the first lines of code; the
+     source banner is the one that read correctly, because its own button is in
+     flow in the bar rather than floating over it. The cluster is one row taller
+     than a language bar, so it cannot fit *inside* one — but aligned to the top
+     it reads as belonging to the bar, which is what it is. */
+  top: 2px;
   right: 8px;
   z-index: 3;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
+  /* 1px, not 2px, and that is what makes the row *be* the height of the bar it
+     sits on: a button is 21px, so 2px of padding made the pill 27px against a 25px
+     language bar and it hung 5px over the code. At 1px it is 25px and flush. The
+     button's own border is transparent at rest, so the pill's border is not
+     doubled against it; the buttons' padding is untouched, so nothing is smaller
+     to press. */
+  padding: 1px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1925,16 +1938,37 @@ body {
   position: relative;
 }
 
-/* Copy buttons: revealed via the JS-driven `.code-copy-show` state. */
+/* Copy buttons. Two kinds, and the difference is the whole point of the change
+   that made them two: a code block's *source* copy lives in the block's control
+   cluster (`.block-control` styles it, and `.code-copy-source` names it), while
+   the *output* copy floats over the output it copies, because the output is a
+   region of its own and the reader is in the middle of it. Two floating controls
+   used to share the block's top-right corner — the copy and the cluster — and
+   the copy made room for itself with `padding-right` on the source. */
 .ProseMirror .code-copy {
+  cursor: pointer;
+}
+
+/* The cluster's copy gets **no** look of its own, and that is the point: it is a
+   block action like any other, so `.block-control` styles it. It used to keep
+   the floating button's border and background as well, which is a second border
+   round one button — and a second set of metrics, so it stood 3px taller than its
+   neighbours and made the row itself taller than the bar the row sits on. */
+.ProseMirror .block-controls .code-copy {
+  min-width: 5.5em;
+}
+
+/* The floating one is positioned, JS-revealed (`.code-copy-show`) and carries the
+   look, so all three stay scoped to it. */
+.ProseMirror .code-copy-float {
   font: inherit;
   font-size: 11px;
+  line-height: 1.4;
   color: var(--text-primary);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 2px 8px;
-  cursor: pointer;
   position: absolute;
   top: 6px;
   right: 8px;
@@ -1943,35 +1977,34 @@ body {
   z-index: 2;
 }
 
-.ProseMirror .code-copy.code-copy-show {
+.ProseMirror .code-copy-float.code-copy-show {
   opacity: 1;
 }
 
-.ProseMirror .code-copy:hover {
+.ProseMirror .code-copy-float:hover {
   background: var(--bg);
 }
 
-.ProseMirror .code-copy.code-copy-fade {
+/* Only the floating one fades, and only because it is over the reader's text; the
+   cluster's copy keeps its slot and its label (`copyButton` in node/execblock.ts
+   is where that split is made). */
+.ProseMirror .code-copy-float.code-copy-fade {
   opacity: 0 !important;
   transition: opacity 500ms;
 }
 
-/* Leave room so the source copy button doesn't cover the first lines' text. */
-.ProseMirror .runnable-source.source-has-copy {
-  padding-right: 3.5em;
-}
-
 /* ── Code language bar / embedded code editor ── */
-
-.ProseMirror .runnable-block.has-code-lang > .code-copy {
-  top: 24px;
-}
 
 .ProseMirror .code-lang-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 10px;
+  /* The bar carries the block's controls now, so it is tall enough to hold them:
+     5px makes it 29px against the 26px control row, where 3px made it 25px and
+     the row hung 3px over the code below it. The row is the block's, not the
+     bar's, so the bar grew rather than the buttons shrinking — a smaller Copy
+     would have been the same fix applied to the one thing the reader presses. */
+  padding: 5px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   border-radius: 6px 6px 0 0;
@@ -1998,10 +2031,6 @@ body {
 .ProseMirror .runnable-block .cm-editor,
 .ProseMirror .runnable-block .cm-scroller {
   background: var(--surface);
-}
-
-.ProseMirror .code-editor-host.source-has-copy {
-  padding-right: 3.5em;
 }
 
 /* Live per-line diagnostics for `edi-formula` blocks. */

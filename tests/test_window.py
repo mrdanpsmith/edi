@@ -2779,6 +2779,109 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
     assert text["form"] == "Show as sheet", text
 
 
+# What a code block's one control row holds, and — the claim this test exists
+# for — that nothing else is floating over the code where it sits. The copy button
+# used to be there: absolutely positioned in the same corner as the cluster, with
+# `padding-right` on the source to make room for it. A screenshot of a just-mutated
+# DOM under the offscreen platform is a stale frame and would have believed it, so
+# the question is asked of the computed style and of `elementFromPoint`.
+CODE_BLOCK_CONTROLS = """
+(() => {
+  const block = document.querySelector('.runnable-block');
+  const cluster = block && block.querySelector('.block-controls');
+  if (!block || !cluster) return { missing: true };
+  const cs = (el) => getComputedStyle(el);
+  const rect = (el) => el.getBoundingClientRect();
+  const buttons = [...cluster.querySelectorAll('button')];
+  const bar = block.querySelector('.code-lang-bar');
+  const floating = [...block.querySelectorAll('*')].filter((el) => {
+    if (el.classList.contains('block-controls')) return false;
+    const r = rect(el);
+    return cs(el).position === 'absolute' && r.width > 0 && r.height > 0;
+  }).map((el) => String(el.getAttribute('class')));
+  cluster.style.pointerEvents = 'auto';
+  return {
+    buttons: buttons.map((b) => b.textContent),
+    floating,
+    reserve: !!block.querySelector('.source-has-copy'),
+    // Every cluster button has to be the thing under its own centre, or a
+    // control that is present and hit-testable-looking is not pressable — which
+    // is what the language bar sits in the row above it.
+    hits: buttons.map((b) => {
+      const r = rect(b);
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b;
+    }),
+    // One button, one border. The copy used to keep the floating button's border
+    // and fill *on top of* `.block-control`'s, which drew a second outline round
+    // it and — being a second set of metrics too — made it 3px taller than the
+    // button beside it and the row taller than the bar the row sits on.
+    borders: buttons.map((b) => [cs(b).borderTopWidth, cs(b).borderRightWidth,
+      cs(b).borderBottomWidth, cs(b).borderLeftWidth].join(' ')),
+    backgrounds: buttons.map((b) => cs(b).backgroundColor),
+    heights: buttons.map((b) => Math.round(rect(b).height)),
+    rowHeight: Math.round(rect(cluster).height),
+    // Where the row sits against the block's own first row of chrome. A code
+    // block's language bar is the only one of those the generic CSS can know
+    // about, so it is the one this can be checked against: a row 7px down covered
+    // the 25px bar *and* 11px of the first lines of code.
+    chrome: bar ? { topGap: Math.round(rect(cluster).top - rect(bar).top),
+                    overhang: Math.round(rect(cluster).bottom - rect(bar).bottom),
+                    barHeight: Math.round(rect(bar).height) } : null,
+  };
+})()
+"""
+
+
+def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
+    """A code block's **Copy** is one of its cluster's buttons, not a second control
+    floating in the same corner.
+
+    Real engine: the overlap was two absolutely-positioned boxes on top of each
+    other, which jsdom cannot see (no layout) and a screenshot cannot be trusted
+    to show. The copy is now a contributed action, which is what §6.3 says a
+    block's own controls are, so the two can no longer be in the same place.
+    """
+    _set_scheme(window, False)
+
+    window._web.page().runJavaScript(
+        "window.ediSetContent('```python\\nprint(1)\\nprint(2)\\n```'); true"
+    )
+    time.sleep(0.5)
+    plain = _dump(window, CODE_BLOCK_CONTROLS)
+    assert not plain.get("missing"), plain
+    assert plain["buttons"] == ["Source", "Copy"], plain
+    # Nothing is left floating over the code, and nothing reserves room for it.
+    assert plain["floating"] == [], plain
+    assert not plain["reserve"], plain
+    assert all(plain["hits"]), plain
+    # Copy is one of the cluster's buttons, so it is drawn like the rest of them:
+    # one 1px border, no fill of its own, and the same height as its neighbour.
+    assert plain["borders"] == ["1px 1px 1px 1px"] * 2, plain
+    assert plain["backgrounds"] == ["rgba(0, 0, 0, 0)"] * 2, plain
+    assert len(set(plain["heights"])) == 1, plain
+
+    window._web.page().runJavaScript(
+        "window.ediSetContent('```\\n#!/usr/bin/env python3\\nprint(1)\\n```'); true"
+    )
+    time.sleep(0.5)
+    runnable = _dump(window, CODE_BLOCK_CONTROLS)
+    assert not runnable.get("missing"), runnable
+    # Copy, then Run: the order the block reads in.
+    assert runnable["buttons"] == ["Source", "Copy", "Run"], runnable
+    assert runnable["floating"] == [], runnable
+    assert all(runnable["hits"]), runnable
+    assert len(set(runnable["heights"])) == 1, runnable
+
+    # The row is level with the language bar it belongs to, and the same height as
+    # it: a control on a code block belongs *on* the bar, not over the code under
+    # it, which is what `top: 6px` did — the row covered the 25px bar and 11px of
+    # the first lines of code.
+    chrome = runnable["chrome"]
+    assert chrome is not None, runnable
+    assert chrome["topGap"] <= 2, chrome
+    assert chrome["overhang"] <= 0, chrome
+
+
 def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
     """The block's **Source** control works from inside its edit mode.
 

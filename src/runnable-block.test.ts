@@ -319,6 +319,9 @@ describe('code block copy buttons', () => {
   })
 
   afterEach(() => {
+    // Fake timers are per-test here, so an assertion that throws must not leave
+    // them installed: every test after it would then time out instead.
+    vi.useRealTimers()
     document.body.innerHTML = ''
   })
 
@@ -326,6 +329,54 @@ describe('code block copy buttons', () => {
     const view = makeView('```\n#!/usr/bin/env python3\nprint(1)\n```')
     const btn = view.dom.querySelector('.code-copy-source') as HTMLButtonElement
     expect(btn).toBeTruthy()
+    view.destroy()
+  })
+
+  it('puts the source copy in the control cluster, so the two cannot overlap', () => {
+    // It used to float over the source in the block's top-right corner — where
+    // the cluster is — and made room for itself with `padding-right` on the
+    // code. Copy is one of the cluster's own actions now, which is what §6.3 says
+    // a block's other controls are.
+    for (const md of [
+      '```\n#!/usr/bin/env python3\nprint(1)\n```',
+      '```\nconsole.log("hi")\n```',
+      '```python\nx = 1\n```',
+    ]) {
+      const view = makeView(md)
+      const copy = view.dom.querySelector('.code-copy-source') as HTMLButtonElement
+      const cluster = view.dom.querySelector('.block-controls') as HTMLElement
+      expect(copy).toBeTruthy()
+      expect(cluster).toBeTruthy()
+      expect(cluster.contains(copy)).toBe(true)
+      // The mode button comes first, then the block's own actions.
+      expect([...cluster.querySelectorAll('button')].map((b) => b.textContent))
+        .toEqual(['Source', 'Copy', ...(md.includes('#!') ? ['Run'] : [])])
+      // Nothing is left floating over the code, and nothing reserves room for it.
+      expect(view.dom.querySelectorAll('.code-copy-float').length)
+        .toBeLessThanOrEqual(1)
+      expect(view.dom.querySelector('.source-has-copy')).toBeNull()
+      view.destroy()
+    }
+  })
+
+  it('keeps the output copy floating over the output, which is its own region', async () => {
+    // The one copy that genuinely floats: it appears over text the reader is in
+    // the middle of, so it is revealed by hovering that text rather than by the
+    // block's controls.
+    invokeMock.mockResolvedValue(null)
+    const handle = streamHandle({ exitCode: 0, stdout: 'out\n', stderr: '', timedOut: false })
+    invokeStreamMock.mockReturnValue(handle)
+    const view = makeView('```\n#!/bin/sh\necho out\n```')
+    ;(view.dom.querySelector('.exec-run') as HTMLButtonElement).click()
+    handle._emit({ id: handle.id, kind: 'output', stream: 'stdout', text: 'out\n' })
+    handle._finish()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const out = view.dom.querySelector('.exec-output-wrap > .code-copy') as HTMLButtonElement
+    expect(out).toBeTruthy()
+    expect(out.classList.contains('code-copy-float')).toBe(true)
+    // ...and it is not in the cluster, which is at the *top* of the block.
+    expect(view.dom.querySelector('.block-controls')?.contains(out)).toBe(false)
     view.destroy()
   })
 
@@ -346,6 +397,59 @@ describe('code block copy buttons', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('copyText', { text: 'console.log("hi")' })
     expect(btn.textContent).toBe('Copied!')
+    view.destroy()
+  })
+
+  it('keeps the cluster copy in its slot after copying instead of fading it out', async () => {
+    invokeMock.mockResolvedValue(null)
+
+    const view = makeView('```\nconsole.log("hi")\n```')
+    const cluster = view.dom.querySelector('.block-controls') as HTMLElement
+    const btn = view.dom.querySelector('.code-copy-source') as HTMLButtonElement
+    const widthBefore = btn.offsetWidth
+    vi.useFakeTimers()
+
+    btn.click()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The label is the whole of the feedback. Fading the button was a floating
+    // control getting out of the reader's way, and in the cluster it did the
+    // opposite: the row kept the button's width, so the copy left a hole with
+    // nothing in it and the row snapped back when the label came back.
+    expect(btn.classList.contains('code-copy-fade')).toBe(false)
+    expect(btn.classList.contains('code-copy-show')).toBe(false)
+    expect(btn.textContent).toBe('Copied!')
+    expect(cluster.contains(btn)).toBe(true)
+    expect(btn.offsetWidth).toBe(widthBefore)
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(btn.textContent).toBe('Copy')
+    expect(btn.classList.contains('code-copy-fade')).toBe(false)
+    expect(btn.offsetWidth).toBe(widthBefore)
+    view.destroy()
+  })
+
+  it('still fades the floating output copy, which is over the reader\'s text', async () => {
+    invokeMock.mockResolvedValue(null)
+
+    const handle = streamHandle({ exitCode: 0, stdout: 'out\n', stderr: '', timedOut: false })
+    invokeStreamMock.mockReturnValue(handle)
+    const view = makeView('```\n#!/bin/sh\necho out\n```')
+    ;(view.dom.querySelector('.exec-run') as HTMLButtonElement).click()
+    handle._emit({ id: handle.id, kind: 'output', stream: 'stdout', text: 'out\n' })
+    handle._finish()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const outCopy = view.dom.querySelector('.exec-output-wrap .code-copy') as HTMLButtonElement
+    vi.useFakeTimers()
+    outCopy.classList.add('code-copy-show')
+    outCopy.click()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The one control that is genuinely floating keeps both halves of getting out
+    // of the way, so the split is pinned at both ends and not just the cluster's.
+    expect(outCopy.classList.contains('code-copy-fade')).toBe(true)
+    expect(outCopy.classList.contains('code-copy-show')).toBe(false)
     view.destroy()
   })
 
