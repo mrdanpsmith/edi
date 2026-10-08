@@ -6,7 +6,7 @@ import { EditorView } from 'prosemirror-view'
 import { Node as ProseNode } from 'prosemirror-model'
 import { setBlockType } from 'prosemirror-commands'
 import { history, undo } from 'prosemirror-history'
-import { blockModePlugin, currentBlockMode, enterSourceMode, exitSourceMode, setBlockModeAt, toggleSourceMode } from './block-modes'
+import { blockModePlugin, currentBlockMode, enterSourceMode, exitSourceMode, modeFor, setBlockModeAt, toggleSourceMode } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { enterDiagramEditMode, exitDiagramEditMode, mermaidNodeViewPlugin } from './node/mermaid'
 import { codeBlockNodeViewPlugin } from './node/execblock'
@@ -89,9 +89,10 @@ describe('blockMode record', () => {
     view.destroy()
   })
 
-  it('enterSourceMode sets _source attr and the record', () => {
+  it('enterSourceMode records the mode and leaves the document alone', () => {
     const view = createEditor('# Hello')
     const pos = firstBlockPos(view)
+    const before = view.state.doc.toString()
     enterSourceMode(view, pos)
 
     expect(sourcePos(view)).toBe(pos)
@@ -102,21 +103,21 @@ describe('blockMode record', () => {
       interaction: 'viewing',
     })
 
-    const node = blockNodeAt(view, pos)
-    expect(node!.attrs._source).toBe(true)
+    // The representation is plugin state, not content: entering it must not
+    // edit the user's file, and must not leave a `_source` attr behind.
+    expect(view.state.doc.toString()).toBe(before)
+    expect(blockNodeAt(view, pos)!.attrs._source).toBeUndefined()
     view.destroy()
   })
 
-  it('exitSourceMode clears _source attr and the record', () => {
+  it('exitSourceMode clears the record', () => {
     const view = createEditor('# Hello')
     const pos = firstBlockPos(view)
     enterSourceMode(view, pos)
     exitSourceMode(view)
 
     expect(sourcePos(view)).toBeNull()
-
-    const node = blockNodeAt(view, pos)
-    expect(node!.attrs._source).toBe(false)
+    expect(modeFor(view.state, pos)).toBeNull()
     view.destroy()
   })
 
@@ -148,16 +149,14 @@ describe('blockMode record', () => {
     toggleSourceMode(view, positions[1])
     expect(sourcePos(view)).toBe(positions[1])
 
-    const node0 = blockNodeAt(view, positions[0])
-    expect(node0!.attrs._source).toBe(false)
-    const node1 = blockNodeAt(view, positions[1])
-    expect(node1!.attrs._source).toBe(true)
+    expect(modeFor(view.state, positions[0])).toBeNull()
+    expect(modeFor(view.state, positions[1])?.representation).toBe('source')
     view.destroy()
   })
 })
 
 describe('block nodeView factory', () => {
-  it('creates visual NodeView when _source is false', () => {
+  it('creates visual NodeView by default', () => {
     const view = createEditor('# Hello')
     const pos = firstBlockPos(view)
     const deco = view.nodeDOM(pos) as HTMLElement
@@ -166,7 +165,7 @@ describe('block nodeView factory', () => {
     view.destroy()
   })
 
-  it('creates source NodeView when _source is true', () => {
+  it('creates source NodeView when the record says so', () => {
     const view = createEditor('# Hello')
     const pos = firstBlockPos(view)
     enterSourceMode(view, pos)
@@ -686,7 +685,7 @@ describe('mermaid visual mode rendering', () => {
   }
 
   function editModeOf(view: EditorView): boolean {
-    return view.state.doc.firstChild!.attrs._edit === true
+    return currentBlockMode(view.state)?.interaction === 'editing'
   }
 
   /** Mermaid renders asynchronously; wait for the render to land, not a tick. */
@@ -832,7 +831,6 @@ describe('mermaid visual mode rendering', () => {
     view.dispatch(
       view.state.tr.setNodeMarkup(firstBlockPos(view), undefined, {
         value: 'graph TD\n  A[',
-        _source: false,
       }),
     )
     await flush()
@@ -982,7 +980,7 @@ describe('mermaid visual mode rendering', () => {
     // handing over — its pending label is not left on screen.
     expect(proseToMarkdown(view.state.doc)).toContain('A[Gamma]')
     expect(view.dom.querySelector('.mermaid-edit-input')).toBeNull()
-    expect(view.state.doc.child(1)!.attrs._edit).toBe(true)
+    expect(currentBlockMode(view.state)).toMatchObject({ pos: allBlockPositions(view)[1], interaction: 'editing' })
 
     view.destroy()
   })
@@ -1115,13 +1113,14 @@ describe('mermaid visual mode rendering', () => {
     await flush()
     await flush()
 
-    enterDiagramEditMode(view, allBlockPositions(view)[1])
+    const [first, second] = allBlockPositions(view)
+    enterDiagramEditMode(view, second)
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
-    expect(view.state.doc.firstChild!.attrs._edit).not.toBe(true)
-    expect(view.state.doc.child(1).attrs._edit).toBe(true)
+    expect(modeFor(view.state, first)).toBeNull()
+    expect(modeFor(view.state, second)?.interaction).toBe('editing')
 
-    exitDiagramEditMode(view, allBlockPositions(view)[1])
-    expect(view.state.doc.child(1).attrs._edit).not.toBe(true)
+    exitDiagramEditMode(view, second)
+    expect(modeFor(view.state, second)).toBeNull()
     expect(await rendered(view, '.mermaid-editing', false)).toBe(true)
 
     view.destroy()
@@ -1343,10 +1342,8 @@ describe('handle position accuracy', () => {
     toggleSourceMode(view, positions[0])
     expect(sourcePos(view)).toBe(positions[0])
 
-    const block0 = blockNodeAt(view, positions[0])
-    const block1 = blockNodeAt(view, positions[1])
-    expect(block0!.attrs._source).toBe(true)
-    expect(block1!.attrs._source).toBe(false)
+    expect(modeFor(view.state, positions[0])?.representation).toBe('source')
+    expect(modeFor(view.state, positions[1])).toBeNull()
     view.destroy()
   })
 
@@ -1374,9 +1371,7 @@ describe('handle position accuracy', () => {
     expect(toggledBlock!.type.name).toBe('code_block')
 
     for (const p of positions) {
-      if (p !== codeBlockPos) {
-        expect(blockNodeAt(view, p)!.attrs._source).toBe(false)
-      }
+      if (p !== codeBlockPos) expect(modeFor(view.state, p)).toBeNull()
     }
     view.destroy()
   })
@@ -1444,11 +1439,10 @@ describe('runnable code block toggle', () => {
     expect(sourcePos(view)).toBe(runPos)
 
     for (const p of positions) {
-      const block = blockNodeAt(view, p)
       if (p === runPos) {
-        expect(block!.attrs._source).toBe(true)
+        expect(modeFor(view.state, p)?.representation).toBe('source')
       } else {
-        expect(block!.attrs._source).toBe(false)
+        expect(modeFor(view.state, p)).toBeNull()
       }
     }
     view.destroy()

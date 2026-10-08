@@ -13,7 +13,7 @@ import { emojiTokenAt } from '../emojiToken'
 import { undoNoScroll, redoNoScroll, undoDepth, redoDepth } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText, readText } from '../clipboard'
-import { blockNodeView } from '../blockview'
+import { blockNodeView, showsSource } from '../blockview'
 import {
   setActiveCellHost,
   type CellLinkContext,
@@ -354,7 +354,11 @@ class TableNodeView implements NodeView, InlineCellHost {
   }
 
   update(node: ProseNode): boolean {
-    if (node.attrs._source !== this.node.attrs._source) return false
+    // A block showing its source is a different node view altogether, and this
+    // one is only ever built for the sheet — so "in the source form" *is* "the
+    // mode changed", and refusing the update is the rebuild. Asked of the record,
+    // which is where the representation lives now that no node carries one.
+    if (showsSource(this.view, this.getPos())) return false
     if (node.attrs._plain !== this.node.attrs._plain) return false
     this.node = node
     // `_resolved` only changes how the table serializes, so sync the checkbox
@@ -2950,7 +2954,7 @@ class TablePlainView implements NodeView {
 
   update(node: ProseNode): boolean {
     if (node.type.name !== TABLE_TYPE) return false
-    if (node.attrs._source !== this.node.attrs._source) return false
+    if (showsSource(this.view, this.getPos())) return false
     if (node.attrs._plain !== this.node.attrs._plain) return false
     this.node = node
     const value = String(node.attrs.value ?? '')
@@ -3111,9 +3115,11 @@ export const tableNodeViewPlugin = new Plugin({
   props: {
     nodeViews: {
       [TABLE_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
-        if (node.attrs._source) {
-          return blockNodeView(node, view, getPos) ?? new TableNodeView(node, view, getPos)
-        }
+        // The source form is the record's business and is asked of it directly
+        // (`table` is never a `source_block`); the form (`_plain`) is the one
+        // thing a table keeps on the document, because it is per-block, not
+        // exclusive, and outlives a visit.
+        if (showsSource(view, getPos())) return blockNodeView(node, view, getPos) as NodeView
         if (node.attrs._plain) return new TablePlainView(node, view, getPos)
         return new TableNodeView(node, view, getPos)
       },

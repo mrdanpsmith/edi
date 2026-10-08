@@ -1,6 +1,7 @@
 import { Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import type { EditorState, Transaction } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
+import { Decoration, DecorationSet } from 'prosemirror-view'
 import type { EditorView } from 'prosemirror-view'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { markdownToProse } from './markdown'
@@ -14,6 +15,24 @@ import { markdownToProse } from './markdown'
  * document is in a non-default state at a time, and that invariant lives here
  * rather than in three places that each held one position and each invalidated
  * it differently.
+ *
+ * **The record is the whole of a block's mode; no node carries one.** There is
+ * no `_source` or `_edit` attr on any node type, so:
+ *
+ * - a mode flip is not an edit — not undoable, and it does not mark the user's
+ *   document dirty (`dispatchTransaction` only calls `onChange` for a doc
+ *   change), where opening a block's source used to be an undoable edit to the
+ *   file;
+ * - undo can no longer desynchronise plugin state from the document, which it
+ *   could: the attr change and the meta landed in one transaction, but history
+ *   restores the *document* and replays `apply` without the meta, so undoing an
+ *   entry left the block drawing visually while the record still said otherwise;
+ * - nothing on disk moves, because the attrs were invisible to the serializer
+ *   anyway. (`_plain` remains — see the note on `buildSourceCommitTransaction`.)
+ *
+ * What it costs is that a mode flip no longer changes the document, so
+ * ProseMirror has no reason to re-ask the node views about it; `BLOCK_MODE_CLASS`
+ * is how they find out.
  */
 
 export type Representation = 'preview' | 'source'
@@ -35,6 +54,19 @@ export interface BlockMode {
 }
 
 export const BLOCK_MODE_KEY = new PluginKey<BlockMode | null>('EDI_BLOCK_MODE')
+
+/**
+ * The class the block the record names wears, and the reason a mode flip reaches
+ * the node views at all.
+ *
+ * This is not decoration for its own sake. A mode is no longer an edit, so
+ * flipping it leaves the document byte-identical — and ProseMirror only walks
+ * the tree when the document (or a node's decorations) changed, so a node view
+ * whose rendering depends on the mode would never be asked again and the block
+ * would keep drawing the way it was. A node decoration on the block is what
+ * makes the walk happen; the views answer it by asking `modeFor`.
+ */
+export const BLOCK_MODE_CLASS = 'edi-block-mode'
 
 /**
  * What a block type supports. This is the declaration a block makes about
@@ -86,8 +118,21 @@ function supportsMode(node: ProseNode, mode: BlockMode): boolean {
   return true
 }
 
+function blockModeDecorations(state: EditorState): DecorationSet {
+  const mode = currentBlockMode(state)
+  if (mode === null) return DecorationSet.empty
+  const node = state.doc.nodeAt(mode.pos)
+  if (node === null || !supportsMode(node, mode)) return DecorationSet.empty
+  return DecorationSet.create(state.doc, [
+    Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: BLOCK_MODE_CLASS }),
+  ])
+}
+
 export const blockModePlugin = new Plugin<BlockMode | null>({
   key: BLOCK_MODE_KEY,
+  props: {
+    decorations: blockModeDecorations,
+  },
   state: {
     init: (): BlockMode | null => null,
     /**
@@ -190,65 +235,6 @@ export function placeCaretInText(tr: Transaction, pos: number, fromBound: number
   for (let p = pos + 1; p <= Math.min(toBound, size); p++) {
     if (tryPos(p)) return
   }
-}
-
-function findBlockAtPos(doc: ProseNode, pos: number): { offset: number; node: ProseNode } | null {
-  let result: { offset: number; node: ProseNode } | null = null
-  doc.forEach((node, offset) => {
-    if (result) return
-    if (pos >= offset && pos < offset + node.nodeSize) {
-      result = { offset, node }
-    }
-  })
-  return result
-}
-
-function replaceBlock(tr: Transaction, pos: number, attrs: Record<string, unknown>): void {
-  const found = findBlockAtPos(tr.doc, pos)
-  if (!found) return
-  const replacement = found.node.type.create(attrs, found.node.content, found.node.marks)
-  tr.replaceWith(found.offset, found.offset + found.node.nodeSize, replacement)
-}
-
-/**
- * Mirror the record's representation onto the document attr every node view
- * still reads (`src/schema.ts`). This goes away in phase 2, when the mode
- * stops living in the document at all.
- */
-function setSourceAttr(tr: Transaction, pos: number, on: boolean): void {
-  setAttr(tr, pos, '_source', on)
-}
-
-/**
- * Mirror the record's interaction axis. Only a block that *declares* the axis
- * (`blockModeFor`) has somewhere to mirror it to, so this is a no-op for a
- * table or a paragraph rather than a stray attr on a node type that has no
- * business carrying one.
- */
-export function setInteractionAttr(tr: Transaction, pos: number, on: boolean): void {
-  const found = findBlockAtPos(tr.doc, pos)
-  if (found === null || blockModeFor(found.node).interaction === 'none') return
-  setAttr(tr, pos, '_edit', on)
-}
-
-function setAttr(tr: Transaction, pos: number, name: string, on: boolean): void {
-  const found = findBlockAtPos(tr.doc, pos)
-  if (found === null) return
-  const attrs: Record<string, unknown> = { ...found.node.attrs }
-  if (on) attrs[name] = true
-  else delete attrs[name]
-  replaceBlock(tr, pos, attrs)
-}
-
-/**
- * Drop the document attrs the record is currently mirrored onto. Called on the
- * way *out* of a mode, in the same transaction that records the new mode, so
- * clearing a mode is one undo step with entering the next one.
- */
-export function clearModeMirror(tr: Transaction, mode: BlockMode | null): void {
-  if (mode === null) return
-  if (mode.representation === 'source') setSourceAttr(tr, mode.pos, false)
-  if (mode.interaction === 'editing') setInteractionAttr(tr, mode.pos, false)
 }
 
 /**
@@ -380,8 +366,6 @@ export function enterSourceMode(view: EditorView, pos: number): void {
   const at = releaseSourceBlock(view, pos)
 
   const tr = view.state.tr
-  clearModeMirror(tr, currentBlockMode(view.state))
-  setSourceAttr(tr, at, true)
   setBlockModeAt(tr, at, { representation: 'source' })
   const end = at + (tr.doc.nodeAt(at)?.nodeSize ?? 0)
   placeCaretInText(tr, sourceCaret(view.state, tr, at), at + 1, end)

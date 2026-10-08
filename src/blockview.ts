@@ -1,7 +1,7 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
-import { commitSourceBlock } from './block-modes'
+import { commitSourceBlock, modeFor } from './block-modes'
 import { serializeBlock } from './markdown'
 import { headingSlug } from './schema'
 
@@ -75,6 +75,11 @@ function createSemanticWrapper(node: ProseNode): HTMLElement | null {
   }
 }
 
+/** Is the block at `pos` showing its raw markdown, per the mode record? */
+export function showsSource(view: EditorView, pos: number | undefined): boolean {
+  return modeFor(view.state, pos)?.representation === 'source'
+}
+
 class BlockSourceNodeView implements NodeView {
   dom: HTMLElement
   private cm: BlockCodeMirror | null = null
@@ -133,7 +138,10 @@ class BlockSourceNodeView implements NodeView {
   }
 
   update(node: ProseNode): boolean {
-    if (!node.attrs._source) return false
+    // The mode is not a document attr, so it cannot be read off the node: ask
+    // the record, and rebuild when the answer has changed — the source editor
+    // and the rendering are two entirely different views of the same block.
+    if (!showsSource(this.view, this.getPos())) return false
     this.node = node
     return true
   }
@@ -155,9 +163,13 @@ class BlockVisualNodeView implements NodeView {
   dom: HTMLElement
   contentDOM: HTMLElement
   private sig: string
+  private view: EditorView
+  private getPos: () => number | undefined
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.sig = visualSignature(node)
+    this.view = view
+    this.getPos = getPos
     this.dom = document.createElement('div')
     this.dom.className = 'block-visual-mode'
 
@@ -181,7 +193,7 @@ class BlockVisualNodeView implements NodeView {
   }
 
   update(node: ProseNode): boolean {
-    if (node.attrs._source) return false
+    if (showsSource(this.view, this.getPos())) return false
     if (visualSignature(node) !== this.sig) return false
     // The heading's id derives from its text, so a text edit within the same
     // level keeps the node view alive but must refresh the anchor.
@@ -207,7 +219,7 @@ export function blockNodeView(
   view: EditorView,
   getPos: () => number | undefined,
 ): NodeView {
-  if (node.attrs._source || node.type.name === 'source_block') {
+  if (showsSource(view, getPos()) || node.type.name === 'source_block') {
     return new BlockSourceNodeView(node, view, getPos)
   }
 

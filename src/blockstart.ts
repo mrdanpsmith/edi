@@ -40,16 +40,17 @@ const horizontalRule = (): InputRule =>
   })
 
 /**
- * Build the node a fence marker produces. `mermaid` yields an atom block that
- * opens in source mode; a `#!` info string becomes the shebang first line of a
- * runnable code block; anything else is a code block with that language.
+ * Build the node a fence marker produces. `mermaid` yields an empty atom block
+ * whose mode is set by `insertFence` (which owns the transaction, and therefore
+ * the record); a `#!` info string becomes the shebang first line of a runnable
+ * code block; anything else is a code block with that language.
  */
 export function fenceNode(
   state: EditorState,
   info: string,
 ): { node: import('prosemirror-model').Node } | null {
   if (info === 'mermaid') {
-    return { node: state.schema.nodes.mermaid_block.create({ value: '', _source: true }) }
+    return { node: state.schema.nodes.mermaid_block.create({ value: '' }) }
   }
   if (info.startsWith('#!')) {
     return { node: state.schema.nodes.code_block.create(null, [state.schema.text(info)]) }
@@ -76,8 +77,10 @@ function insertFence(state: EditorState, blockFrom: number, blockTo: number, inf
 
   if (info === 'mermaid') {
     // The inserted atom sits at (or, if the replace reshaped the doc, somewhere
-    // inside) the doc. Marking it as the open source block focuses the editor
-    // with the serialized fence, ready for a language + newline.
+    // inside) the doc. Recording it as the open source block focuses the editor
+    // with the serialized fence, ready for a language + newline — and being the
+    // record rather than an attr on the node, it is a mode flip that leaves the
+    // document alone.
     let pos = tr.doc.nodeAt(blockFrom)?.type.name === 'mermaid_block' ? blockFrom : -1
     if (pos < 0) {
       tr.doc.forEach((node, offset) => {

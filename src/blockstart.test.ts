@@ -86,12 +86,10 @@ describe('block-start input rules', () => {
     typeText(view, '```mermaid ')
     const block = firstBlock(view)
     expect(block.type.name).toBe('mermaid_block')
-    expect(block.attrs._source).toBe(true)
     expect(sourcePos(view)).toBe(0)
 
     expect(dispatchKeydown(view, 'Escape')).toBe(true)
     expect(firstBlock(view).type.name).toBe('mermaid_block')
-    expect(firstBlock(view).attrs._source).toBe(false)
     expect(sourcePos(view)).toBeNull()
     expect(proseToMarkdown(view.state.doc)).toContain('```mermaid')
   })
@@ -116,7 +114,7 @@ describe('block-start input rules', () => {
     typeText(mermaid, '```mermaid')
     expect(dispatchKeydown(mermaid, 'Enter')).toBe(true)
     expect(firstBlock(mermaid).type.name).toBe('mermaid_block')
-    expect(firstBlock(mermaid).attrs._source).toBe(true)
+    expect(sourcePos(mermaid)).toBe(0)
   })
 
   it('bullet: content after - / * / + converts; - alone stays literal', () => {

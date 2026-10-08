@@ -18,7 +18,6 @@ const nodes: SchemaSpec['nodes'] = {
   paragraph: {
     group: 'block',
     content: 'inline*',
-    attrs: { _source: { default: false } },
     parseDOM: [{ tag: 'p' }],
     toDOM() {
       return ['p', 0]
@@ -28,7 +27,7 @@ const nodes: SchemaSpec['nodes'] = {
   heading: {
     group: 'block',
     content: 'inline*',
-    attrs: { level: { default: 1 }, _source: { default: false }, id: { default: null } },
+    attrs: { level: { default: 1 }, id: { default: null } },
     parseDOM: [
       { tag: 'h1', getAttrs: (dom: HTMLElement) => ({ level: 1, id: dom.getAttribute('id') }) },
       { tag: 'h2', getAttrs: (dom: HTMLElement) => ({ level: 2, id: dom.getAttribute('id') }) },
@@ -49,7 +48,6 @@ const nodes: SchemaSpec['nodes'] = {
   blockquote: {
     group: 'block',
     content: 'block+',
-    attrs: { _source: { default: false } },
     parseDOM: [{ tag: 'blockquote' }],
     toDOM() {
       return ['blockquote', 0]
@@ -59,7 +57,6 @@ const nodes: SchemaSpec['nodes'] = {
   bullet_list: {
     group: 'block',
     content: 'list_item+',
-    attrs: { _source: { default: false } },
     parseDOM: [{ tag: 'ul' }],
     toDOM() {
       return ['ul', 0]
@@ -69,7 +66,7 @@ const nodes: SchemaSpec['nodes'] = {
   ordered_list: {
     group: 'block',
     content: 'list_item+',
-    attrs: { order: { default: 1 }, _source: { default: false } },
+    attrs: { order: { default: 1 } },
     parseDOM: [{
       tag: 'ol',
       getAttrs(dom: HTMLElement) {
@@ -111,7 +108,7 @@ const nodes: SchemaSpec['nodes'] = {
     content: 'text*',
     marks: '',
     code: true,
-    attrs: { language: { default: '' }, _source: { default: false } },
+    attrs: { language: { default: '' } },
     parseDOM: [{
       tag: 'pre',
       preserveWhitespace: 'full',
@@ -130,7 +127,6 @@ const nodes: SchemaSpec['nodes'] = {
   horizontal_rule: {
     group: 'block',
     atom: true,
-    attrs: { _source: { default: false } },
     parseDOM: [{ tag: 'hr' }],
     toDOM() {
       return ['hr']
@@ -142,7 +138,7 @@ const nodes: SchemaSpec['nodes'] = {
     marks: '',
     code: true,
     atom: true,
-    attrs: { value: { default: '' }, _source: { default: false }, _plain: { default: true }, _resolved: { default: false } },
+    attrs: { value: { default: '' }, _plain: { default: true }, _resolved: { default: false } },
     parseDOM: [
       {
         tag: 'table',
@@ -226,7 +222,7 @@ const nodes: SchemaSpec['nodes'] = {
     marks: '',
     code: true,
     atom: true,
-    attrs: { value: { default: '' }, _source: { default: false }, _edit: { default: false } },
+    attrs: { value: { default: '' } },
     parseDOM: [{
       tag: '[data-mermaid-block]',
       getAttrs(dom: HTMLElement) {
@@ -247,7 +243,6 @@ const nodes: SchemaSpec['nodes'] = {
       type: { default: '' },
       label: { default: '' },
       content: { default: '' },
-      _source: { default: false },
     },
     parseDOM: [{
       tag: '[data-encrypted-block]',

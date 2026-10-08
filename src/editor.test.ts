@@ -4,6 +4,7 @@ import { TextSelection } from 'prosemirror-state'
 import { Slice } from 'prosemirror-model'
 import { createBlockEditor } from './editor'
 import { proseToMarkdown } from './markdown'
+import { currentBlockMode } from './block-modes'
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -206,10 +207,10 @@ describe('block source toggle keymap', () => {
     cursorInsideLastBlock(view)
 
     expect(dispatchKeydown(view, 'e', { ctrlKey: true, shiftKey: true })).toBe(true)
-    expect(view.state.doc.firstChild?.attrs._source).toBe(true)
+    expect(currentBlockMode(view.state)?.representation).toBe('source')
 
     expect(dispatchKeydown(view, 'Escape')).toBe(true)
-    expect(view.state.doc.firstChild?.attrs._source).toBe(false)
+    expect(currentBlockMode(view.state)).toBeNull()
     editor.destroy()
   })
 
@@ -219,7 +220,7 @@ describe('block source toggle keymap', () => {
     cursorInsideLastBlock(view)
     dispatchKeydown(view, 'e', { ctrlKey: true, shiftKey: true })
     expect(dispatchKeydown(view, 'e', { ctrlKey: true, shiftKey: true })).toBe(true)
-    expect(view.state.doc.firstChild?.attrs._source).toBe(false)
+    expect(currentBlockMode(view.state)).toBeNull()
     editor.destroy()
   })
 

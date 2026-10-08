@@ -29,6 +29,7 @@ import { Decoration, DecorationSet } from 'prosemirror-view'
 import type { EditorView } from 'prosemirror-view'
 import type { Node as ProseNode, Slice } from 'prosemirror-model'
 import { CODE_LANGUAGE_ALIASES, shebangLanguage } from './codeLanguages'
+import { modeFor } from './block-modes'
 
 type Dir = 1 | -1
 
@@ -53,16 +54,20 @@ export const SELECTION_HIGHLIGHT_KEY = new PluginKey('EDI_SELECTION_HIGHLIGHT')
 /**
  * True when a `code_block`'s node view owns its own DOM (CodeMirror) rather
  * than exposing a ProseMirror `contentDOM`. A grammar (a language tag or a
- * shebang) selects CodeMirror in `RunnableBlockNodeView`, and source mode does
- * too. A ProseMirror text position cannot be placed inside one of these, and
- * its chrome (language badge, Copy button) would otherwise be swept into a
+ * shebang) selects CodeMirror in `RunnableBlockNodeView`, and the source form
+ * does too. A ProseMirror text position cannot be placed inside one of these,
+ * and its chrome (language badge, Copy button) would otherwise be swept into a
  * range, so they are treated as atomic selection units — the same as a table
  * or a diagram. Plain fenced blocks (no grammar) keep an editable
  * `<pre><code>`, so those still behave as text.
+ *
+ * `pos` is the block's own position, because the source form is no longer
+ * something a node can say about itself: it lives in the mode record, which
+ * names exactly one block, so the question has to be asked against the state.
  */
-export function isCodeEditorBlock(node: ProseNode): boolean {
+export function isCodeEditorBlock(state: EditorState, node: ProseNode, pos: number): boolean {
   if (node.type.name !== 'code_block') return false
-  if (node.attrs['_source']) return true
+  if (modeFor(state, pos)?.representation === 'source') return true
   const tag = String(node.attrs.language ?? '').trim().toLowerCase()
   if (tag && tag in CODE_LANGUAGE_ALIASES) return true
   const interpreter = shebangLanguage(node.textContent)
@@ -70,13 +75,13 @@ export function isCodeEditorBlock(node: ProseNode): boolean {
 }
 
 /** A block the gesture selects whole: an atom, or a CodeMirror code block. */
-export function isSelectionAtom(node: ProseNode): boolean {
-  return node.isBlock && (node.isAtom || isCodeEditorBlock(node))
+export function isSelectionAtom(state: EditorState, node: ProseNode, pos: number): boolean {
+  return node.isBlock && (node.isAtom || isCodeEditorBlock(state, node, pos))
 }
 
 /** A text block the gesture can place a selection endpoint inside. */
-function isSelectionTextblock(node: ProseNode): boolean {
-  return node.isTextblock && !isCodeEditorBlock(node)
+function isSelectionTextblock(state: EditorState, node: ProseNode, pos: number): boolean {
+  return node.isTextblock && !isCodeEditorBlock(state, node, pos)
 }
 
 function rungFromSelection(sel: Selection): Rung {
@@ -100,17 +105,18 @@ interface TextBlock {
 }
 
 /** The text block that contains `pos`, at any nesting depth. */
-function enclosingTextBlock(doc: ProseNode, pos: number): TextBlock | null {
+function enclosingTextBlock(state: EditorState, pos: number): TextBlock | null {
+  const doc = state.doc
   const clamped = Math.min(Math.max(pos, 0), doc.content.size)
   const $pos = doc.resolve(clamped)
   for (let d = $pos.depth; d > 0; d--) {
     const node = $pos.node(d)
-    if (isSelectionTextblock(node)) {
+    if (isSelectionTextblock(state, node, $pos.before(d))) {
       return { pos: $pos.before(d), start: $pos.start(d), end: $pos.end(d) }
     }
     // A CodeMirror code block is an atomic unit: its interior is not a place a
     // text selection can end, so don't resolve one for it.
-    if (isCodeEditorBlock(node)) return null
+    if (isCodeEditorBlock(state, node, $pos.before(d))) return null
   }
   return null
 }
@@ -122,11 +128,11 @@ interface Unit {
 }
 
 /** Every text block and atomic block, in document order. */
-function collectUnits(doc: ProseNode): Unit[] {
+function collectUnits(state: EditorState): Unit[] {
   const out: Unit[] = []
-  doc.descendants((node, pos) => {
-    if (isSelectionTextblock(node)) out.push({ pos, text: true, size: node.content.size + 1 })
-    else if (isSelectionAtom(node)) out.push({ pos, text: false, size: node.nodeSize })
+  state.doc.descendants((node, pos) => {
+    if (isSelectionTextblock(state, node, pos)) out.push({ pos, text: true, size: node.content.size + 1 })
+    else if (isSelectionAtom(state, node, pos)) out.push({ pos, text: false, size: node.nodeSize })
     return true
   })
   return out
@@ -137,8 +143,8 @@ function collectUnits(doc: ProseNode): Unit[] {
  * text block, or — when the head sits on a block boundary between two blocks —
  * the nearest unit on the `dir` side of `head`.
  */
-function adjacentUnit(doc: ProseNode, tb: TextBlock | null, head: number, dir: Dir): Unit | null {
-  const units = collectUnits(doc)
+function adjacentUnit(state: EditorState, tb: TextBlock | null, head: number, dir: Dir): Unit | null {
+  const units = collectUnits(state)
   if (tb) {
     const idx = units.findIndex((u) => u.pos === tb.pos)
     if (idx >= 0) return units[idx + dir] ?? null
@@ -168,9 +174,7 @@ function unitRung(unit: Unit): Rung {
  * distinction.
  */
 export function nextRung(state: EditorState, sel: Selection, dir: Dir): Rung | null {
-  const doc = state.doc
-
-  const units = collectUnits(doc)
+  const units = collectUnits(state)
 
   if (sel instanceof NodeSelection) {
     let idx = units.findIndex((u) => u.pos === sel.from)
@@ -182,7 +186,7 @@ export function nextRung(state: EditorState, sel: Selection, dir: Dir): Rung | n
 
   if (!(sel instanceof TextSelection)) return null
 
-  const tb = enclosingTextBlock(doc, sel.head)
+  const tb = enclosingTextBlock(state, sel.head)
   // Inside a text block the first press is the browser's move: snap the head to
   // the block edge. Only then does the gesture move a whole unit at a time.
   if (tb) {
@@ -190,7 +194,7 @@ export function nextRung(state: EditorState, sel: Selection, dir: Dir): Rung | n
     if (dir < 0 && sel.head > tb.start) return textRung(sel.anchor, tb.start)
   }
 
-  const unit = adjacentUnit(doc, tb, sel.head, dir)
+  const unit = adjacentUnit(state, tb, sel.head, dir)
   if (!unit) return null
   // A text block extends the range to its far edge; an atomic block is added on
   // its own, ending the range on its far boundary. Either way each press adds
@@ -268,8 +272,8 @@ export const selectionExpandKeymap = keymap({
 /** Does the range pass through a block the gesture treats as special? */
 function selectionHasAtom(state: EditorState): boolean {
   let found = false
-  state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
-    if (isSelectionAtom(node)) {
+  state.doc.nodesBetween(state.selection.from, state.selection.to, (node, pos) => {
+    if (isSelectionAtom(state, node, pos)) {
       found = true
       return false
     }
@@ -338,7 +342,7 @@ export const selectionHighlightPlugin = new Plugin({
       if (!(sel instanceof TextSelection) || sel.empty) return null
       const decos: Decoration[] = []
       state.doc.descendants((node, pos) => {
-        if (isSelectionAtom(node) && pos >= sel.from && pos + node.nodeSize <= sel.to) {
+        if (isSelectionAtom(state, node, pos) && pos >= sel.from && pos + node.nodeSize <= sel.to) {
           decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'edi-block-selected' }))
         }
         return true

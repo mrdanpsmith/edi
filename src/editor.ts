@@ -395,8 +395,9 @@ function attachScrollerCaretFallback(view: EditorView, parent: HTMLElement): (ev
     // caret-capable position after it, so clicking below it opens a new
     // paragraph to put the caret in. That is the only way to then select the
     // block itself from below — a range from above always includes the text
-    // before it.
-    if (last && isSelectionAtom(last)) {
+    // before it. Its own position is asked of the block, because a fence in its
+    // source form is one of these too and only the record says so.
+    if (last && isSelectionAtom(view.state, last, doc.content.size - last.nodeSize)) {
       const tr = view.state.tr.insert(doc.content.size, view.state.schema.nodes.paragraph.create())
       tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
       view.dispatch(tr)

@@ -4,7 +4,7 @@ import { markdownToProse, proseToMarkdown } from './markdown'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { createBlockEditor } from './editor'
-import { currentBlockMode, toggleSourceMode } from './block-modes'
+import { currentBlockMode, modeFor, toggleSourceMode } from './block-modes'
 
 /** The position the single block-mode record names, or null. */
 function sourcePos(view: EditorView): number | null {
@@ -105,7 +105,7 @@ describe('source mode is scoped to a single document', () => {
 
     expect(editor.commitSource()).toBe(true)
     expect(sourcePos(view)).toBeNull()
-    expect(view.state.doc.child(0).attrs._source).toBe(false)
+    expect(modeFor(view.state, pos)).toBeNull()
     editor.destroy()
   })
 })

@@ -6,7 +6,9 @@ import { schema } from './schema'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { EditorState as CMEditorState } from '@codemirror/state'
 import { markdownToProse, proseToMarkdown } from './markdown'
+import { blockModePlugin, currentBlockMode, modeFor } from './block-modes'
 import { type ContextMenuEntry } from './contextmenu'
+
 
 const zeroRect = {
   top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
@@ -246,6 +248,26 @@ async function loadMain(): Promise<void> {
 
 async function stateModule(): Promise<typeof import('./state')> {
   return import('./state')
+}
+
+/**
+ * The `block-modes` module *as `main` itself resolved it*.
+ *
+ * `loadMain` calls `vi.resetModules()` and then imports `./main`, which
+ * re-evaluates `main` and its non-mocked dependencies — `./block-modes` among
+ * them, since it is not in this file's mock list. A view built from the copy
+ * imported at the top of this file therefore holds a different `blockModePlugin`
+ * from the one `main`'s own `toggleSourceMode` writes to, and the two can never
+ * meet: the meta lands on a key nothing is listening for. Importing after
+ * `loadMain` picks up the instance in `main`'s registry instead.
+ *
+ * Only `main`'s own entry points need this. The `./node/mermaid` mock is cached
+ * across `resetModules`, so anything routed through the diagram module still
+ * shares the statically imported copy, and a view built from *that* works for
+ * the menu items that call it.
+ */
+async function mainSideBlockModes(): Promise<typeof import('./block-modes')> {
+  return import('./block-modes')
 }
 
 function press(key: string, extra: KeyboardEventInit = {}): void {
@@ -1124,7 +1146,12 @@ describe('kanban board insertion', () => {
     const view = new EditorView(host, {
       state: EditorState.create({
         doc: markdownToProse(markdown, schema),
-        plugins: [history()],
+        // The board opens straight in edit mode, and that is the mode record:
+        // a view with no plugin for it can never report the board as open.
+        // The insert itself is routed through the `./node/mermaid` mock, which
+        // shares the statically imported `./block-modes` — so this must be that
+        // copy, not `main`'s (see `mainSideBlockModes`).
+        plugins: [history(), blockModePlugin],
       }),
     })
     mainState.editorView = view as unknown as typeof mainState.editorView
@@ -1156,7 +1183,10 @@ describe('kanban board insertion', () => {
     const board = view.state.doc.child(1)
     expect(board?.type.name).toBe('mermaid_block')
     expect(board?.attrs.value).toBe('kanban\n  col1[Backlog]\n  col2[Doing]')
-    expect(board?.attrs._edit).toBe(true)
+    // The insert carries the record with it, so the board is open for editing
+    // and one undo takes the whole thing away.
+    expect(modeFor(view.state, 0)).toBeNull()
+    expect(currentBlockMode(view.state)?.interaction).toBe('editing')
     expect(proseToMarkdown(view.state.doc)).toContain('```mermaid\nkanban\n  col1[Backlog]\n  col2[Doing]\n```')
 
     undo(view.state, view.dispatch)
@@ -1672,14 +1702,17 @@ describe('context menu', () => {
     await flushAsync()
     const host = document.createElement('div')
     document.body.appendChild(host)
+    // The mode is plugin state now, so this view needs the plugin — and the one
+    // `main` holds, since `Edit source` is `main`'s own entry point.
+    const { blockModePlugin: plugin, modeFor: modeOf } = await mainSideBlockModes()
     const realView = new EditorView(host, {
-      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
+      state: EditorState.create({ doc: markdownToProse('# Hello', schema), plugins: [plugin] }),
     })
     mainState.editorView = realView as unknown as typeof mainState.editorView
 
     const mermaid = document.createElement('div')
     mermaid.className = 'mermaid'
-    mermaid.innerHTML = '<div class="block-handle" data-block-pos="1"></div><div class="mermaid-preview"></div>'
+    mermaid.innerHTML = '<div class="block-handle" data-block-pos="0"></div><div class="mermaid-preview"></div>'
     document.querySelector<HTMLElement>('#editor-container')!.appendChild(mermaid)
 
     mermaid.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
@@ -1687,7 +1720,7 @@ describe('context menu', () => {
       .find((button) => button.textContent === 'Edit source')!
     expect(editSource).toBeDefined()
     editSource.click()
-    expect(realView.state.doc.child(0)?.attrs._source).toBe(true)
+    expect(modeOf(realView.state, 0)?.representation).toBe('source')
 
     realView.destroy()
     host.remove()
@@ -1703,6 +1736,7 @@ describe('context menu', () => {
     const realView = new EditorView(host, {
       state: EditorState.create({
         doc: markdownToProse('```mermaid\ngraph TD\n  A[Alpha]\n```', schema),
+        plugins: [blockModePlugin],
       }),
     })
     mainState.editorView = realView as unknown as typeof mainState.editorView
@@ -1723,11 +1757,11 @@ describe('context menu', () => {
     }
 
     item(openMenu(), 'Edit diagram').click()
-    expect(realView.state.doc.child(0)?.attrs._edit).toBe(true)
+    expect(modeFor(realView.state, 0)?.interaction).toBe('editing')
     visual.classList.add('mermaid-editing')
 
     item(openMenu(), 'Done editing').click()
-    expect(realView.state.doc.child(0)?.attrs._edit).not.toBe(true)
+    expect(modeFor(realView.state, 0)).toBeNull()
 
     realView.destroy()
     host.remove()

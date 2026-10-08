@@ -12,7 +12,7 @@ import { promptForPassword } from '../crypto-dialog'
 import { confirmAction } from '../bridge'
 import { markdownToProse } from '../markdown'
 import { createBlockEditor } from '../editor'
-import { blockNodeView } from '../blockview'
+import { blockNodeView, showsSource } from '../blockview'
 import type { ResolveImage } from '../image'
 
 let imageResolver: ResolveImage | undefined
@@ -55,7 +55,6 @@ interface EncryptedBlockAttrs {
   type: string
   label: string
   content: string
-  _source: boolean | undefined
 }
 
 function encryptedBlockChipText(attrs: EncryptedBlockAttrs): string {
@@ -68,7 +67,6 @@ function getAttrs(node: ProseNode): EncryptedBlockAttrs {
     type: String(node.attrs.type ?? ''),
     label: String(node.attrs.label ?? ''),
     content: String(node.attrs.content ?? ''),
-    _source: node.attrs._source as boolean | undefined,
   }
 }
 
@@ -106,8 +104,10 @@ class EncryptedBlockNodeView implements NodeView {
   }
 
   update(node: ProseNode): boolean {
-    const attrs = getAttrs(node)
-    if (attrs._source) return false
+    // Source mode is a different node view (the decrypted block's markdown),
+    // so a change of it rebuilds. Asked of the mode record, which is where the
+    // representation lives now that no node carries one.
+    if (showsSource(this.view, this.getPos())) return false
     const structuralChange =
       node.attrs.content !== this.node.attrs.content ||
       node.attrs.label !== this.node.attrs.label ||
@@ -318,7 +318,9 @@ export const encryptedBlockNodeViewPlugin = new Plugin({
   props: {
     nodeViews: {
       encrypted_block: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
-        if (node.attrs._source) {
+        // `blockNodeView` answers "is this block showing its source" from the
+        // mode record; `encrypted_block` is never a `source_block`.
+        if (showsSource(view, getPos())) {
           return blockNodeView(node, view, getPos) as NodeView
         }
         return new EncryptedBlockNodeView(node, view, getPos)

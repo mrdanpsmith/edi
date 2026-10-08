@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { EditorState } from 'prosemirror-state'
+import { history, undo } from 'prosemirror-history'
 import { EditorView } from 'prosemirror-view'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { markdownToProse, proseToMarkdown } from './markdown'
@@ -9,11 +10,13 @@ import { codeBlockNodeViewPlugin } from './node/execblock'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import {
+  BLOCK_MODE_CLASS,
   BLOCK_MODE_KEY,
   blockModeFor,
   blockModePlugin,
   currentBlockMode,
   enterSourceMode,
+  exitSourceMode,
   modeFor,
   toggleSourceMode,
 } from './block-modes'
@@ -29,7 +32,7 @@ vi.mock('mermaid', () => ({
   },
 }))
 
-function createEditor(initialMarkdown: string): EditorView {
+function createEditor(initialMarkdown: string, extraPlugins: Plugin[] = []): EditorView {
   const doc = markdownToProse(initialMarkdown, schema)
   const nodeViewPlugin = new Plugin({
     props: {
@@ -41,7 +44,14 @@ function createEditor(initialMarkdown: string): EditorView {
   return new EditorView(document.body, {
     state: EditorState.create({
       doc,
-      plugins: [blockModePlugin, codeBlockNodeViewPlugin, nodeViewPlugin, mermaidNodeViewPlugin, tableNodeViewPlugin],
+      plugins: [
+        blockModePlugin,
+        codeBlockNodeViewPlugin,
+        nodeViewPlugin,
+        mermaidNodeViewPlugin,
+        tableNodeViewPlugin,
+        ...extraPlugins,
+      ],
     }),
   })
 }
@@ -92,8 +102,8 @@ describe('the outgoing block commits before the record moves', () => {
     const after = allBlockPositions(view)
     expect(view.state.doc.nodeAt(currentBlockMode(view.state)!.pos)!.type.name).toBe('paragraph')
     expect(view.state.doc.nodeAt(after[0])!.type.name).toBe('heading')
-    expect(view.state.doc.nodeAt(after[0])!.attrs._source).toBe(false)
-    expect(view.state.doc.nodeAt(after[1])!.attrs._source).toBe(true)
+    expect(modeFor(view.state, after[0])).toBeNull()
+    expect(modeFor(view.state, after[1])?.representation).toBe('source')
     view.destroy()
   })
 
@@ -129,7 +139,10 @@ describe('blockModeFor', () => {
     // one that must never take the record.
     const node = schema.nodes.source_block.create({ markdown: '# hi\n' })
     expect(blockModeFor(node)).toEqual({ representation: false, interaction: 'none' })
+    // No node type carries a representation attr any more, so a block cannot
+    // claim a mode by saying so about itself.
     expect(schema.nodes.source_block.create({ markdown: 'x' }).attrs._source).toBeUndefined()
+    expect(schema.nodes.heading.create().attrs._source).toBeUndefined()
   })
 
   it('declares the interaction axis for mermaid only', () => {
@@ -181,14 +194,14 @@ describe('one block at a time', () => {
     const view = createEditor('# First\n\nSecond paragraph')
     const [first, second] = allBlockPositions(view)
     enterSourceMode(view, first)
-    expect(view.state.doc.nodeAt(first)!.attrs._source).toBe(true)
+    expect(modeFor(view.state, first)?.representation).toBe('source')
 
     toggleSourceMode(view, second)
+    // One record names one block, so the outgoing block is not merely un-marked:
+    // it has no claim left on the mode at all.
     expect(currentBlockMode(view.state)!.pos).toBe(second)
-    expect(view.state.doc.nodeAt(second)!.attrs._source).toBe(true)
-    // The block that lost the mode also loses the attr that mirrored it, in the
-    // same transaction — so the two can never disagree.
-    expect(view.state.doc.nodeAt(first)!.attrs._source).toBe(false)
+    expect(modeFor(view.state, second)?.representation).toBe('source')
+    expect(modeFor(view.state, first)).toBeNull()
     view.destroy()
   })
 
@@ -220,6 +233,59 @@ describe('the plugin key', () => {
     view.dispatch(tr)
     expect(currentBlockMode(view.state)!.interaction).toBe('editing')
     expect(proseToMarkdown(view.state.doc)).toBe('# First\n\nSecond paragraph\n')
+    view.destroy()
+  })
+})
+describe('the mode is not document content', () => {
+  it('is not undoable: undo after entering leaves the block in source', () => {
+    const view = createEditor('# Hello\n\nSecond paragraph', [history()])
+    const [first] = allBlockPositions(view)
+    const before = view.state.doc.toString()
+    enterSourceMode(view, first)
+    expect(modeFor(view.state, first)?.representation).toBe('source')
+    expect(view.state.doc.toString()).toBe(before)
+
+    // Nothing for history to undo, because a mode is not an edit to the file.
+    expect(undo(view.state, view.dispatch)).toBe(false)
+    // With the mode in an attr, an undo *could* revert `_source` while the
+    // record still said otherwise — a block drawing visually and answering to a
+    // mode whose CodeMirror instance was never there. Both live in the record
+    // now, so there is nothing for history to get half-right.
+    expect(modeFor(view.state, first)?.representation).toBe('source')
+    expect(view.state.doc.toString()).toBe(before)
+    view.destroy()
+  })
+
+  it('rebuilds the node view when the record changes, despite no doc change', () => {
+    const view = createEditor('# Hello')
+    const [first] = allBlockPositions(view)
+    const dom = view.nodeDOM(first) as HTMLElement
+    expect(dom.classList.contains('block-visual-mode')).toBe(true)
+
+    enterSourceMode(view, first)
+
+    // ProseMirror only walks the tree when the document or a node's decorations
+    // changed, and a mode flip now changes neither — so the record publishes
+    // itself as a decoration to make the walk happen. Without that, the block
+    // would keep drawing as it was with nothing wrong to see.
+    const after = view.nodeDOM(first) as HTMLElement
+    expect(after).not.toBe(dom)
+    expect(after.classList.contains('block-source-mode')).toBe(true)
+    expect(after.classList.contains(BLOCK_MODE_CLASS)).toBe(true)
+    view.destroy()
+  })
+
+  it('gives the block back its rendering on the way out', () => {
+    const view = createEditor('# Hello')
+    const [first] = allBlockPositions(view)
+    enterSourceMode(view, first)
+    expect((view.nodeDOM(first) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
+
+    exitSourceMode(view)
+
+    const after = view.nodeDOM(first) as HTMLElement
+    expect(after.classList.contains('block-visual-mode')).toBe(true)
+    expect(after.classList.contains(BLOCK_MODE_CLASS)).toBe(false)
     view.destroy()
   })
 })

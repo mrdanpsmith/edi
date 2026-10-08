@@ -2,7 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state'
 import type { EditorState } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
-import { blockNodeView } from '../blockview'
+import { blockNodeView, showsSource } from '../blockview'
 import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
 import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
@@ -425,7 +425,10 @@ class RunnableBlockNodeView implements NodeView {
   }
 
   update(node: ProseNode): boolean {
-    if (node.attrs['_source'] !== this.node.attrs['_source']) return false
+    // Source mode is a different node view entirely, so a change of it rebuilds
+    // rather than reconciles — asked of the mode record, which is where the
+    // representation lives now that no node carries one.
+    if (showsSource(this.view, this.getPos())) return false
     // A change to the language tag can swap the grammar, the badge, or the
     // code/plaintext renderer — rebuild from scratch rather than reconcile.
     if (node.attrs.language !== this.node.attrs.language) return false
@@ -502,7 +505,9 @@ export const codeBlockNodeViewPlugin = new Plugin({
   props: {
     nodeViews: {
       code_block(node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView {
-        if (node.attrs['_source']) {
+        // `blockNodeView` answers "is this fence showing its source" from the
+        // mode record; `code_block` is never a `source_block`.
+        if (showsSource(view, getPos())) {
           return blockNodeView(node, view, getPos) as unknown as NodeView
         }
         return new RunnableBlockNodeView(node, view, getPos)
