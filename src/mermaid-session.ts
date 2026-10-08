@@ -693,8 +693,7 @@ export class DiagramSession {
       // is longer than the card-shaped box it was opened from more often than
       // not, and a fixed box either scrolls the rest of the title out of sight or
       // covers the columns behind it with a field nothing is being typed into.
-      input.style.height = 'auto'
-      input.addEventListener('input', () => {
+      const sizeToContent = () => {
         input.style.height = 'auto'
         input.style.height = `${Math.min(input.scrollHeight, COMPOSER_MAX_HEIGHT)}px`
         // Past the cap the field stops climbing and scrolls: the point is that
@@ -702,7 +701,17 @@ export class DiagramSession {
         input.style.overflowY = input.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden'
         spec.subject.grow?.(state.subject ?? found, input as HTMLTextAreaElement)
         this.schedule()
-      })
+      }
+      input.addEventListener('input', sizeToContent)
+      // **Sizing on `input` alone is not enough**, because `input.value` was set
+      // above and no event has been fired yet. Every field built around a value
+      // that already has one — a rename, and every field re-homed after a render,
+      // which is the same thing — came back at the *slot's* height: a 5-line card
+      // with a 2-line composer on it and the rest of the title scrolled out of
+      // sight, no keypress away from being committed as the whole of it. An empty
+      // composer is left alone, so opening one does not resize the card it
+      // replaces: nothing is typed, so there is nothing to be the size of.
+      if (input.value.length > 0) sizeToContent()
     }
 
     element.appendChild(input)

@@ -1916,11 +1916,21 @@ def test_kanban_card_editor_grows_with_its_text_and_only_with_it(window):
         )
 
     def settled():
+        # Wait for the two to *agree*, not for the card to merely exist. `h > 0` is
+        # true the instant the field opens, so it waited for nothing and left this
+        # to whichever of the two the renderer got to first — which is why the same
+        # numbers failed about one run in twelve.
         _wait(
             window,
-            "(() => { const c = document.querySelector('.mermaid .items > g.node.mermaid-node-editing');"
-            " return { h: c ? Number(c.querySelector('rect').getAttribute('height')) : 0 }; })()",
-            lambda d: d["h"] > 0,
+            """(() => {
+              const card = document.querySelector('.mermaid .items > g.node.mermaid-node-editing');
+              const input = document.querySelector('.mermaid-edit-input');
+              if (!card || !input) return { h: 0, agree: false };
+              const h = Number(card.querySelector('rect').getAttribute('height'));
+              const f = input.getBoundingClientRect().height;
+              return { h, agree: input.style.height !== 'auto' && h > 0 && h <= f + 9 };
+            })()""",
+            lambda d: d["agree"],
         )
 
     _render(window, KANBAN)

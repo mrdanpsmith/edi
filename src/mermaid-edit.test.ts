@@ -3107,6 +3107,55 @@ describe('the shape of a field', () => {
     expect(afterOne).toBe(32)
   })
 
+  it('sizes a rename to the title it already holds, with no keystroke', async () => {
+    const commit = vi.fn()
+    const { svg } = await board(commit)
+    // jsdom computes no layout, so the content height is stubbed for the whole
+    // field: what is under test is *that the sizing runs when the field is built*,
+    // which is a question about when it runs and not about where a browser wraps.
+    Object.defineProperty(window.HTMLTextAreaElement.prototype, 'scrollHeight', {
+      value: 24,
+      configurable: true,
+    })
+    const card = [...svg.querySelectorAll('.items > g.node')].filter(
+      (node) => !node.classList.contains('mermaid-kanban-slot'),
+    )[0]!
+    const title = card.querySelector('.mermaid-editables')!
+    title.getBoundingClientRect = () => rect(14, 44, 112, 16)
+    clickAt(title)
+
+    // A rename is a field built around a title that is already in it, and every
+    // field re-homed after a render is the same thing. Sizing on `input` alone
+    // left both at the height of the slot they replaced — the card grows to the
+    // title, the composer does not, and the rest of the title is scrolled out of
+    // sight, a keystroke away from being committed as the whole of it.
+    const field = inPlaceField() as HTMLTextAreaElement
+    expect(field.value).toBe('One')
+    expect(field.style.height).toBe('24px')
+    expect(Number(card.querySelector('rect')?.getAttribute('height'))).toBe(32)
+    // @ts-expect-error -- a stub installed for this test, removed on the way out
+    delete window.HTMLTextAreaElement.prototype.scrollHeight
+  })
+
+  it('leaves a fresh composer at the slot height, since nothing is typed in it yet', async () => {
+    const commit = vi.fn()
+    const { svg } = await board(commit)
+    Object.defineProperty(window.HTMLTextAreaElement.prototype, 'scrollHeight', {
+      value: 24,
+      configurable: true,
+    })
+    clickAt(cardSlots(svg)[0]!)
+
+    // The other half of the same rule: a composer with nothing in it must not
+    // resize the card it is standing in, or opening one would change the board.
+    const field = inPlaceField() as HTMLTextAreaElement
+    expect(field.value).toBe('')
+    expect(field.style.height).toBe('')
+    expect(Number(cardSlots(svg)[0]!.querySelector('rect')?.getAttribute('height'))).not.toBe(32)
+    // @ts-expect-error -- a stub installed for this test, removed on the way out
+    delete window.HTMLTextAreaElement.prototype.scrollHeight
+  })
+
   it('edits a column name and a new column with the same field', async () => {
     const commit = vi.fn()
     const { svg } = await board(commit)
