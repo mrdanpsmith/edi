@@ -13,6 +13,7 @@ import { confirmAction } from '../bridge'
 import { markdownToProse } from '../markdown'
 import { createBlockEditor } from '../editor'
 import { blockNodeView, showsSource } from '../blockview'
+import { attachBlockControls } from '../block-modes'
 import type { ResolveImage } from '../image'
 
 let imageResolver: ResolveImage | undefined
@@ -90,16 +91,6 @@ class EncryptedBlockNodeView implements NodeView {
     this.getPos = getPos
     this.dom = document.createElement('div')
     this.dom.className = 'encrypted-block'
-    const pos = getPos()
-    if (pos !== undefined) {
-      const $pos = view.state.doc.resolve(pos)
-      if ($pos.parent.type.name === 'doc') {
-        const handle = document.createElement('div')
-        handle.className = 'block-handle'
-        handle.setAttribute('data-block-pos', String(pos))
-        this.dom.appendChild(handle)
-      }
-    }
     this.render()
   }
 
@@ -174,23 +165,34 @@ class EncryptedBlockNodeView implements NodeView {
     this.wordsEl = words
     pill.appendChild(words)
 
-    const actions = document.createElement('span')
-    actions.className = 'encrypted-block-actions'
-    const makeBtn = (text: string, cls: string, run: () => void, title?: string): HTMLButtonElement => {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = `toolbar-btn ${cls}`
-      btn.textContent = text
-      if (title) btn.title = title
-      btn.addEventListener('mousedown', (e) => e.preventDefault())
-      btn.addEventListener('click', (e) => { e.stopPropagation(); run() })
-      actions.appendChild(btn)
-      return btn
-    }
-    makeBtn('Normalize', 'encrypted-block-unmask', () => { void this.unmask_() }, 'Convert to normal block (decrypted)')
-    this.toggleBtn = makeBtn('Unlock ▸', 'encrypted-block-toggle', () => { void this.toggleShow_() })
-    pill.appendChild(actions)
     this.dom.appendChild(pill)
+
+    // Unlock and Normalize are the block's own actions, so they go in the one
+    // cluster every block has, in the same place as everything else's — which is
+    // also what finally shows them: the old reveal list for the dot grid did not
+    // mention `.encrypted-block`, so the handle this block injected was in the DOM
+    // and never visible.
+    const controls = attachBlockControls(this.node, this.view, this.getPos, [
+      this.blockButton('Normalize', 'encrypted-block-unmask', () => { void this.unmask_() },
+        'Convert to normal block (decrypted)'),
+      this.toggleBtn = this.blockButton('Unlock ▸', 'encrypted-block-toggle', () => { void this.toggleShow_() }),
+    ])
+    if (controls) this.dom.appendChild(controls.dom)
+  }
+
+  private blockButton(
+    text: string,
+    cls: string,
+    run: () => void,
+    title?: string,
+  ): HTMLButtonElement {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = `block-control toolbar-btn ${cls}`
+    btn.textContent = text
+    if (title) btn.title = title
+    btn.addEventListener('click', (e) => { e.stopPropagation(); run() })
+    return btn
   }
 
   /** Show: render the decrypted markdown inline, editable; never into the document. */

@@ -172,15 +172,20 @@ def _wait(win, script, predicate, timeout=15):
 
 
 def _enter_edit_mode(win, timeout=15):
-    """Click the real Edit button and wait for the labels to be marked."""
+    """Click the real Edit button and wait for the labels to be marked.
+
+    The button is generated into the block's one control cluster from the mode
+    descriptor (`src/block-modes.ts`), so it is found by its own class rather than
+    by the toolbar it used to be injected into.
+    """
     clicked = _dump(
         win,
-        "(() => { const b = document.querySelector('.mermaid-edit-toggle');"
+        "(() => { const b = document.querySelector('.block-control-interaction');"
         " if (!b) return { missing: true };"
         " b.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));"
         " return { label: b.textContent }; })()",
     )
-    assert not clicked.get("missing"), "the hover toolbar had no Edit button"
+    assert not clicked.get("missing"), "the block's control cluster had no Edit button"
     return _wait(
         win,
         "(() => ({ n: document.querySelectorAll('.mermaid-editables').length }))()",
@@ -288,13 +293,46 @@ def _type(win, value):
     return typed
 
 
+def _press_source(win, expect_label="Source"):
+    """Press the block's own **Source** control the way a mouse does.
+
+    Real mousedown/mouseup/click at the button's own centre, and aimed through
+    `elementFromPoint` rather than at the button directly, so the press has to
+    land on what the reader sees — which is the only way a control painted over
+    by the drawing shows up here.
+    """
+    out = _dump(
+        win,
+        f"""(() => {{
+          const cluster = document.querySelector('.mermaid .block-controls');
+          if (!cluster) return {{ missing: true }};
+          cluster.style.opacity = '1';
+          cluster.style.pointerEvents = 'auto';
+          const b = [...cluster.querySelectorAll('button')]
+            .find((x) => x.textContent === {json.dumps(expect_label)});
+          if (!b) return {{ missing: 'no ' + {json.dumps(expect_label)} }};
+          const r = b.getBoundingClientRect();
+          const x = r.left + r.width / 2;
+          const y = r.top + r.height / 2;
+          const at = document.elementFromPoint(x, y) || b;
+          const opts = {{ bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }};
+          for (const type of ['mousedown', 'mouseup', 'click']) {{
+            at.dispatchEvent(new MouseEvent(type, opts));
+          }}
+          return {{ label: b.textContent, hit: at === b }};
+        }})()""",
+    )
+    assert not out.get("missing"), out
+    return out
+
+
 def _click_done(win):
-    """Press the hover toolbar's Done button the way a mouse does: the press
-    first, which is what keeps the open label editor focused, and only then the
-    click that turns edit mode off."""
+    """Press the cluster's Done button the way a mouse does: the press first,
+    which is what keeps the open label editor focused, and only then the click
+    that turns edit mode off."""
     pressed = _dump(
         win,
-        "(() => { const b = document.querySelector('.mermaid-edit-toggle');"
+        "(() => { const b = document.querySelector('.block-control-interaction');"
         " if (!b) return { missing: true };"
         " const opts = { bubbles: true, button: 0 };"
         " b.dispatchEvent(new MouseEvent('mousedown', opts));"
@@ -302,7 +340,7 @@ def _click_done(win):
         " b.dispatchEvent(new MouseEvent('click', opts));"
         " return { label: b.textContent }; })()",
     )
-    assert not pressed.get("missing"), "the hover toolbar had no Done button"
+    assert not pressed.get("missing"), "the control cluster had no Done button"
     return pressed
 
 
@@ -770,7 +808,7 @@ def _pointer_drag_column(win, column, slot):
 EDIT_STATE = (
     "(() => ({ editing: !!document.querySelector('.mermaid-editing'),"
     " marked: document.querySelectorAll('.mermaid-editables').length,"
-    " button: (document.querySelector('.mermaid-edit-toggle') || {}).textContent }))()"
+    " button: (document.querySelector('.block-control-interaction') || {}).textContent }))()"
 )
 
 # The words the drawn slots are written with, which are the editor's own: a card
@@ -1272,8 +1310,8 @@ def _click_kanban_column_slot(win):
     return _wait(win, _composer_js(None), lambda d: d["v"] is not None, timeout=10)
 
 
-def _dblclick_below_document(win):
-    """Double-click the white space the editor's own box does not reach.
+def _altclick_below_document(win):
+    """Alt+click the white space the editor's own box does not reach.
 
     A document of one short diagram ends the ProseMirror box just under it, and
     everything below that is the scroller's background — a click there is a click
@@ -1281,6 +1319,10 @@ def _dblclick_below_document(win):
     the browser goes on to select the nearest text on the page (the document
     name in the status bar). Reports the element the point really lands on, so a
     test can show the click was outside the editor rather than assume it.
+
+    Alt+click is the mode gesture since §5.2 of the block-modes spec; the double
+    click it replaced could not be aimed at a *single* click here without also
+    selecting a word, which is half of what it is being removed for.
     """
     out = _dump(
         win,
@@ -1296,8 +1338,9 @@ def _dblclick_below_document(win):
           const x = boxRect.left + boxRect.width / 2;
           const el = document.elementFromPoint(x, y);
           const opts = { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y };
-          for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) {
-            (el || document.body).dispatchEvent(new MouseEvent(type, opts));
+          const alt = Object.assign({}, opts, { altKey: true });
+          for (const type of ['mousedown', 'mouseup', 'click']) {
+            (el || document.body).dispatchEvent(new MouseEvent(type, alt));
           }
           return {
             y: Math.round(y), inEditor: !!(el && el.closest && el.closest('.ProseMirror')),
@@ -1311,11 +1354,15 @@ def _dblclick_below_document(win):
 
 
 def _zoom(win, label):
-    """Press one of the hover toolbar's zoom buttons ('+', '−' or '100%')."""
+    """Press one of the diagram's zoom buttons ('+', '−' or '100%').
+
+    They live in the block's one control cluster (§6.2), beside Source and Edit,
+    rather than in a toolbar of this block's own.
+    """
     out = _dump(
         win,
         f"""(() => {{
-          const bar = document.querySelector('.mermaid-toolbar');
+          const bar = document.querySelector('.mermaid .block-controls');
           const b = bar && [...bar.querySelectorAll('button')]
             .find((x) => x.textContent === {json.dumps(label)});
           if (!b) return {{ missing: true }};

@@ -8,6 +8,7 @@ import {
   adaptDiagramColors,
   diagramNeedsBake,
   attachMermaidToolbar,
+  mermaidZoomButtons,
   bakeDiagram,
   reinitializeMermaidTheme,
   copyMermaidAsImage,
@@ -150,7 +151,7 @@ describe('attachMermaidToolbar', () => {
     preview.className = 'mermaid-preview'
     preview.appendChild(svg)
     host.append(preview)
-    attachMermaidToolbar(host, svg, 800)
+    attachMermaidToolbar(host, mermaidZoomButtons(host, svg, 800))
     return { host, svg }
   }
 
@@ -203,7 +204,7 @@ describe('attachMermaidToolbar', () => {
   it('disables the buttons when the natural width is unavailable', () => {
     const host = document.createElement('div')
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    attachMermaidToolbar(host, svg, null)
+    attachMermaidToolbar(host, mermaidZoomButtons(host, svg, null))
     for (const b of buttons(host)) expect(b.disabled).toBe(true)
   })
 })
@@ -548,7 +549,7 @@ describe('bakeDiagram', () => {
 
   it('re-bakes at the current zoom factor on a zoom event', async () => {
     const { holder, svg, ctx } = makeBlock()
-    attachMermaidToolbar(holder, svg, 800)
+    attachMermaidToolbar(holder, mermaidZoomButtons(holder, svg, 800))
     await bakeDiagram(holder, svg, 800)
     expect(ctx.fillRect).toHaveBeenCalledTimes(1)
 

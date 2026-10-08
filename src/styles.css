@@ -592,40 +592,113 @@ body {
   margin-bottom: 0.5em;
 }
 
-/* Block handle */
-.block-handle {
+/* ── The one control cluster per block ─────────────────────────────────────
+ * Every top-level block shows the same row at the same place, revealed by the
+ * same rule, and its mode buttons come from `blockModeFor` (src/block-modes.ts)
+ * while its other controls are the block's own actions. This one rule replaces
+ * six hover lists that each named their own blocks — which is how a diagram's
+ * zoom pill, a plain table's lone button and an encrypted block's (invisible)
+ * handle ended up as three different things in three different corners. */
+.block-controls {
   position: absolute;
-  left: -24px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 24px;
+  top: 6px;
+  right: 8px;
+  z-index: 3;
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: 4px;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   opacity: 0;
   transition: opacity 150ms;
+  pointer-events: none;
   user-select: none;
 }
 
-.block-visual-mode:hover > .block-handle,
-.mermaid:hover > .block-handle,
-.runnable-block:hover > .block-handle,
-.spreadsheet:hover > .block-handle,
-.ss-plain:hover > .block-handle {
+/* The reveal is keyed off the cluster's own wrapper rather than a per-block-type
+ * list, which is also why the encrypted block finally gets one: the old list
+ * never mentioned it, so its controls were in the DOM and never shown. A control
+ * that nothing can reach is not a control, and the cluster is the only control
+ * the block has. */
+.block-controls:hover,
+.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls {
   opacity: 1;
+  pointer-events: auto;
 }
 
-.block-handle:hover {
-  background: var(--surface);
+.block-control {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 8px;
+  min-width: 24px;
+  cursor: pointer;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.block-control:hover:not(:disabled) {
+  background: var(--bg);
   color: var(--text-primary);
+  border-color: var(--border);
 }
 
-.block-handle svg {
-  display: block;
+.block-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* The interaction axis while it is on: the one cluster button that reports a
+   state rather than performing an action. */
+.block-control-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.block-control-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Block chrome is not content. */
+.ProseMirror .block-controls {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ── The active block ───────────────────────────────────────────────
+ * A left accent rule on the one block the record names, in that mode's colour.
+ * The status chip says *what* is in a mode; this says *where*, which is the half
+ * the chip cannot give. An inset shadow rather than a border, so marking a block
+ * costs it no layout — the rule is not content and must not reflow the document.
+ *
+ * These classes are also what makes a mode flip reach the node views at all:
+ * ProseMirror compares a node's decorations by value and skips the tree walk when
+ * they match, so the rule has to be distinct per mode (see `BLOCK_MODE_CLASS`). */
+.ProseMirror .edi-block-mode-preview {
+  box-shadow: inset 3px 0 0 var(--warning, #d97706);
+}
+
+.ProseMirror .edi-block-mode-source {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* The interaction axis, a third colour so a board being edited inside a Source
+   form still reads as the thing being worked on. */
+.ProseMirror .edi-block-mode-editing {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+/* A block in its source form already says so with a border of its own. */
+.ProseMirror .block-source-mode {
+  box-shadow: none;
 }
 
 /* ── Keyboard block selection ── */
@@ -1017,14 +1090,6 @@ body {
   cursor: pointer;
 }
 
-/* The row/column + lands in the same corner as the block handle when the
-   hovered boundary crosses the block's vertical middle; yield the handle for
-   that moment so it cannot steal the insert click. */
-.spreadsheet.ss-guide-near-handle > .block-handle {
-  opacity: 0;
-  pointer-events: none;
-}
-
 .spreadsheet .ss-grid td {
   position: relative;
   overflow: hidden;
@@ -1116,9 +1181,7 @@ body {
 .spreadsheet .ss-namebox,
 .spreadsheet .ss-status,
 .spreadsheet .ss-grid thead,
-.spreadsheet .ss-grid tbody th,
-.spreadsheet .ss-plain-tools,
-.block-handle {
+.spreadsheet .ss-grid tbody th {
   user-select: none;
 }
 
@@ -1194,38 +1257,6 @@ body {
 .ss-plain {
   position: relative;
   margin: 1em 0 1em 24px;
-}
-
-.ss-plain .ss-plain-tools {
-  position: absolute;
-  right: 8px;
-  top: 4px;
-  display: flex;
-  gap: 6px;
-  opacity: 0;
-  transition: opacity 150ms;
-  pointer-events: none;
-}
-
-.ss-plain:hover .ss-plain-tools,
-.ss-plain:focus-within .ss-plain-tools {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.ss-plain .ss-plain-tools .ss-tool {
-  font-size: 11px;
-  line-height: 1.4;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.ss-plain .ss-plain-tools .ss-tool:hover {
-  background: var(--table-header-bg);
 }
 
 .ss-plain .ss-plain-scroll {
@@ -1357,9 +1388,6 @@ body {
   display: block;
   margin: 0 auto;
 }
-.ProseMirror .mermaid .block-handle {
-  z-index: 2;
-}
 /* Chromium makes SVG nodes natively draggable: a kanban card would start the
    browser's own drag (drag image, no pointer events) before our threshold is
    crossed, and the card would silently snap back on drop. The group a held column
@@ -1388,6 +1416,11 @@ body {
 .mermaid:hover > .mermaid-toolbar {
   opacity: 1;
 }
+
+/* A diagram in the editor has no toolbar of its own: its zoom buttons are in the
+   block's control cluster, the same row every other block's controls are in.
+   This bar is what a diagram gets when it is rendered outside an editor — pasted
+   or exported — where there is no cluster to put them in. */
 
 .mermaid-toolbar-btn {
   font: inherit;
@@ -1791,12 +1824,12 @@ body {
 
 /* Block chrome is not content: a Ctrl/Cmd+Shift range that passes through or
    brackets the block must not paint the language badge, the Copy button, the
-   line-number gutter or the block handle as if they were selected text. Both
-   the pointer (`user-select`) and the selection highlight (`::selection`) are
-   suppressed on those elements. */
+   line-number gutter or the block's control cluster as if they were selected
+   text. Both the pointer (`user-select`) and the selection highlight
+   (`::selection`) are suppressed on those elements. */
 .ProseMirror .runnable-block .code-copy,
 .ProseMirror .runnable-block .code-lang-bar,
-.ProseMirror .block-handle {
+.ProseMirror .block-controls {
   -webkit-user-select: none;
   user-select: none;
 }
@@ -1807,8 +1840,8 @@ body {
 .ProseMirror .runnable-block .code-lang-bar *::selection,
 .ProseMirror .runnable-block .cm-gutters::selection,
 .ProseMirror .runnable-block .cm-gutters *::selection,
-.ProseMirror .block-handle::selection,
-.ProseMirror .block-handle *::selection {
+.ProseMirror .block-controls::selection,
+.ProseMirror .block-controls *::selection {
   background: transparent;
   color: inherit;
 }
@@ -1850,39 +1883,23 @@ body {
   width: 100%;
 }
 
-.ProseMirror .runnable-controls .exec-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 6px 8px;
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
-}
-
-.ProseMirror .runnable-controls .exec-toolbar .exec-run {
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 5px;
+/* Run/Stop lives in the block's control cluster with everything else's; only
+   the states that belong to a run rather than to a mode are left here. */
+.ProseMirror .block-controls .exec-run {
+  font-size: 11px;
   padding: 2px 10px;
-  cursor: pointer;
 }
 
-.ProseMirror .runnable-controls .exec-toolbar .exec-run:hover:not(:disabled) {
-  background: var(--bg);
-}
-
-.ProseMirror .runnable-controls .exec-toolbar .exec-run.exec-stop {
+.ProseMirror .block-controls .exec-run.exec-stop {
   color: var(--danger);
-  background: transparent;
 }
 
-.ProseMirror .runnable-controls .exec-toolbar .exec-run.exec-stop:hover:not(:disabled) {
+.ProseMirror .block-controls .exec-run.exec-stop:hover:not(:disabled) {
   background: var(--danger-alt, var(--surface));
+  border-color: var(--danger);
 }
 
-.ProseMirror .runnable-controls .exec-toolbar .exec-run:disabled {
+.ProseMirror .block-controls .exec-run:disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -2094,6 +2111,23 @@ body {
 
 #status-right {
   flex: none;
+}
+
+/* The mode chip: which block is in a mode, and what that mode is called. Its own
+   element rather than a corner of `#status-left`, which is the transient flash
+   slot and would overwrite it three seconds later. */
+#status-mode {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+#status-mode[hidden] {
+  display: none;
 }
 
 /* Shown only while the document is zoomed (hidden at 100%). */
@@ -2736,6 +2770,8 @@ body {
 
 .encrypted-block {
   box-sizing: border-box;
+  /* The block's control cluster is absolutely positioned against it. */
+  position: relative;
   border: 1px dashed var(--border);
   border-radius: 6px;
   background: var(--surface);

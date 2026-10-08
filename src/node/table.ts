@@ -14,6 +14,7 @@ import { undoNoScroll, redoNoScroll, undoDepth, redoDepth } from 'prosemirror-hi
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText, readText } from '../clipboard'
 import { blockNodeView, showsSource } from '../blockview'
+import { BLOCK_MODE_HANDLERS, attachBlockControls, blockModeFor } from '../block-modes'
 import {
   setActiveCellHost,
   type CellLinkContext,
@@ -76,10 +77,6 @@ const INSERT_EDGE = 6
 /** Half-width (px) of the forgiving corridor that keeps a shown guide alive
  * while the pointer travels from the chrome to its floating button. */
 const INSERT_CORRIDOR = 14
-/** How far (px) past the table's right edge a double-click must land before the
- * empty area beside the table counts as "outside the block" (leaving room to
- * hit the column insert guide, which sits at the grid's trailing edge). */
-const EXIT_MARGIN = 32
 
 /** Tooltip for a table cell: the raw content, with a formula error's hint
  * appended so hovering an error explains it without leaving the table. A
@@ -92,16 +89,72 @@ function cellTitle(raw: string, cellSol: CellSolution | undefined): string {
   return cellSol?.hint ? `${base} — ${cellSol.hint}` : base
 }
 
-function createHandleDOM(pos: number): HTMLElement {
-  const handle = document.createElement('div')
-  handle.className = 'block-handle'
-  handle.setAttribute('data-block-pos', String(pos))
-  handle.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-    <circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/>
-    <circle cx="3" cy="6" r="1.2"/><circle cx="9" cy="6" r="1.2"/>
-    <circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/>
-  </svg>`
-  return handle
+/**
+ * The form a table is drawn in. This is not one of the two mode axes: it is
+ * per-block and not exclusive (one table can be a sheet while another is text),
+ * and it outlives a visit to the block, so a single record cannot hold it and it
+ * lives in the document as `_plain` instead. The descriptor still names both
+ * forms and their labels, which is what the control, the context menu and
+ * Alt+click are built from.
+ */
+export function tableFormOf(node: ProseNode): string {
+  return node.attrs._plain === true ? 'text' : 'sheet'
+}
+
+/** Put the table at `pos` into the named form. */
+export function setTableForm(view: EditorView, pos: number | undefined, form: string): void {
+  if (pos === undefined) return
+  if (form === 'text') enterPlainMode(view, pos)
+  else enterSpreadsheetMode(view, pos)
+}
+
+/**
+ * What Alt+click on a table does (§5.2): its rendered form, and never its
+ * interaction axis — a sheet is live whenever it is open, and the descriptor
+ * says `interaction: 'none'` because there is nothing to finish. Registered on
+ * the one table type, alongside the diagram's registration of the axis it does
+ * have.
+ */
+export function toggleTableForm(view: EditorView, pos: number): void {
+  const node = view.state.doc.nodeAt(pos)
+  if (node === null || node.type.name !== TABLE_TYPE) return
+  setTableForm(view, pos, tableFormOf(node) === 'sheet' ? 'text' : 'sheet')
+}
+
+/**
+ * The block's **Show as text** / **Show as sheet** control, labelled from the
+ * descriptor's own form list so the cluster, the context menu and Alt+click can
+ * never drift into three spellings of the same two words.
+ */
+function formControl(
+  view: EditorView,
+  getPos: () => number | undefined,
+  node: ProseNode,
+): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'block-control block-control-form'
+  const other = (form: string): string =>
+    blockModeFor(node).forms?.find((entry) => entry.id !== form)?.label ?? 'Change form'
+  const paint = (): void => {
+    const at = getPos()
+    const current = at === undefined ? 'sheet' : tableFormOf(view.state.doc.nodeAt(at) ?? node)
+    button.textContent = other(current)
+    button.title = current === 'sheet'
+      ? 'Draw this table as plain text'
+      : 'Open this table as a spreadsheet'
+  }
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const at = getPos()
+    // Read at press time, like every other control: the form is a document
+    // attribute, so the node captured when the cluster was built is a snapshot.
+    const current = at === undefined ? node : view.state.doc.nodeAt(at) ?? node
+    setTableForm(view, at, tableFormOf(current) === 'sheet' ? 'text' : 'sheet')
+  })
+  paint()
+  return button
 }
 
 class TableNodeView implements NodeView, InlineCellHost {
@@ -170,13 +223,11 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.dom.className = 'spreadsheet'
     spreadsheetViews.set(this.dom, this)
 
-    const pos = getPos()
-    if (pos !== undefined) {
-      const $pos = view.state.doc.resolve(pos)
-      if ($pos.parent.type.name === 'doc') {
-        this.dom.appendChild(createHandleDOM(pos))
-      }
-    }
+    // One cluster for the block, in the same place every other block's is: its
+    // mode buttons, generated from the descriptor, then the block's own actions —
+    // here the one control that changes the rendered form.
+    const controls = attachBlockControls(node, view, getPos, [formControl(view, getPos, node)])
+    if (controls) this.dom.appendChild(controls.dom)
 
     this.dom.addEventListener('mousedown', (event) => {
       const target = event.target as HTMLElement
@@ -427,15 +478,6 @@ class TableNodeView implements NodeView, InlineCellHost {
     })
     this.valuesButton = valuesBtn
     tools.appendChild(valuesBtn)
-    const viewBtn = document.createElement('button')
-    viewBtn.type = 'button'
-    viewBtn.className = 'ss-tool ss-tool-view'
-    viewBtn.textContent = 'View'
-    viewBtn.title = 'View this table as plain text'
-    viewBtn.addEventListener('click', () => {
-      this.commitFxEdit()
-      enterPlainMode(this.view, this.getPos())
-    })
     const resolveLabel = document.createElement('label')
     resolveLabel.className = 'ss-tool ss-tool-check'
     resolveLabel.title =
@@ -453,7 +495,6 @@ class TableNodeView implements NodeView, InlineCellHost {
     resolveLabel.appendChild(resolveInput)
     resolveLabel.appendChild(resolveText)
     tools.appendChild(resolveLabel)
-    tools.appendChild(viewBtn)
     this.dom.appendChild(tools)
   }
 
@@ -757,30 +798,13 @@ class TableNodeView implements NodeView, InlineCellHost {
         : atEnd
           ? 'Append row at the end'
           : `Insert row above ${index + 1}`
-    // The button can land over the block handle (both sit in the block's left
-    // gutter near its vertical middle). Yield the handle then so it cannot
-    // steal the insert click; measuring the positioned button forces layout.
-    const handle = this.dom.querySelector('.block-handle')
-    if (handle) {
-      const hr = handle.getBoundingClientRect()
-      const pr = plus.getBoundingClientRect()
-      const overlaps =
-        hr.width > 0 &&
-        pr.left < hr.right &&
-        pr.right > hr.left &&
-        pr.top < hr.bottom &&
-        pr.bottom > hr.top
-      this.dom.classList.toggle('ss-guide-near-handle', overlaps)
-    } else {
-      this.dom.classList.remove('ss-guide-near-handle')
-    }
   }
 
   private hideInsertGuide(): void {
     if (!this.insertGuide) return
     this.insertGuide.hidden = true
     this.insertGuideTarget = null
-    this.dom.classList.remove('ss-inserting-col', 'ss-inserting-row', 'ss-guide-near-handle')
+    this.dom.classList.remove('ss-inserting-col', 'ss-inserting-row')
   }
 
   /** Insert at the guide currently shown. Shared by the `+` click and a
@@ -2811,24 +2835,12 @@ class TablePlainView implements NodeView {
     this.dom = document.createElement('div')
     this.dom.className = 'ss-plain'
 
-    const pos = getPos()
-    if (pos !== undefined) {
-      const $pos = view.state.doc.resolve(pos)
-      if ($pos.parent.type.name === 'doc') {
-        this.dom.appendChild(createHandleDOM(pos))
-      }
-    }
+    const controls = attachBlockControls(node, view, getPos, [formControl(view, getPos, node)])
+    if (controls) this.dom.appendChild(controls.dom)
 
     this.body = document.createElement('div')
     this.body.className = 'ss-plain-body'
     this.dom.appendChild(this.body)
-    this.dom.addEventListener('dblclick', (event) => {
-      const target = event.target as HTMLElement
-      if (target.closest('.masked-field, .ss-tool, a, button, .block-handle')) return
-      event.preventDefault()
-      event.stopPropagation()
-      enterSpreadsheetMode(this.view, this.getPos())
-    })
     this.renderBody()
     this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.renderBody())
     this.unsubscribeSearchChanges = subscribeSearchChanges(view, () => this.onSearchChange())
@@ -2838,26 +2850,11 @@ class TablePlainView implements NodeView {
     const body = this.body
     if (!body) return
 
-    const tools = document.createElement('div')
-    tools.className = 'ss-plain-tools'
-    const spreadsheetBtn = document.createElement('button')
-    spreadsheetBtn.type = 'button'
-    spreadsheetBtn.className = 'ss-tool'
-    spreadsheetBtn.textContent = 'Edit'
-    spreadsheetBtn.title = 'Edit this table as a spreadsheet'
-    spreadsheetBtn.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      enterSpreadsheetMode(this.view, this.getPos())
-    })
-    tools.appendChild(spreadsheetBtn)
-
     const scroll = document.createElement('div')
     scroll.className = 'ss-plain-scroll'
     scroll.appendChild(this.buildTable())
 
     body.textContent = ''
-    body.appendChild(tools)
     body.appendChild(scroll)
   }
 
@@ -3078,40 +3075,15 @@ export function spreadsheetMenuEntries(target: EventTarget | null): ContextMenuE
   return view ? view.buildCellMenuEntries() : null
 }
 
-/** True when a double-click lands in the empty space beside a table's grid —
- * inside the scroll wrapper but past the grid's right edge by a small margin —
- * which should leave spreadsheet mode exactly like a double-click outside the
- * block. The grid only spans its content width, so this is the white area to
- * the right of the table. */
-function isSpreadsheetEmptyArea(event: MouseEvent): boolean {
-  const target = event.target
-  if (!(target instanceof Element)) return false
-  const grid = target.closest('.ss-table-scroll')?.querySelector<HTMLElement>('.ss-grid')
-  if (!grid || grid.contains(target)) return false
-  return event.clientX > grid.getBoundingClientRect().right + EXIT_MARGIN
-}
+/**
+ * A table is the one block whose Alt+click toggles its *form* rather than its
+ * interaction axis, because a sheet is live whenever it is open and has no
+ * state to finish. Registered rather than imported into `block-modes.ts`, which
+ * cannot import this file.
+ */
+BLOCK_MODE_HANDLERS[TABLE_TYPE] = { toggle: toggleTableForm }
 
 export const tableNodeViewPlugin = new Plugin({
-  view(view: EditorView) {
-    const onDblClick = (event: MouseEvent): void => {
-      const target = event.target as HTMLElement | null
-      if (!target || !view.dom.isConnected) return
-      // A double-click inside the spreadsheet normally stays put, but the empty
-      // area beside the grid should behave like the area outside the block.
-      if (target.closest?.('.spreadsheet') && !isSpreadsheetEmptyArea(event)) return
-      const spreadPos = currentSpreadPos(view.state)
-      if (spreadPos === null) return
-      const tr = view.state.tr
-      const node = tr.doc.nodeAt(spreadPos)
-      setTableModeAttr(tr, spreadPos, true)
-      if (node && node.type.name === TABLE_TYPE) {
-        tr.setSelection(TextSelection.create(tr.doc, spreadPos + node.nodeSize))
-      }
-      view.dispatch(tr)
-    }
-    document.addEventListener('dblclick', onDblClick)
-    return { destroy: () => document.removeEventListener('dblclick', onDblClick) }
-  },
   props: {
     nodeViews: {
       [TABLE_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {

@@ -15,11 +15,11 @@ import {
   commitSourceMode,
   currentBlockMode,
   enterSourceMode,
+  exitBlockMode,
   setBlockMode,
 } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
-import { attachBlockHandles } from './blockhandle'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import { formulaDefsPlugin, formulaEnvFor } from './formulaDefs'
@@ -115,7 +115,7 @@ const blockToggleKeymap = keymap({
     // different block, and opening *that* one as a side effect of asking to
     // close the first would be a surprise.
     if (currentBlockMode(state) !== null) {
-      if (!commitSourceMode(view)) return false
+      if (!exitBlockMode(view)) return false
       return true
     }
 
@@ -132,11 +132,13 @@ const blockToggleKeymap = keymap({
     enterSourceMode(view, blockPos)
     return true
   },
-  'Escape': (state, dispatch, view) => {
+  // The whole ladder is `exitBlockMode` (§5.3): a block in its source form
+  // commits and returns to its rendering, a block in its interaction form goes
+  // to Done, and anything else hands Escape straight on — which is what leaves
+  // selection handling, dialogs and a diagram's own Escape alone.
+  'Escape': (_state, dispatch, view) => {
     if (!dispatch || !view) return false
-    if (currentBlockMode(state) === null) return false
-    if (!commitSourceMode(view)) return false
-    return true
+    return exitBlockMode(view)
   },
 })
 
@@ -161,6 +163,16 @@ export interface BlockEditor {
 export interface BlockEditorOptions {
   onOpenLink?: (href: string, text: string) => void
   onChange?: () => void
+  /**
+   * Called whenever the block-mode record changes, and only then.
+   *
+   * A mode is not a document change, so there is no `onChange` to hang the
+   * status chip on — and the *nested* editor an unlocked encrypted block creates
+   * has a record of its own, which is why this is an option rather than
+   * something the plugin writes into a shared element: only the editor that was
+   * asked for it gets told.
+   */
+  onModeChange?: (mode: ReturnType<typeof currentBlockMode>) => void
   resolveImageSrc?: ResolveImage
   /** Render as a read-only view (selection/copy allowed, typing disabled). */
   readonly?: boolean
@@ -297,10 +309,14 @@ export function createBlockEditor(
   const dispatchTransaction = (transaction: import('prosemirror-state').Transaction) => {
     const cur = viewRef.current
     if (!cur) return
+    const before = currentBlockMode(cur.state)
     const next = cur.state.apply(transaction)
     cur.updateState(next)
     if (transaction.docChanged) {
       options.onChange?.()
+    }
+    if (currentBlockMode(next) !== before) {
+      options.onModeChange?.(currentBlockMode(next))
     }
   }
   const view = new EditorView(parent, {
@@ -326,7 +342,6 @@ export function createBlockEditor(
   }
   view.dom.addEventListener('click', onNodeViewLinkClick)
 
-  attachBlockHandles(view)
   const onScrollerMouseDown = attachScrollerCaretFallback(view, parent)
 
   return {
@@ -350,7 +365,13 @@ export function createBlockEditor(
       return view.state
     },
     applyState(state: EditorState) {
+      // A tab swap brings its own record with it, which is a mode change the
+      // chip has to hear about like any other.
+      const before = view.state
       view.updateState(state)
+      if (currentBlockMode(state) !== currentBlockMode(before)) {
+        options.onModeChange?.(currentBlockMode(state))
+      }
     },
     insertMarkdown(markdown: string) {
       view.dispatch(view.state.tr.insertText(markdown))

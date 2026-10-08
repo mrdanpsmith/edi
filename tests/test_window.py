@@ -73,7 +73,7 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _open_kanban_menu,
     _press_at_the_menu_seam,
     _click_label,
-    _dblclick_below_document,
+    _altclick_below_document,
     _dump,
     _enter_edit_mode,
     _open_board_dialog,
@@ -83,6 +83,7 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _resize_view,
     _press_enter,
     _press_key,
+    _press_source,
     _pump_until,
     _render,
     _set_document,
@@ -455,7 +456,10 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "Save &As…\tCtrl+Shift+S" in file_labels
     assert "&Revert" in file_labels
     assert "Copy File &Path\tCtrl+Alt+Shift+C" in file_labels
-    assert "&Export HTML…\tCtrl+Shift+E" in file_labels
+    # No shortcut: Ctrl+Shift+E is the page's block-source toggle, and a menubar
+    # shortcut would win over the page. The label must not advertise it.
+    assert "&Export HTML…" in file_labels
+    assert not any(label.startswith("&Export HTML…\t") for label in file_labels)
     assert "&Quit\tCtrl+Q" in file_labels
     # Open Recent belongs directly under Open.
     assert file_labels.index("Open &Recent") == file_labels.index("&Open…\tCtrl+O") + 1
@@ -611,6 +615,60 @@ def _read_zoom(window):
     )
     assert _pump_until(lambda: bool(out), timeout=5), "no zoom probe"
     return out
+
+
+def test_ctrl_shift_e_reaches_the_page(window):
+    """Ctrl+Shift+E opens a block's source, because nothing in the shell claims it.
+
+    §1.6 of the block-modes spec, tested rather than assumed. The Export HTML
+    QAction's *label* used to carry `\\tCtrl+Shift+E`, and Qt is told a menubar
+    shortcut by the `\\t` in its label — a shortcut that wins over the page, which
+    is the same reason Rename has none. So the page's `Mod-Shift-e` binding existed
+    and could never fire, and block source mode had no working keyboard entry.
+
+    Two halves, because either alone would pass while the bug stands: the shell
+    must not hold the sequence (read off the real QActions), and the page must
+    answer it when the key arrives.
+    """
+    claimed = []
+    # The menus the window stores, and only those: PySide6 hands ownership of an
+    # `addMenu()` result to Python (see the note beside them in
+    # `backend/window.py`), so reaching a menu through `action.menu()` hands back a
+    # second owner of an object that already has one, and letting that wrapper go
+    # deletes the menu out from under every later test.
+    for menu in (window._file_menu, window._edit_menu, window._insert_menu,
+                 window._view_menu, window._help_menu):
+        for item in menu.actions():
+            # A `\t` in a label is how Qt is told a shortcut, and it shows up in
+            # the text as well — which is exactly how this went wrong: the Export
+            # item's label carried one the page also wanted.
+            claimed.append((item.text(), item.shortcut().toString()))
+    assert any(sequence for _label, sequence in claimed), \
+        "no menu action had a shortcut at all"
+    # Nothing may take Ctrl+Shift+E, or the page is still starved.
+    assert not any("Ctrl+Shift+E" in sequence for _label, sequence in claimed), claimed
+    assert not any("Ctrl+Shift+E" in label for label, _sequence in claimed), claimed
+
+    window._web.page().runJavaScript(
+        "window.ediSetContent('Hello world'); true"
+    )
+    time.sleep(0.4)
+    entered = _wait(
+        window,
+        "(() => { const p = document.querySelector('.ProseMirror p');"
+        " if (!p) return { missing: true };"
+        " p.dispatchEvent(new KeyboardEvent('keydown',"
+        " { key: 'e', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));"
+        " return { source: !!document.querySelector('.block-source-mode') }; })()",
+        lambda d: d.get("source") is True,
+        timeout=10,
+    )
+    assert entered["source"], "the page did not answer Mod-Shift-e"
+    # ...and the shell opened nothing on the way, which is what the old label
+    # would have done instead.
+    assert not _dump(window, "(() => ({ dialogs: document.querySelectorAll('.edi-dialog').length }))()")[
+        "dialogs"
+    ]
 
 
 def test_document_zoom_scales_the_editor_not_the_chrome(visible, qtbot):
@@ -2648,7 +2706,143 @@ def test_kanban_drawn_slot_composes_a_wrapping_title(window):
     )
 
 
-def test_double_click_below_a_lone_board_ends_its_edit_session(window):
+def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
+    """A bare double click inside a spreadsheet cell is the browser's, not a mode.
+
+    §5.2 of the block-modes spec moved the block-mode gestures off double click
+    onto Alt+click precisely because the old handler was stealing this: a double
+    click on a word is the word being selected, and it also used to be the gesture
+    that left the sheet. A real engine with the real grid, so the grid's own double
+    click (its inline cell editor) and the browser's selection are both in play.
+    """
+    window._web.page().runJavaScript(
+        "window.ediSetContent('| Name | Qty |\\n| --- | --- |\\n| Widget | 4 |\\n'); true"
+    )
+    opened = _wait(
+        window,
+        "(() => { const b = document.querySelector('.block-control-form');"
+        " if (!b) return { missing: true };"
+        " if (b.textContent === 'Show as sheet') b.click();"
+        " return { sheet: !!document.querySelector('.spreadsheet'),"
+        "  label: b.textContent }; })()",
+        lambda d: d.get("sheet") is True,
+        timeout=15,
+    )
+    assert opened["sheet"], opened
+
+    before = _dump(window, "(() => ({ plain: !!document.querySelector('.ss-plain') }))()")
+    assert not before["plain"], "the table was not a sheet to begin with"
+
+    # A real double click, at real coordinates, on a real word.
+    spot = _dump(
+        window,
+        """(() => {
+          const cell = document.querySelector('.spreadsheet .ss-grid tbody td');
+          if (!cell) return { missing: true };
+          const range = document.createRange();
+          range.selectNodeContents(cell);
+          const rect = range.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          const at = document.elementFromPoint(x, y) || cell;
+          const opts = { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y };
+          for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) {
+            at.dispatchEvent(new MouseEvent(type, opts));
+          }
+          return { x, y, cell: cell.textContent, target: at.tagName };
+        })()""",
+    )
+    assert not spot.get("missing"), "no spreadsheet cell to double click in"
+
+    time.sleep(0.3)
+    after = _dump(window, "(() => ({ sheet: !!document.querySelector('.spreadsheet'),"
+                         " plain: !!document.querySelector('.ss-plain'),"
+                         " form: (document.querySelector('.block-control-form') || {}).textContent }))()")
+    assert after["sheet"] and not after["plain"], after
+    assert after["form"] == "Show as text", after
+
+    # ...and the gesture that *does* change the form still does, from the cell.
+    _dump(
+        window,
+        "(() => { const cell = document.querySelector('.spreadsheet .ss-grid tbody td');"
+        " cell.dispatchEvent(new MouseEvent('click',"
+        " { bubbles: true, cancelable: true, button: 0, altKey: true }));"
+        " return { clicked: true }; })()",
+    )
+    text = _wait(
+        window,
+        "(() => ({ plain: !!document.querySelector('.ss-plain'),"
+        " form: (document.querySelector('.block-control-form') || {}).textContent }))()",
+        lambda d: d.get("plain") is True,
+        timeout=10,
+    )
+    assert text["form"] == "Show as sheet", text
+
+
+def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
+    """The block's **Source** control works from inside its edit mode.
+
+    This is the gesture that looks like it does nothing: alt-click a board into
+    its interactive mode, press Source, and the record changes while the board
+    stays drawn — pressing again puts it back, so the control reads as inert.
+
+    The cause is not the control but how the mode reaches the node views. A mode
+    is not a document edit, so ProseMirror re-walks the tree only when a node's
+    *decorations* change (`ViewDesc.matchesNode` compares them by value), and a
+    decoration that only said \"there is a mode\" is byte-identical across two
+    different modes: entering Source from Edit leaves it unchanged, the walk is
+    skipped, `MermaidNodeView.update()` is never asked, and the block keeps
+    drawing the board. The record therefore says Source and the board says Edit.
+    Fixed by making the mode's class carry the mode — which is what §7.2's accent
+    rule was for anyway — so this is the test that keeps it load-bearing.
+    """
+    _set_scheme(window, False)
+    _render(window, KANBAN_LONE)
+    _enter_edit_mode(window)
+    before = _dump(window, EDIT_STATE)
+    assert before["editing"] and before["button"] == "Done", before
+
+    _press_source(window)
+
+    # The board is gone, the raw source is on screen, and nothing of the editing
+    # layer outlived it — the drawn places to add are edit mode's.
+    after = _wait(
+        window,
+        "(() => ({ source: !!document.querySelector('.block-source-mode'),"
+        " banner: (document.querySelector('.block-source-label') || {}).textContent || null,"
+        " editing: !!document.querySelector('.mermaid-editing'),"
+        " cluster: !!document.querySelector('.mermaid .block-controls'),"
+        " marked: document.querySelectorAll('.mermaid-editables').length }))()",
+        lambda d: d["source"] is True,
+        timeout=10,
+    )
+    assert after["banner"] == "Source", after
+    assert not after["editing"], after
+    assert not after["cluster"], after
+    assert not after["marked"], after
+    slots = _dump(window, KANBAN_SLOTS)
+    assert slots["cards"] == [] and slots["column"] is None, "a drawn slot outlived the mode"
+
+    # ...and back again, from the banner: one control, both directions.
+    _dump(
+        window,
+        "(() => { const b = document.querySelector('.block-source-exit');"
+        " if (!b) return { missing: true };"
+        " b.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));"
+        " return { label: b.textContent }; })()",
+    )
+    back = _wait(
+        window,
+        "(() => ({ editing: !!document.querySelector('.mermaid-editing'),"
+        " labels: [...document.querySelectorAll('.mermaid .block-controls button')]"
+        "  .map((b) => b.textContent) }))()",
+        lambda d: d["editing"] is False and "Source" in d["labels"],
+        timeout=10,
+    )
+    assert back["labels"][0] == "Source", back
+
+
+def test_alt_click_below_a_lone_board_ends_its_edit_session(window):
     """A double click under a board that is the whole document ends its edit
     session — the gesture that turns the mode off should not have to land back
     on the diagram.
@@ -2664,8 +2858,8 @@ def test_double_click_below_a_lone_board_ends_its_edit_session(window):
     _enter_edit_mode(window)
     assert _dump(window, EDIT_STATE)["editing"], "the board never opened for editing"
 
-    spot = _dblclick_below_document(window)
-    assert not spot["inEditor"], f"the double click landed inside the editor: {spot}"
+    spot = _altclick_below_document(window)
+    assert not spot["inEditor"], f"the Alt+click landed inside the editor: {spot}"
 
     after = _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)
     assert not after["marked"], after
@@ -2678,7 +2872,7 @@ def test_double_click_below_a_lone_board_ends_its_edit_session(window):
     # the board can be reopened and ended again.
     _enter_edit_mode(window)
     assert _dump(window, EDIT_STATE)["editing"], "the board did not reopen"
-    _dblclick_below_document(window)
+    _altclick_below_document(window)
     assert _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)["marked"] == 0
 
 
@@ -3017,29 +3211,30 @@ def test_leaving_edit_mode_resolves_the_label_being_edited(window):
     assert state["source"] and "A[Beta]" in state["source"], "Done dropped the pending edit"
     assert any("Beta" in t for t in state["texts"]), state
 
-    # A double click outside the diagram finishes edit mode too, and a double
-    # click in the label input while editing one does not.
+    # An Alt+click outside the diagram finishes edit mode too, and an Alt+click
+    # in the label input while editing one does not — a click in a text field is
+    # that field's own, not a request about the diagram behind it.
     _enter_edit_mode(window)
     _click_first_offered(window, "Beta")
     _dump(
         window,
         "(() => { const i = document.querySelector('.mermaid-edit-input, .mermaid [contenteditable=\"true\"]');"
         " if (!i) return { missing: true };"
-        " i.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }));"
+        " i.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, altKey: true }));"
         " return { in: true }; })()",
     )
-    assert _dump(window, LABEL_STATE)["editing"], "a double click in the label input left edit mode"
+    assert _dump(window, LABEL_STATE)["editing"], "an Alt+click in the label input left edit mode"
 
     _dump(
         window,
         "(() => { const p = [...document.querySelectorAll('.ProseMirror p')]"
         " .find((e) => e.textContent === 'After the diagram');"
         " if (!p) return { missing: true };"
-        " p.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }));"
+        " p.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, altKey: true }));"
         " return { hit: p.textContent }; })()",
     )
     state = _wait(window, LABEL_STATE, lambda d: not d["editing"], timeout=20)
-    assert not state["input"], "the outside double click left the label editor open"
+    assert not state["input"], "the outside Alt+click left the label editor open"
     assert not state["editable"], state
 
 

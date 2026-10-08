@@ -6,7 +6,7 @@ import type { Fragment, Node as ProseNode, Schema, Mark } from 'prosemirror-mode
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
-import { remarkPlugin as mermaidRemarkPlugin } from './node/mermaid'
+import { MERMAID_TYPE, remarkPlugin as mermaidRemarkPlugin } from './remark/mermaid'
 import {
   remarkPlugin as maskedFieldRemarkPlugin,
   maskedFieldToMarkdown,
@@ -214,7 +214,7 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
     case 'code': {
       const lang = node.lang ?? ''
       if (lang === 'mermaid') {
-        return schema.node('mermaid_block', { value: node.value ?? '' })
+        return schema.node(MERMAID_TYPE, { value: node.value ?? '' })
       }
       if (lang === 'encrypted') {
         const info: Record<string, string> = {}
@@ -266,8 +266,8 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       // mdast exposes the image destination on `url`, not `src`.
       return schema.node('image', { src: node.url ?? node.src ?? '', alt: node.alt ?? '' })
 
-    case 'mermaid_block':
-      return schema.node('mermaid_block', { value: node.value ?? '' })
+    case MERMAID_TYPE:
+      return schema.node(MERMAID_TYPE, { value: node.value ?? '' })
 
     case 'masked_field':
       return schema.node('masked_field', {
@@ -404,7 +404,7 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
     case 'masked_field':
       return maskedFieldToMarkdown(node.attrs.content as string, node.attrs.label as string)
 
-    case 'mermaid_block': {
+    case MERMAID_TYPE: {
       const val = (node.attrs.value as string) ?? ''
       const fence = codeFence(val)
       return indent + fence + 'mermaid\n' + val + '\n' + indent + fence

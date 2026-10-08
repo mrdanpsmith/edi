@@ -32,13 +32,20 @@ import {
 import { parseTableFile, toMarkdownTable } from './import'
 import { insertPastedText, pasteAsMarkdown } from './paste'
 import { EditorView } from '@codemirror/view'
+import type { Node as ProseNode } from 'prosemirror-model'
+import type { EditorView as ProseEditorView } from 'prosemirror-view'
 import { EditorSelection } from '@codemirror/state'
 import { undo as cmUndo, redo as cmRedo } from '@codemirror/commands'
 import { copyText, readText, writeClipboard } from './clipboard'
 import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
-import { commitSourceMode, toggleSourceMode } from './block-modes'
-import { findBlockPosForHandle } from './blockhandle'
+import {
+  blockModeFor,
+  blockPosForElement,
+  modeFor,
+  toggleBlockMode,
+  type BlockMode,
+} from './block-modes'
 import { isMisleadingLink } from './linkSecurity'
 import { applyLink, NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
@@ -66,8 +73,8 @@ import welcomeMarkdown from './docs/welcome.md?raw'
 import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
 import { setEncryptedBlockImageResolver, primeEncryptedBlockShow, getActiveEncryptedBlockView } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
-import { insertTable as insertSpreadsheetTable, enterSpreadsheetMode, enterPlainMode, spreadsheetMenuEntries } from './node/table'
-import { enterDiagramEditMode, exitDiagramEditMode, insertKanbanBoard } from './node/mermaid'
+import { insertTable as insertSpreadsheetTable, setTableForm, spreadsheetMenuEntries, tableFormOf } from './node/table'
+import { insertKanbanBoard } from './node/mermaid'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { headingSlug } from './schema'
 import { HomeScreen } from './home'
@@ -86,6 +93,7 @@ const WELCOME_DOCUMENT = welcomeMarkdown.replace('{{BUILTIN_FUNCTIONS}}', WELCOM
 const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
 const toolbarEl = document.querySelector<HTMLElement>('#toolbar')!
 const statusLeft = document.querySelector<HTMLElement>('#status-left')!
+const statusMode = document.querySelector<HTMLElement>('#status-mode')!
 const statusRight = document.querySelector<HTMLElement>('#status-right')!
 const statusZoom = document.querySelector<HTMLButtonElement>('#status-zoom')!
 const tabbar = document.querySelector<HTMLElement>('#tabbar')!
@@ -169,6 +177,44 @@ function updateStatus(): void {
   const text = blockEditor?.getMarkdown() ?? ''
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
+}
+
+/**
+ * The status chip: which block is in a mode, and what that mode is called.
+ *
+ * It needs an element of its own because `#status-left` is the transient flash
+ * slot — `flashStatus` overwrites it and `updateStatus` clears it after three
+ * seconds — so a chip living there would flash away. It is written only from the
+ * plugin's own state changes (`onModeChange`), never from a flash, and it says
+ * *what* is in a mode; the accent rule on the block itself is the in-document
+ * half that says *where* (§7.2).
+ */
+function renderModeChip(mode: BlockMode | null): void {
+  if (!statusMode) return
+  const view = mode !== null ? blockEditor?.getView() : undefined
+  const node = mode !== null && view !== undefined ? view.state.doc.nodeAt(mode.pos) : null
+  if (mode === null || node === null || node === undefined) {
+    statusMode.textContent = ''
+    statusMode.hidden = true
+    return
+  }
+  const source = mode.representation === 'source'
+  const words = modeChipWords(node)
+  statusMode.hidden = false
+  const name = source ? 'Source' : 'Edit'
+  statusMode.textContent = words === ''
+    ? name
+    : `${name} — “${words}”${source ? ' · Esc for preview' : ''}`
+}
+
+/** A few words of the block itself, so the chip names *which* block it is about. */
+function modeChipWords(node: ProseNode): string {
+  const text = node.type.name === 'mermaid_block'
+    ? String(node.attrs.value ?? '').split('\n', 1)[0] ?? ''
+    : node.textContent
+  const trimmed = text.replace(/\s+/g, ' ').trim()
+  if (trimmed === '') return ''
+  return trimmed.length > 40 ? `${trimmed.slice(0, 39)}…` : trimmed
 }
 
 function updateZoomIndicator(): void {
@@ -1068,6 +1114,18 @@ function editLink(link: LinkRange): void {
   })
 }
 
+/**
+ * The block items of the context menu, generated from the block's own descriptor
+ * rather than from a chain on its wrapper class names.
+ *
+ * Three names existed for source mode and two each for a diagram's edit mode and
+ * a table's rendered form, all of them spelled per call site; and the block was
+ * identified by a `data-block-pos` written into its dot grid when that grid was
+ * built. Both problems have the same fix: ask `blockModeFor` what the block
+ * supports, and ask the DOM for where the block is now. A right-click inside a
+ * list item or a blockquote reaches this too, and works precisely because it no
+ * longer needs a handle to identify the block it is in (§6.7).
+ */
 function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
   const view = blockEditor?.getView()
   if (!view) return []
@@ -1080,7 +1138,36 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
     entries.push({ type: 'item', label, onSelect, ...extra })
   }
 
-  const runnable = target.closest('.runnable-block')
+  const pos = blockPosForElement(view, target)
+  if (pos < 0) return entries
+  const node = view.state.doc.nodeAt(pos)
+  if (node === null) return entries
+  // The wrapper is still needed for two things that are about the *rendering*,
+  // not the mode: a diagram's image to copy, and a runnable block's own controls.
+  const wrapper = blockWrapperFor(view, target)
+
+  const img = wrapper?.querySelector<HTMLImageElement>('.mermaid-img') ?? null
+  const svg = wrapper?.querySelector<SVGSVGElement>('.mermaid svg[id]') ?? null
+  if (img ?? svg) {
+    addItem('Copy image', () => {
+      void copyMermaidAsImage(img ?? (svg as SVGSVGElement)).then((result) => {
+        if (!result.ok) showError(result.error ?? 'Could not copy image')
+      })
+    })
+    addItem('Save image…', () => {
+      const active = getActive()
+      const base = active?.path ? fileName(active.path) : UNTITLED
+      void saveMermaidAsImage(img ?? (svg as SVGSVGElement), base).then((result) => {
+        if (!result.ok) {
+          showError(result.error ?? 'Could not save image')
+        } else if (result.path) {
+          flashStatus(`Saved ${result.path}`)
+        }
+      })
+    })
+  }
+
+  const runnable = wrapper?.closest('.runnable-block') ?? null
   if (runnable) {
     const runButton = runnable.querySelector<HTMLButtonElement>('.exec-run')
     if (runButton) {
@@ -1094,97 +1181,42 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
         void copyText(text)
       })
     }
-    const handle = runnable.querySelector<HTMLElement>(':scope > .block-handle[data-block-pos], :scope > div > .block-handle[data-block-pos]') ?? runnable.querySelector<HTMLElement>('.block-handle[data-block-pos]')
-    let rPos = handle ? findBlockPosForHandle(view, handle) : null
-    if (rPos === null && handle) {
-      const p = Number(handle.dataset.blockPos)
-      if (Number.isInteger(p)) rPos = p
-    }
-    if (rPos !== null) addItem('Encrypt block…', () => { void encryptBlockAt(view, rPos) })
-    return entries
   }
 
-  if (target.closest('.block-source-mode')) {
-    // Source/visual (Mermaid) mode: commit the edited source back to the
-    // document and leave source mode, exactly like the toolbar exit button.
-    addItem('Visual mode', () => {
-      commitSourceMode(view)
+  const descriptor = blockModeFor(node)
+
+  // A table's rendered form, labelled from the descriptor's own form list.
+  if (descriptor.forms) {
+    const other = descriptor.forms.find((form) => form.id !== tableFormOf(node))
+    if (other) addItem(other.label, () => setTableForm(view, pos, other.id))
+  }
+
+  if (descriptor.interaction === 'toggle') {
+    const editing = modeFor(view.state, pos)?.interaction === 'editing'
+    addItem(editing ? 'Done' : 'Edit', () => {
+      toggleBlockMode(view, pos, 'interaction')
     })
-    return entries
   }
-
-  // Right-clicking text inside nested blocks (lists, blockquotes) must still
-  // find the *visible* top-level wrapper: walk up to the enclosing block
-  // surface and use its own block handle.
-  let wrapper: Element | null = null
-  let handleEl: HTMLElement | null = null
-  let handlePos: number | null = null
-  {
-    let el: Element | null = target
-    while (el) {
-      if (el.matches('.mermaid, .block-visual-mode, .spreadsheet, .ss-plain, .runnable-block, .encrypted-block')) {
-        const h = el.querySelector<HTMLElement>(':scope > .block-handle[data-block-pos]') ?? el.querySelector<HTMLElement>('.block-handle[data-block-pos]')
-        if (h) {
-          wrapper = el
-          handleEl = h
-          break
-        }
-      }
-      el = el.parentElement
-    }
-  }
-
-  if (wrapper && handleEl) {
-    handlePos = findBlockPosForHandle(view, handleEl)
-    if (handlePos === null) {
-      const p = Number(handleEl.dataset.blockPos)
-      if (Number.isInteger(p)) handlePos = p
-      else handlePos = null
-    }
-    if (handlePos === null) return entries
-    const img = wrapper.querySelector<HTMLImageElement>('.mermaid-img')
-    const svg = wrapper.querySelector<SVGSVGElement>('.mermaid svg[id]')
-    if (img ?? svg) {
-      addItem('Copy image', () => {
-        void copyMermaidAsImage(img ?? (svg as SVGSVGElement)).then((result) => {
-          if (!result.ok) showError(result.error ?? 'Could not copy image')
-        })
-      })
-      addItem('Save image…', () => {
-        const active = getActive()
-        const base = active?.path ? fileName(active.path) : UNTITLED
-        void saveMermaidAsImage(img ?? (svg as SVGSVGElement), base).then((result) => {
-          if (!result.ok) {
-            showError(result.error ?? 'Could not save image')
-          } else if (result.path) {
-            flashStatus(`Saved ${result.path}`)
-          }
-        })
-      })
-    }
-    if (wrapper.classList.contains('spreadsheet')) {
-      addItem('Table view', () => enterPlainMode(view, handlePos!))
-    } else if (wrapper.classList.contains('ss-plain')) {
-      addItem('Spreadsheet mode', () => enterSpreadsheetMode(view, handlePos!))
-    } else if (wrapper.classList.contains('mermaid')) {
-      if (wrapper.classList.contains('mermaid-editing')) {
-        addItem('Done editing', () => exitDiagramEditMode(view, handlePos!))
-      } else {
-        addItem('Edit diagram', () => enterDiagramEditMode(view, handlePos!))
-      }
-    }
-    addItem('Edit source', () => {
-      toggleSourceMode(view, handlePos!)
+  if (descriptor.representation) {
+    const source = modeFor(view.state, pos)?.representation === 'source'
+    addItem(source ? 'Preview' : 'Source', () => {
+      toggleBlockMode(view, pos, 'representation')
     })
-    const blockNode = view.state.doc.nodeAt(handlePos!)
-    if (blockNode && blockNode.type.name !== 'encrypted_block') {
-      addItem('Encrypt block…', () => { void encryptBlockAt(view, handlePos!) })
-    }
+  }
+  if (node.type.name !== 'encrypted_block') {
+    addItem('Encrypt block…', () => { void encryptBlockAt(view, pos) })
   }
   return entries
 }
 
-
+/** The top-level block's own wrapper element, for the items about its rendering. */
+function blockWrapperFor(view: ProseEditorView, target: Element): HTMLElement | null {
+  let el: Element | null = target
+  while (el && el !== view.dom && el.parentElement !== view.dom) {
+    el = el.parentElement
+  }
+  return el instanceof HTMLElement && el !== view.dom ? el : null
+}
 
 function encryptBlockCommand(): void {
   const view = blockEditor?.getView()
@@ -1232,6 +1264,7 @@ function init(): void {
   blockEditor = createBlockEditor(editorContainer, '', {
     onOpenLink: openLink,
     onChange: () => setActiveDirty(true),
+    onModeChange: renderModeChip,
     resolveImageSrc: resolveImageFileUrl,
   })
   toolbar = new Toolbar(toolbarEl, { getView: () => getActiveEncryptedBlockView() ?? blockEditor!.getView() }, [

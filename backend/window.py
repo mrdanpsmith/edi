@@ -380,7 +380,11 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        export_action = QAction("&Export HTML…\tCtrl+Shift+E", self)
+        # No shortcut: Ctrl+Shift+E is the page's block-source toggle
+        # (`Mod-Shift-e` in `src/editor.ts`), and a menubar shortcut wins over
+        # the page — see the Rename action above. This label used to claim it,
+        # which is why block source mode had no working keyboard entry.
+        export_action = QAction("&Export HTML…", self)
         export_action.triggered.connect(lambda _checked=False: self._menu_command("export"))
         file_menu.addAction(export_action)
 

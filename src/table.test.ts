@@ -7,7 +7,13 @@ import { history } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { parsePipes } from './spreadsheet-util'
-import { blockModePlugin, enterSourceMode, exitSourceMode } from './block-modes'
+import {
+  blockModePlugin,
+  blockPosForElement,
+  currentBlockMode,
+  enterSourceMode,
+  exitBlockMode,
+} from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode, spreadsheetMenuEntries } from './node/table'
 import { ContextMenu, type ContextMenuEntry } from './contextmenu'
@@ -94,6 +100,18 @@ function colHeader(view: EditorView, col: number): HTMLElement {
 function rowGutter(view: EditorView, row: number): HTMLElement {
   const rows = tableGrid(view).querySelectorAll('tbody tr')
   return rows[row]!.querySelector('th.ss-row')! as HTMLElement
+}
+
+/** The mode gesture: Alt+click, which toggles a table's rendered form. */
+function altClick(target: Element): void {
+  target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true }))
+}
+
+/** The block's own form control, in the cluster every block has. */
+function formControl(view: EditorView): HTMLButtonElement {
+  const button = view.dom.querySelector<HTMLButtonElement>('.block-control-form')
+  if (!button) throw new Error('no form control rendered')
+  return button
 }
 
 function tool(view: EditorView, label: string): HTMLElement {
@@ -843,7 +861,7 @@ describe('TableNodeView grid', () => {
     enterSourceMode(view, pos)
     expect(view.dom.querySelector('.spreadsheet')).toBeNull()
     expect(view.dom.querySelector('.cm-content')).toBeTruthy()
-    exitSourceMode(view)
+    exitBlockMode(view)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
     expect(proseToMarkdown(view.state.doc)).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |\n')
     view.destroy()
@@ -895,62 +913,76 @@ describe('TableNodeView grid', () => {
 
   it('keeps a single spreadsheet open at a time, like block source mode', () => {
     const view = createPlainTable('| A |\n| --- |\n| 1 |\n\n| B |\n| --- |\n| 2 |')
-    const handles = Array.from(view.dom.querySelectorAll('.block-handle'))
-    expect(handles.length).toBe(2)
-    enterSpreadsheetMode(view, Number(handles[0]!.getAttribute('data-block-pos')))
+    // Every top-level block carries one cluster, so the tables are found the way
+    // the context menu finds them: from the DOM, not from a position attribute
+    // written into a handle when it was built.
+    const clusters = view.dom.querySelectorAll('.block-controls')
+    expect(clusters.length).toBe(2)
+    const tables = view.dom.querySelectorAll('.ss-plain')
+    enterSpreadsheetMode(view, blockPosForElement(view, tables[0]!))
     expect(view.dom.querySelectorAll('.spreadsheet').length).toBe(1)
-    enterSpreadsheetMode(view, Number(handles[1]!.getAttribute('data-block-pos')))
+    enterSpreadsheetMode(view, blockPosForElement(view, view.dom.querySelector('.ss-plain')!))
     expect(view.dom.querySelectorAll('.spreadsheet').length).toBe(1)
     expect(view.state.doc.child(0).attrs._plain).toBe(true)
     expect(view.state.doc.child(1).attrs._plain).toBe(false)
     view.destroy()
   })
 
-  it('double-clicking outside the spreadsheet closes edit mode', () => {
+  it('Alt+clicking the spreadsheet itself takes it back to text', () => {
     const view = createPlainTable('| A |\n| --- |\n| 1 |')
-    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
-    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    altClick(view.dom.querySelector('.ss-plain-table') as HTMLElement)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
-    view.dom.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    // Anywhere on the table, the gesture toggles the form: there is no "inside
+    // the grid but outside the block" corner any more, because a double click
+    // inside a cell used to mean "select this word".
+    altClick(view.dom.querySelector('.ss-grid tbody td') as HTMLElement)
     expect(view.dom.querySelector('.spreadsheet')).toBeNull()
     expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
     view.destroy()
   })
 
-  it('double-clicking the empty area beside the table closes edit mode', () => {
-    const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
-    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
-    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+  it('a bare double click in the grid is the cell editor, not a way out of the sheet', () => {
+    const view = createPlainTable('| A |\n| --- |\n| 1 |')
+    altClick(view.dom.querySelector('.ss-plain-table') as HTMLElement)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
-    const grid = view.dom.querySelector('.ss-grid') as HTMLElement
-    grid.getBoundingClientRect = () =>
-      ({ left: 0, right: 200, top: 0, bottom: 40, width: 200, height: 40, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
-    const wrap = view.dom.querySelector('.ss-table-scroll') as HTMLElement
-    // Within the margin beside the table edge: stay in spreadsheet mode.
-    wrap.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 210, clientY: 20 }))
+    // A double click inside the grid is the grid's own business — it edits the
+    // cell in place — and it no longer doubles as "leave the sheet", which is
+    // what the document-level handler used to make it.
+    const gridCell = view.dom.querySelector('.ss-grid tbody td') as HTMLElement
+    gridCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
-    // Past the margin: behave like a double-click outside the block.
-    wrap.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 260, clientY: 20 }))
-    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
-    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    expect(view.state.doc.childCount).toBe(1)
+    expect(view.state.doc.firstChild?.type.name).toBe('table')
     view.destroy()
   })
 
-  it('double-clicking outside the editor closes edit mode when the table is the only node', () => {
-    const view = createPlainTable('| A |\n| --- |\n| 1 |')
-    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
-    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
-    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
-    document.body.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
-    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+  it('a bare double click in a plain table selects the word instead of opening the sheet', () => {
+    const view = createPlainTable('| A |\n| --- |\n| Alpha |')
+    const td = view.dom.querySelector('.ss-plain-table tbody td') as HTMLElement
+    // This is what the mode double click was stealing: a plain table is text, and
+    // a double click on a word is the browser selecting it. `preventDefault` came
+    // back as false while this node view owned the table, which is exactly the
+    // theft §5.2 exists to undo.
+    const notPrevented = td.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(notPrevented).toBe(true)
     expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    expect(view.dom.querySelector('.spreadsheet')).toBeNull()
+    view.destroy()
+  })
+
+  it('Alt+clicking away from the block has nothing to finish, and says so quietly', () => {
+    const view = createPlainTable('| A |\n| --- |\n| 1 |')
+    altClick(view.dom.querySelector('.ss-plain-table') as HTMLElement)
+    expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
+    // A sheet is not an interaction axis, so there is no record to finish: the
+    // gesture is inert rather than reaching into the table's document attr.
+    expect(currentBlockMode(view.state)).toBeNull()
     view.destroy()
   })
 
   it('spreadsheet mode deselects the table so typing cannot replace it', () => {
     const view = createPlainTable('| A |\n| --- |\n| 1 |')
-    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
-    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    altClick(view.dom.querySelector('.ss-plain-table') as HTMLElement)
     expect(view.state.selection).not.toBeInstanceOf(NodeSelection)
     const grid = view.dom.querySelector('.ss-grid') as HTMLElement
     grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }))
@@ -1595,30 +1627,31 @@ describe('TableNodeView grid', () => {
     expect(tds[0]!.textContent).toBe('1')
     expect(tds[1]!.textContent).toBe('2')
 
-    const spreadBtn = view.dom.querySelector('.ss-plain-tools .ss-tool')
-    expect(spreadBtn?.textContent).toBe('Edit')
+    // The form control is in the one cluster every block has, labelled from the
+    // descriptor's own form list rather than from a per-call-site string.
+    const cluster = view.dom.querySelector('.block-controls') as HTMLElement
+    expect(cluster.querySelector('.block-control-representation')?.textContent).toBe('Source')
+    expect(cluster.querySelector('.block-control-form')?.textContent).toBe('Show as sheet')
     view.destroy()
   })
 
   it('toggles from plain view to spreadsheet mode and back', () => {
     const view = createPlainTable('| A |\n| --- |\n| 1 |')
-    const spreadBtn = view.dom.querySelector('.ss-plain-tools .ss-tool') as HTMLButtonElement
-    spreadBtn.click()
+    formControl(view).click()
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
     expect(view.dom.querySelector('.ss-plain')).toBeNull()
     expect(view.dom.querySelector('.ss-grid')).toBeTruthy()
 
-    tool(view, 'View').click()
+    formControl(view).click()
     expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
     expect(view.dom.querySelector('.spreadsheet')).toBeNull()
     expect(proseToMarkdown(view.state.doc)).toBe('| A |\n| --- |\n| 1 |\n')
     view.destroy()
   })
 
-  it('double-clicking a plain table opens the spreadsheet view', () => {
+  it('Alt+clicking a plain table opens the spreadsheet view', () => {
     const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
-    const tbl = view.dom.querySelector('.ss-plain-table') as HTMLElement
-    tbl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    altClick(view.dom.querySelector('.ss-plain-table') as HTMLElement)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
     expect(view.dom.querySelector('.ss-plain')).toBeNull()
     view.destroy()
@@ -1921,17 +1954,18 @@ describe('TableNodeView insert row/column', () => {
     return view.dom.querySelector('.spreadsheet') as HTMLElement
   }
 
-  it('yields the block handle only while the insert button overlaps it', () => {
+  it('has nothing left to yield: the insert button and the controls no longer share a corner', () => {
+    // The + used to be measured against the dot grid in the block's left gutter
+    // on every guide refresh and hand the click over while the two overlapped.
+    // The controls are at the block's right edge now and there is no grid, so
+    // the collision and its workaround are both gone.
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
     const spreadsheet = spreadsheetDom(view)
-    const handle = spreadsheet.querySelector('.block-handle') as HTMLElement
-    expect(handle).not.toBeNull()
-    stubRect(handle, -24, -4, 40, 64)
     stubRect(insertPlus(view), -16, 0, 44, 60)
     hoverInsert(colHeader(view, 1))
-    expect(spreadsheet.classList.contains('ss-guide-near-handle')).toBe(true)
-    hoverInsert(cell(view, 1, 0), 1000, 1000)
     expect(spreadsheet.classList.contains('ss-guide-near-handle')).toBe(false)
+    expect(spreadsheet.querySelector('.block-handle')).toBeNull()
+    expect(insertPlus(view).hidden).toBe(false)
     view.destroy()
   })
 

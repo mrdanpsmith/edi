@@ -3,6 +3,7 @@ import type { EditorState } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { blockNodeView, showsSource } from '../blockview'
+import { attachBlockControls, type BlockControls } from '../block-modes'
 import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
 import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
@@ -24,18 +25,6 @@ function shebangOf(text: string): string | null {
 
 function sourceOf(text: string, shebang: string): string {
   return text.slice(shebang.length).replace(/^\n/, '')
-}
-
-function createHandleDOM(pos: number): HTMLElement {
-  const handle = document.createElement('div')
-  handle.className = 'block-handle'
-  handle.setAttribute('data-block-pos', String(pos))
-  handle.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-    <circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/>
-    <circle cx="3" cy="6" r="1.2"/><circle cx="9" cy="6" r="1.2"/>
-    <circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/>
-  </svg>`
-  return handle
 }
 
 async function copyPlainText(text: string): Promise<void> {
@@ -146,6 +135,7 @@ class RunnableBlockNodeView implements NodeView {
   private output: HTMLPreElement | null = null
   private outputCopy: HTMLButtonElement | null = null
   private controlsLayer: HTMLElement | null = null
+  private controls: BlockControls | null = null
   private shebang: string | null
   private lastContent: string
   private running = false
@@ -163,11 +153,6 @@ class RunnableBlockNodeView implements NodeView {
 
     this.dom = document.createElement('div')
     this.dom.className = 'runnable-block'
-
-    const pos = getPos()
-    if (pos !== undefined) {
-      this.dom.appendChild(createHandleDOM(pos))
-    }
 
     const langTag = String(node.attrs.language ?? '').trim()
     const info = codeLanguageFor(langTag || null, node.textContent)
@@ -208,8 +193,54 @@ class RunnableBlockNodeView implements NodeView {
 
     this.appendSourceCopyButton()
 
-    if (this.shebang) this.buildControls(this.shebang)
+    this.attachControls()
     if (info?.formula) this.buildFormulaStatus()
+  }
+
+  /**
+   * The block's one control cluster, and the output area a run prints into.
+   *
+   * Both a plain code block and a runnable one get the cluster — it carries the
+   * block's Source control, which every top-level block has — and only a runnable
+   * one gets the Run button and somewhere to print. Only the output stays in flow,
+   * because it has to push the document down as it grows.
+   */
+  private attachControls(): void {
+    const shebang = this.shebang
+    const actions: HTMLElement[] = []
+    if (shebang !== null) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'block-control exec-run'
+      button.textContent = 'Run'
+      this.runButton = button
+      button.addEventListener('click', () => {
+        if (this.running) void this.stopRun()
+        else void this.run(shebang)
+      })
+      actions.push(button)
+    }
+    this.controls = attachBlockControls(this.node, this.view, this.getPos, actions)
+    if (this.controls) this.dom.appendChild(this.controls.dom)
+    if (shebang === null) return
+
+    const layer = document.createElement('div')
+    layer.className = 'runnable-controls'
+    this.controlsLayer = layer
+
+    const output = document.createElement('pre')
+    output.className = 'exec-output'
+    output.hidden = true
+    this.output = output
+
+    const outputWrap = document.createElement('div')
+    outputWrap.className = 'exec-output-wrap'
+    this.outputCopy = createCopyButton(() => output.textContent ?? '', this.dom, '.exec-output-wrap')
+    outputWrap.append(output, this.outputCopy)
+    this.outputCopy.style.display = 'none'
+
+    layer.appendChild(outputWrap)
+    this.dom.appendChild(layer)
   }
 
   /** Keep the ProseMirror document in lock-step with the embedded editor.
@@ -262,48 +293,6 @@ class RunnableBlockNodeView implements NodeView {
     errors.hidden = issues.length === 0
   }
 
-  private buildControls(shebang: string): void {
-    const layer = document.createElement('div')
-    layer.className = 'runnable-controls'
-    this.controlsLayer = layer
-
-    const toolbar = document.createElement('div')
-    toolbar.className = 'exec-toolbar'
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'exec-run'
-    button.textContent = 'Run'
-    // Keep the caret out of the button's label. Clicking a <button> natively
-    // places the text cursor inside its text; that must not happen when toggling
-    // a run. preventDefault on mousedown stops the button from taking the caret
-    // (and focus) while allowing the click handler below to still fire.
-    button.addEventListener('mousedown', (e) => e.preventDefault())
-    toolbar.appendChild(button)
-    this.runButton = button
-
-    const output = document.createElement('pre')
-    output.className = 'exec-output'
-    output.hidden = true
-    this.output = output
-
-    const outputWrap = document.createElement('div')
-    outputWrap.className = 'exec-output-wrap'
-    this.outputCopy = createCopyButton(() => output.textContent ?? '', this.dom, '.exec-output-wrap')
-    outputWrap.append(output, this.outputCopy)
-    this.outputCopy.style.display = 'none'
-
-    layer.append(toolbar, outputWrap)
-    this.dom.appendChild(layer)
-
-    button.addEventListener('click', () => {
-      if (this.running) {
-        void this.stopRun()
-      } else {
-        void this.run(shebang)
-      }
-    })
-  }
-
   private appendSourceCopyButton(): void {
     const source = this.sourceHost
     if (!source) return
@@ -328,6 +317,11 @@ class RunnableBlockNodeView implements NodeView {
     this.runEpoch++
     this.activeHandle?.dispose()
     this.activeHandle = null
+    // The cluster carries the Run button and the Source control, so it is part of
+    // what a content change rebuilds: a stale button would carry the previous
+    // body's closure.
+    this.controls?.remove()
+    this.controls = null
     if (this.controlsLayer) this.controlsLayer.remove()
     this.controlsLayer = null
     this.runButton = null
@@ -453,7 +447,7 @@ class RunnableBlockNodeView implements NodeView {
           this.editorBusy = false
         }
       }
-      if (newShebang) this.buildControls(newShebang)
+      this.attachControls()
     }
     if (this.formulaErrors) this.renderFormulaStatus()
     return true
@@ -470,9 +464,9 @@ class RunnableBlockNodeView implements NodeView {
     if (this.editor) return true
     // Only content edits to the `<code>` element matter to ProseMirror. Our own
     // UI mutations (Run button text/disabled, unhiding/filling the output, the
-    // block handle) live outside the contentDOM; if PM treats them as external
-    // edits it remounts the view and wipes the transient output before the
-    // async run resolves.
+    // block's control cluster) live outside the contentDOM; if PM treats them as
+    // external edits it remounts the view and wipes the transient output before
+    // the async run resolves.
     return this.contentDOM === null || !this.contentDOM.contains(target)
   }
 
@@ -481,7 +475,6 @@ class RunnableBlockNodeView implements NodeView {
     if (!(t instanceof Element)) return false
     return (
       t.closest('.exec-run') !== null ||
-      t.closest('.block-handle') !== null ||
       t.closest('.code-copy') !== null ||
       t.closest('.cm-editor') !== null
     )

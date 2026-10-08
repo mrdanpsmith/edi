@@ -2,7 +2,6 @@ import { NodeSelection, Plugin, TextSelection } from 'prosemirror-state'
 import type { EditorState } from 'prosemirror-state'
 import type { Node as ProseNode, DOMOutputSpec } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
-import { visit } from 'unist-util-visit'
 import { blockNodeView, showsSource } from '../blockview'
 import { reinitializeMermaidTheme } from '../mermaid'
 import {
@@ -17,62 +16,23 @@ import {
   renderDiagram,
 } from '../mermaid-edit'
 import {
+  BLOCK_CONTROLS_CLASS,
+  BLOCK_MODE_HANDLERS,
+  attachBlockControls,
   currentBlockMode,
   modeFor,
   releaseSourceBlock,
   setBlockMode,
   setBlockModeAt,
+  type BlockControls,
   type BlockMode,
 } from '../block-modes'
+import { MERMAID_TYPE } from '../remark/mermaid'
 import { markdownToProse, serializeBlock } from '../markdown'
 import { createBlockCodeMirror } from '../codemirror-block'
 import type { BlockCodeMirror } from '../codemirror-block'
 import { showError } from '../bridge'
 import { promptForKanbanColumns } from '../urlDialog'
-
-export const MERMAID_TYPE = 'mermaid_block'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function remarkPlugin(this: any) {
-  const data = this.data()
-  if (!data.micromarkExtensions) data.micromarkExtensions = []
-  if (!data.fromMarkdownExtensions) data.fromMarkdownExtensions = []
-  if (!data.toMarkdownExtensions) data.toMarkdownExtensions = []
-
-  data.fromMarkdownExtensions.push({
-    transforms: [
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (tree: any) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        visit(tree, 'code', (node: any, index: number | undefined, parent: any) => {
-          if (index !== undefined && node.lang === 'mermaid') {
-            parent.children[index] = {
-              type: MERMAID_TYPE,
-              value: node.value ?? '',
-              position: node.position,
-            }
-          }
-        })
-      },
-    ],
-  })
-
-  data.toMarkdownExtensions.push({
-    handlers: {
-      [MERMAID_TYPE]: (
-        node: { value?: string },
-        _: unknown,
-        state: { enter: (t: string) => () => void },
-        info: unknown,
-      ) => {
-        const exit = state.enter('code')
-        void info
-        exit()
-        return `\`\`\`mermaid\n${node.value ?? ''}\n\`\`\`\n`
-      },
-    },
-  })
-}
 
 export const mermaidSchema = {
   group: 'block',
@@ -95,18 +55,6 @@ export const mermaidSchema = {
 
 const mermaidViews = new Set<MermaidNodeView>()
 
-function createHandleDOM(pos: number): HTMLElement {
-  const handle = document.createElement('div')
-  handle.className = 'block-handle'
-  handle.setAttribute('data-block-pos', String(pos))
-  handle.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-    <circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/>
-    <circle cx="3" cy="6" r="1.2"/><circle cx="9" cy="6" r="1.2"/>
-    <circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/>
-  </svg>`
-  return handle
-}
-
 class MermaidNodeView implements NodeView {
   dom: HTMLElement
   private currentCode = ''
@@ -120,6 +68,7 @@ class MermaidNodeView implements NodeView {
    * the new one — so the old answer is what it has to remember.
    */
   private mode: BlockMode | null
+  private controls: BlockControls | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     mermaidViews.add(this)
@@ -196,6 +145,8 @@ class MermaidNodeView implements NodeView {
     // longer there, still swallowing its own events, with the block's own padding
     // for it still applied.
     discardMermaidSession(this.dom)
+    this.controls?.remove()
+    this.controls = null
     this.dom.innerHTML = ''
     this.dom.className = 'block-source-mode'
 
@@ -203,14 +154,14 @@ class MermaidNodeView implements NodeView {
     toolbar.className = 'block-source-toolbar'
     const label = document.createElement('span')
     label.className = 'block-source-label'
-    label.textContent = 'Mermaid source'
+    label.textContent = 'Source'
     toolbar.appendChild(label)
 
     const exitBtn = document.createElement('button')
     exitBtn.type = 'button'
     exitBtn.className = 'block-source-exit'
-    exitBtn.textContent = 'Visual mode'
-    exitBtn.title = 'Back to visual mode (Esc)'
+    exitBtn.textContent = 'Preview'
+    exitBtn.title = 'Back to the rendered block (Esc)'
     exitBtn.addEventListener('click', () => {
       this.exitSource(this.cm?.getValue() ?? '')
     })
@@ -256,23 +207,26 @@ class MermaidNodeView implements NodeView {
     // everything against it, so a session that outlived this would be placing
     // overlays in a detached scroller. A rebuild is a fresh block either way.
     discardMermaidSession(this.dom)
+    this.controls?.remove()
+    this.controls = null
     this.dom.innerHTML = ''
     this.dom.className = 'mermaid'
     this.syncModeClass()
 
-    const pos = this.getPos()
-    if (pos !== undefined) {
-      this.dom.appendChild(createHandleDOM(pos))
-    }
-
     const preview = document.createElement('div')
     preview.className = 'mermaid-preview'
     this.dom.appendChild(preview)
+    // The cluster is what carries the zoom buttons now, and it is the thing a
+    // render replaces: those buttons bind to the svg and the natural width *this*
+    // render produced, so they are rebuilt with it and handed back to the cluster.
+    this.controls = attachBlockControls(this.node, this.view, this.getPos)
+    if (this.controls) this.dom.appendChild(this.controls.dom)
     void this.renderPreview(preview, code)
   }
 
   private syncModeClass(): void {
     this.dom.classList.toggle(EDITING_CLASS, this.editing)
+    this.controls?.refresh()
   }
 
   /** Re-render into the existing preview, so the last good diagram survives a failure. */
@@ -286,7 +240,6 @@ class MermaidNodeView implements NodeView {
   }
 
   private async renderPreview(container: HTMLElement, code: string): Promise<void> {
-    const button = this.createToggleButton()
     // A board is authored from the board, so in edit mode it is *drawn* with the
     // two places a card or a column can be added: mermaid lays a card slot out in
     // the next card's own place and a column slot out as a column, which is
@@ -294,6 +247,7 @@ class MermaidNodeView implements NodeView {
     // rendered and never part of what is committed — the document holds the
     // board, and the slots are derived from it on every render.
     const drawn = this.editing ? kanbanAuthoringSource(code) : code
+    const controls = this.controls
     await renderDiagram(container, drawn, {
       host: this.dom,
       // A commit handler is what puts the diagram into edit mode.
@@ -303,35 +257,15 @@ class MermaidNodeView implements NodeView {
           // itself — and drops one still holding its placeholder.
           (patched) => this.commitSource(kanbanRealSource(patched))
         : undefined,
-      actions: [button],
+      // The cluster holds the zoom buttons; the Edit/Done beside them is
+      // generated from the record, so a render never has to carry it in.
+      placeActions: (buttons) => {
+        // A render can outlive the block it drew (a newer one took over, or the
+        // block went to its source form), and the cluster it would have gone into
+        // is gone with it.
+        if (this.controls === controls) this.controls?.setActions(buttons)
+      },
     })
-  }
-
-  private createToggleButton(): HTMLButtonElement {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'mermaid-toolbar-btn mermaid-edit-toggle'
-    this.paintToggle(button)
-    button.addEventListener('click', (event) => {
-      event.stopPropagation()
-      const pos = this.getPos()
-      if (pos !== undefined) toggleDiagramEditMode(this.view, pos)
-    })
-    button.addEventListener('mousedown', (event) => {
-      // Keep ProseMirror from treating the button press as a block selection.
-      event.preventDefault()
-      event.stopPropagation()
-    })
-    return button
-  }
-
-  private paintToggle(button: HTMLButtonElement): void {
-    const editing = this.editing
-    button.textContent = editing ? 'Done' : 'Edit'
-    button.title = editing ? 'Finish editing the diagram' : 'Edit the diagram in place'
-    button.setAttribute('aria-pressed', String(editing))
-    button.setAttribute('aria-label', button.title)
-    button.classList.toggle('mermaid-edit-toggle-on', editing)
   }
 
   /**
@@ -361,14 +295,16 @@ class MermaidNodeView implements NodeView {
     if (this.cm !== null) return true
     const target = event.target
     if (!(target instanceof Element)) return false
-    // The label editor and the board's own chrome are real controls inside the
-    // block: every keystroke and mouse event in them belongs to the editor, not
-    // to ProseMirror. The chrome is matched by its *layer* rather than by the
-    // button class, because an open `⋯` menu is a list of items rather than a
-    // button and is just as much the editor's own surface. The rest of the
-    // diagram keeps its normal behaviour — clicking it still selects the block
-    // and reveals its handle.
-    return target.closest(`.${FIELD_CLASS}, .${KANBAN_CHROME_CLASS}`) !== null
+    // The label editor, the board's own chrome and the block's control cluster
+    // are real controls inside the block: every keystroke and mouse event in them
+    // belongs to the editor, not to ProseMirror. The chrome is matched by its
+    // *layer* rather than by the button class, because an open `⋯` menu is a list
+    // of items rather than a button and is just as much the editor's own surface.
+    // The rest of the diagram keeps its normal behaviour — clicking it still
+    // selects the block, and Alt+click on it still toggles edit mode.
+    return target.closest(
+      `.${FIELD_CLASS}, .${KANBAN_CHROME_CLASS}, .${BLOCK_CONTROLS_CLASS}`,
+    ) !== null
   }
 
   ignoreMutation(): boolean {
@@ -524,67 +460,19 @@ export async function insertKanbanBoard(view: EditorView): Promise<boolean> {
   return insertKanbanSource(view, source)
 }
 
-/** The diagram a double click lands on, or null when it is not on one. */
-function diagramEditTogglePos(event: MouseEvent): number | null {
-  if (!(event.target instanceof Element)) return null
-  const block = event.target.closest<HTMLElement>('.mermaid')
-  if (!block) return null
-  // Chrome and an open label editor handle their own double clicks, and so does
-  // a board's controls: a double click on one of them — or inside a `⋯` menu —
-  // is a click on that, not a request to toggle this diagram.
-  if (event.target.closest(`.mermaid-toolbar, .${FIELD_CLASS}, .${KANBAN_CHROME_CLASS}`) !== null) return null
-  if (block.querySelector(`.${FIELD_CLASS}`) !== null) return null
-  const handle = block.querySelector<HTMLElement>('.block-handle[data-block-pos]')
-  const pos = handle ? Number(handle.dataset.blockPos) : Number.NaN
-  return Number.isInteger(pos) && pos >= 0 ? pos : null
-}
-
 /**
- * A double click Chrome already owns: a word to select, a link to open, a
- * button to press, a caret in an editor. Such a click is left to do its own
- * job — it merely happens to also end diagram edit mode.
+ * A diagram is the one block type with an interaction axis, so it is what
+ * registers how that axis is entered and left, and what Alt+click does to it
+ * (§5.2). Registered rather than imported into `block-modes.ts`, which cannot
+ * import this file.
  */
-function chromeHandlesDoubleClick(event: MouseEvent): boolean {
-  return (
-    event.target instanceof Element &&
-    event.target.closest('a[href], button, input, textarea, select, .cm-editor') !== null
-  )
+BLOCK_MODE_HANDLERS[MERMAID_TYPE] = {
+  enter: enterDiagramEditMode,
+  exit: exitDiagramEditMode,
+  toggle: toggleDiagramEditMode,
 }
 
 export const mermaidNodeViewPlugin = new Plugin({
-  view(view: EditorView) {
-    const onDblClick = (event: MouseEvent): void => {
-      const pos = diagramEditTogglePos(event)
-      if (pos !== null) {
-        toggleDiagramEditMode(view, pos)
-        return
-      }
-      // A double click outside the diagram finishes it too: edit mode belongs to
-      // one diagram, and the gesture that turns it off should not have to land
-      // back on the diagram — on a diagram in source mode, or on one that no
-      // longer shows one. The click is not swallowed, so whatever it meant for
-      // the page below (a word, a caret) still happens.
-      if (chromeHandlesDoubleClick(event)) return
-      const open = currentEditPos(view.state)
-      if (open === null || view.nodeDOM(open) === null) return
-      exitDiagramEditMode(view, open)
-    }
-    // The editor's own box is only as tall as its content, so a document that is
-    // one short diagram leaves the rest of the scroller — the white area under
-    // the board — outside `view.dom` entirely, and a double click landed there
-    // never reached this handler: the mode stayed on and the browser went on to
-    // select the nearest text on the page instead, which is the document name in
-    // the status bar. Listen on the scroller, which holds both. It is the
-    // scroller and not `document` (which is what the table plugin can afford)
-    // so that a double click in a dialog sitting on top of the editor cannot
-    // reach through it and end the session behind the dialog.
-    // `Document` is in the union for a mount into a fragment or a shadow root,
-    // which ProseMirror allows and which has no `parentElement`; the union is
-    // what defeats `addEventListener`'s typed overloads.
-    const host = view.dom.parentElement ?? document
-    host.addEventListener('dblclick', onDblClick as EventListener)
-    return { destroy: () => host.removeEventListener('dblclick', onDblClick as EventListener) }
-  },
   props: {
     nodeViews: {
       [MERMAID_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {

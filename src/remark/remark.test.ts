@@ -5,7 +5,7 @@ import remarkStringify from 'remark-stringify'
 import { highlight } from './highlight'
 import { subscript } from './sub'
 import { superscript } from './sup'
-import { remarkPlugin as rawMermaidRemarkPlugin } from '../node/mermaid'
+import { remarkPlugin as rawMermaidRemarkPlugin } from './mermaid'
 import { markdownToProse, proseToMarkdown } from '../markdown'
 import { schema } from '../schema'
 

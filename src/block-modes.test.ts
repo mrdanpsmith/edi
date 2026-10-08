@@ -7,17 +7,21 @@ import { markdownToProse, proseToMarkdown } from './markdown'
 import { schema } from './schema'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
-import { mermaidNodeViewPlugin } from './node/mermaid'
+import { encryptedBlockNodeViewPlugin } from './node/encryptedblock'
+import { enterDiagramEditMode, mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import {
+  BLOCK_CONTROLS_CLASS,
   BLOCK_MODE_CLASS,
   BLOCK_MODE_KEY,
   blockModeFor,
   blockModePlugin,
   currentBlockMode,
+  enterBlockMode,
   enterSourceMode,
-  exitSourceMode,
+  exitBlockMode,
   modeFor,
+  toggleBlockMode,
   toggleSourceMode,
 } from './block-modes'
 import { Plugin } from 'prosemirror-state'
@@ -50,6 +54,7 @@ function createEditor(initialMarkdown: string, extraPlugins: Plugin[] = []): Edi
         nodeViewPlugin,
         mermaidNodeViewPlugin,
         tableNodeViewPlugin,
+        encryptedBlockNodeViewPlugin,
         ...extraPlugins,
       ],
     }),
@@ -281,11 +286,311 @@ describe('the mode is not document content', () => {
     enterSourceMode(view, first)
     expect((view.nodeDOM(first) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
 
-    exitSourceMode(view)
+    exitBlockMode(view)
 
     const after = view.nodeDOM(first) as HTMLElement
     expect(after.classList.contains('block-visual-mode')).toBe(true)
     expect(after.classList.contains(BLOCK_MODE_CLASS)).toBe(false)
+    view.destroy()
+  })
+})
+
+describe('one cluster per top-level block', () => {
+  const DOC = [
+    '# Heading',
+    '',
+    'A paragraph.',
+    '',
+    '- Item 1',
+    '- Item 2',
+    '',
+    '> Quoted',
+    '',
+    '```js',
+    'console.log(1)',
+    '```',
+    '',
+    '```mermaid',
+    'graph TD',
+    '  A[Alpha]',
+    '```',
+    '',
+    '| A |',
+    '| --- |',
+    '| 1 |',
+    '',
+  ].join('\n')
+
+  function clusters(view: EditorView): HTMLElement[] {
+    return Array.from(view.dom.querySelectorAll<HTMLElement>(`.${BLOCK_CONTROLS_CLASS}`))
+  }
+
+  it('gives every top-level block exactly one, and a nested block none', async () => {
+    const view = createEditor(DOC)
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+    // heading, paragraph, list, blockquote, code block, diagram, table. A
+    // `source_block` is deliberately absent: it is permanently in its source
+    // form, so it carries the banner and no cluster (§6.5).
+    expect(clusters(view).length).toBe(7)
+    expect(view.dom.querySelectorAll('li > .block-controls').length).toBe(0)
+    expect(view.dom.querySelectorAll('blockquote .block-controls').length).toBe(0)
+    view.destroy()
+  })
+
+  it('puts every one of them in the same place in its own block', async () => {
+    const view = createEditor(DOC)
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+    // Compared by geometry rather than by counting buttons: what the
+    // consolidation promises is *one place*, and a block type with more controls
+    // (a diagram's zoom) must not push its own cluster somewhere else.
+    const rights = new Set<number>()
+    for (const cluster of clusters(view)) {
+      cluster.getBoundingClientRect = () =>
+        ({ right: 100, left: 60, top: 8, bottom: 30, width: 40, height: 22, x: 60, y: 8, toJSON: () => ({}) }) as DOMRect
+      rights.add(cluster.getBoundingClientRect().right)
+    }
+    expect(rights.size).toBe(1)
+    view.destroy()
+  })
+
+  it('labels a diagram\'s two axes from the descriptor and a table\'s form from it too', async () => {
+    const view = createEditor(DOC)
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+    const heading = view.nodeDOM(0) as HTMLElement
+    expect(heading.querySelector('.block-control-representation')?.textContent).toBe('Source')
+    expect(heading.querySelector('.block-control-interaction')).toBeNull()
+
+    const diagram = view.dom.querySelector<HTMLElement>('.mermaid')!
+    expect(diagram.querySelector('.block-control-representation')?.textContent).toBe('Source')
+    expect(diagram.querySelector('.block-control-interaction')?.textContent).toBe('Edit')
+
+    const table = view.dom.querySelector<HTMLElement>('.ss-plain')!
+    expect(table.querySelector('.block-control-form')?.textContent).toBe('Show as sheet')
+    view.destroy()
+  })
+
+  it('takes the block back to its rendering when the cluster\'s own Preview is pressed', () => {
+    const view = createEditor('# Hello\n\nSecond paragraph')
+    const [first] = allBlockPositions(view)
+    enterSourceMode(view, first)
+    // The one-way dot grid of §1.5 returned early when the block it named was
+    // already open, so the mode could not be turned off from there at all.
+    expect((view.nodeDOM(first) as HTMLElement).querySelector(`.${BLOCK_CONTROLS_CLASS}`)).toBeNull()
+    const banner = (view.nodeDOM(first) as HTMLElement).querySelector('.block-source-exit') as HTMLButtonElement
+    expect(banner.textContent).toBe('Preview')
+    banner.click()
+    expect(currentBlockMode(view.state)).toBeNull()
+    expect((view.nodeDOM(first) as HTMLElement).classList.contains('block-visual-mode')).toBe(true)
+    view.destroy()
+  })
+
+  it('shows no floating cluster and exactly one Preview control while in Source', () => {
+    const view = createEditor('# Hello')
+    const [first] = allBlockPositions(view)
+    enterSourceMode(view, first)
+    expect(view.dom.querySelectorAll(`.${BLOCK_CONTROLS_CLASS}`).length).toBe(0)
+    const previews = Array.from(view.dom.querySelectorAll('button'))
+      .filter((button) => button.textContent === 'Preview')
+    expect(previews.length).toBe(1)
+    view.destroy()
+  })
+
+  it('reveals an encrypted block\'s controls, which the old reveal list omitted', () => {
+    const view = createEditor('> Just text')
+    expect(view.dom.querySelectorAll(`.${BLOCK_CONTROLS_CLASS}`).length).toBe(1)
+    view.destroy()
+  })
+})
+
+describe('the Escape ladder (§5.3)', () => {
+  it('commits a block in Source and hands it back its rendering', () => {
+    const view = createEditor('# First\n\nSecond paragraph')
+    const [first] = allBlockPositions(view)
+    enterSourceMode(view, first)
+    const cm = CMEditorView.findFromDOM(
+      (view.nodeDOM(first) as HTMLElement).querySelector<HTMLElement>('.cm-editor')!,
+    )!
+    cm.dispatch({ changes: { from: 0, to: cm.state.doc.length, insert: '# Typed\n' } })
+
+    expect(exitBlockMode(view)).toBe(true)
+
+    // There is deliberately no rung that "just forgets" a source block: the
+    // buffer is the only copy of what was typed, so committing *is* the exit.
+    expect(proseToMarkdown(view.state.doc)).toContain('# Typed')
+    expect(currentBlockMode(view.state)).toBeNull()
+    view.destroy()
+  })
+
+  it('goes to Done on the interaction axis, and says nothing when nothing is open', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    enterBlockMode(view, board, { interaction: 'editing' })
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+
+    expect(exitBlockMode(view)).toBe(true)
+    expect(currentBlockMode(view.state)).toBeNull()
+    // ...and the last rung: hand Escape straight on, so selection handling and
+    // every other Escape handler are unaffected.
+    expect(exitBlockMode(view)).toBe(false)
+    view.destroy()
+  })
+
+  it('finishes a pending kanban label before the interaction axis goes', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    expect(exitBlockMode(view)).toBe(true)
+    expect(currentBlockMode(view.state)).toBeNull()
+    view.destroy()
+  })
+})
+
+describe('the Alt+click gesture (§5.2)', () => {
+  /** Alt+click, the gesture that toggles a block's interaction axis. */
+  function altClick(target: EventTarget | null): void {
+    ;(target as Element).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
+    )
+  }
+
+  it('toggles a diagram, and leaves it alone for a bare double click', async () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+    const diagram = view.dom.querySelector<HTMLElement>('.mermaid-preview')!
+
+    altClick(diagram)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+
+    altClick(diagram)
+    expect(modeFor(view.state, board)).toBeNull()
+
+    // The gesture the mode used to claim, given back: a double click is the
+    // browser selecting a word inside the diagram.
+    const notPrevented = diagram.dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true, cancelable: true, button: 0 }),
+    )
+    expect(notPrevented).toBe(true)
+    expect(modeFor(view.state, board)).toBeNull()
+    view.destroy()
+  })
+
+  it('finishes the interaction axis from anywhere else in the editor', async () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')
+    const [board] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+    const paragraph = Array.from(view.dom.querySelectorAll<HTMLElement>('p')).find(
+      (el) => el.textContent === 'After the diagram',
+    )!
+    altClick(paragraph)
+    expect(currentBlockMode(view.state)).toBeNull()
+    view.destroy()
+  })
+
+  it('toggles a table\'s form and never its interaction axis', () => {
+    const view = createEditor('| A |\n| --- |\n| 1 |')
+    const [table] = allBlockPositions(view)
+    expect(view.state.doc.nodeAt(table)!.type.name).toBe('table')
+    expect(blockModeFor(view.state.doc.nodeAt(table)!).interaction).toBe('none')
+
+    altClick(view.dom.querySelector('.ss-plain-table tbody td'))
+    expect(view.state.doc.nodeAt(table)!.attrs._plain).toBe(false)
+    expect(view.dom.querySelector('.spreadsheet')).not.toBeNull()
+
+    altClick(view.dom.querySelector('.spreadsheet .ss-grid tbody td')!)
+    expect(view.state.doc.nodeAt(table)!.attrs._plain).toBe(true)
+    expect(view.dom.querySelector('.ss-plain')).not.toBeNull()
+    // A form is not on either axis, so no record ever names it.
+    expect(currentBlockMode(view.state)).toBeNull()
+    view.destroy()
+  })
+
+  it('is inert on a block type that registers nothing to toggle', () => {
+    const view = createEditor('# Hello\n\nSecond paragraph')
+    altClick(view.dom.querySelector('h1'))
+    expect(currentBlockMode(view.state)).toBeNull()
+    view.destroy()
+  })
+})
+
+describe('the generated controls', () => {
+  it('toggles the representation axis from the API, in both directions', () => {
+    const view = createEditor('# Hello')
+    const [first] = allBlockPositions(view)
+    toggleBlockMode(view, first, 'representation')
+    expect(modeFor(view.state, first)?.representation).toBe('source')
+    toggleBlockMode(view, first, 'representation')
+    expect(currentBlockMode(view.state)).toBeNull()
+    view.destroy()
+  })
+})
+
+describe('a mode flip reaches the node views (BLOCK_MODE_CLASS)', () => {
+  // The bug this whole describe exists for. A mode is not a document edit, so
+  // ProseMirror re-walks the tree only when a node's *decorations* change —
+  // `ViewDesc.matchesNode` compares them by value and returns "nothing to do"
+  // when they match. A decoration that only said "there is a mode" is therefore
+  // byte-identical across two different modes, so flipping an axis while the
+  // record stays held changed nothing the view could see: the record moved to
+  // Source and the board kept drawing, which is a control that looks inert.
+  //
+  // The class carries the mode, so the accent rule is the load-bearing half of
+  // the notification as well as the legible one.
+
+  it('carries the representation, so it differs between the two forms', () => {
+    const view = createEditor('# Hello')
+    const [first] = allBlockPositions(view)
+    const classes = (): string[] =>
+      [...(view.nodeDOM(first) as HTMLElement).classList].sort()
+
+    enterSourceMode(view, first)
+    // Re-read the element: entering Source rebuilds the node view, and that
+    // rebuild is the thing the decoration is for.
+    expect(classes()).toContain(BLOCK_MODE_CLASS)
+    expect(classes()).toContain(`${BLOCK_MODE_CLASS}-source`)
+
+    exitBlockMode(view)
+    expect(classes()).not.toContain(BLOCK_MODE_CLASS)
+    view.destroy()
+  })
+
+  it('rebuilds a diagram that enters Source from its own edit mode', () => {
+    // The gesture that reported it: alt-click a board into edit mode, press
+    // Source. Both records are non-null and both decorate the same node, so this
+    // is the transition the class has to distinguish.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+
+    enterSourceMode(view, board)
+
+    expect(modeFor(view.state, board)).toMatchObject({
+      representation: 'source',
+      interaction: 'viewing',
+    })
+    // The board is asked to become something else, and it does.
+    const dom = view.nodeDOM(board) as HTMLElement
+    expect(dom.classList.contains('block-source-mode')).toBe(true)
+    expect(dom.querySelector('.mermaid-preview')).toBeNull()
+    expect(dom.querySelector('.block-source-exit')?.textContent).toBe('Preview')
+    view.destroy()
+  })
+
+  it('rebuilds a diagram that enters edit mode from its own Source form', async () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    enterSourceMode(view, board)
+    expect((view.nodeDOM(board) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
+
+    enterBlockMode(view, board, { interaction: 'editing' })
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+
+    const dom = view.nodeDOM(board) as HTMLElement
+    expect(dom.classList.contains('mermaid')).toBe(true)
+    expect(dom.classList.contains('mermaid-editing')).toBe(true)
+    expect(dom.classList.contains('block-source-mode')).toBe(false)
     view.destroy()
   })
 })

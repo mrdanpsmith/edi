@@ -523,26 +523,31 @@ function createToolbarButton(label: string, title: string): HTMLButtonElement {
   return button
 }
 
-export function attachMermaidToolbar(
+/**
+ * The three zoom buttons, wired to `svg` and to `host`'s zoom event.
+ *
+ * They are returned rather than wrapped in a toolbar because they no longer live
+ * in one of their own: a diagram in the editor gets them in the block's control
+ * cluster (`attachBlockControls`), the same row every other block's controls are
+ * in, and each render replaces them because they bind to the drawing *it*
+ * produced. `attachMermaidToolbar` below is the standalone bar a diagram gets
+ * when it is not in an editor — a pasted or exported one — where there is no
+ * cluster to hold them.
+ */
+export function mermaidZoomButtons(
   host: HTMLElement,
   svg: SVGSVGElement,
   natural: number | null,
-  actions: readonly HTMLButtonElement[] = [],
-): void {
-  const zoomOut = createToolbarButton('−', 'Zoom out')
+): HTMLButtonElement[] {
+  const zoomOut = createToolbarButton('\u2212', 'Zoom out')
   const zoomIn = createToolbarButton('+', 'Zoom in')
   const reset = createToolbarButton('100%', 'Reset zoom')
-
-  const bar = document.createElement('div')
-  bar.className = 'mermaid-toolbar'
-  bar.append(zoomOut, zoomIn, reset, ...actions)
-  host.appendChild(bar)
 
   if (natural === null) {
     zoomOut.disabled = true
     zoomIn.disabled = true
     reset.disabled = true
-    return
+    return [zoomOut, zoomIn, reset]
   }
 
   let factor = 1
@@ -564,10 +569,6 @@ export function attachMermaidToolbar(
     host.dispatchEvent(new CustomEvent(ZOOM_EVENT, { detail: { factor } }))
   }
 
-  bar.addEventListener('mousedown', (event) => {
-    event.preventDefault()
-    event.stopPropagation()
-  })
   zoomIn.addEventListener('click', () => {
     factor = clamp(factor * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
     applyZoom()
@@ -577,6 +578,21 @@ export function attachMermaidToolbar(
     applyZoom()
   })
   reset.addEventListener('click', resetZoom)
+  return [zoomOut, zoomIn, reset]
+}
+
+export function attachMermaidToolbar(
+  host: HTMLElement,
+  buttons: readonly HTMLButtonElement[],
+): void {
+  const bar = document.createElement('div')
+  bar.className = 'mermaid-toolbar'
+  bar.append(...buttons)
+  bar.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+  })
+  host.appendChild(bar)
 }
 
 export async function renderPendingMermaid(container: HTMLElement): Promise<void> {
@@ -604,7 +620,7 @@ export async function renderPendingMermaid(container: HTMLElement): Promise<void
         const natural = responsifySvg(svgEl)
         adaptDiagramColors(svgEl)
         pinSvgTextColors(svgEl)
-        attachMermaidToolbar(holder, svgEl, natural)
+        attachMermaidToolbar(holder, mermaidZoomButtons(holder, svgEl, natural))
         void bakeDiagram(holder, svgEl, natural)
       }
       el.replaceWith(holder)

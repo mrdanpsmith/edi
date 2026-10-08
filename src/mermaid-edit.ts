@@ -26,6 +26,7 @@ import {
   bakeDiagram,
   errorBlock,
   loadMermaid,
+  mermaidZoomButtons,
   pinSvgTextColors,
   responsifySvg,
 } from './mermaid'
@@ -1856,8 +1857,16 @@ export interface MermaidDiagramOptions {
    * usual.
    */
   commit?: (source: string) => void
-  /** Extra buttons for the hover toolbar, e.g. the edit-mode toggle. */
-  actions?: readonly HTMLButtonElement[]
+  /**
+   * Where the diagram's zoom buttons go.
+   *
+   * In the editor they belong to the block's control cluster — one row at one
+   * place on every block, rather than a pill of their own in this block's corner
+   * — and a render hands them over because they bind to the drawing it produced.
+   * Without a sink they get the standalone hover toolbar, which is what a diagram
+   * rendered outside an editor has.
+   */
+  placeActions?: (buttons: readonly HTMLButtonElement[]) => void
 }
 
 /**
@@ -1883,7 +1892,7 @@ export async function renderDiagram(
   code: string,
   options: MermaidDiagramOptions,
 ): Promise<void> {
-  const { host, commit, actions = [] } = options
+  const { host, commit, placeActions } = options
   const session = sessionFor(host, commit ?? noop)
   session.bind(commit, container)
   const ticket = session.beginRender()
@@ -1916,7 +1925,9 @@ export async function renderDiagram(
     adaptDiagramColors(svgEl)
     pinSvgTextColors(svgEl)
     host.querySelector('.mermaid-toolbar')?.remove()
-    attachMermaidToolbar(host, svgEl, natural, actions)
+    const zoom = mermaidZoomButtons(host, svgEl, natural)
+    if (placeActions) placeActions(zoom)
+    else attachMermaidToolbar(host, zoom)
     // A baked diagram is a bitmap under an invisible vector, which would put
     // every native label out of reach while editing, so edit mode keeps the
     // live SVG on top instead.

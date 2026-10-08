@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
+import { Plugin } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { history, undo } from 'prosemirror-history'
 import { schema } from './schema'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { EditorState as CMEditorState } from '@codemirror/state'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { blockModePlugin, currentBlockMode, modeFor } from './block-modes'
 import { type ContextMenuEntry } from './contextmenu'
+import type { BlockMode } from './block-modes'
 
 
 const zeroRect = {
@@ -70,7 +71,12 @@ const mainState = vi.hoisted(() => {
     markdown: 'Welcome',
     selectionMarkdown: 'Welcome',
     editorView,
-    editorOptions: undefined as { onChange?: () => void } | undefined,
+    editorOptions: undefined as
+      | {
+          onChange?: () => void
+          onModeChange?: (mode: BlockMode | null) => void
+        }
+      | undefined,
   }
 })
 
@@ -110,7 +116,10 @@ vi.mock('./editor', async (importOriginal) => ({
   createBlockEditor: vi.fn((
     _parent: HTMLElement,
     markdown: string,
-    options?: { onChange?: () => void },
+    options?: {
+      onChange?: () => void
+      onModeChange?: (mode: BlockMode | null) => void
+    },
   ) => {
     mainState.editorOptions = options
     mainState.markdown = markdown
@@ -147,15 +156,31 @@ vi.mock('./mermaid', () => ({
     initialize: vi.fn(),
     render: vi.fn().mockResolvedValue({ svg: '<svg></svg>' }),
   },
+  // `rethemeMermaid` walks the rendered diagrams when the theme changes; with
+  // no `reinitializeMermaidTheme` behind it, it would load the real mermaid.
+  reinitializeMermaidTheme: vi.fn().mockResolvedValue(undefined),
+  loadMermaid: vi.fn(async () => ({ render: vi.fn().mockResolvedValue({ svg: '<svg></svg>', diagramType: 'base' }) })),
+  errorBlock: (message: string) => {
+    const block = document.createElement('div')
+    block.className = 'mermaid-error'
+    block.textContent = message
+    return block
+  },
+  responsifySvg: vi.fn(() => 800),
+  adaptDiagramColors: vi.fn(),
+  pinSvgTextColors: vi.fn(),
+  attachMermaidToolbar: vi.fn(),
+  mermaidZoomButtons: vi.fn(() => []),
+  bakeDiagram: vi.fn(),
 }))
 
-vi.mock('./node/mermaid', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./node/mermaid')>()
-  return {
-    ...actual,
-    rethemeMermaid: vi.fn(),
-  }
-})
+// `./node/mermaid` is deliberately *not* mocked. It registers how a diagram's
+// interaction axis is entered and left into the mode registry, and a
+// `vi.mock(..., importOriginal)` factory is cached across `resetModules` — so a
+// mocked copy would register into the registry of an earlier evaluation than the
+// one `main` resolves, and every interaction item in the context menu would be
+// silently inert. The real module is cheap here: `rethemeMermaid` only walks the
+// (empty) set of rendered diagrams when the theme changes.
 
 // The grid's editing commands come from the live node view; the menu itself
 // stays owned by main so the block actions can be appended below them.
@@ -224,6 +249,7 @@ const DOM_TEMPLATE = `
     </main>
     <footer id="statusbar">
       <span id="status-left"></span>
+      <span id="status-mode" hidden></span>
       <button type="button" id="status-zoom" hidden></button>
       <span id="status-right"></span>
     </footer>
@@ -268,6 +294,76 @@ async function stateModule(): Promise<typeof import('./state')> {
  */
 async function mainSideBlockModes(): Promise<typeof import('./block-modes')> {
   return import('./block-modes')
+}
+
+/**
+ * A real EditorView on the app's block editor, with a real node view for every
+ * block type.
+ *
+ * The context menu and the block-mode gestures both ask the *DOM* which block the
+ * pointer is over (§6.4), and the node views ask the mode record which form they
+ * are drawing — so neither a fake document nor a hand-made `<div class="spreadsheet">`
+ * can stand in for one any more.
+ *
+ * The mode plugin and the node views come from one batch of dynamic imports,
+ * after `loadMain` has re-evaluated every non-mocked module. A mode is
+ * identified by its `PluginKey`, so a node view from a different evaluation than
+ * the plugin would ask a record no view carries.
+ */
+type MainSideNodeViews = {
+  modes: typeof import('./block-modes')
+  table: typeof import('./node/table')
+  plugins: Plugin[]
+}
+
+let nodeViews: MainSideNodeViews | null = null
+
+async function mainSideNodeViews(): Promise<MainSideNodeViews> {
+  if (nodeViews !== null) return nodeViews
+  const [modes, blockview, mermaid, table, execblock] = await Promise.all([
+    mainSideBlockModes(),
+    import('./blockview'),
+    import('./node/mermaid'),
+    import('./node/table'),
+    import('./node/execblock'),
+  ])
+  nodeViews = {
+    modes,
+    table,
+    plugins: [
+      history(),
+      modes.blockModePlugin,
+      // Before the plain block view, as in the editor: a code block with a
+      // shebang is a runnable block, and ProseMirror takes the first node view
+      // that claims a type.
+      execblock.codeBlockNodeViewPlugin,
+      new Plugin({
+        props: {
+          nodeViews: Object.fromEntries(
+            [...blockview.BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockview.blockNodeView]),
+          ),
+        },
+      }),
+      mermaid.mermaidNodeViewPlugin,
+      table.tableNodeViewPlugin,
+    ],
+  }
+  return nodeViews
+}
+
+async function mountDoc(markdown: string): Promise<EditorView> {
+  const views = await mainSideNodeViews()
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const view = new EditorView(host, {
+    state: EditorState.create({
+      doc: markdownToProse(markdown, schema),
+      plugins: [...views.plugins],
+    }),
+  })
+  mainState.editorView = view as unknown as typeof mainState.editorView
+  document.querySelector<HTMLElement>('#editor-container')?.appendChild(view.dom)
+  return view
 }
 
 function press(key: string, extra: KeyboardEventInit = {}): void {
@@ -1140,22 +1236,17 @@ describe('import', () => {
 })
 
 describe('kanban board insertion', () => {
-  function attachView(markdown: string): EditorView {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const view = new EditorView(host, {
-      state: EditorState.create({
-        doc: markdownToProse(markdown, schema),
-        // The board opens straight in edit mode, and that is the mode record:
-        // a view with no plugin for it can never report the board as open.
-        // The insert itself is routed through the `./node/mermaid` mock, which
-        // shares the statically imported `./block-modes` — so this must be that
-        // copy, not `main`'s (see `mainSideBlockModes`).
-        plugins: [history(), blockModePlugin],
-      }),
-    })
-    mainState.editorView = view as unknown as typeof mainState.editorView
-    return view
+  /**
+   * A view with the same node views and mode plugin the insert writes through.
+   *
+   * The record is then read back the only way that cannot disagree about which
+   * evaluation of the mode module wrote it: the board's own drawing, which is
+   * what "open in edit mode" means to a reader.
+   */
+  async function attachView(markdown: string): Promise<EditorView> {
+    await loadMain()
+    nodeViews = null
+    return mountDoc(markdown)
   }
 
   function columnField(): HTMLTextAreaElement {
@@ -1168,7 +1259,7 @@ describe('kanban board insertion', () => {
 
   it('inserts a board built from the dialog and opens it in edit mode', async () => {
     await loadMain()
-    const view = attachView('Hello')
+    const view = await attachView('Hello')
     menu('insertKanban')
     await flushAsync()
     expect(document.querySelector('.edi-dialog-title')?.textContent).toBe('New kanban board')
@@ -1183,11 +1274,13 @@ describe('kanban board insertion', () => {
     const board = view.state.doc.child(1)
     expect(board?.type.name).toBe('mermaid_block')
     expect(board?.attrs.value).toBe('kanban\n  col1[Backlog]\n  col2[Doing]')
-    // The insert carries the record with it, so the board is open for editing
-    // and one undo takes the whole thing away.
-    expect(modeFor(view.state, 0)).toBeNull()
-    expect(currentBlockMode(view.state)?.interaction).toBe('editing')
     expect(proseToMarkdown(view.state.doc)).toContain('```mermaid\nkanban\n  col1[Backlog]\n  col2[Doing]\n```')
+    // The insert carries the record with it, so the board comes up drawn for
+    // editing — one undo takes the whole thing away, record and all. The drawing
+    // is the assertion that cannot go wrong about *which* evaluation of the mode
+    // module wrote it: it is the node view's own answer.
+    await flushAsync()
+    expect(view.dom.querySelector('.mermaid')?.classList.contains('mermaid-editing')).toBe(true)
 
     undo(view.state, view.dispatch)
     expect(view.state.doc.childCount).toBe(1)
@@ -1195,8 +1288,7 @@ describe('kanban board insertion', () => {
   })
 
   it('replaces an empty paragraph with the board', async () => {
-    await loadMain()
-    const view = attachView('')
+    const view = await attachView('')
     menu('insertKanban')
     await flushAsync()
     columnField().value = 'Todo'
@@ -1209,7 +1301,7 @@ describe('kanban board insertion', () => {
   it('inserts nothing when the dialog is cancelled', async () => {
     await loadMain()
     mainState.showError.mockClear()
-    const view = attachView('Hello')
+    const view = await attachView('Hello')
     menu('insertKanban')
     await flushAsync()
     columnField().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -1220,7 +1312,7 @@ describe('kanban board insertion', () => {
 
   it('inserts nothing when every name the dialog collects is blank', async () => {
     await loadMain()
-    const view = attachView('Hello')
+    const view = await attachView('Hello')
     menu('insertKanban')
     await flushAsync()
     // Emptiness is the only thing left to refuse, and the dialog refuses it
@@ -1241,7 +1333,7 @@ describe('kanban board insertion', () => {
   it('builds a column whose name is a double quote, carried as an entity', async () => {
     await loadMain()
     mainState.showError.mockClear()
-    const view = attachView('Hello')
+    const view = await attachView('Hello')
     menu('insertKanban')
     await flushAsync()
     // A raw quote would close the label its own quote opened, so the source
@@ -1257,7 +1349,7 @@ describe('kanban board insertion', () => {
   it('inserts a column whose name holds a delimiter, quoted in the source', async () => {
     await loadMain()
     mainState.showError.mockClear()
-    const view = attachView('Hello')
+    const view = await attachView('Hello')
     menu('insertKanban')
     await flushAsync()
     // `]]` is a perfectly good column name; mermaid just cannot read it bare.
@@ -1271,35 +1363,37 @@ describe('kanban board insertion', () => {
 
 describe('context menu', () => {
   /**
-   * A real EditorView holding `markdown`, mounted where the context menu looks
-   * for it: `buildContextMenu` reads the view off the app's block editor, and
-   * that is a stub in this suite (a fake doc cannot answer `posAtDOM`).
+   * Boot the app and give every test in here a document to right-click in.
+   *
+   * This replaces the `loadMain` / `ediSetContent` / `flushAsync` trio each of
+   * these tests used to open with. It has to be here rather than inside each
+   * test: two `loadMain` calls mean two live copies of `main`, and therefore two
+   * `contextmenu` listeners and two menus on the page.
    */
-  async function mountLinkDoc(markdown: string): Promise<{ view: EditorView }> {
+  async function boot(options: { withDocument?: boolean } = {}): Promise<void> {
     await loadMain()
+    // `loadMain` re-evaluates every non-mocked module, so the cached node views
+    // belong to the registry that just went away. Holding on to them would have
+    // the node views ask a record no view carries.
+    nodeViews = null
+    if (options.withDocument === false) return
     // A session has to exist: with no document open the app answers no
     // right-click at all, before the menu is even built.
     window.ediSetContent?.('Hello')
     await flushAsync()
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const view = new EditorView(host, {
-      state: EditorState.create({
-        doc: markdownToProse(markdown, schema),
-        plugins: [history()],
-      }),
-    })
-    mainState.editorView = view as unknown as typeof mainState.editorView
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(view.dom)
+    await mountDoc('Hello')
+    await flushAsync()
+  }
+
+  async function mountLinkDoc(markdown: string): Promise<{ view: EditorView }> {
+    await boot()
+    const view = await mountDoc(markdown)
     await flushAsync()
     return { view }
   }
 
   it('opens the clipboard menu on right-click inside the editor', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
-
+    await boot()
     const editor = document.querySelector<HTMLElement>('#editor-container')!
     editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }))
     const labels = Array.from(document.querySelectorAll('.edi-menu-item'))
@@ -1314,9 +1408,7 @@ describe('context menu', () => {
 
   /** A real CodeMirror editor mounted where the masked-field input branch looks. */
   async function mountCodeMirror(doc: string): Promise<CMEditorView> {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const host = document.createElement('div')
     document.querySelector<HTMLElement>('#editor-container')!.appendChild(host)
     const view = new CMEditorView({
@@ -1377,9 +1469,7 @@ describe('context menu', () => {
   })
 
   it('gives masked-field inputs the real input menu instead of the document menu', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const input = document.createElement('input')
     input.className = 'masked-field-input'
     input.value = 'hunter2'
@@ -1556,9 +1646,7 @@ describe('context menu', () => {
   })
 
   it('disables cut and copy without a selection', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     document.querySelector<HTMLElement>('#editor-container')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 0, clientY: 0 }))
     const cut = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
@@ -1574,9 +1662,7 @@ describe('context menu', () => {
   })
 
   it('disables undo and redo when there is nothing to undo or redo', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     // A view of this test's own: whether `ediSetContent` still points at an
     // earlier test's editor (and how much history that one is holding) is not
     // what "nothing to undo" is meant to be about.
@@ -1599,9 +1685,7 @@ describe('context menu', () => {
   })
 
   it('enables undo and redo per history depth without scrolling', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const host = document.createElement('div')
     document.body.appendChild(host)
     const realView = new EditorView(host, {
@@ -1643,26 +1727,19 @@ describe('context menu', () => {
   })
 
   it('opens no context menu on the home screen', async () => {
-    await loadMain()
+    await boot({ withDocument: false })
     document.querySelector<HTMLElement>('#editor-container')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 0, clientY: 0 }))
     expect(document.querySelector('.edi-context-menu')).toBeNull()
   })
 
   it('offers Run and Copy source on a runnable block, Stop while running', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
+    await boot()
+    // A real block in a real view: the menu finds its block by asking the DOM
+    // where it is (§6.4), so a hand-made element outside the view names nothing.
+    const view = await mountDoc('```\n#!/usr/bin/env some-unknown-tool\nprint("hi")\n```')
     await flushAsync()
-
-    const runnable = document.createElement('div')
-    runnable.className = 'runnable-block'
-    runnable.innerHTML = [
-      '<pre class="runnable-source">#!/usr/bin/env python3',
-      'print("hi")</pre>',
-      '<button type="button" class="exec-run">Run</button>',
-    ].join('\n')
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(runnable)
-    const source = runnable.querySelector<HTMLElement>('.runnable-source')!
+    const source = view.dom.querySelector<HTMLElement>('.runnable-block')!
 
     source.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     let labels = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
@@ -1671,83 +1748,54 @@ describe('context menu', () => {
     expect(labels).toContain('Copy source')
     expect(labels).not.toContain('Stop')
 
-    runnable.querySelector<HTMLElement>('.exec-run')!.classList.add('exec-stop')
+    view.dom.querySelector<HTMLElement>('.exec-run')!.classList.add('exec-stop')
     source.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     labels = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
       .map((button) => button.textContent ?? '')
     expect(labels).toContain('Stop')
     expect(labels).not.toContain('Run')
-    runnable.remove()
   })
 
-  it('offers Visual mode when right-clicking source-mode blocks', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
+  it('offers Preview, and not Source, on a block in its source form', async () => {
+    await boot()
+    const view = await mountDoc('# Hello')
+    const modes = await mainSideBlockModes()
+    modes.enterSourceMode(view, 0)
     await flushAsync()
-    const sourceMode = document.createElement('div')
-    sourceMode.className = 'block-source-mode'
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sourceMode)
+    const sourceMode = view.dom.querySelector<HTMLElement>('.block-source-mode')!
+    expect(sourceMode).not.toBeNull()
 
     sourceMode.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     const labels = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
       .map((button) => button.textContent ?? '')
-    expect(labels).toContain('Visual mode')
-    expect(labels).not.toContain('Edit source')
-    sourceMode.remove()
+    // §5.1: two names for the two forms, and the menu offers the way *out*.
+    expect(labels).toContain('Preview')
+    expect(labels).not.toContain('Source')
   })
 
-  it('enters source mode from Edit source on a mermaid block', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    // The mode is plugin state now, so this view needs the plugin — and the one
-    // `main` holds, since `Edit source` is `main`'s own entry point.
-    const { blockModePlugin: plugin, modeFor: modeOf } = await mainSideBlockModes()
-    const realView = new EditorView(host, {
-      state: EditorState.create({ doc: markdownToProse('# Hello', schema), plugins: [plugin] }),
-    })
-    mainState.editorView = realView as unknown as typeof mainState.editorView
+  it('enters source mode from the block menu on a diagram', async () => {
+    await boot()
+    const view = await mountDoc('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const modes = await mainSideBlockModes()
+    const block = view.nodeDOM(0) as HTMLElement
 
-    const mermaid = document.createElement('div')
-    mermaid.className = 'mermaid'
-    mermaid.innerHTML = '<div class="block-handle" data-block-pos="0"></div><div class="mermaid-preview"></div>'
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(mermaid)
+    block.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+    const source = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+      .find((button) => button.textContent === 'Source')
+    expect(source).toBeDefined()
+    source!.click()
 
-    mermaid.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
-    const editSource = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
-      .find((button) => button.textContent === 'Edit source')!
-    expect(editSource).toBeDefined()
-    editSource.click()
-    expect(modeOf(realView.state, 0)?.representation).toBe('source')
-
-    realView.destroy()
-    host.remove()
-    mermaid.remove()
+    expect(modes.modeFor(view.state, 0)?.representation).toBe('source')
   })
 
-  it('enters and leaves mermaid edit mode from the block menu', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const realView = new EditorView(host, {
-      state: EditorState.create({
-        doc: markdownToProse('```mermaid\ngraph TD\n  A[Alpha]\n```', schema),
-        plugins: [blockModePlugin],
-      }),
-    })
-    mainState.editorView = realView as unknown as typeof mainState.editorView
-
-    const visual = document.createElement('div')
-    visual.className = 'mermaid'
-    visual.innerHTML = '<div class="block-handle" data-block-pos="0"></div><div class="mermaid-preview"></div>'
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(visual)
+  it('enters and leaves the interaction axis from the block menu', async () => {
+    await boot()
+    const view = await mountDoc('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const modes = await mainSideBlockModes()
 
     const openMenu = (): HTMLButtonElement[] => {
-      visual.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+      const block = view.nodeDOM(0) as HTMLElement
+      block.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
       return Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
     }
     const item = (buttons: HTMLButtonElement[], label: string): HTMLButtonElement => {
@@ -1756,16 +1804,13 @@ describe('context menu', () => {
       return found!
     }
 
-    item(openMenu(), 'Edit diagram').click()
-    expect(modeFor(realView.state, 0)?.interaction).toBe('editing')
-    visual.classList.add('mermaid-editing')
+    // Both words of §5.1's interaction axis, from the descriptor rather than from
+    // a class name on the wrapper.
+    item(openMenu(), 'Edit').click()
+    expect(modes.modeFor(view.state, 0)?.interaction).toBe('editing')
 
-    item(openMenu(), 'Done editing').click()
-    expect(modeFor(realView.state, 0)).toBeNull()
-
-    realView.destroy()
-    host.remove()
-    visual.remove()
+    item(openMenu(), 'Done').click()
+    expect(modes.currentBlockMode(view.state)).toBeNull()
   })
 
   function sheetInput(value: string, selection?: [number, number]): HTMLInputElement {
@@ -1792,33 +1837,24 @@ describe('context menu', () => {
     input.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
   }
 
-  /** A `.spreadsheet` block (block handle included, so the block actions
-   *  resolve) with a live view behind it, plus its teardown. */
-  const fakeSheet = (): { sheet: HTMLElement; teardown: () => void } => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const view = new EditorView(host, {
-      state: EditorState.create({ doc: markdownToProse('# Hello', schema) }),
-    })
-    mainState.editorView = view as unknown as typeof mainState.editorView
-    const sheet = document.createElement('div')
-    sheet.className = 'spreadsheet'
-    sheet.innerHTML = '<div class="block-handle" data-block-pos="1"></div>'
-    document.querySelector<HTMLElement>('#editor-container')!.appendChild(sheet)
-    return {
-      sheet,
-      teardown: () => {
-        view.destroy()
-        host.remove()
-        sheet.remove()
-      },
-    }
+  /**
+   * A real spreadsheet in a real view, with a live grid behind it.
+   *
+   * A table's own `_plain` form is a sheet, so the grid node view renders without
+   * anything having to ask for it.
+   */
+  const fakeSheet = async (): Promise<{ sheet: HTMLElement; teardown: () => void }> => {
+    const view = await mountDoc('| A |\n| --- |\n| 1 |')
+    // A table opens as text; the grid is one click away, so ask for it through the
+    // same registry the node view came from.
+    nodeViews!.table.enterSpreadsheetMode(view, 0)
+    const sheet = view.dom.querySelector<HTMLElement>('.spreadsheet')!
+    expect(sheet).not.toBeNull()
+    return { sheet, teardown: () => view.destroy() }
   }
 
   it('scopes the menu to a spreadsheet cell editor', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const input = sheetInput('=SUM(A1)', [1, 4])
 
     openCellMenu(input)
@@ -1834,9 +1870,7 @@ describe('context menu', () => {
   })
 
   it('disables cut and copy on a cell editor without a selection', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const input = sheetInput('=1', [2, 2])
 
     openCellMenu(input)
@@ -1845,9 +1879,7 @@ describe('context menu', () => {
   })
 
   it('selects and pastes into the cell editor', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const input = sheetInput('=A1', [2, 2])
 
     openCellMenu(input)
@@ -1865,9 +1897,7 @@ describe('context menu', () => {
   })
 
   it('runs undo and redo against the cell editor', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const execCommand = vi.fn()
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
     const input = sheetInput('=1', [2, 2])
@@ -1878,9 +1908,7 @@ describe('context menu', () => {
   })
 
   it('keeps focus in a spreadsheet input when its menu opens', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
+    await boot()
     const input = sheetInput('=1', [2, 2])
     const blurred = vi.fn()
     input.addEventListener('blur', blurred)
@@ -1891,10 +1919,8 @@ describe('context menu', () => {
   })
 
   it('keeps the spreadsheet actions alongside the cell menu', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
-    const { sheet, teardown } = fakeSheet()
+    await boot()
+    const { sheet, teardown } = await fakeSheet()
     const input = document.createElement('input')
     input.className = 'ss-edit-input'
     input.value = '=1'
@@ -1909,8 +1935,8 @@ describe('context menu', () => {
       'Copy',
       'Paste',
       'Select all',
-      'Table view',
-      'Edit source',
+      'Show as text',
+      'Source',
       'Encrypt block…',
     ])
 
@@ -1918,10 +1944,8 @@ describe('context menu', () => {
   })
 
   it('offers only block actions on a cell with no live spreadsheet view', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
-    const { sheet, teardown } = fakeSheet()
+    await boot()
+    const { sheet, teardown } = await fakeSheet()
     sheet.insertAdjacentHTML(
       'beforeend',
       '<table><tbody><tr><td class="ss-cell">1</td></tr></tbody></table>',
@@ -1929,16 +1953,14 @@ describe('context menu', () => {
     const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
-    expect(menuLabels()).toEqual(['Table view', 'Edit source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Show as text', 'Source', 'Encrypt block…'])
 
     teardown()
   })
 
   it('keeps the grid editing commands above the block actions on a cell', async () => {
-    await loadMain()
-    window.ediSetContent?.('Hello')
-    await flushAsync()
-    const { sheet, teardown } = fakeSheet()
+    await boot()
+    const { sheet, teardown } = await fakeSheet()
     sheet.insertAdjacentHTML(
       'beforeend',
       '<table><tbody><tr><td class="ss-cell">1</td></tr></tbody></table>',
@@ -1952,12 +1974,69 @@ describe('context menu', () => {
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     expect(mainState.spreadsheetMenuEntries).toHaveBeenCalledWith(cell)
-    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Table view', 'Edit source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Show as text', 'Source', 'Encrypt block…'])
 
     findMenuItem('Cut').click()
     expect(cut).toHaveBeenCalledTimes(1)
 
     teardown()
+  })
+})
+
+describe('the status chip', () => {
+  /**
+   * The chip is written from the mode record alone and into an element of its
+   * own, because `#status-left` is the transient flash slot: a chip there would
+   * be overwritten by the next flash and cleared by `updateStatus` after three
+   * seconds.
+   */
+  function chip(): { text: string; hidden: boolean } {
+    const el = document.querySelector<HTMLElement>('#status-mode')!
+    return { text: el.textContent ?? '', hidden: el.hidden }
+  }
+
+  it('names the mode and the block it is about, and empties when it closes', async () => {
+    await loadMain()
+    nodeViews = null
+    const modes = await mainSideBlockModes()
+    expect(chip()).toEqual({ text: '', hidden: true })
+
+    const view = await mountDoc('## The heading text')
+    modes.enterSourceMode(view, 0)
+    // `createBlockEditor` is stubbed here, so the notification the real
+    // `dispatchTransaction` sends on a record change is delivered by hand;
+    // `editor.test.ts` is where the notification itself is pinned.
+    mainState.editorOptions?.onModeChange?.(modes.currentBlockMode(view.state))
+    await flushAsync()
+    expect(chip()).toEqual({
+      text: 'Source \u2014 \u201cThe heading text\u201d \u00b7 Esc for preview',
+      hidden: false,
+    })
+
+    modes.exitBlockMode(view)
+    mainState.editorOptions?.onModeChange?.(modes.currentBlockMode(view.state))
+    await flushAsync()
+    expect(chip()).toEqual({ text: '', hidden: true })
+  })
+
+  it('names a diagram by its first line, and truncates a long one', async () => {
+    await loadMain()
+    nodeViews = null
+    const modes = await mainSideBlockModes()
+    const view = await mountDoc('```mermaid\nflowchart LR\n  A[Alpha]\n```')
+    modes.enterBlockMode(view, 0, { interaction: 'editing' })
+    mainState.editorOptions?.onModeChange?.(modes.currentBlockMode(view.state))
+    await flushAsync()
+    expect(chip().text).toBe('Edit \u2014 \u201cflowchart LR\u201d')
+
+    const long = await mountDoc('a paragraph of exactly sixty words is not what a status chip is for at all')
+    modes.enterSourceMode(long, 0)
+    mainState.editorOptions?.onModeChange?.(modes.currentBlockMode(long.state))
+    await flushAsync()
+    const text = chip().text
+    expect(text.startsWith('Source \u2014 \u201c')).toBe(true)
+    expect(text.endsWith('\u2026\u201d \u00b7 Esc for preview')).toBe(true)
+    expect(text.length).toBeLessThan(90)
   })
 })
 

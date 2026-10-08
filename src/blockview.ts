@@ -1,21 +1,9 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
-import { commitSourceBlock, modeFor } from './block-modes'
+import { attachBlockControls, commitSourceBlock, modeFor } from './block-modes'
 import { serializeBlock } from './markdown'
 import { headingSlug } from './schema'
-
-function createHandleDOM(pos: number): HTMLElement {
-  const handle = document.createElement('div')
-  handle.className = 'block-handle'
-  handle.setAttribute('data-block-pos', String(pos))
-  handle.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-    <circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/>
-    <circle cx="3" cy="6" r="1.2"/><circle cx="9" cy="6" r="1.2"/>
-    <circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/>
-  </svg>`
-  return handle
-}
 
 /**
  * What the visual-mode wrapper DOM depends on. The node view rebuilds the
@@ -100,14 +88,14 @@ class BlockSourceNodeView implements NodeView {
 
     const label = document.createElement('span')
     label.className = 'block-source-label'
-    label.textContent = 'Markdown source'
+    label.textContent = 'Source'
     toolbar.appendChild(label)
 
     const exitBtn = document.createElement('button')
     exitBtn.type = 'button'
     exitBtn.className = 'block-source-exit'
-    exitBtn.textContent = 'Visual mode'
-    exitBtn.title = 'Back to visual mode (Esc)'
+    exitBtn.textContent = 'Preview'
+    exitBtn.title = 'Back to the rendered block (Esc)'
     exitBtn.addEventListener('click', () => {
       this.exitSource(this.cm?.getValue() ?? '')
     })
@@ -173,14 +161,6 @@ class BlockVisualNodeView implements NodeView {
     this.dom = document.createElement('div')
     this.dom.className = 'block-visual-mode'
 
-    const pos = getPos()
-    if (pos !== undefined) {
-      const $pos = view.state.doc.resolve(pos)
-      if ($pos.parent.type.name === 'doc') {
-        this.dom.appendChild(createHandleDOM(pos))
-      }
-    }
-
     const semantic = createSemanticWrapper(node)
     if (semantic) {
       this.contentDOM = semantic
@@ -190,6 +170,10 @@ class BlockVisualNodeView implements NodeView {
       this.contentDOM.className = 'block-content'
       this.dom.appendChild(this.contentDOM)
     }
+    // Appended after the content so it paints over it, which is what lets it be
+    // pressed where it overlaps a wide diagram or a long code block.
+    const controls = attachBlockControls(node, view, getPos)
+    if (controls) this.dom.appendChild(controls.dom)
   }
 
   update(node: ProseNode): boolean {

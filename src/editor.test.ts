@@ -4,7 +4,7 @@ import { TextSelection } from 'prosemirror-state'
 import { Slice } from 'prosemirror-model'
 import { createBlockEditor } from './editor'
 import { proseToMarkdown } from './markdown'
-import { currentBlockMode } from './block-modes'
+import { currentBlockMode, enterSourceMode, exitBlockMode } from './block-modes'
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -374,6 +374,47 @@ describe('BlockEditor public API', () => {
     const editor = createBlockEditor(document.body, 'hello', { onChange })
     editor.setMarkdown('replaced')
     expect(onChange).not.toHaveBeenCalled()
+    editor.destroy()
+  })
+
+  // A mode is not a document change, so the status chip cannot hang off
+  // `onChange`: it needs to hear about the record itself, and only this editor
+  // (the nested one an unlocked encrypted block creates has a record of its own,
+  // and no chip).
+  it('notifies onModeChange when the block-mode record changes, and only then', () => {
+    const onChange = vi.fn()
+    const onModeChange = vi.fn()
+    const editor = createBlockEditor(document.body, 'hello', { onChange, onModeChange })
+    const view = editor.getView()
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)))
+    expect(onModeChange).not.toHaveBeenCalled()
+
+    enterSourceMode(view, 0)
+    expect(onModeChange).toHaveBeenCalledTimes(1)
+    expect(onModeChange.mock.calls[0]![0]).toMatchObject({ representation: 'source' })
+    // ...and a mode flip is not an edit, so the document is not dirtied by it.
+    expect(onChange).not.toHaveBeenCalled()
+
+    exitBlockMode(view)
+    expect(onModeChange).toHaveBeenCalledTimes(2)
+    expect(onModeChange.mock.calls[1]![0]).toBeNull()
+    editor.destroy()
+  })
+
+  it('carries a tab\'s own record across the swap', () => {
+    const onModeChange = vi.fn()
+    const editor = createBlockEditor(document.body, 'hello', { onModeChange })
+    const opened = editor.createState('world')
+    enterSourceMode(editor.getView(), 0)
+    expect(onModeChange).toHaveBeenCalledTimes(1)
+    onModeChange.mockClear()
+
+    editor.applyState(opened)
+
+    // The chip follows the record, and the record follows the tab.
+    expect(onModeChange).toHaveBeenCalledTimes(1)
+    expect(onModeChange.mock.calls[0]![0]).toBeNull()
     editor.destroy()
   })
 

@@ -61,12 +61,25 @@ export const BLOCK_MODE_KEY = new PluginKey<BlockMode | null>('EDI_BLOCK_MODE')
  *
  * This is not decoration for its own sake. A mode is no longer an edit, so
  * flipping it leaves the document byte-identical — and ProseMirror only walks
- * the tree when the document (or a node's decorations) changed, so a node view
- * whose rendering depends on the mode would never be asked again and the block
- * would keep drawing the way it was. A node decoration on the block is what
- * makes the walk happen; the views answer it by asking `modeFor`.
+ * the tree when the document changed *or a node's decorations did*
+ * (`ViewDesc.matchesNode` compares them by value), so a node view whose rendering
+ * depends on the mode would never be asked again and the block would keep drawing
+ * the way it was. A node decoration on the block is what makes the walk happen;
+ * the views answer it by asking `modeFor`.
+ *
+ * **It has to say *which* mode.** A decoration that only said "there is a mode"
+ * would be byte-identical across two different modes, and a mode flip from one to
+ * another while the record stays held would not be a change at all: pressing
+ * Source on a diagram that is already in its edit mode left the record on Source
+ * and the board still drawn, because nothing asked the node view. So the class
+ * carries the axis, which is §7.2's accent rule doing the load-bearing half as
+ * well as the legible one.
  */
 export const BLOCK_MODE_CLASS = 'edi-block-mode'
+
+/** `…-preview` / `…-source`, plus `…-editing` while the interaction axis is on. */
+export const BLOCK_MODE_SOURCE_CLASS = `${BLOCK_MODE_CLASS}-source`
+export const BLOCK_MODE_EDITING_CLASS = `${BLOCK_MODE_CLASS}-editing`
 
 /**
  * What a block type supports. This is the declaration a block makes about
@@ -123,15 +136,57 @@ function blockModeDecorations(state: EditorState): DecorationSet {
   if (mode === null) return DecorationSet.empty
   const node = state.doc.nodeAt(mode.pos)
   if (node === null || !supportsMode(node, mode)) return DecorationSet.empty
+  const classes = [BLOCK_MODE_CLASS, `${BLOCK_MODE_CLASS}-${mode.representation}`]
+  if (mode.interaction === 'editing') classes.push(BLOCK_MODE_EDITING_CLASS)
   return DecorationSet.create(state.doc, [
-    Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: BLOCK_MODE_CLASS }),
+    Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: classes.join(' ') }),
   ])
 }
+
+/**
+ * What a block type needs the record for, registered by the node view that owns
+ * it.
+ *
+ * `blockModeFor` says a block type *has* an interaction axis; this says how it is
+ * entered and left, and what the Alt+click gesture does to it. It is a table
+ * rather than an import because the two node views that have one — the diagram
+ * and the table — both import this module, and what entering costs is a
+ * subsystem concern: finishing a pending label before an interaction mode
+ * changes is an ordering rule of `mermaid-edit.ts`, and cycling a table's
+ * rendered form is a document edit of `node/table.ts`.
+ */
+export interface BlockModeHandlers {
+  /** Enter the interaction axis, in that subsystem's own order. */
+  enter?: (view: EditorView, pos: number) => void
+  /** Leave it, the same way — the ladder's third step, and `Done`. */
+  exit?: (view: EditorView, pos: number) => void
+  /** What Alt+click on this block does (§5.2). */
+  toggle?: (view: EditorView, pos: number) => void
+}
+
+export const BLOCK_MODE_HANDLERS: Record<string, BlockModeHandlers> = {}
 
 export const blockModePlugin = new Plugin<BlockMode | null>({
   key: BLOCK_MODE_KEY,
   props: {
     decorations: blockModeDecorations,
+  },
+  view(view: EditorView) {
+    const onClick = (event: MouseEvent): void => {
+      blockModeGesture(view, event)
+    }
+    // The editor's *scroll container*: the editor's own box is only as tall as
+    // its content, so a document that is one short block leaves the white space
+    // under it on the scroller, where a `view.dom` listener sees nothing — and
+    // that space is where a click aimed at the page *under* a lone board lands.
+    // It is the scroller and not `document` (which the old table handler could
+    // afford) so that an Alt+click in a dialog sitting on top of the editor
+    // cannot reach through it.
+    // `Document` is in the union for a mount into a fragment or a shadow root,
+    // which ProseMirror allows and which has no `parentElement`.
+    const host = view.dom.parentElement ?? document
+    host.addEventListener('click', onClick as EventListener)
+    return { destroy: () => host.removeEventListener('click', onClick as EventListener) }
   },
   state: {
     init: (): BlockMode | null => null,
@@ -206,6 +261,174 @@ export function modeFor(state: EditorState, pos: number | undefined): BlockMode 
   if (pos === undefined) return null
   const mode = currentBlockMode(state)
   return mode !== null && mode.pos === pos ? mode : null
+}
+
+/**
+ * The top-level block `target` sits in, as a document position, or -1 when it is
+ * not in this editor at all.
+ *
+ * This is the **one** DOM→position authority (§6.4). It replaced two: a
+ * `data-block-pos` snapshot written into every handle when it was built, and a
+ * walk that re-derived the position by scanning the document for a wrapper. The
+ * snapshot is a number read at build time — stale the moment the document moves
+ * under it — so every control now closes over the node view's `getPos()` and
+ * asks at press time; this is the same question asked in the other direction,
+ * for the two entry points that start from a DOM event (the context menu and the
+ * Alt+click gesture) and have no node view to ask.
+ *
+ * `posAtDOM` is the primitive that answers it, and it needs no layout — which
+ * matters, because the alternative (`posAtCoords`) needs a hit test and the real
+ * engine is the only place a hit test exists. The containment check is not
+ * redundant: an unlocked encrypted block is a *second* editor inside this one,
+ * and a position in its document means nothing here.
+ */
+export function blockPosForElement(view: EditorView, target: EventTarget | null): number {
+  if (!(target instanceof Element) || !view.dom.contains(target)) return -1
+  let inside: number
+  try {
+    inside = view.posAtDOM(target, 0)
+  } catch {
+    return -1
+  }
+  if (inside < 0) return -1
+  const doc = view.state.doc
+  const blockEndingAt = (at: number): number => {
+    let found = -1
+    doc.forEach((node, offset) => {
+      if (found < 0 && at === offset + node.nodeSize) found = offset
+    })
+    return found
+  }
+  let blockPos = -1
+  doc.forEach((node, offset) => {
+    if (blockPos >= 0) return
+    if (inside >= offset && inside < offset + node.nodeSize) blockPos = offset
+  })
+  // A block's own DOM can report the position at its *end* boundary rather than
+  // inside it, and for an atom — a table, a diagram, a rule — that boundary is
+  // also where the next block starts. Left alone, a click in a table would name
+  // whatever follows it, which is the same class of bug the old
+  // `data-block-pos` snapshot had and this replaced.
+  if (blockPos < 0) blockPos = blockEndingAt(inside)
+  return blockPos
+}
+
+/**
+ * A click Chrome already owns: a button, a text field, a link, a CodeMirror
+ * editor, a diagram's own layer. Such a click is the control's own business —
+ * Alt+click on a zoom button is a zoom, not a request about the block it happens
+ * to sit on.
+ *
+ * The two diagram classes are spelled out rather than imported from
+ * `mermaid-edit.ts`, which would put the whole rendering library behind this
+ * module; they are the chrome layer's public names, and the kanban builder and
+ * the diagram's `stopEvent` match the same ones.
+ */
+function chromeOwnsClick(event: MouseEvent): boolean {
+  return (
+    event.target instanceof Element &&
+    event.target.closest(
+      'a[href], button, input, textarea, select, .cm-editor, .block-controls,'
+      + ' .mermaid-kanban-chrome, .mermaid-edit-field',
+    ) !== null
+  )
+}
+
+/**
+ * The Alt+click gesture (§5.2), for every block type at once.
+ *
+ * On a block that has something to toggle, it toggles it; anywhere else it
+ * finishes whatever is editing. The second half is deliberate and is what the
+ * double click this replaces already did for a diagram: the gesture that turns a
+ * mode off should not have to land back on the thing that turned it on, and a
+ * board is the one block whose Alt+click target may have moved under the
+ * pointer since. The click is never swallowed — a word to select, a caret to
+ * place and a cell to mark all still happen, which is the whole reason the mode
+ * gestures moved off double click in the first place.
+ *
+ * Nothing is claimed for a block type that registers no `toggle`, which is why
+ * Alt+click on a paragraph is inert.
+ */
+export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
+  if (!event.altKey || event.button !== 0) return false
+  if (chromeOwnsClick(event)) return false
+  const pos = blockPosForElement(view, event.target)
+  if (pos >= 0) {
+    const node = view.state.doc.nodeAt(pos)
+    const toggle = node === null ? undefined : BLOCK_MODE_HANDLERS[node.type.name]?.toggle
+    if (toggle !== undefined) {
+      toggle(view, pos)
+      return true
+    }
+  }
+  return exitBlockMode(view)
+}
+
+/**
+ * Put the block at `pos` into a mode.
+ *
+ * The ordering rule is not here but in the two entries below it, and it is the
+ * same one: commit the outgoing source block, *then* build this transaction,
+ * *then* dispatch it. Every route in the app goes through one of these, so no
+ * route can move the record while an edit is still sitting in a buffer.
+ */
+export function enterBlockMode(
+  view: EditorView,
+  pos: number,
+  changes: { representation?: Representation; interaction?: Interaction },
+): void {
+  if (changes.representation === 'source') {
+    enterSourceMode(view, pos)
+    return
+  }
+  if (changes.interaction === 'editing') {
+    const node = view.state.doc.nodeAt(pos)
+    const enter = node === null ? undefined : BLOCK_MODE_HANDLERS[node.type.name]?.enter
+    enter?.(view, pos)
+  }
+}
+
+/**
+ * The Escape ladder (§5.3), and `exitBlockMode` in general.
+ *
+ * One block is in a non-default state at a time, so leaving it is one decision
+ * with two rungs: a block in its source form has a buffer whose only copy of what
+ * was typed lives in a CodeMirror instance, so committing it *is* the exit; any
+ * other mode simply has the record dropped. Returns whether it did anything, so
+ * the ladder's last rung can hand Escape on to every other handler — selection,
+ * dialogs, a diagram's own.
+ *
+ * Step one of the ladder is not here and does not need to be: an open field, a
+ * cell editor and a menu each take Escape themselves and stop it arriving.
+ */
+export function exitBlockMode(view: EditorView): boolean {
+  const mode = currentBlockMode(view.state)
+  if (mode === null) return false
+  if (mode.representation === 'source') return commitSourceMode(view)
+  if (mode.interaction === 'editing') {
+    const exit = BLOCK_MODE_HANDLERS[mode.type]?.exit
+    if (exit !== undefined) {
+      exit(view, mode.pos)
+      return true
+    }
+  }
+  view.dispatch(view.state.tr.setMeta(BLOCK_MODE_KEY, null))
+  return true
+}
+
+/** Toggle one axis of the block at `pos`, in both directions. */
+export function toggleBlockMode(
+  view: EditorView,
+  pos: number,
+  axis: 'representation' | 'interaction',
+): void {
+  if (axis === 'representation') {
+    toggleSourceMode(view, pos)
+    return
+  }
+  const node = view.state.doc.nodeAt(pos)
+  if (node === null) return
+  BLOCK_MODE_HANDLERS[node.type.name]?.toggle?.(view, pos)
 }
 
 /**
@@ -373,19 +596,6 @@ export function enterSourceMode(view: EditorView, pos: number): void {
 }
 
 /**
- * Leave the source form, committing the buffer on the way out.
- *
- * In the source form the buffer is the only copy of what was typed, so the
- * commit *is* the exit: `commitSourceMode` writes it to the document and clears
- * the record itself. Any other mode simply has the record dropped.
- */
-export function exitSourceMode(view: EditorView): void {
-  if (commitSourceMode(view)) return
-  if (currentBlockMode(view.state) === null) return
-  view.dispatch(view.state.tr.setMeta(BLOCK_MODE_KEY, null))
-}
-
-/**
  * Toggle the block at `pos` in and out of the source form, in both directions
  * and from either block: a block already in it goes back to its rendering, and
  * opening a second block commits the first.
@@ -393,8 +603,167 @@ export function exitSourceMode(view: EditorView): void {
 export function toggleSourceMode(view: EditorView, pos: number): void {
   const mode = currentBlockMode(view.state)
   if (mode !== null && mode.pos === pos && mode.representation === 'source') {
-    exitSourceMode(view)
+    exitBlockMode(view)
     return
   }
   enterSourceMode(view, pos)
+}
+
+// ── the control cluster ─────────────────────────────────────────────────────
+
+export const BLOCK_CONTROLS_CLASS = 'block-controls'
+
+/** One button in the cluster, as the record and the node view describe it. */
+interface ControlButton {
+  button: HTMLButtonElement
+  /** Repaint from the record — the label is the mode, so it follows it. */
+  paint(): void
+}
+
+export interface BlockControls {
+  dom: HTMLElement
+  /** Re-read the record and repaint the mode buttons. */
+  refresh(): void
+  /**
+   * Replace the block's *own* actions (everything after the mode buttons).
+   *
+   * A node view owns the elements it contributes — a diagram's zoom buttons are
+   * rebuilt on every render, because they bind to the drawing that render
+   * produced — so they arrive as elements rather than as descriptors.
+   */
+  setActions(elements: readonly HTMLElement[]): void
+  /** Take the cluster down: the block is showing its source, or is going away. */
+  remove(): void
+}
+
+/**
+ * Build a block's one control cluster: its mode buttons, generated from
+ * `blockModeFor`, followed by whatever actions the node view contributes.
+ *
+ * This replaces five places controls used to be built and four of them had a
+ * hover rule and a geometry of their own (§6.2). Every top-level block now gets
+ * the same row at the same place, so which control a block has is a question
+ * about what the block *can do* rather than about which node view drew it.
+ *
+ * Every button reads its position from `getPos()` **when it is pressed**. That is
+ * the single position authority (§6.4): the alternative every one of these had
+ * was a `data-block-pos` written into the DOM when the control was built, which
+ * is a snapshot of a position the document is free to move.
+ *
+ * Returns null when there is nothing to put in it — a nested block (§6.7), or a
+ * type with no modes at all, which is what keeps `source_block` (permanently in
+ * its source form, so with the banner and never a cluster) out of it.
+ */
+export function attachBlockControls(
+  node: ProseNode,
+  view: EditorView,
+  getPos: () => number | undefined,
+  actions: readonly HTMLElement[] = [],
+): BlockControls | null {
+  const pos = getPos()
+  // A cluster on every list item would clutter exactly the dense structures where
+  // it is least useful, so controls stay on top-level blocks — and nested blocks
+  // reach Source through `Mod-Shift-e`, the status chip and the context menu,
+  // none of which need a control to exist.
+  if (pos === undefined || view.state.doc.resolve(pos).parent.type.name !== 'doc') return null
+
+  const descriptor = blockModeFor(node)
+  const buttons: ControlButton[] = []
+  if (descriptor.representation) buttons.push(representationButton(view, getPos))
+  if (descriptor.interaction === 'toggle') buttons.push(interactionButton(view, getPos))
+  if (buttons.length === 0 && actions.length === 0) return null
+
+  const dom = document.createElement('div')
+  dom.className = BLOCK_CONTROLS_CLASS
+  const actionSlot = document.createElement('span')
+  actionSlot.className = 'block-control-actions'
+  dom.append(...buttons.map((entry) => entry.button), actionSlot)
+  // Keep the caret out of the labels: clicking a <button> natively puts the text
+  // cursor inside its text, and a press that moved the caret into a diagram's
+  // zoom pill would deselect the block the user was working on.
+  dom.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+  })
+
+  const setActions = (elements: readonly HTMLElement[]): void => {
+    actionSlot.replaceChildren(...elements)
+  }
+  setActions(actions)
+  for (const entry of buttons) entry.paint()
+
+  return {
+    dom,
+    refresh: () => {
+      for (const entry of buttons) entry.paint()
+    },
+    setActions,
+    remove: () => dom.remove(),
+  }
+}
+
+function controlButton(className: string): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = `block-control ${className}`
+  return button
+}
+
+function representationButton(
+  view: EditorView,
+  getPos: () => number | undefined,
+): ControlButton {
+  const button = controlButton('block-control-representation')
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const at = getPos()
+    if (at === undefined) return
+    // Through the shared toggle, which is what makes this the two-way control the
+    // one-way dot grid of §1.5 could not be: opening another block commits this
+    // one first, so a press here can never throw away what was typed in it.
+    toggleBlockMode(view, at, 'representation')
+  })
+  return {
+    button,
+    paint: () => {
+      const at = getPos()
+      const source = at !== undefined && modeFor(view.state, at)?.representation === 'source'
+      button.textContent = source ? 'Preview' : 'Source'
+      button.title = source
+        ? 'Back to the rendered block (Esc)'
+        : 'Show this block as markdown (Ctrl+Shift+E)'
+      button.setAttribute('aria-pressed', String(source))
+    },
+  }
+}
+
+function interactionButton(
+  view: EditorView,
+  getPos: () => number | undefined,
+): ControlButton {
+  const button = controlButton('block-control-interaction')
+  const toggle = (): void => {
+    const at = getPos()
+    if (at === undefined) return
+    toggleBlockMode(view, at, 'interaction')
+  }
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    toggle()
+  })
+  return {
+    button,
+    paint: () => {
+      const at = getPos()
+      const editing = at !== undefined && modeFor(view.state, at)?.interaction === 'editing'
+      button.textContent = editing ? 'Done' : 'Edit'
+      button.title = editing
+        ? 'Finish editing the diagram (Esc)'
+        : 'Edit the diagram in place (Alt+click)'
+      button.classList.toggle('block-control-on', editing)
+      button.setAttribute('aria-pressed', String(editing))
+    },
+  }
 }

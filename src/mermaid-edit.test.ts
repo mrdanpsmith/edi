@@ -37,6 +37,7 @@ vi.mock('./mermaid', () => ({
   adaptDiagramColors: vi.fn(),
   pinSvgTextColors: vi.fn(),
   attachMermaidToolbar: vi.fn(),
+  mermaidZoomButtons: vi.fn(() => []),
   bakeDiagram: hoisted.bake,
 }))
 
