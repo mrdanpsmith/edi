@@ -83,7 +83,7 @@ class MermaidNodeView implements NodeView {
       this.showSource()
     } else {
       this.currentCode = String(node.attrs.value ?? '')
-      this.showPreview(this.currentCode)
+      this.showVisual(this.currentCode)
     }
   }
 
@@ -116,7 +116,7 @@ class MermaidNodeView implements NodeView {
       this.cm?.destroy()
       this.cm = null
       this.currentCode = String(node.attrs.value ?? '')
-      this.showPreview(this.currentCode)
+      this.showVisual(this.currentCode)
       return true
     }
     this.node = node
@@ -160,7 +160,7 @@ class MermaidNodeView implements NodeView {
     const exitBtn = document.createElement('button')
     exitBtn.type = 'button'
     exitBtn.className = 'block-source-exit'
-    exitBtn.textContent = 'Preview'
+    exitBtn.textContent = 'Visual'
     exitBtn.title = 'Back to the rendered block (Esc)'
     exitBtn.addEventListener('click', () => {
       this.exitSource(this.cm?.getValue() ?? '')
@@ -197,15 +197,15 @@ class MermaidNodeView implements NodeView {
     this.view.focus()
   }
 
-  private showPreview(code: string): void {
+  private showVisual(code: string): void {
     this.currentCode = code
-    this.buildPreview(code)
+    this.buildVisual(code)
   }
 
-  private buildPreview(code: string): void {
-    // The preview element is about to be replaced, and the session places
-    // everything against it, so a session that outlived this would be placing
-    // overlays in a detached scroller. A rebuild is a fresh block either way.
+  private buildVisual(code: string): void {
+    // The element holding the drawing is about to be replaced, and the session
+    // places everything against it, so a session that outlived this would be
+    // placing overlays in a detached scroller. A rebuild is a fresh block anyway.
     discardMermaidSession(this.dom)
     this.controls?.remove()
     this.controls = null
@@ -213,15 +213,20 @@ class MermaidNodeView implements NodeView {
     this.dom.className = 'mermaid'
     this.syncModeClass()
 
-    const preview = document.createElement('div')
-    preview.className = 'mermaid-preview'
-    this.dom.appendChild(preview)
+    // The variable is named for the mode (`visual`) and the class for what the
+    // element is — the scroller the drawing lives in, which has been called
+    // `.mermaid-preview` since long before the two axes had names. Not a
+    // half-renamed pair: the mode says how the block is shown, the element holds
+    // the diagram.
+    const visual = document.createElement('div')
+    visual.className = 'mermaid-preview'
+    this.dom.appendChild(visual)
     // The cluster is what carries the zoom buttons now, and it is the thing a
     // render replaces: those buttons bind to the svg and the natural width *this*
     // render produced, so they are rebuilt with it and handed back to the cluster.
     this.controls = attachBlockControls(this.node, this.view, this.getPos)
     if (this.controls) this.dom.appendChild(this.controls.dom)
-    void this.renderPreview(preview, code)
+    void this.renderVisual(visual, code)
   }
 
   private syncModeClass(): void {
@@ -229,17 +234,17 @@ class MermaidNodeView implements NodeView {
     this.controls?.refresh()
   }
 
-  /** Re-render into the existing preview, so the last good diagram survives a failure. */
+  /** Re-render into the existing drawing, so the last good diagram survives a failure. */
   private rerender(): void {
-    const preview = this.dom.querySelector<HTMLElement>('.mermaid-preview')
-    if (!preview) {
-      this.buildPreview(this.currentCode)
+    const visual = this.dom.querySelector<HTMLElement>('.mermaid-preview')
+    if (!visual) {
+      this.buildVisual(this.currentCode)
       return
     }
-    void this.renderPreview(preview, this.currentCode)
+    void this.renderVisual(visual, this.currentCode)
   }
 
-  private async renderPreview(container: HTMLElement, code: string): Promise<void> {
+  private async renderVisual(container: HTMLElement, code: string): Promise<void> {
     // A board is authored from the board, so in edit mode it is *drawn* with the
     // two places a card or a column can be added: mermaid lays a card slot out in
     // the next card's own place and a column slot out as a column, which is
@@ -280,7 +285,8 @@ class MermaidNodeView implements NodeView {
     if (pos === undefined) return
     // Only ever a diagram: the block can have gone to its source mode while a
     // dialog was up, and a commit that landed then would be an edit in the
-    // document that neither the preview nor the CodeMirror buffer ever showed.
+    // document that neither the rendered diagram nor the CodeMirror buffer ever
+    // showed.
     const node = this.view.state.doc.nodeAt(pos)
     if (!node || node.type.name !== MERMAID_TYPE) return
     // The record is deliberately left alone: this is a visual edit to a block
@@ -353,7 +359,8 @@ export function enterDiagramEditMode(view: EditorView, pos: number | undefined):
   // The diagram about to drop out of edit mode finishes its pending field *before*
   // the transaction lands, not after it. A dispatch re-renders the block
   // synchronously as far as the first `await`, which is far enough to rebind its
-  // session to "this is a preview" — so a field accepted afterwards would be
+  // session to "this is not editable any more" — so a field accepted afterwards
+  // would be
   // committing to a block that had already stopped being editable, and the
   // half-typed label would be dropped on the floor. Accepting first lets the
   // commit's own render happen in edit mode, and the mode change then renders over

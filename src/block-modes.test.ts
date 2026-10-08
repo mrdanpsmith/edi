@@ -13,7 +13,10 @@ import { tableNodeViewPlugin } from './node/table'
 import {
   BLOCK_CONTROLS_CLASS,
   BLOCK_MODE_CLASS,
+  BLOCK_MODE_EDITING_CLASS,
   BLOCK_MODE_KEY,
+  BLOCK_MODE_SOURCE_CLASS,
+  BLOCK_MODE_VISUAL_CLASS,
   blockModeFor,
   blockModePlugin,
   currentBlockMode,
@@ -232,7 +235,7 @@ describe('the plugin key', () => {
     const tr = view.state.tr.setMeta(BLOCK_MODE_KEY, {
       pos: first,
       type: 'heading',
-      representation: 'preview' as const,
+      representation: 'visual' as const,
       interaction: 'editing' as const,
     })
     view.dispatch(tr)
@@ -369,7 +372,7 @@ describe('one cluster per top-level block', () => {
     view.destroy()
   })
 
-  it('takes the block back to its rendering when the cluster\'s own Preview is pressed', () => {
+  it('takes the block back to its rendering when the cluster\'s own Visual is pressed', () => {
     const view = createEditor('# Hello\n\nSecond paragraph')
     const [first] = allBlockPositions(view)
     enterSourceMode(view, first)
@@ -377,20 +380,20 @@ describe('one cluster per top-level block', () => {
     // already open, so the mode could not be turned off from there at all.
     expect((view.nodeDOM(first) as HTMLElement).querySelector(`.${BLOCK_CONTROLS_CLASS}`)).toBeNull()
     const banner = (view.nodeDOM(first) as HTMLElement).querySelector('.block-source-exit') as HTMLButtonElement
-    expect(banner.textContent).toBe('Preview')
+    expect(banner.textContent).toBe('Visual')
     banner.click()
     expect(currentBlockMode(view.state)).toBeNull()
     expect((view.nodeDOM(first) as HTMLElement).classList.contains('block-visual-mode')).toBe(true)
     view.destroy()
   })
 
-  it('shows no floating cluster and exactly one Preview control while in Source', () => {
+  it('shows no floating cluster and exactly one Visual control while in Source', () => {
     const view = createEditor('# Hello')
     const [first] = allBlockPositions(view)
     enterSourceMode(view, first)
     expect(view.dom.querySelectorAll(`.${BLOCK_CONTROLS_CLASS}`).length).toBe(0)
     const previews = Array.from(view.dom.querySelectorAll('button'))
-      .filter((button) => button.textContent === 'Preview')
+      .filter((button) => button.textContent === 'Visual')
     expect(previews.length).toBe(1)
     view.destroy()
   })
@@ -538,17 +541,21 @@ describe('a mode flip reaches the node views (BLOCK_MODE_CLASS)', () => {
   // The class carries the mode, so the accent rule is the load-bearing half of
   // the notification as well as the legible one.
 
-  it('carries the representation, so it differs between the two forms', () => {
-    const view = createEditor('# Hello')
-    const [first] = allBlockPositions(view)
+  it('carries the representation, so the two forms decorate differently', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
     const classes = (): string[] =>
-      [...(view.nodeDOM(first) as HTMLElement).classList].sort()
+      [...(view.nodeDOM(board) as HTMLElement).classList].sort()
 
-    enterSourceMode(view, first)
-    // Re-read the element: entering Source rebuilds the node view, and that
-    // rebuild is the thing the decoration is for.
-    expect(classes()).toContain(BLOCK_MODE_CLASS)
-    expect(classes()).toContain(`${BLOCK_MODE_CLASS}-source`)
+    // Both forms on one block, with the record held throughout: the transition
+    // the old single class could not express.
+    enterBlockMode(view, board, { interaction: 'editing' })
+    expect(classes()).toContain(BLOCK_MODE_VISUAL_CLASS)
+    expect(classes()).toContain(BLOCK_MODE_EDITING_CLASS)
+
+    enterSourceMode(view, board)
+    expect(classes()).toContain(BLOCK_MODE_SOURCE_CLASS)
+    expect(classes()).not.toContain(BLOCK_MODE_VISUAL_CLASS)
 
     exitBlockMode(view)
     expect(classes()).not.toContain(BLOCK_MODE_CLASS)
@@ -574,7 +581,7 @@ describe('a mode flip reaches the node views (BLOCK_MODE_CLASS)', () => {
     const dom = view.nodeDOM(board) as HTMLElement
     expect(dom.classList.contains('block-source-mode')).toBe(true)
     expect(dom.querySelector('.mermaid-preview')).toBeNull()
-    expect(dom.querySelector('.block-source-exit')?.textContent).toBe('Preview')
+    expect(dom.querySelector('.block-source-exit')?.textContent).toBe('Visual')
     view.destroy()
   })
 

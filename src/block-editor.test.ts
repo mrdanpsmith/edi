@@ -205,7 +205,7 @@ describe('block nodeView factory', () => {
     const btn = dom.querySelector('.block-source-exit') as HTMLElement
     expect(btn).toBeTruthy()
     // §5.1: the two names for the two forms, wherever they are shown.
-    expect(btn.textContent).toBe('Preview')
+    expect(btn.textContent).toBe('Visual')
     expect(dom.querySelector('.block-source-label')?.textContent).toBe('Source')
     view.destroy()
   })
@@ -240,9 +240,9 @@ describe('block nodeView factory', () => {
     enterSourceMode(view, pos)
     const dom = view.nodeDOM(pos) as HTMLElement
     expect(dom.querySelector('.block-controls')).toBeNull()
-    // One action, one place: a block is never showing two Preview controls.
+    // One action, one place: a block is never showing two Visual controls.
     const previews = Array.from(view.dom.querySelectorAll('button'))
-      .filter((button) => button.textContent === 'Preview')
+      .filter((button) => button.textContent === 'Visual')
     expect(previews.length).toBe(1)
     view.destroy()
   })

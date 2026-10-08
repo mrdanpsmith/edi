@@ -9,7 +9,11 @@ the preview renders it live — and a few block types go much further.
   `Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+Q` quit.
 - File actions also live as toolbar buttons; hide that row with
   `View → Toolbar`.
-- Click the small handle on a block's left edge to toggle its source view.
+- Hover a block for its controls at the right edge: **Source** shows that
+  block's markdown and **Visual** brings the rendering back. `Ctrl+Shift+E`
+  does the same for the block the caret is in.
+- `Alt+click` a diagram to edit it in place, or a table to swap it between
+  plain text and a spreadsheet. `Esc` leaves whatever is open.
 - Click a link to open it; right-click one to edit its address. Clearing
   the address removes the link and keeps the text.
 - `Ctrl+Shift+V` pastes clipboard text as markdown (parsed into real blocks);
@@ -111,8 +115,8 @@ does a label the source repeats with no way to tell the copies apart.
 Renaming a name the diagram uses elsewhere (an ER entity, a state, a class,
 a branch, a requirement) renames the references with it.
 
-The source is always the document: open the block with its handle to edit
-it as text. A diagram that stops parsing keeps its last good rendering plus
+The source is always the document: open the block with **Source** to edit it
+as text, and **Visual** (or `Esc`) to bring the rendering back. A diagram that stops parsing keeps its last good rendering plus
 a short note, so nothing disappears while you type.
 
 `Insert → Kanban Board…` (or the toolbar's **Kanban** button) starts a new
@@ -138,12 +142,12 @@ print("Hello from Edi!")
 ```
 ````
 
-The preview shows a **Run** button; output lands beneath the block and
-**Stop** cancels a hung run.
+Hovering a code block shows a **Run** button in its controls; output lands
+beneath the block and **Stop** cancels a hung run.
 
 ## Export
 
-`Ctrl+Shift+E` exports the rendered preview — Mermaid diagrams, computed
-spreadsheet values, and code output included — as one self-contained HTML
-file you can share or archive.
+`File → Export HTML…` exports the rendered document — Mermaid diagrams,
+computed spreadsheet values, and code output included — as one self-contained
+HTML file you can share or archive.
 

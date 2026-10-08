@@ -1756,7 +1756,7 @@ describe('context menu', () => {
     expect(labels).not.toContain('Run')
   })
 
-  it('offers Preview, and not Source, on a block in its source form', async () => {
+  it('offers Visual, and not Source, on a block in its source form', async () => {
     await boot()
     const view = await mountDoc('# Hello')
     const modes = await mainSideBlockModes()
@@ -1769,7 +1769,7 @@ describe('context menu', () => {
     const labels = Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
       .map((button) => button.textContent ?? '')
     // §5.1: two names for the two forms, and the menu offers the way *out*.
-    expect(labels).toContain('Preview')
+    expect(labels).toContain('Visual')
     expect(labels).not.toContain('Source')
   })
 
@@ -2009,7 +2009,7 @@ describe('the status chip', () => {
     mainState.editorOptions?.onModeChange?.(modes.currentBlockMode(view.state))
     await flushAsync()
     expect(chip()).toEqual({
-      text: 'Source \u2014 \u201cThe heading text\u201d \u00b7 Esc for preview',
+      text: 'Source \u2014 \u201cThe heading text\u201d \u00b7 Esc for visual',
       hidden: false,
     })
 
@@ -2035,7 +2035,7 @@ describe('the status chip', () => {
     await flushAsync()
     const text = chip().text
     expect(text.startsWith('Source \u2014 \u201c')).toBe(true)
-    expect(text.endsWith('\u2026\u201d \u00b7 Esc for preview')).toBe(true)
+    expect(text.endsWith('\u2026\u201d \u00b7 Esc for visual')).toBe(true)
     expect(text.length).toBeLessThan(90)
   })
 })

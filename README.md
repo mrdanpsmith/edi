@@ -42,9 +42,14 @@ signature and an example. This section is the short version.
 
 ### Live markdown editing
 
-- The preview renders as you write; every block has a handle on its left edge
-  that toggles its own source view, so the rendered document and the markdown
-  behind it are never more than a click apart.
+- The preview renders as you write, and every block carries one row of controls
+  at its right edge: **Source** shows that block's markdown and **Visual** brings
+  the rendering back, so the rendered document and the markdown behind it are
+  never more than a hover apart. `Ctrl+Shift+E` does the same for the block the
+  caret is in.
+- `Alt+click` a diagram to edit it in place — labels, cards and columns — or a
+  table to swap it between plain text and a spreadsheet; `Esc` leaves whatever
+  is open.
 - Click a link to open it, right-click one to edit its address — clearing the
   address leaves the text behind, unlinked. A link whose text and destination
   disagree is underlined, and opening it asks first.
@@ -133,8 +138,10 @@ match.
 - Every table has a **Copy** button that puts HTML *and* tab-separated text on
   the clipboard, for Word, Excel and email.
 - Right-click a rendered diagram for **Copy image** / **Save image…**.
-- `Ctrl+Shift+E` exports the whole rendered preview — diagrams, computed values
-  and code output included — as one self-contained HTML file.
+- `File → Export HTML…` exports the whole rendered document — diagrams,
+  computed values and code output included — as one self-contained HTML file.
+  It carries no keyboard shortcut, so `Ctrl+Shift+E` stays the block-source
+  toggle.
 
 ### Menus and toolbar
 
@@ -167,7 +174,7 @@ the old file in one step, so it is never left under both names.
 | `Ctrl+Shift+C` | Copy selection as Markdown |
 | `Ctrl+Alt+Shift+C` | Copy file path |
 | `Ctrl+Shift+V` | Paste as Markdown |
-| `Ctrl+Shift+E` | Export preview as HTML |
+| `Ctrl+Shift+E` | Toggle a block's source / visual view |
 | `Ctrl+B` / `Ctrl+I` | Bold / italic |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste |

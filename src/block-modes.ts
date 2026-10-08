@@ -10,7 +10,7 @@ import { markdownToProse } from './markdown'
  * The two axes every block mode is expressed in, and the single record that
  * holds the one block in a non-default state.
  *
- * The axes are orthogonal: a mermaid block is `preview` *and* `editing`, which
+ * The axes are orthogonal: a mermaid block is `visual` *and* `editing`, which
  * is why they live on one record rather than in two. At most one block in a
  * document is in a non-default state at a time, and that invariant lives here
  * rather than in three places that each held one position and each invalidated
@@ -35,7 +35,7 @@ import { markdownToProse } from './markdown'
  * is how they find out.
  */
 
-export type Representation = 'preview' | 'source'
+export type Representation = 'visual' | 'source'
 export type Interaction = 'viewing' | 'editing'
 
 export interface BlockMode {
@@ -77,7 +77,12 @@ export const BLOCK_MODE_KEY = new PluginKey<BlockMode | null>('EDI_BLOCK_MODE')
  */
 export const BLOCK_MODE_CLASS = 'edi-block-mode'
 
-/** `…-preview` / `…-source`, plus `…-editing` while the interaction axis is on. */
+/**
+ * `…-visual` / `…-source`, plus `…-editing` while the interaction axis is on.
+ * Both are what §7.2's accent rule is drawn from, and the difference between
+ * them is what makes a mode flip reach the node views.
+ */
+export const BLOCK_MODE_VISUAL_CLASS = `${BLOCK_MODE_CLASS}-visual`
 export const BLOCK_MODE_SOURCE_CLASS = `${BLOCK_MODE_CLASS}-source`
 export const BLOCK_MODE_EDITING_CLASS = `${BLOCK_MODE_CLASS}-editing`
 
@@ -136,7 +141,10 @@ function blockModeDecorations(state: EditorState): DecorationSet {
   if (mode === null) return DecorationSet.empty
   const node = state.doc.nodeAt(mode.pos)
   if (node === null || !supportsMode(node, mode)) return DecorationSet.empty
-  const classes = [BLOCK_MODE_CLASS, `${BLOCK_MODE_CLASS}-${mode.representation}`]
+  const classes = [
+    BLOCK_MODE_CLASS,
+    mode.representation === 'source' ? BLOCK_MODE_SOURCE_CLASS : BLOCK_MODE_VISUAL_CLASS,
+  ]
   if (mode.interaction === 'editing') classes.push(BLOCK_MODE_EDITING_CLASS)
   return DecorationSet.create(state.doc, [
     Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: classes.join(' ') }),
@@ -242,7 +250,7 @@ export function setBlockModeAt(
     return
   }
   const descriptor = blockModeFor(node)
-  const representation = changes.representation ?? 'preview'
+  const representation = changes.representation ?? 'visual'
   const interaction = changes.interaction ?? 'viewing'
   if ((representation === 'source' && !descriptor.representation)
     || (interaction === 'editing' && descriptor.interaction === 'none')) {
@@ -729,7 +737,7 @@ function representationButton(
     paint: () => {
       const at = getPos()
       const source = at !== undefined && modeFor(view.state, at)?.representation === 'source'
-      button.textContent = source ? 'Preview' : 'Source'
+      button.textContent = source ? 'Visual' : 'Source'
       button.title = source
         ? 'Back to the rendered block (Esc)'
         : 'Show this block as markdown (Ctrl+Shift+E)'

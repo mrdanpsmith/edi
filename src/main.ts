@@ -204,7 +204,7 @@ function renderModeChip(mode: BlockMode | null): void {
   const name = source ? 'Source' : 'Edit'
   statusMode.textContent = words === ''
     ? name
-    : `${name} — “${words}”${source ? ' · Esc for preview' : ''}`
+    : `${name} — “${words}”${source ? ' · Esc for visual' : ''}`
 }
 
 /** A few words of the block itself, so the chip names *which* block it is about. */
@@ -1199,7 +1199,7 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
   }
   if (descriptor.representation) {
     const source = modeFor(view.state, pos)?.representation === 'source'
-    addItem(source ? 'Preview' : 'Source', () => {
+    addItem(source ? 'Visual' : 'Source', () => {
       toggleBlockMode(view, pos, 'representation')
     })
   }

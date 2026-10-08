@@ -673,7 +673,7 @@ body {
   user-select: none;
 }
 
-/* ── The active block ───────────────────────────────────────────────
+/* ── The active block ────────────────────────────────────────────────
  * A left accent rule on the one block the record names, in that mode's colour.
  * The status chip says *what* is in a mode; this says *where*, which is the half
  * the chip cannot give. An inset shadow rather than a border, so marking a block
@@ -682,7 +682,7 @@ body {
  * These classes are also what makes a mode flip reach the node views at all:
  * ProseMirror compares a node's decorations by value and skips the tree walk when
  * they match, so the rule has to be distinct per mode (see `BLOCK_MODE_CLASS`). */
-.ProseMirror .edi-block-mode-preview {
+.ProseMirror .edi-block-mode-visual {
   box-shadow: inset 3px 0 0 var(--warning, #d97706);
 }
 

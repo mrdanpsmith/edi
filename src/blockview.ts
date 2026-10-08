@@ -94,7 +94,7 @@ class BlockSourceNodeView implements NodeView {
     const exitBtn = document.createElement('button')
     exitBtn.type = 'button'
     exitBtn.className = 'block-source-exit'
-    exitBtn.textContent = 'Preview'
+    exitBtn.textContent = 'Visual'
     exitBtn.title = 'Back to the rendered block (Esc)'
     exitBtn.addEventListener('click', () => {
       this.exitSource(this.cm?.getValue() ?? '')

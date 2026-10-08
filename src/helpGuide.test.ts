@@ -75,7 +75,23 @@ describe('buildHelpGuideMarkdown', () => {
     expect(guide).toContain('renames the references with it')
   })
 
-  it('documents the export shortcut', () => {
-    expect(guide).toContain('`Ctrl+Shift+E` exports the rendered preview')
+  it('documents the export action, and says it has no shortcut', () => {
+    // It used to claim Ctrl+Shift+E, which the Export QAction's label made Qt
+    // swallow — so the page's own block-source toggle never fired and block
+    // source mode had no working keyboard entry. The Export label carries none
+    // now; the guide says so, so the shortcut table and the app agree.
+    expect(guide).toContain('`File → Export HTML…` exports the rendered document')
+    expect(guide).not.toContain('`Ctrl+Shift+E` exports')
+  })
+
+  it('documents the block controls, and never the removed dot grid', () => {
+    expect(guide).toContain('**Source** shows that')
+    expect(guide).toContain('**Visual** brings the rendering back')
+    expect(guide).toContain('`Ctrl+Shift+E`')
+    expect(guide).toContain('`Alt+click`')
+    // The handle on the left edge is gone — one cluster at the right edge
+    // replaced it — and a guide that still teaches it is worse than none.
+    expect(guide).not.toContain('handle on a block')
+    expect(guide).not.toContain("block's left edge")
   })
 })
