@@ -203,7 +203,16 @@ function renderModeChip(mode: BlockMode | null): void {
   const source = mode.representation === 'source'
   const words = modeChipWords(node)
   statusMode.hidden = false
-  const name = source ? 'Source' : 'Edit'
+  // The record's *name*, in the record's own vocabulary (§5.1). Which of the three
+  // it is has to be asked rather than assumed, because a table held open as a
+  // sheet is `visual` and `viewing` — the two axes alone would call it "Edit",
+  // which is a different block's mode entirely. The label comes from the
+  // descriptor so the chip, the cluster button and the context menu cannot drift
+  // into three spellings of the same word.
+  const form = mode.form === undefined
+    ? undefined
+    : blockModeFor(node).forms?.find((entry) => entry.id === mode.form)?.label
+  const name = source ? 'Source' : form ?? 'Edit'
   statusMode.textContent = words === ''
     ? name
     : `${name} — “${words}”${source ? ' · Esc for visual' : ''}`

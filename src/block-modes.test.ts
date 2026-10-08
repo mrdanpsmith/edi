@@ -454,9 +454,11 @@ describe('the Escape ladder (§5.3)', () => {
 
 describe('the Alt+click gesture (§5.2)', () => {
   /** Alt+click, the gesture that advances a block one step through its cycle. */
-  function altClick(target: EventTarget | null): void {
+  function altClick(target: EventTarget | null, shift = false): void {
     ;(target as Element).dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
+      new MouseEvent('click', {
+        bubbles: true, cancelable: true, altKey: true, button: 0, shiftKey: shift,
+      }),
     )
   }
 
@@ -583,6 +585,48 @@ describe('the Alt+click gesture (§5.2)', () => {
 
     altClick(editor)
     expect(modeFor(view.state, code)?.representation).toBe('source')
+    view.destroy()
+  })
+
+  it('goes straight back to Visual on Alt+Shift+click, from wherever it is', async () => {
+    // The only path out of a diagram's Edit used to be *through* Source, and that
+    // path is not free: it commits the buffer, re-parses the block and re-renders
+    // the drawing. Leaving a mode should not cost a round trip through another.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+
+    altClick(view.nodeDOM(board) as HTMLElement)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    altClick(view.nodeDOM(board) as HTMLElement, true)
+    expect(modeFor(view.state, board)).toBeNull()
+    // The editing layer is really gone, not merely unrecorded.
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid-editing')).toBeNull())
+    expect(view.dom.querySelector('.mermaid-editables')).toBeNull()
+
+    // From Source too, and it commits rather than discarding — the same rule every
+    // other way out of source mode obeys.
+    enterSourceMode(view, board)
+    altClick(view.nodeDOM(board) as HTMLElement, true)
+    expect(modeFor(view.state, board)).toBeNull()
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+
+    // The full cycle is untouched: this is additive, not a step removed.
+    altClick(view.nodeDOM(board) as HTMLElement)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    view.destroy()
+  })
+
+  it('does not spend an Alt+Shift+click on a block that was not in a mode', () => {
+    const view = createEditor('# Hello\n\nSecond paragraph')
+    const [heading, para] = allBlockPositions(view)
+    enterSourceMode(view, heading)
+
+    // Aimed at a block that is merely being viewed: there is nothing to leave, so
+    // the click is not consumed by the gesture and the record is untouched.
+    altClick(view.nodeDOM(para) as HTMLElement, true)
+    expect(modeFor(view.state, heading)?.representation).toBe('source')
+    expect(modeFor(view.state, para)).toBeNull()
     view.destroy()
   })
 

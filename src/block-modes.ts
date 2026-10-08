@@ -617,8 +617,36 @@ export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
   if (!event.altKey || event.button !== 0) return false
   if (chromeOwnsClick(event)) return false
   const pos = blockPosForElement(view, event.target)
+  // **Alt+Shift+click is the way back to the visual form**, from wherever the
+  // block is in its cycle.
+  //
+  // Without it the only path out of a diagram's Edit mode is *through* Source,
+  // and that path is not free: it commits the buffer, re-parses the block and
+  // re-renders the drawing. Leaving a mode should not cost a round trip through
+  // another one, so this short-circuits the cycle instead of changing it — the
+  // full cycle still works for anyone who wants it, and the chord is additive
+  // rather than a step removed.
+  //
+  // Escape does the same job from the keyboard (§5.3) and stays the primary way
+  // down; this is the pointer's shortcut to it, for the case where the pointer is
+  // already where you want to be.
+  if (event.shiftKey) {
+    return pos >= 0 ? exitBlockModeAt(view, pos) : exitBlockMode(view)
+  }
   if (pos >= 0 && advanceBlockMode(view, pos)) return true
   return exitBlockMode(view)
+}
+
+/**
+ * Leave whatever non-default state the block at `pos` is in, reporting whether
+ * there was one — `exitBlockMode`'s per-block form, for a gesture that has
+ * already resolved which block it is aimed at.
+ *
+ * Returns false for a block that was not holding the record, so the caller can
+ * hand on rather than consume a click that was not about anything.
+ */
+export function exitBlockModeAt(view: EditorView, pos: number): boolean {
+  return modeFor(view.state, pos) === null ? false : exitBlockMode(view)
 }
 
 /**

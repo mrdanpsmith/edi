@@ -14,7 +14,8 @@ the preview renders it live — and a few block types go much further.
   does the same for the block the caret is in.
 - `Alt+click` any block to step it through its modes: a diagram goes visual →
   edit → source, a table goes plain text → spreadsheet → source, everything else
-  goes visual → source. `Esc` steps back down one.
+  goes visual → source. `Alt+Shift+click` goes straight back to the visual form,
+  and `Esc` steps back down one.
 - Click a link to open it; right-click one to edit its address. Clearing
   the address removes the link and keeps the text.
 - `Ctrl+Shift+V` pastes clipboard text as markdown (parsed into real blocks);

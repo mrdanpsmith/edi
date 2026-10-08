@@ -3604,8 +3604,15 @@ graph TD
           return { v };
         })()""" % json.dumps(scheme))
         assert value["v"], f"--block-hover is undefined in {scheme}"
-        assert value["v"] != "#f2f5f8" or scheme == "light", (
-            "the dark scheme must not reuse the light tint: %s" % value)
+        assert value["v"] != "#eef4fd" or scheme == "light", (
+            "the dark scheme must not reuse the light band: %s" % value)
+        # Blue, and only just: the channel that leads must be blue, or the band is
+        # the grey it was — this app's chrome is four greys a few points apart and
+        # a grey band read as one more of them.
+        r, g, b = (int(value["v"][i:i + 2], 16) for i in (1, 3, 5))
+        assert b > g >= r, f"--block-hover must lean blue in {scheme}: {value['v']}"
+        assert max(r, g, b) - min(r, g, b) < 24, (
+            f"--block-hover must be *very* faint in {scheme}: {value['v']}")
 
 
 # The band's geometry. `:hover` cannot be exercised by this harness (QTest mouse
@@ -3712,3 +3719,111 @@ graph TD
         # (a code block's editor) somewhere to show.
         assert row["bandTop"] < row["blockTop"], row
         assert row["bandBottom"] > row["blockBottom"], row
+
+
+
+# The sheet's own controls, and the mode buttons they were competing with. §6.3
+# moves a block's *actions* into its cluster and this is that rule finishing its
+# job: three alignment buttons and "Use values" were left in a `.ss-tools` row
+# inside the sheet, under the cluster rather than in it.
+SHEET_TOOLS_IN_THE_CLUSTER = """(() => {
+  const sheet = document.querySelector('#editor-container .spreadsheet');
+  if (!sheet) return { missing: true };
+  const cluster = sheet.querySelector('.block-controls');
+  const tools = sheet.querySelector('.ss-tools');
+  const inside = (sel) => {
+    const el = sheet.querySelector(sel);
+    return {
+      present: !!el,
+      inCluster: !!(el && cluster && cluster.contains(el)),
+      inTools: !!(el && tools && tools.contains(el)),
+      size: el ? [Math.round(el.getBoundingClientRect().width),
+                  Math.round(el.getBoundingClientRect().height)] : null,
+    };
+  };
+  return {
+    hasCluster: !!cluster,
+    hasTools: !!tools,
+    // Actions: belong in the cluster, with the mode buttons.
+    align: inside('.ss-tool-icon'),
+    values: inside('.ss-tool-view'),
+    // Not actions: the readout and the labelled setting stay in the flow.
+    status: inside('.ss-status'),
+    resolve: inside('.ss-tool-check'),
+    modeButtons: cluster
+      ? [...cluster.querySelectorAll('.block-control-representation, .block-control-form')]
+          .map((b) => b.textContent)
+      : [],
+  };
+})()"""
+
+
+def _open_a_sheet(window):
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true"
+        % json.dumps("| A | B |\n| --- | --- |\n| 1 | 2 |\n"))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=20)
+    _dump(window, """(() => {
+      const cell = document.querySelector('#editor-container .ss-plain-table td');
+      cell.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
+          lambda d: d.get("s") is True, timeout=10)
+
+
+def test_a_sheets_own_actions_are_drawn_in_its_cluster(window):
+    """One bar per block: the mode buttons and the sheet's actions together.
+
+    The alignment buttons and "Use values" were actions drawn in a `.ss-tools` row
+    inside the sheet, so they sat under the cluster and competed with the very
+    controls they sit beside now. What is deliberately *not* moved is the two
+    things that are not actions: the status readout, which would vanish exactly
+    when it was worth reading (the cluster is `opacity: 0` until hover), and the
+    "Resolve formulas?" checkbox, which is a labelled setting with nowhere to put
+    its words in a pill.
+    """
+    _open_a_sheet(window)
+    out = _dump(window, SHEET_TOOLS_IN_THE_CLUSTER)
+    assert out["hasCluster"], "the sheet has no cluster"
+    assert out["hasTools"], "the sheet has no .ss-tools row left to hold the non-actions"
+
+    assert out["align"]["present"], "the alignment buttons are gone"
+    assert out["align"]["inCluster"], "the alignment buttons are not in the cluster"
+    assert out["values"]["present"], "Use values is gone"
+    assert out["values"]["inCluster"], "Use values is not in the cluster"
+
+    assert out["status"]["present"] and out["status"]["inTools"], (
+        "the status readout must stay in the flow: a hover-only readout is unreadable")
+    assert out["resolve"]["present"] and out["resolve"]["inTools"], (
+        "the Resolve checkbox must stay in the flow: it is a labelled setting")
+
+    # The two mode controls are still there, first, as the cluster is meant to be.
+    assert out["modeButtons"] == ["Source", "Text"], out["modeButtons"]
+
+
+def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
+    """A sheet wears no accent rule, and the chip names it.
+
+    The bar's vocabulary is the two axes — "is this block being shown as something
+    other than its document" — and a sheet is a rendering. It used to be marked
+    anyway, in `--warning`, which drew an amber rule down the left edge of every
+    open spreadsheet and read as a fault; that only began when the form moved onto
+    the record (§4.3), since before that a sheet held no record to decorate.
+    """
+    _open_a_sheet(window)
+    out = _dump(window, """(() => {
+      const sheet = document.querySelector('#editor-container .spreadsheet');
+      const chip = document.querySelector('#status-mode');
+      return {
+        shadow: getComputedStyle(sheet).boxShadow,
+        chip: (chip || {}).textContent || '',
+        chipHidden: (chip || {}).hidden,
+      };
+    })()""")
+    assert out["shadow"] in ("none", ""), (
+        f"a sheet must not wear the accent bar: {out['shadow']!r}")
+    assert out["chip"].startswith("Sheet"), (
+        f"the chip must name the form, not the interaction axis: {out['chip']!r}")

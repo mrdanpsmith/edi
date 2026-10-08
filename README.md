@@ -49,7 +49,8 @@ signature and an example. This section is the short version.
   caret is in.
 - `Alt+click` any block to step it through its modes: a diagram goes
   visual → edit → source, a table goes plain text → spreadsheet → source, and
-  everything else goes visual → source. `Esc` steps back down one.
+  everything else goes visual → source. `Alt+Shift+click` goes straight back to
+  the visual form, and `Esc` steps back down one.
 - Click a link to open it, right-click one to edit its address — clearing the
   address leaves the text behind, unlinked. A link whose text and destination
   disagree is underlined, and opening it asks first.

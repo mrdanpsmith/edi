@@ -242,8 +242,15 @@ class TableNodeView implements NodeView, InlineCellHost {
     // One cluster for the block, in the same place every other block's is: its
     // mode buttons, generated from the descriptor, then the block's own actions —
     // here the one control that changes the rendered form.
-    const controls = attachBlockControls(node, view, getPos, [formControl(view, getPos, node)])
+    // Built *before* the cluster: `attachBlockControls` copies the action list
+    // into its slot once, so a button added to the array afterwards is a button
+    // that is in no cluster at all — which is what a first attempt did, and it
+    // looked like the alignment controls had been deleted.
+    const actions: HTMLElement[] = [formControl(view, getPos, node)]
+    const tools = this.buildTools(actions)
+    const controls = attachBlockControls(node, view, getPos, actions)
     if (controls) this.dom.appendChild(controls.dom)
+    this.dom.appendChild(tools)
 
     this.dom.addEventListener('mousedown', (event) => {
       const target = event.target as HTMLElement
@@ -255,7 +262,6 @@ class TableNodeView implements NodeView, InlineCellHost {
       event.stopPropagation()
     })
     this.dom.addEventListener('contextmenu', (event) => this.onGridContextMenu(event))
-    this.buildTools()
     this.buildFxBar()
     this.buildGrid()
     this.buildInsertGuide()
@@ -457,7 +463,20 @@ class TableNodeView implements NodeView, InlineCellHost {
 
   // --- Static chrome ---
 
-  private buildTools(): void {
+  /**
+   * The sheet's own controls: three alignment buttons and **Use values**, which
+   * are actions and so belong in the block's cluster with the mode buttons
+   * (§6.3) — where the rest of the app keeps its actions and where they stop
+   * competing with them for the same corner.
+   *
+   * What stays behind is the two things that are **not** actions and cannot be
+   * moved without losing what they are for: the status readout, because a readout
+   * inside a cluster that is `opacity: 0` until the block is hovered is a readout
+   * that vanishes exactly when you look at the thing it describes; and the
+   * "Resolve formulas?" checkbox, because it is a labelled setting and a bare
+   * checkbox in a pill has nowhere to put its words.
+   */
+  private buildTools(actions: HTMLElement[]): HTMLElement {
     const tools = document.createElement('div')
     tools.className = 'ss-tools'
     for (const [align, title, markup] of [
@@ -467,7 +486,11 @@ class TableNodeView implements NodeView, InlineCellHost {
     ] as const) {
       const button = document.createElement('button')
       button.type = 'button'
-      button.className = 'ss-tool ss-tool-icon'
+      // `block-control` as well as its own classes: a control that lives in the
+      // cluster is styled by it, so a second border and a second set of metrics
+      // round one button is not what it is there for — and a 21px row of three is
+      // exactly the collision that put these controls in their own bar.
+      button.className = 'block-control ss-tool ss-tool-icon'
       button.dataset.align = align
       button.title = title
       button.setAttribute('aria-label', title)
@@ -478,7 +501,7 @@ class TableNodeView implements NodeView, InlineCellHost {
         this.commitFxEdit()
         this.alignColumns(align)
       })
-      tools.appendChild(button)
+      actions.push(button)
       this.alignButtons.push({ align, el: button })
     }
     const status = document.createElement('span')
@@ -487,7 +510,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     this.statusEl = status
     const valuesBtn = document.createElement('button')
     valuesBtn.type = 'button'
-    valuesBtn.className = 'ss-tool ss-tool-view'
+    valuesBtn.className = 'block-control ss-tool ss-tool-view'
     valuesBtn.textContent = 'Use values'
     valuesBtn.title =
       'Replace the selected cells’ formulas with their current computed values (they stop recalculating — undo with Ctrl+Z)'
@@ -495,7 +518,7 @@ class TableNodeView implements NodeView, InlineCellHost {
       this.useValues()
     })
     this.valuesButton = valuesBtn
-    tools.appendChild(valuesBtn)
+    actions.push(valuesBtn)
     const resolveLabel = document.createElement('label')
     resolveLabel.className = 'ss-tool ss-tool-check'
     resolveLabel.title =
@@ -513,7 +536,7 @@ class TableNodeView implements NodeView, InlineCellHost {
     resolveLabel.appendChild(resolveInput)
     resolveLabel.appendChild(resolveText)
     tools.appendChild(resolveLabel)
-    this.dom.appendChild(tools)
+    return tools
   }
 
   private buildFxBar(): void {

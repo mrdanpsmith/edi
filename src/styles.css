@@ -16,7 +16,12 @@
 
   --editor-bg: #ffffff;
   --active-line: #f0f3f6;
-  --block-hover: #f2f5f8;
+  /* Not a grey. Light grey is what all the chrome in this app is made of —
+     `--surface`, `--table-header-bg`, `--active-line` and the handle gutter are
+     four greys a few points apart — so a grey band read as one more of them. A
+     very faint blue is the same weight and reads as its own thing, and it is the
+     colour with no job in the palette. */
+  --block-hover: #eef4fd;
   --selection: #b6d7ff;
   --selection-strong: #9ecbff;
 
@@ -53,7 +58,7 @@
 
   --editor-bg: #0d1117;
   --active-line: #161b22;
-  --block-hover: #171d26;
+  --block-hover: #131b2a;
   --selection: #264f78;
   --selection-strong: #1e4d7a;
 
@@ -749,10 +754,6 @@ body {
  * These classes are also what makes a mode flip reach the node views at all:
  * ProseMirror compares a node's decorations by value and skips the tree walk when
  * they match, so the rule has to be distinct per mode (see `BLOCK_MODE_CLASS`). */
-.ProseMirror .edi-block-mode-visual {
-  box-shadow: inset 3px 0 0 var(--warning, #d97706);
-}
-
 .ProseMirror .edi-block-mode-source {
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -762,6 +763,26 @@ body {
 .ProseMirror .edi-block-mode-editing {
   box-shadow: inset 3px 0 0 var(--danger);
 }
+
+/* **There is deliberately no rule for `…-visual`.** There was one, in
+   `--warning`, and it is gone for two reasons that turned out to be the same
+   reason.
+
+   A block can only hold the record while it is in *some* non-default state, and
+   since the form moved onto the record (§4.3) those are exactly two: its source
+   form, or a diagram being edited. A table as a sheet is the third — and it is a
+   *rendering*, so it gets no bar: what marks it is the chip, which names it
+   (`Sheet — "…"`), and the fact that it is unmistakably a spreadsheet. So a
+   record that is `visual` and not `editing` and carries no form cannot be reached
+   by any route, and a rule for it would be decoration for a state that does not
+   exist.
+
+   It is also worth saying what the amber bar *looked* like, because the reason it
+   had to go was that it was unreadable rather than merely unwanted: it ran down
+   the left edge of every open spreadsheet and read as a fault. A form-only mode
+   never wore it before the record change, because a form used to be a document
+   attr and a sheet held no record to decorate — which is why the bar appeared at
+   the same moment as §4.3 and looked like a regression from it. */
 
 /* A block in its source form already says so with a border of its own. */
 .ProseMirror .block-source-mode {
