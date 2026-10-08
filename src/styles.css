@@ -754,58 +754,70 @@ body {
  * These classes are also what makes a mode flip reach the node views at all:
  * ProseMirror compares a node's decorations by value and skips the tree walk when
  * they match, so the rule has to be distinct per mode (see `BLOCK_MODE_CLASS`). */
-/* **One bar, one colour, for whichever block holds the record.** §7.2 drew it in
-   three: `--warning` for visual, `--accent` for source, `--danger` for editing, on
-   the reasoning that three states deserve three colours.
-
-   They do not, and two of the three were actively wrong:
-
-   - `--danger` is this app's colour for *destructive* things — the delete dialog's
-     button, the kanban bin's dressing. Using it for "you are editing this diagram"
-     made the most ordinary state in the app look like a fault, and it was reported
-     as an artifact twice. Editing a board is the point of the mode.
-   - `--warning` for a plain view was the same mistake in amber, and it is why an
-     open spreadsheet grew an amber rule down its left edge.
-
-   And the encoding was never doing any work: **only one block holds the record at
-   a time** (§2.1), so a bar can never be one colour because another block is
-   another colour — there is never another bar. The bar answers *which* block; the
-   chip answers *what* mode, and it can afford to, because it has the room.
-
-   A form-only mode wears no bar at all (see below), so this fires on the two
-   states that are genuinely alternate renderings of a block: its source form, and
-   a diagram being edited. */
+/* ── Two outlines, and what each one means ───────────────────────────────────
+ * These are the whole of the app's block-level indication vocabulary, and they are
+ * kept to exactly two so that either can be read at a glance:
+ *
+ * | the block is… | drawn as |
+ * |---|---|
+ * | **selected** — in the selection | a **solid** accent outline, plus a tint |
+ * | **in a non-visual mode** — source, or being edited | a **dotted** accent outline |
+ * | neither | nothing |
+ *
+ * **A block in a non-visual mode gets a dotted outline, whatever the mode and
+ * whatever the block type.** That was not true: §7.2 drew a 3px accent bar down the
+ * left edge, and a block in its source form additionally had a *solid* accent
+ * border of its own, so the two alternate states of a document looked nothing like
+ * each other and neither matched a third. Three separate treatments for three
+ * states, none of them the rule.
+ *
+ * One rule, one mark. Dotted is the choice because these states are the reader's own
+ * doing and temporary — a block you are editing right now — and a solid line is
+ * spent on selection, where it belongs (§ *selected* below). It is also drawn with
+ * `outline` rather than a `box-shadow`, so it costs the block no layout: the rule
+ * is chrome and must never reflow the document.
+ *
+ * A **form-only** mode — a table as a sheet — is deliberately not in it. A
+ * spreadsheet is a rendering, not an alternate document: it is what you *edit* a
+ * table in (§5.1 calls it `Edit`), so it is the table being worked on rather than
+ * the table being suspended. The chip names it, and the cluster button says `Edit`.
+ * Its decoration class is still set regardless, because that is what makes a form
+ * flip reach the node view at all (§4.3). */
 .ProseMirror :is(.edi-block-mode-source, .edi-block-mode-editing) {
-  box-shadow: inset 3px 0 0 var(--accent);
+  outline: 2px dotted var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
-/* **A block whose only non-default state is a rendered form** — a table as a sheet
-   — wears no bar, because it is not an alternate *document*: it is a spreadsheet,
-   which is what you edit a table in, and §5.1's vocabulary calls that `Edit` on the
-   button and the chip but the block itself is still plainly a table. What marks it
-   is the chip and the fact that it is unmistakably a spreadsheet.
-
-   It has to be said that this class is still *decorated* even though it draws
-   nothing. It is what makes a form flip reach the node view at all: a form differs
-   from plain text in nothing else the decoration can see, so without a distinct
-   class `ViewDesc.matchesNode` returns "no change", the tree is not re-walked, and
-   the table keeps drawing as text (§4.3). */
-
-/* A block in its source form already says so with a border of its own. */
+/* A block in its source form no longer wears the record's *bar* — the dotted
+   outline above says so — so nothing here needs to cancel a shadow. */
 .ProseMirror .block-source-mode {
   box-shadow: none;
 }
 
-/* ── Keyboard block selection ── */
-/* A special (atomic) block reached by Ctrl/Cmd+Shift+Up/Down is selected whole
-   (a NodeSelection, which the view tags `.ProseMirror-selectednode`) or is
-   bracketed by a text range (tagged `.edi-block-selected` by the selection
-   plugin). Both get the same unmistakable accent treatment. */
+/* ── Selected block: one solid accent outline ───────────────────────────────
+ * The other half of the vocabulary above, and the reason the mode outline is
+ * *dotted*: a solid accent line means **this block is selected**.
+ *
+ * Two ways a block ends up selected, one rule. A block selected whole is a
+ * `NodeSelection`, which ProseMirror tags `.ProseMirror-selectednode` on the node
+ * itself; a block the selection merely *covers* is tagged `.edi-block-selected` by
+ * `selectionHighlightPlugin`. Both were the same accent treatment before, and still
+ * are — the point is that a reader does not have to know which mechanism fired.
+ *
+ * The tint is the second half of the mark because an outline alone is easy to miss
+ * on a tall block, and the native text highlight is deliberately suppressed inside
+ * these blocks (see `.edi-block-selected::selection`) so that the two do not stack.
+ *
+ * **Declared after the mode outline so that a block which is both selected and in a
+ * mode reads as selected.** Selection is the transient, actionable state and the one
+ * a next keystroke or Ctrl+X will act on; the mode is the standing one.
+ */
 .ProseMirror .ProseMirror-selectednode,
 .ProseMirror .edi-block-selected {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
@@ -1554,14 +1566,16 @@ body {
 
 /* ── Visual editing of rendered diagrams ── */
 
-/* Edit mode is explicit (hover-toolbar Edit, right-click, or a double click),
-   like a table's spreadsheet mode, so the preview itself stays a preview until
-   the user asks to edit it. */
-.ProseMirror .mermaid.mermaid-editing {
-  outline: 1px dashed var(--accent);
-  outline-offset: 3px;
-  border-radius: 4px;
-}
+/* A diagram being edited used to have its **own** frame here: 1px dashed accent,
+   3px out. It was the only block in the app that drew one, which is what "a dotted
+   outline that occasionally occurs for some blocks" was — and a dashed frame at a
+   different weight and offset is not a rule, it is a leftover.
+
+   It is gone, and the dotted accent outline every non-visual mode now uses (see
+   "Two outlines" above) says this instead. Edit mode is still explicit — the
+   cluster's **Edit**, Alt+click, the context menu — so the preview stays a preview
+   until the reader asks to edit it; what marks that they have is now the same mark
+   every other mode gets. */
 
 .ProseMirror .mermaid .mermaid-edit-toggle {
   margin-left: 4px;
@@ -2135,8 +2149,15 @@ body {
 
 /* ── Block source mode (inline CodeMirror) ── */
 
+/* The frame around the raw-markdown editor is **chrome**, not a mode: it is what
+   makes an editor read as a panel, and it is why a source block has rounded
+   corners and clips its own contents. It is `--border` for the same reason the mode
+   outline is dotted and the selection outline solid — a solid accent line here would
+   be a third statement about the same fact, and it used to be the loudest one: an
+   open source block wore a bright accent frame around the whole editor while a
+   diagram being edited wore something else entirely. */
 .block-source-mode {
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   background: var(--surface);

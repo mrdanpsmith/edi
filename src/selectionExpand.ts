@@ -329,23 +329,35 @@ export const selectionExpandPlugin = new Plugin<ExpandState>({
 })
 
 /**
- * Highlight atomic blocks that a text range fully contains, so a kanban board
- * or table bracketed by a selection looks selected instead of skipped. A
- * whole-block `NodeSelection` is styled separately via
- * `.ProseMirror-selectednode`.
+ * Mark every **top-level block** the selection covers as a unit, so a selected
+ * block looks selected by the same rule whatever it is and however it was
+ * selected.
+ *
+ * **The selection's kind is not consulted, which is the fix.** This used to require
+ * a `TextSelection`, so `Ctrl+A` — which ProseMirror makes an `AllSelection` —
+ * highlighted nothing at all: open `spreadsheets.md`, press select-all, and not one
+ * block looked selected. Every kind of non-empty selection has `from` and `to`, and
+ * the question this plugin answers is only "is this block inside them", so the kind
+ * was never needed. A whole-block `NodeSelection` is styled separately, via the
+ * `.ProseMirror-selectednode` class ProseMirror puts on the node itself.
+ *
+ * **Only top-level blocks.** A list item or a paragraph inside a blockquote is not
+ * a block the reader thinks of as a unit, and outlining every one of them turns
+ * select-all into a wall of boxes. The native text highlight still covers the text
+ * inside them.
  */
 export const selectionHighlightPlugin = new Plugin({
   key: SELECTION_HIGHLIGHT_KEY,
   props: {
     decorations(state) {
       const sel = state.selection
-      if (!(sel instanceof TextSelection) || sel.empty) return null
+      if (sel.empty) return null
       const decos: Decoration[] = []
-      state.doc.descendants((node, pos) => {
-        if (isSelectionAtom(state, node, pos) && pos >= sel.from && pos + node.nodeSize <= sel.to) {
+      // `doc.children`, not `descendants`: see the note above.
+      state.doc.forEach((node, pos) => {
+        if (pos >= sel.from && pos + node.nodeSize <= sel.to) {
           decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'edi-block-selected' }))
         }
-        return true
       })
       return decos.length ? DecorationSet.create(state.doc, decos) : null
     },

@@ -3865,105 +3865,63 @@ def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
         f"the chip must use the cycle's vocabulary: {out['chip']!r}")
 
 
-# §7.2's accent rule. It was `--warning` for a plain view, `--accent` for source
-# and `--danger` for editing — three colours for three states, on the reasoning
-# that three states deserve three colours.
+# §7.2's block-level indication. It has been `--warning` for a plain view,
+# `--accent` for source and `--danger` for editing; the last of those put the same
+# red on a diagram being edited that the delete dialog and the kanban bin use, and it
+# was reported as an artifact twice. It is now a dotted accent outline, shared by
+# every non-visual mode.
 #
-# Two of them were wrong in the same way, and it showed. `--danger` is this app's
-# colour for *destructive* things (the delete dialog's button, the kanban bin's
-# dressing), so the most ordinary state in the app — a diagram you are editing —
-# wore the same red as a delete and was reported as an artifact. `--warning` did the
-# same in amber, which is what put a rule down the left edge of every open
-# spreadsheet.
-#
-# The encoding was doing no work anyway: only one block holds the record at a time
-# (§2.1), so there is never a second bar for a colour to be told apart from. The bar
-# answers *which* block; the chip answers *what*.
+# The scan is deliberately broad — every computed background, border, outline and
+# shadow across the editor, not just the one element — because both reports were "a
+# red bar *somewhere*", and the first time round only the suspected element was
+# measured, which is how the mermaid-only frame at a higher specificity survived.
 RECORD_BAR_IS_NOT_RED = r"""(() => {
   const RED = /rgba?\((\d+),\s*(\d+),\s*(\d+)/;
-  const reddish = (value) => {
-    const m = RED.exec(value);
-    if (!m) return false;
-    const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
-    return r > 110 && r > g + 45 && r > b + 45;
-  };
   const hits = [];
   for (const el of document.querySelectorAll('#editor-container *')) {
     const cs = getComputedStyle(el);
     for (const prop of ['backgroundColor', 'borderLeftColor', 'borderRightColor',
                         'borderTopColor', 'borderBottomColor', 'boxShadow',
                         'outlineColor']) {
-      if (reddish(cs[prop])) {
-        hits.push({ cls: String(el.className).slice(0, 40), prop, v: cs[prop].slice(0, 40) });
+      const value = cs[prop];
+      const m = RED.exec(value);
+      if (!m) continue;
+      const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+      if (r > 110 && r > g + 45 && r > b + 45) {
+        hits.push({ cls: String(el.className).slice(0, 40), prop, v: value.slice(0, 40) });
       }
     }
   }
-  const bar = (sel) => {
-    const el = document.querySelector(sel);
-    return el ? getComputedStyle(el).boxShadow : null;
+  const kindOf = (el) => {
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return { style: cs.outlineStyle, colour: cs.outlineColor,
+             width: parseFloat(cs.outlineWidth) || 0 };
   };
   return {
     hits,
-    visualBar: bar('#editor-container .mermaid'),
-    editingBar: bar('#editor-container .mermaid-editing'),
-    plainTableBar: bar('#editor-container .ss-plain'),
-    sheetBar: bar('#editor-container .spreadsheet'),
+    visual: kindOf(document.querySelector('#editor-container .mermaid')),
+    editing: kindOf(document.querySelector('#editor-container .mermaid-editing')),
+    sheet: kindOf(document.querySelector('#editor-container .spreadsheet')),
+    chip: (document.querySelector('#status-mode') || {}).textContent || '',
   };
 })()"""
 
 
-def test_a_block_holding_the_record_is_never_marked_in_red(window):
+def test_a_block_in_a_non_visual_mode_is_never_marked_in_red(window):
     """Editing a diagram is the point of the mode, not a hazard.
 
     `--danger` is this app's destructive colour — the delete dialog's button, the
     kanban bin's dressing — so wearing it for "you are editing this diagram" made an
-    ordinary state look like a fault, and it was reported as an artifact. The bar is
-    now one accent colour for whichever block holds the record, which is the only
-    encoding it can usefully carry: one block holds it at a time, so there is never
-    a second bar to be told apart from.
+    ordinary state look like a fault, and it was reported as an artifact. Editing and
+    Source now share one dotted accent outline, and a sheet wears none at all,
+    because a spreadsheet is a rendering rather than an alternate document.
     """
     import json
+    from tests.mermaid_render import _render
     window._web.page().runJavaScript(
         "window.ediSetContent(%s); true"
-        % json.dumps("```mermaid\ngraph TD\n  A[Alpha] --> B[Beta]\n```\n"))
-    _wait(window,
-          "(() => ({ m: !!document.querySelector('#editor-container .mermaid') }))()",
-          lambda d: d.get("m") is True, timeout=25)
-
-    # Visual, and nothing is marked at all: nothing holds the record.
-    before = _dump(window, RECORD_BAR_IS_NOT_RED)
-    assert before["visualBar"] == "none", before["visualBar"]
-    assert before["editingBar"] is None, before["editingBar"]
-
-    _dump(window, """(() => {
-      const el = document.querySelector('#editor-container .mermaid-preview')
-        || document.querySelector('#editor-container .mermaid');
-      el.dispatchEvent(new MouseEvent('click',
-        { bubbles: true, cancelable: true, button: 0, altKey: true }));
-      return { clicked: true };
-    })()""")
-    _wait(window,
-          "(() => ({ e: !!document.querySelector('#editor-container .mermaid-editing') }))()",
-          lambda d: d.get("e") is True, timeout=15)
-
-    during = _dump(window, RECORD_BAR_IS_NOT_RED)
-    assert during["editingBar"] not in (None, "none"), (
-        f"a diagram being edited should carry the record's bar: {during['editingBar']!r}")
-    assert not during["hits"], f"something in the editor is drawn in red: {during['hits']}"
-
-
-def test_a_table_as_a_sheet_is_not_marked_at_all(window):
-    """A spreadsheet is a rendering, so it wears no bar — and the chip says `Edit`.
-
-    Two halves that are easy to confuse. The sheet must be **unmarked**, because
-    §7.2's rule is about the two alternate *document* states and a sheet is neither;
-    and the chip must still **name** the state, because that is where "what" is
-    answered. The decoration class is kept either way — it is what makes a form
-    flip reach the node view at all (§4.3).
-    """
-    import json
-    window._web.page().runJavaScript(
-        "window.ediSetContent(%s); true" % json.dumps("| A | B |\n| --- | --- |\n| 1 | 2 |\n"))
+        % json.dumps("| A | B |\n| --- | --- |\n| 1 | 2 |\n"))
     _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
           lambda d: d.get("t") is True, timeout=20)
     _dump(window, """(() => {
@@ -3975,12 +3933,208 @@ def test_a_table_as_a_sheet_is_not_marked_at_all(window):
     _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
           lambda d: d.get("s") is True, timeout=10)
 
-    out = _dump(window, RECORD_BAR_IS_NOT_RED)
-    assert out["sheetBar"] in ("none", ""), (
-        f"a sheet must not carry the record's bar: {out['sheetBar']!r}")
-    assert not out["hits"], f"something in the editor is drawn in red: {out['hits']}"
+    sheet = _dump(window, RECORD_BAR_IS_NOT_RED)
+    assert not sheet["hits"], f"something in the editor is drawn in red: {sheet['hits']}"
+    assert sheet["sheet"] is None or sheet["sheet"]["style"] == "none", (
+        f"a sheet is a rendering, so it wears no mode outline: {sheet['sheet']}")
+    # ...but the chip still names the state, in the cycle's vocabulary.
+    assert sheet["chip"].startswith("Edit"), (
+        f"the chip must name the state: {sheet['chip']!r}")
 
-    chip = _dump(window,
-                 "(() => ({ text: (document.querySelector('#status-mode')||{}).textContent || '' }))()")
-    assert chip["text"].startswith("Edit"), (
-        f"the chip must still name the state, in the cycle's vocabulary: {chip['text']!r}")
+    _set_scheme(window, False)
+    _render(window, FLOW)
+    _dump(window, """(() => {
+      const el = document.querySelector('.mermaid .mermaid-preview')
+        || document.querySelector('.mermaid');
+      el.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ e: !!document.querySelector('.mermaid-editing') }))()",
+          lambda d: d.get("e") is True, timeout=15)
+
+    # Whether the diagram's outline is dotted or solid here depends on whether the
+    # render also *selected* it — and it is, because `_render` leaves a NodeSelection
+    # on the block it inserted. That is the documented precedence (selection wins
+    # over the mode), and it is the subject of the other test; what matters here is
+    # that nothing red is on the page at all.
+    during = _dump(window, RECORD_BAR_IS_NOT_RED)
+    assert not during["hits"], f"something in the editor is drawn in red: {during['hits']}"
+    assert during["editing"], "a diagram being edited should be marked somehow"
+    assert during["editing"]["colour"] != "rgb(209, 36, 47)", during["editing"]
+
+
+def test_a_table_as_a_sheet_is_not_marked_at_all(window):
+    """A spreadsheet wears no mode outline, and the chip says `Edit`.
+
+    Two halves that are easy to confuse. The sheet must be **unmarked**, because
+    §7.2's rule is about the two alternate *document* states and a sheet is neither;
+    and the chip must still **name** the state, because that is where "what" is
+    answered. Its decoration class is set either way — that is what makes a form
+    flip reach the node view at all (§4.3).
+    """
+    import json
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps("| A | B |\n| --- | --- |\n| 1 | 2 |\n"))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=20)
+    _dump(window, """(() => {
+      const b = document.querySelector('#editor-container .block-control-form');
+      b.click();
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
+          lambda d: d.get("s") is True, timeout=10)
+
+    out = _dump(window, RECORD_BAR_IS_NOT_RED)
+    assert out["sheet"] is None or out["sheet"]["style"] == "none", out["sheet"]
+    assert out["chip"].startswith("Edit"), f"the chip must name the state: {out['chip']!r}"
+
+
+# The two outlines of the block-level vocabulary (styles.css §7.2): a **solid**
+# accent outline means *selected*, a **dotted** one means *in a non-visual mode*.
+#
+# The selection half is checked by actually selecting, because the report was that
+# `Ctrl+A` shows no indication at all on `spreadsheets.md` — and that turned out to
+# be a bug in `selectionHighlightPlugin` rather than a missing style: it required a
+# `TextSelection`, and `Ctrl+A` is an `AllSelection`.
+BLOCK_OUTLINES = r"""(() => {
+  const kindOf = (el) => {
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return {
+      style: cs.outlineStyle,
+      width: parseFloat(cs.outlineWidth) || 0,
+      colour: cs.outlineColor,
+      dot: cs.outlineStyle === 'dotted',
+      solid: cs.outlineStyle === 'solid',
+    };
+  };
+  return {
+    selected: [...document.querySelectorAll('#editor-container .edi-block-selected')].map(
+      (el) => ({ cls: String(el.className).split(' ')[0], ...kindOf(el) })),
+    nodeSelected: [...document.querySelectorAll('#editor-container .ProseMirror-selectednode')]
+      .map((el) => ({ cls: String(el.className).split(' ')[0], ...kindOf(el) })),
+    editing: [...document.querySelectorAll('#editor-container .mermaid-editing')].map(kindOf),
+    source: [...document.querySelectorAll('#editor-container .block-source-mode')].map(kindOf),
+    sourceOwnBorder: (() => {
+      const el = document.querySelector('#editor-container .block-source-mode');
+      return el ? getComputedStyle(el).borderTopColor : null;
+    })(),
+    sheet: kindOf(document.querySelector('#editor-container .spreadsheet')),
+    accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+  };
+})()"""
+
+
+def _spreadsheets(window):
+    """The document the report was made against: a formula block and three tables."""
+    import pathlib
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps(pathlib.Path("spreadsheets.md").read_text()))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+
+
+def _accent_rgb(window):
+    """The `--accent` of whichever scheme is loaded, as an `(r, g, b)` tuple."""
+    raw = _dump(window, BLOCK_OUTLINES)["accent"]
+    assert raw.startswith("#") and len(raw) == 7, f"unexpected --accent: {raw!r}"
+    return tuple(int(raw[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _outline_colour_rgb(colour):
+    parts = colour.replace("rgb(", "").replace(")", "").split(", ")
+    return tuple(int(v) for v in parts[:3])
+
+
+def test_select_all_marks_every_selected_block(window):
+    """`Ctrl+A` on `spreadsheets.md` marks every block it covers.
+
+    The report was: press select-all, and not one block looks selected. The cause
+    was not a missing style — `selectionHighlightPlugin` required a `TextSelection`
+    and `Ctrl+A` is an `AllSelection`, so it decorated nothing. Every kind of
+    non-empty selection has `from` and `to`, so the kind was never needed.
+    """
+    _spreadsheets(window)
+    assert not _dump(window, BLOCK_OUTLINES)["selected"], (
+        "something is already selected before the test selects anything")
+
+    _dump(window, "(() => { document.querySelector('#editor-container .ProseMirror').focus();"
+                  " return { focused: true }; })()")
+    _dump(window, """(() => {
+      for (const type of ['keydown', 'keyup']) {
+        document.dispatchEvent(new KeyboardEvent(type, {
+          key: 'a', code: 'KeyA', keyCode: 65, which: 65,
+          ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+      }
+      return { sent: true };
+    })()""")
+    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
+
+    # Every top-level block in this document: the formula block and three tables.
+    assert len(marked["selected"]) == 4, marked["selected"]
+    accent = _accent_rgb(window)
+    for entry in marked["selected"]:
+        assert entry["solid"], f"a selected block needs a SOLID outline: {entry}"
+        assert entry["width"] >= 2, f"the selection outline is too thin to see: {entry}"
+        assert _outline_colour_rgb(entry["colour"]) == accent, (
+            f"the selection outline is not --accent: {entry}")
+
+
+def test_a_non_visual_mode_is_a_dotted_outline_whatever_the_mode(window):
+    """Editing and Source get the *same* mark: dotted, in the accent colour.
+
+    A block in a non-visual mode is the reader's own doing and temporary, so a solid
+    line is spent on selection. This was three separate treatments for three states
+    — a 3px left bar, a source block's own solid accent border, and whatever a form
+    did — and none of them matched.
+    """
+    _set_scheme(window, False)
+    _render(window, FLOW)
+
+    accent = _accent_rgb(window)
+
+    # `_render` leaves a `NodeSelection` on the block it inserted, so this diagram
+    # is **selected and being edited at once** — which is the precedence worth
+    # pinning. Selection's solid outline is declared after the mode's dotted one and
+    # deliberately wins: selection is the transient state a next keystroke or Ctrl+X
+    # will act on, where the mode is the standing one. The dotted mark on its own is
+    # checked below, on a block that is only in a mode.
+    _dump(window, """(() => {
+      const el = document.querySelector('.mermaid .mermaid-preview')
+        || document.querySelector('.mermaid');
+      el.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ e: !!document.querySelector('.mermaid-editing') }))()",
+          lambda d: d.get("e") is True, timeout=15)
+
+    editing = _dump(window, BLOCK_OUTLINES)
+    assert editing["nodeSelected"], (
+        f"the render should have selected the block it inserted: {editing}")
+    assert editing["editing"] and editing["editing"][0]["solid"], (
+        f"selection must win over the mode: {editing['editing']}")
+    assert _outline_colour_rgb(editing["editing"][0]["colour"]) == accent, (
+        f"the outline is not --accent: {editing['editing'][0]}")
+    # ...and no trace of the `--danger` red the bar used to be.
+    assert editing["editing"][0]["colour"] != "rgb(209, 36, 47)", editing["editing"][0]
+
+    # **The mode mark on its own.** A paragraph in Source, which is only in a mode
+    # and is not a block selection, so nothing else can be mistaken for the mark.
+    _dump(window, "(() => { document.querySelector('.block-control-representation').click();"
+                  " return { clicked: true }; })()")
+    _wait(window, "(() => ({ s: !!document.querySelector('.block-source-mode') }))()",
+          lambda d: d.get("s") is True, timeout=10)
+
+    source = _dump(window, BLOCK_OUTLINES)
+    assert source["source"] and source["source"][0]["dot"], (
+        f"a block in Source needs a DOTTED outline: {source['source']}")
+    assert _outline_colour_rgb(source["source"][0]["colour"]) == accent, (
+        f"the mode outline is not --accent: {source['source'][0]}")
+    # Its own border is chrome — `--border`, not the accent — so the frame around
+    # the editor and the outline around the block are two different statements.
+    assert source["sourceOwnBorder"] != f"rgb({accent[0]}, {accent[1]}, {accent[2]})", (
+        f"a source block's own border must be chrome, not a mode: "
+        f"{source['sourceOwnBorder']}")
