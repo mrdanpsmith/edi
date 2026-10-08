@@ -2907,13 +2907,3 @@ def test_every_offered_label_rename_resolves(window, source, needle, expect):
     else:
         assert state["notice"], "mermaid refused the source without saying so"
         assert not drawn(state), state
-
-def test_probe_pm_node_selection(window):
-    _render(window, KANBAN_EMPTY)
-    _enter_edit_mode(window)
-    _click_kanban_slot(window, 0)
-    import time; time.sleep(0.5)
-    print('DURING', _dump(window, "(() => ({ selNodes: document.querySelectorAll('.ProseMirror-selectednode').length, focused: document.activeElement?.tagName }))()"))
-    _dump(window, "(() => { const e = document.querySelector('.mermaid [contenteditable=\"true\"]'); if (e) e.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true})); return {}; })()")
-    import time as t; t.sleep(0.5)
-    print('AFTER', _dump(window, "(() => ({ selNodes: document.querySelectorAll('.ProseMirror-selectednode').length, focused: document.activeElement?.tagName, editEl: !!document.querySelector('.mermaid [contenteditable=\"true\"]') }))()"))

@@ -285,6 +285,14 @@ describe('patchLabel: kanban', () => {
     expect(patchLabel(board, family, 'italic', 'plain')).toEqual(ok('kanban\n  Todo\n    id1[*plain*]'))
   })
 
+  it('renames a card whose label carries underscore emphasis', () => {
+    // `_ital_` and `__bold__` render the same as the asterisk forms — the
+    // editor must keep the delimiter family the source used.
+    const board = 'kanban\n  Todo\n    id1[_ital_]\n    id2[__bold__]'
+    expect(patchLabel(board, family, 'ital', 'plain')).toEqual(ok('kanban\n  Todo\n    id1[_plain_]\n    id2[__bold__]'))
+    expect(patchLabel(board, family, 'bold', 'plain')).toEqual(ok('kanban\n  Todo\n    id1[_ital_]\n    id2[__plain__]'))
+  })
+
   it('falls back to the rendered text for a shape mermaid renders verbatim', () => {
     // The mapper reports no label for `id6>Ang Label]`, so the edit goes
     // through the unique-substring rule rather than guessing a shape span.

@@ -35,7 +35,6 @@ const NOTICE_CLASS = 'mermaid-edit-notice'
 const NOTICE_TEXT =
   "Couldn't parse diagram — keeping the previous version. Edit the source to fix it."
 const NOTICE_MS = 3000
-const INVALID_FLASH_MS = 700
 /** The card being dragged: the real one, lifted out of the board to follow the pointer. */
 const DRAG_CARD_CLASS = 'kanban-dragging-card'
 /** On the preview while a card is in flight, so the board stops clipping it. */
@@ -658,14 +657,18 @@ function wholeWordSpans(
 }
 
 /** A label that is one whole emphasis run, e.g. `*italic*`, `**bold**`. */
-const EMPHASIS_WRAP = /^(\*\*|\*|~~|`)([\s\S]+)\1$/
+const EMPHASIS_WRAP = /^(\*\*\*|\*\*|\*|___|__|_|~~|`)([\s\S]+)\1$/
 
 /** The label mermaid draws from a source spelling: inline emphasis and code
  * markers render as elements, so the board shows the text without them. */
 function renderedText(label: string): string {
   return label
+    .replace(/\*\*\*([^*]+)\*\*\*/g, '$1')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/___([^_]+)___/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
     .replace(/~~([^~]+)~~/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
 }
@@ -704,6 +707,11 @@ function editCardTitleOver(
     ? Number(rectEl.getAttribute('height')) || rectEl.getBoundingClientRect().height
     : 0
   hostCard?.classList.add('mermaid-node-editing')
+  // The field is transparent by design (so it fades into the card) — hide the
+  // label it is editing or its old text shows through underneath. The old
+  // text is back exactly when the field itself is gone, which is true for
+  // accept (the commit re-renders), refusal and cancel alike.
+  labelEl.style.visibility = 'hidden'
   let hadListener = false
   return openInlineInput({
     host: container,
@@ -737,6 +745,7 @@ function editCardTitleOver(
         hostCard?.classList.remove('mermaid-node-editing')
         if (rectEl) rectEl.setAttribute('height', String(startHeight))
         if (frameEl) frameEl.setAttribute('height', String(startHeight))
+        labelEl.style.visibility = ''
       }).observe(field.parentElement ?? container, { childList: true })
     },
     onAccept: (typed) => onAccept(typed),
@@ -2216,13 +2225,6 @@ interface InlineInputSpec {
    */
   multiline?: boolean
   /**
-   * Match the editor's typography to the element the text currently lives in,
-   * so an edit reads as the card itself being edited rather than a field laid
-   * over it: same font, size, colour, alignment and padding, with the field's
-   * own chrome (border, background, shadow) taken off.
-   */
-  styleFrom?: Element | null
-  /**
    * Enter, or a blur. Return `true` when the caller is done with the input
    * either way, `false` to refuse the value quietly, and a string to refuse it
    * *and* say why in a notice — the way an unusable card title is refused. A
@@ -2269,21 +2271,6 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
   input.value = value
   if (placeholder) input.placeholder = placeholder
   input.style.height = `${box().height || 20}px`
-  if (spec.styleFrom) {
-    const cs = getComputedStyle(spec.styleFrom)
-    input.style.fontFamily = cs.fontFamily
-    input.style.fontSize = cs.fontSize
-    input.style.fontWeight = cs.fontWeight
-    input.style.fontStyle = cs.fontStyle
-    input.style.color = cs.color
-    input.style.lineHeight = cs.lineHeight
-    input.style.textAlign = cs.textAlign
-    input.style.padding = cs.paddingTop + ' ' + cs.paddingRight + ' ' + cs.paddingBottom + ' ' + cs.paddingLeft
-    input.style.background = 'transparent'
-    input.style.border = 'none'
-    input.style.boxShadow = 'none'
-    input.style.borderRadius = '0'
-  }
   // A wrapping field is sized by its own content, not by the slot it replaced:
   // a card title is longer than the card-shaped place it was opened from more
   // often than not, and a fixed box either scrolls the rest of the title out of
@@ -2344,13 +2331,14 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
     // a card that did not appear.
     const refusal = onAccept(input.value.trim())
     if (refusal !== true) {
+      // Rejected in place: the field stays open with the notice and the
+      // invalid styling, until the user fixes it or presses Esc.
       input.classList.add(INVALID_CLASS)
       const why = typeof refusal === 'string' ? refusal : ''
       if (why) {
         const block = host.closest<HTMLElement>('.mermaid')
         if (block) showNotice(block, why, 'The diagram cannot be given that label.')
       }
-      setTimeout(close, INVALID_FLASH_MS)
       return
     }
     close()
@@ -2376,7 +2364,6 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
     event.stopPropagation()
   })
   input.addEventListener('pointerdown', (event) => event.stopPropagation())
-  input.addEventListener('mousedown', (event) => event.preventDefault())
   input.addEventListener('blur', () => finish(true))
   // The field is a box over the diagram, so a click inside it must not be read as
   // a click on whatever label happens to lie underneath — which is how opening a
@@ -2422,7 +2409,10 @@ function openInlineInput(spec: InlineInputSpec): (accept: boolean) => void {
     })
   })
   input.focus()
-  if (value) input.select()
+  // Start with the caret at the end of what is there; selecting all would
+  // make a press elsewhere read as "replace", and then force it to be
+  // deselected with a second click.
+  input.setSelectionRange(input.value.length, input.value.length)
   return finish
 }
 
@@ -3853,7 +3843,7 @@ function attachKanbanChrome(
       // the card will stand — the same in-place edit an existing card gets.
       openEditor(
         editCardTitleOver(container, label, '', 'new', 'Card title', (value) => {
-          if (value === '') return true
+          if (value.trim() === '') return true
           const next = addKanbanCard(source, column, slotAt(column), value)
           if (next === null) return kanbanLabelRefusal(value)
           commit(next)
