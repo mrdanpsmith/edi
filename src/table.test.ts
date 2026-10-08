@@ -13,9 +13,17 @@ import {
   currentBlockMode,
   enterSourceMode,
   exitBlockMode,
+  modeFor,
+  setBlockModeAt,
 } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
-import { tableNodeViewPlugin, insertTable, enterSpreadsheetMode, spreadsheetMenuEntries } from './node/table'
+import {
+  tableNodeViewPlugin,
+  insertTable,
+  enterSpreadsheetMode,
+  spreadsheetMenuEntries,
+  tableFormOf,
+} from './node/table'
 import { ContextMenu, type ContextMenuEntry } from './contextmenu'
 import { formulaDefsPlugin } from './formulaDefs'
 import { getActiveCellHost } from './inline-format'
@@ -51,14 +59,13 @@ function createEditor(md: string, withHistory = false): EditorView {
       ],
     }),
   })
-  // Tables render in the plain view by default (`_plain` is true); enter
-  // spreadsheet mode for the existing suite so `.ss-grid` etc. are present.
-  const firstNode = view.state.doc.child(0)
-  if (firstNode?.type.name === 'table') {
-    const tr = view.state.tr.setNodeMarkup(0, undefined, { ...firstNode.attrs, _plain: false })
-    // The app keeps the view-mode switch out of the undo stack, so the menu's
-    // undo/redo only ever rewinds cell edits.
-    if (withHistory) tr.setMeta('addToHistory', false)
+  // A table's rendering is plain text; a sheet is a *mode*, and it is on the one
+  // record — so the existing suite enters it the way the app does. Nothing to
+  // keep out of the undo stack any more: taking the record is not a document edit
+  // at all, which is what the `_plain` attr used to need `addToHistory: false` for.
+  if (view.state.doc.child(0)?.type.name === 'table') {
+    const tr = view.state.tr
+    setBlockModeAt(view.state, tr, 0, { form: 'sheet' })
     view.dispatch(tr)
   }
   return view
@@ -869,11 +876,11 @@ describe('TableNodeView grid', () => {
 
   it('returns to spreadsheet mode after a source edit', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
-    expect(view.state.doc.child(0).attrs._plain).toBe(false)
+    expect(tableFormOf(view.state, 0)).toBe('sheet')
     enterSourceMode(view, 0)
     const exitBtn = (view.nodeDOM(0) as HTMLElement).querySelector<HTMLElement>('.block-source-exit')
     exitBtn?.click()
-    expect(view.state.doc.child(0).attrs._plain).toBe(false)
+    expect(tableFormOf(view.state, 0)).toBe('sheet')
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
     expect(view.dom.querySelector('.ss-plain')).toBeNull()
     view.destroy()
@@ -881,11 +888,11 @@ describe('TableNodeView grid', () => {
 
   it('returns to plain view after a source edit when it started there', () => {
     const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
-    expect(view.state.doc.child(0).attrs._plain).toBe(true)
+    expect(tableFormOf(view.state, 0)).toBe('text')
     enterSourceMode(view, 0)
     const exitBtn = (view.nodeDOM(0) as HTMLElement).querySelector<HTMLElement>('.block-source-exit')
     exitBtn?.click()
-    expect(view.state.doc.child(0).attrs._plain).toBe(true)
+    expect(tableFormOf(view.state, 0)).toBe('text')
     expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
     view.destroy()
   })
@@ -904,7 +911,7 @@ describe('TableNodeView grid', () => {
   it('opens a newly inserted table directly in spreadsheet mode', () => {
     const view = createEditor('')
     insertTable(view, 3, 2)
-    expect(view.state.doc.firstChild?.attrs._plain).toBe(false)
+    expect(tableFormOf(view.state, 0)).toBe('sheet')
     expect(view.state.selection).not.toBeInstanceOf(NodeSelection)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
     expect(view.dom.querySelector('.ss-grid')).toBeTruthy()
@@ -923,21 +930,26 @@ describe('TableNodeView grid', () => {
     expect(view.dom.querySelectorAll('.spreadsheet').length).toBe(1)
     enterSpreadsheetMode(view, blockPosForElement(view, view.dom.querySelector('.ss-plain')!))
     expect(view.dom.querySelectorAll('.spreadsheet').length).toBe(1)
-    expect(view.state.doc.child(0).attrs._plain).toBe(true)
-    expect(view.state.doc.child(1).attrs._plain).toBe(false)
+    expect(tableFormOf(view.state, 0)).toBe('text')
+    expect(tableFormOf(view.state, view.state.doc.child(0).nodeSize)).toBe('sheet')
     view.destroy()
   })
 
-  it('Alt+clicking the spreadsheet itself takes it back to text', () => {
+  it('cycles a table text → sheet → source on Alt+click, from anywhere on it', () => {
     const view = createPlainTable('| A |\n| --- |\n| 1 |')
-    altClick(view.dom.querySelector('.ss-plain-table') as HTMLElement)
+    const plain = view.dom.querySelector('.ss-plain-table') as HTMLElement
+    const table = blockPosForElement(view, plain)
+    altClick(plain)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
-    // Anywhere on the table, the gesture toggles the form: there is no "inside
-    // the grid but outside the block" corner any more, because a double click
-    // inside a cell used to mean "select this word".
+
+    // Anywhere on the table, the gesture advances the block's cycle: the step on
+    // from the sheet is the block's source, not back to text. There is no
+    // "inside the grid but outside the block" corner any more, because a double
+    // click inside a cell used to mean "select this word".
     altClick(view.dom.querySelector('.ss-grid tbody td') as HTMLElement)
     expect(view.dom.querySelector('.spreadsheet')).toBeNull()
-    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    expect(modeFor(view.state, table)?.representation).toBe('source')
+    expect((view.nodeDOM(table) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
     view.destroy()
   })
 
@@ -970,13 +982,24 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
-  it('Alt+clicking away from the block has nothing to finish, and says so quietly', () => {
+  it('a sheet takes the one slot, as a source form and an edit mode do', () => {
+    // A sheet used to live in a document attr, per-block and non-exclusive, so a
+    // table could be a sheet while a diagram elsewhere was being edited. It is on
+    // the record now, which is what makes "one block in a non-visual state" a
+    // statement the app can actually keep.
     const view = createPlainTable('| A |\n| --- |\n| 1 |')
     altClick(view.dom.querySelector('.ss-plain-table') as HTMLElement)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
-    // A sheet is not an interaction axis, so there is no record to finish: the
-    // gesture is inert rather than reaching into the table's document attr.
-    expect(currentBlockMode(view.state)).toBeNull()
+    expect(currentBlockMode(view.state)).toMatchObject({
+      pos: 0,
+      type: 'table',
+      representation: 'visual',
+      interaction: 'viewing',
+      form: 'sheet',
+    })
+    // ...and it is not a document edit, so it never marked the file dirty and
+    // never reached the undo stack.
+    expect(view.state.doc.child(0).attrs).not.toHaveProperty('_plain')
     view.destroy()
   })
 
@@ -1631,7 +1654,7 @@ describe('TableNodeView grid', () => {
     // descriptor's own form list rather than from a per-call-site string.
     const cluster = view.dom.querySelector('.block-controls') as HTMLElement
     expect(cluster.querySelector('.block-control-representation')?.textContent).toBe('Source')
-    expect(cluster.querySelector('.block-control-form')?.textContent).toBe('Show as sheet')
+    expect(cluster.querySelector('.block-control-form')?.textContent).toBe('Sheet')
     view.destroy()
   })
 

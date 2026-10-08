@@ -268,6 +268,14 @@ async function flushAsync(): Promise<void> {
 
 async function loadMain(): Promise<void> {
   vi.resetModules()
+  // `vi.resetModules()` starts a new module generation, and the node views below
+  // are only usable alongside the `blockModePlugin` of *their own* generation —
+  // a mode is identified by its `PluginKey`, so a `BLOCK_MODE_KEY` from an older
+  // one writes a meta no state in this generation is listening for. Caching them
+  // across a reset is what made a sheet silently fail to open. Clearing it here
+  // makes the invariant true by construction rather than at four call sites that
+  // each had to remember.
+  nodeViews = null
   await import('./main')
   await flushAsync()
 }
@@ -320,12 +328,20 @@ let nodeViews: MainSideNodeViews | null = null
 
 async function mainSideNodeViews(): Promise<MainSideNodeViews> {
   if (nodeViews !== null) return nodeViews
+  // `importActual` for the two node-view modules the mock list covers: a
+  // `vi.mock(..., importOriginal)` factory is cached across `resetModules`, so the
+  // mocked copy is built from a module evaluated in an *earlier* generation — and
+  // its node views ask the mode record through the `BLOCK_MODE_KEY` of that
+  // generation, which is a different key from the `blockModePlugin` in the view
+  // below. A form therefore never reached the DOM. This wants the real node views
+  // anyway (see above), and `main` keeps seeing the mock, which is all the mock is
+  // for.
   const [modes, blockview, mermaid, table, execblock] = await Promise.all([
     mainSideBlockModes(),
-    import('./blockview'),
+    vi.importActual<typeof import('./blockview')>('./blockview'),
     import('./node/mermaid'),
-    import('./node/table'),
-    import('./node/execblock'),
+    vi.importActual<typeof import('./node/table')>('./node/table'),
+    vi.importActual<typeof import('./node/execblock')>('./node/execblock'),
   ])
   nodeViews = {
     modes,
@@ -1245,7 +1261,6 @@ describe('kanban board insertion', () => {
    */
   async function attachView(markdown: string): Promise<EditorView> {
     await loadMain()
-    nodeViews = null
     return mountDoc(markdown)
   }
 
@@ -1375,7 +1390,6 @@ describe('context menu', () => {
     // `loadMain` re-evaluates every non-mocked module, so the cached node views
     // belong to the registry that just went away. Holding on to them would have
     // the node views ask a record no view carries.
-    nodeViews = null
     if (options.withDocument === false) return
     // A session has to exist: with no document open the app answers no
     // right-click at all, before the menu is even built.
@@ -1840,14 +1854,24 @@ describe('context menu', () => {
   /**
    * A real spreadsheet in a real view, with a live grid behind it.
    *
-   * A table's own `_plain` form is a sheet, so the grid node view renders without
+   * A sheet is one state of the one record, so the grid node view renders without
    * anything having to ask for it.
    */
   const fakeSheet = async (): Promise<{ sheet: HTMLElement; teardown: () => void }> => {
     const view = await mountDoc('| A |\n| --- |\n| 1 |')
-    // A table opens as text; the grid is one click away, so ask for it through the
-    // same registry the node view came from.
-    nodeViews!.table.enterSpreadsheetMode(view, 0)
+    // A table opens as text; the grid is one click away.
+    //
+    // Taken through `modes`, not through the mocked `./node/table`: a
+    // `vi.mock(..., importOriginal)` factory is cached across `resetModules`, so
+    // that copy's `enterSpreadsheetMode` closes over the `BLOCK_MODE_KEY` of an
+    // *earlier* module generation than the one whose `blockModePlugin` is in this
+    // view — and a mode is identified by its key, so the write goes to a plugin
+    // nobody is listening for. This is the same trap §5.2's own note records for
+    // `./node/mermaid`, which is why that one is deliberately not mocked; a form
+    // only stayed invisible here while it was an attribute, which is immune to it.
+    const tr = view.state.tr
+    nodeViews!.modes.setBlockModeAt(view.state, tr, 0, { form: 'sheet' })
+    view.dispatch(tr)
     const sheet = view.dom.querySelector<HTMLElement>('.spreadsheet')!
     expect(sheet).not.toBeNull()
     return { sheet, teardown: () => view.destroy() }
@@ -1935,7 +1959,7 @@ describe('context menu', () => {
       'Copy',
       'Paste',
       'Select all',
-      'Show as text',
+      'Text',
       'Source',
       'Encrypt block…',
     ])
@@ -1953,7 +1977,7 @@ describe('context menu', () => {
     const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
-    expect(menuLabels()).toEqual(['Show as text', 'Source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Text', 'Source', 'Encrypt block…'])
 
     teardown()
   })
@@ -1974,7 +1998,7 @@ describe('context menu', () => {
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     expect(mainState.spreadsheetMenuEntries).toHaveBeenCalledWith(cell)
-    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Show as text', 'Source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Text', 'Source', 'Encrypt block…'])
 
     findMenuItem('Cut').click()
     expect(cut).toHaveBeenCalledTimes(1)
@@ -1997,7 +2021,6 @@ describe('the status chip', () => {
 
   it('names the mode and the block it is about, and empties when it closes', async () => {
     await loadMain()
-    nodeViews = null
     const modes = await mainSideBlockModes()
     expect(chip()).toEqual({ text: '', hidden: true })
 
@@ -2021,7 +2044,6 @@ describe('the status chip', () => {
 
   it('names a diagram by its first line, and truncates a long one', async () => {
     await loadMain()
-    nodeViews = null
     const modes = await mainSideBlockModes()
     const view = await mountDoc('```mermaid\nflowchart LR\n  A[Alpha]\n```')
     modes.enterBlockMode(view, 0, { interaction: 'editing' })

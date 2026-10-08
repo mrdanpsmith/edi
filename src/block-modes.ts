@@ -28,7 +28,7 @@ import { markdownToProse } from './markdown'
  *   restores the *document* and replays `apply` without the meta, so undoing an
  *   entry left the block drawing visually while the record still said otherwise;
  * - nothing on disk moves, because the attrs were invisible to the serializer
- *   anyway. (`_plain` remains — see the note on `buildSourceCommitTransaction`.)
+ *   anyway.
  *
  * What it costs is that a mode flip no longer changes the document, so
  * ProseMirror has no reason to re-ask the node views about it; `BLOCK_MODE_CLASS`
@@ -51,6 +51,29 @@ export interface BlockMode {
   type: string
   representation: Representation
   interaction: Interaction
+  /**
+   * Which rendered form the block is drawn in, when it has more than one and is
+   * not in its default one — a table as a sheet.
+   *
+   * This used to be a document attr (`_plain`) on the reasoning that a form is
+   * per-block and non-exclusive, so no single record could hold it. That
+   * reasoning described the *old* behaviour rather than a constraint, and taking
+   * the form onto the record is what makes the app's own rule true: **at most one
+   * block in a non-visual state, in the whole document** (§2.1). It also
+   * deletes three things the attr needed — a `setNodeMarkup` that dirtied the
+   * user's file for what is a view preference, an `addToHistory: false` to keep
+   * that edit out of undo, and a hand-written carry of the value across a source
+   * round-trip, which the record now does for free by simply still holding it.
+   *
+   * A block in its **default** form holds no record at all, which is what lets a
+   * document have any number of tables: plain text is a table's rendering, not a
+   * mode, and only the sheet is one.
+   *
+   * The value is meaningful only while the block is being viewed, but it is
+   * *kept* while it is in its source form, so a table that entered source as a
+   * sheet comes back as a sheet.
+   */
+  form?: string
 }
 
 export const BLOCK_MODE_KEY = new PluginKey<BlockMode | null>('EDI_BLOCK_MODE')
@@ -78,13 +101,25 @@ export const BLOCK_MODE_KEY = new PluginKey<BlockMode | null>('EDI_BLOCK_MODE')
 export const BLOCK_MODE_CLASS = 'edi-block-mode'
 
 /**
- * `…-visual` / `…-source`, plus `…-editing` while the interaction axis is on.
- * Both are what §7.2's accent rule is drawn from, and the difference between
- * them is what makes a mode flip reach the node views.
+ * `…-visual` / `…-source`, plus `…-editing` while the interaction axis is on,
+ * and `…-form` while a block is in a non-default rendered form.
+ *
+ * Both are what §7.2's accent rule is drawn from, and the difference between them
+ * is what makes a mode flip reach the node views.
+ *
+ * **`…-form` is load-bearing in exactly the way §7.2 describes.** A table drawn
+ * as a sheet differs from the same table drawn as text in nothing else the
+ * decoration can see — both are `visual` and `viewing` — so without this marker
+ * the flip is a byte-identical decoration, `ViewDesc.matchesNode` returns "no
+ * change", the tree is not re-walked, and the table keeps drawing as text. That
+ * is the whole of `setNodeMarkup`'s old behaviour, which the node view's
+ * `update()` caught by diffing an attr; now that the form is plugin state, this
+ * class is what catches it.
  */
 export const BLOCK_MODE_VISUAL_CLASS = `${BLOCK_MODE_CLASS}-visual`
 export const BLOCK_MODE_SOURCE_CLASS = `${BLOCK_MODE_CLASS}-source`
 export const BLOCK_MODE_EDITING_CLASS = `${BLOCK_MODE_CLASS}-editing`
+export const BLOCK_MODE_FORM_CLASS = `${BLOCK_MODE_CLASS}-form`
 
 /**
  * What a block type supports. This is the declaration a block makes about
@@ -112,9 +147,25 @@ const INTERACTIVE_BLOCKS = new Set(['mermaid_block'])
 const SOURCE_ONLY_BLOCKS = new Set(['source_block'])
 
 const TABLE_FORMS: BlockModeDescriptor['forms'] = [
-  { id: 'text', label: 'Show as text', isDefault: true },
-  { id: 'sheet', label: 'Show as sheet', isDefault: false },
+  { id: 'text', label: 'Text', isDefault: true },
+  { id: 'sheet', label: 'Sheet', isDefault: false },
 ]
+
+/**
+ * The form a block is drawn in when nothing has asked for another — its
+ * rendering rather than a mode, so it holds no record and any number of blocks
+ * may be in it. `forms` is written in cycle order, so this could be `forms[0]`,
+ * but the descriptor is a declaration and `isDefault` is what it declares;
+ * reading the flag keeps the two from disagreeing if the list is reordered.
+ */
+function defaultFormOf(descriptor: BlockModeDescriptor): string | undefined {
+  return descriptor.forms?.find((entry) => entry.isDefault)?.id
+}
+
+/** Is `form` this block's own rendering rather than a mode? */
+function isDefaultForm(descriptor: BlockModeDescriptor, form: string): boolean {
+  return form === defaultFormOf(descriptor)
+}
 
 export function blockModeFor(node: ProseNode): BlockModeDescriptor {
   if (SOURCE_ONLY_BLOCKS.has(node.type.name)) {
@@ -133,6 +184,11 @@ function supportsMode(node: ProseNode, mode: BlockMode): boolean {
   const descriptor = blockModeFor(node)
   if (mode.representation === 'source' && !descriptor.representation) return false
   if (mode.interaction === 'editing' && descriptor.interaction === 'none') return false
+  // A form the block no longer has is as stale as a mode it can no longer take:
+  // a table whose forms were narrowed must not keep naming one of them.
+  if (mode.form !== undefined && !descriptor.forms?.some((entry) => entry.id === mode.form)) {
+    return false
+  }
   return true
 }
 
@@ -146,6 +202,7 @@ function blockModeDecorations(state: EditorState): DecorationSet {
     mode.representation === 'source' ? BLOCK_MODE_SOURCE_CLASS : BLOCK_MODE_VISUAL_CLASS,
   ]
   if (mode.interaction === 'editing') classes.push(BLOCK_MODE_EDITING_CLASS)
+  if (mode.form !== undefined) classes.push(BLOCK_MODE_FORM_CLASS)
   return DecorationSet.create(state.doc, [
     Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: classes.join(' ') }),
   ])
@@ -168,8 +225,27 @@ export interface BlockModeHandlers {
   enter?: (view: EditorView, pos: number) => void
   /** Leave it, the same way — the ladder's third step, and `Done`. */
   exit?: (view: EditorView, pos: number) => void
-  /** What Alt+click on this block does (§5.2). */
+  /** Toggle it, from either end — the cluster's Edit/Done button, and the menu. */
   toggle?: (view: EditorView, pos: number) => void
+  /**
+   * Told that the record now names this form, so the owning subsystem can do what
+   * only it can.
+   *
+   * A notification, **not** an entry point: the record write has already happened
+   * and been dispatched by the time this runs, so a handler that wrote the record
+   * again would undo the caller's own transition — and one that delegated back
+   * would recurse. It exists because a sheet is a *live* editing surface: taking
+   * one deselects the table, because a `NodeSelection` on a block means typing
+   * replaces the block, and focuses the grid. Neither is the record's business.
+   *
+   * It is a quarter of what this hook was before the form moved onto the record.
+   * The reading half is gone because the record answers that now, and the writing
+   * half because the record *is* the write.
+   */
+  forms?: {
+    /** `pos` is now drawn in `form`; do whatever that form's surface needs. */
+    entered?: (view: EditorView, pos: number, form: string) => void
+  }
 }
 
 export const BLOCK_MODE_HANDLERS: Record<string, BlockModeHandlers> = {}
@@ -239,10 +315,26 @@ export function setBlockMode(tr: Transaction, mode: BlockMode | null): void {
  * node type so `apply` can still recognise it after the document moves. A block
  * that is not there, or cannot take the mode, releases the record instead.
  */
+/**
+ * Record a mode for the block at `pos`, stamping the record with that block's
+ * node type so `apply` can still recognise it after the document moves. A block
+ * that is not there, or cannot take the mode, releases the record instead.
+ *
+ * `state` is the state `tr` was built from, and it is here for one reason: **a
+ * form is sticky.** A caller that says nothing about the form keeps the one the
+ * block already has, so entering a table's source form does not quietly turn it
+ * back into plain text on the way out. That is the whole of what carrying a form
+ * across a source round-trip needs, and it used to need a hand-written carry of
+ * an attribute for exactly this reason (§4.3).
+ *
+ * Every caller has the view it is building `tr` from, so there is no case where
+ * the state is unavailable and the form has to be dropped.
+ */
 export function setBlockModeAt(
+  state: EditorState,
   tr: Transaction,
   pos: number,
-  changes: { representation?: Representation; interaction?: Interaction },
+  changes: { representation?: Representation; interaction?: Interaction; form?: string },
 ): void {
   const node = tr.doc.nodeAt(pos)
   if (node === null) {
@@ -257,8 +349,146 @@ export function setBlockModeAt(
     setBlockMode(tr, null)
     return
   }
-  setBlockMode(tr, { pos, type: node.type.name, representation, interaction })
+  const named = changes.form
+  const kept = modeFor(state, pos)?.form
+  const form = named === undefined ? kept : formId(descriptor, named)
+  setBlockMode(tr, { pos, type: node.type.name, representation, interaction, form })
 }
+
+/** The stored form for `form`, or undefined when it is the block's own default. */
+function formId(descriptor: BlockModeDescriptor, form: string): string | undefined {
+  return isDefaultForm(descriptor, form) ? undefined : form
+}
+
+/**
+ * Put the block at `pos` into the named rendered form, taking or releasing the
+ * one record as that requires.
+ *
+ * A form in the block's **default** is its rendering rather than a mode, so it
+ * releases the record instead of taking it — which is the whole of why a document
+ * may hold any number of tables while only one of them may be a sheet.
+ *
+ * A form is only ever held by a block that is being *viewed*, so asking for a
+ * form of a block in its source form is a no-op: the value is still remembered
+ * there (the record keeps it), it is simply not drawn.
+ *
+ * Everything else about a block is dropped, because the record holds one block:
+ * a table that was in its source form and is asked for a sheet comes back
+ * rendered, as a sheet.
+ */
+export function setBlockForm(view: EditorView, pos: number, form: string): void {
+  const node = view.state.doc.nodeAt(pos)
+  if (node === null) return
+  const type = node.type.name
+  const descriptor = blockModeFor(node)
+  const mode = modeFor(view.state, pos)
+  const tr = view.state.tr
+  if (form === defaultFormOf(descriptor)) {
+    // The block's own rendering: the record goes, and it goes *entirely*. A
+    // formless record naming a block that is merely being viewed is not a
+    // weaker version of the same thing — it is a block in the one slot that
+    // nothing else may occupy, which is exactly what the slot is for.
+    if (mode === null || mode.form === undefined) return
+    if (mode.representation === 'visual' && mode.interaction === 'viewing') {
+      setBlockMode(tr, null)
+    } else {
+      const { form: _released, ...rest } = mode
+      setBlockMode(tr, rest)
+    }
+  } else {
+    setBlockModeAt(view.state, tr, pos, { form })
+  }
+  view.dispatch(tr)
+  BLOCK_MODE_HANDLERS[type]?.forms?.entered?.(view, pos, form)
+}
+
+/** The form the block at `pos` is drawn in, default included. */
+export function blockFormOf(state: EditorState, pos: number | undefined): string | undefined {
+  if (pos === undefined) return undefined
+  const node = state.doc.nodeAt(pos)
+  return node === null ? undefined : defaultFormOf(blockModeFor(node))
+}
+
+/** The non-default form the record names for `pos`, if any. */
+export function blockFormMode(state: EditorState, pos: number | undefined): string | undefined {
+  return pos === undefined ? undefined : modeFor(state, pos)?.form
+}
+
+/**
+ * The one editor holding the one non-visual block in the whole page.
+ *
+ * The record is per-`EditorState`, and an unlocked encrypted block is a *whole
+ * nested editor* with its own state (`encryptedblock.ts`), so "at most one block
+ * in a non-visual state" is a statement about the page and not about a document.
+ * Unlocking a block is deliberately not one of the states that counts — it is a
+ * reveal, per-block and non-exclusive, and it lives in a closure — but a sheet
+ * inside the unlocked block is a table like any other and does count.
+ *
+ * So the exclusivity needs one thing the plugin cannot hold: a pointer to the
+ * editor that has it. Everything else stays in plugin state, and this is only
+ * ever *read* to find out whether somebody else has it. It is released the moment
+ * that editor drops its record, and a destroyed editor leaves a stale reference
+ * that `releaseOtherEditors` skips, so the worst case is one wasted comparison.
+ */
+let holder: EditorView | null = null
+
+/**
+ * Keep the page to **one** block in a non-visual state, from an editor's
+ * `dispatchTransaction`.
+ *
+ * This is the whole cross-editor mechanism, and it is one function called after
+ * every transaction rather than a list of the routes that can take a mode: the
+ * cycle, the cluster's buttons, the keymap, the context menu and a node view's
+ * own `enterDiagramEditMode` are five today and a sixth is a bug.
+ *
+ * **An editor that does not call this opts out of the rule**, silently — nothing
+ * about it is invalid, it simply never claims the slot and so can never be
+ * released from it. That is a real caveat and the reason it is stated here rather
+ * than left to be discovered: every editor in the app comes from
+ * `createBlockEditor`, which calls it, so there is exactly one place to remember.
+ */
+export function keepOneNonVisualBlock(view: EditorView): void {
+  releaseOtherEditors(view)
+  claimFor(view, currentBlockMode(view.state))
+}
+
+/** Remember `view` as the page's holder, if it is not already, or forget it. */
+function claimFor(view: EditorView, mode: BlockMode | null): void {
+  if (mode === null) {
+    if (holder === view) holder = null
+    return
+  }
+  if (holder !== view) holder = view
+}
+
+/**
+ * Release the page's holder when it is some *other* editor, so the caller's next
+ * transaction can take the record without two blocks being in a mode at once.
+ *
+ * Called from the one `dispatchTransaction` every editor shares (`editor.ts`),
+ * after the transaction has been applied, rather than from each route that takes
+ * a mode. That placement is the point: a mode can be taken by the cycle, by the
+ * cluster's buttons, by the keymap, by the context menu, or by a node view's own
+ * `enterDiagramEditMode`, and a list of them is a list that will grow a gap.
+ *
+ * The release goes through `exitBlockMode`, so a block being dropped out of its
+ * source form has its buffer committed rather than discarded — the same rule §3
+ * puts on every other route out.
+ *
+ * Whichever editor takes a mode last wins, which is what makes the gesture feel
+ * like a decision rather than a refusal: the one you just did is the one that
+ * counts, and the earlier one is committed and put back.
+ */
+export function releaseOtherEditors(view: EditorView): void {
+  const other = holder
+  if (other === null || other === view) return
+  // An editor that has gone away (a closed tab, a re-locked encrypted block)
+  // cannot be dispatched to, and holding a dead reference must not stop the page.
+  if (other.dom.isConnected) exitBlockMode(other)
+  if (holder === other) holder = null
+}
+
+
 
 export function currentBlockMode(state: EditorState): BlockMode | null {
   return BLOCK_MODE_KEY.getState(state) ?? null
@@ -322,54 +552,157 @@ export function blockPosForElement(view: EditorView, target: EventTarget | null)
 }
 
 /**
- * A click Chrome already owns: a button, a text field, a link, a CodeMirror
- * editor, a diagram's own layer. Such a click is the control's own business —
- * Alt+click on a zoom button is a zoom, not a request about the block it happens
- * to sit on.
+ * A click Chrome already owns: a button, a text field, a link, a diagram's own
+ * layer. Such a click is the control's own business — Alt+click on a zoom button
+ * is a zoom, not a request about the block it happens to sit on.
  *
  * The two diagram classes are spelled out rather than imported from
  * `mermaid-edit.ts`, which would put the whole rendering library behind this
  * module; they are the chrome layer's public names, and the kanban builder and
  * the diagram's `stopEvent` match the same ones.
+ *
+ * **A CodeMirror is deliberately *not* on this list**, which it was, and which
+ * cost the cycle two whole blocks. A block in its source form is a raw-markdown
+ * editor, so a click in one looked like a click in a text field; but so is a
+ * **code block's visual form**, and a *code block's text is the entire block* —
+ * claiming it meant Alt+click did nothing on the one block type a reader most
+ * wants to see as markdown, aimed at the only part of it anyone clicks. It then
+ * cost the cycle its own way back out: the block that Alt+click had just opened
+ * could not be Alt+clicked closed, because by then its editor *was* the source
+ * form and so was claimed. A cycle that can only be entered is not a cycle.
+ *
+ * What Alt+click does inside a buffer is the cycle's, and that is the right
+ * answer for a modifier gesture: a raw-markdown editor is selected with a plain
+ * drag or double click, so Alt+click there is nobody's business but the block's.
+ * The genuinely interactive fields are still claimed, and each is a real control
+ * — `input`/`textarea` for a masked field or a table cell editor, and the
+ * diagram's own label field and kanban composers, which are the modes' fields.
  */
 function chromeOwnsClick(event: MouseEvent): boolean {
   return (
     event.target instanceof Element &&
     event.target.closest(
-      'a[href], button, input, textarea, select, .cm-editor, .block-controls,'
+      'a[href], button, input, textarea, select, .block-controls,'
       + ' .mermaid-kanban-chrome, .mermaid-edit-field',
     ) !== null
   )
 }
 
+
 /**
- * The Alt+click gesture (§5.2), for every block type at once.
+ * The Alt+click gesture (§5.2), for every block type at once: **advance the
+ * block under the pointer one step through its cycle.**
  *
- * On a block that has something to toggle, it toggles it; anywhere else it
- * finishes whatever is editing. The second half is deliberate and is what the
- * double click this replaces already did for a diagram: the gesture that turns a
- * mode off should not have to land back on the thing that turned it on, and a
- * board is the one block whose Alt+click target may have moved under the
- * pointer since. The click is never swallowed — a word to select, a caret to
- * place and a cell to mark all still happen, which is the whole reason the mode
- * gestures moved off double click in the first place.
+ * Every block that has a source form cycles — visual → the block's own middle
+ * step, if it has one → source → back to visual — so the descriptor is the only
+ * thing consulted and the cycle reads the same on a paragraph, a diagram and a
+ * table. Two cases fall through to `exitBlockMode`, and both are deliberate:
  *
- * Nothing is claimed for a block type that registers no `toggle`, which is why
- * Alt+click on a paragraph is inert.
+ * - **a click that names no block.** That is the gesture turning a mode off
+ *   without having to land back on the block that turned it on, which is why the
+ *   listener sits on the scroller rather than on `view.dom` — a lone board
+ *   leaves the space under itself on the scroller, and a click aimed at the page
+ *   there has to be answered by the editor and not by Chrome selecting the
+ *   document name in the status bar.
+ * - **`source_block`**, which *is* its source form and so has one state and
+ *   nothing to advance to.
+ *
+ * The click is never swallowed — a word to select, a caret to place and a cell to
+ * mark all still happen, which is the whole reason the mode gestures moved off
+ * double click in the first place. There is deliberately no off-ramp on a block
+ * that *does* cycle: the way back down is Escape, which steps back exactly one
+ * mode, and which is the only half of the gesture that stays on the keyboard.
  */
 export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
   if (!event.altKey || event.button !== 0) return false
   if (chromeOwnsClick(event)) return false
   const pos = blockPosForElement(view, event.target)
-  if (pos >= 0) {
-    const node = view.state.doc.nodeAt(pos)
-    const toggle = node === null ? undefined : BLOCK_MODE_HANDLERS[node.type.name]?.toggle
-    if (toggle !== undefined) {
-      toggle(view, pos)
+  if (pos >= 0 && advanceBlockMode(view, pos)) return true
+  return exitBlockMode(view)
+}
+
+/**
+ * Advance the block at `pos` one step through its cycle, and report whether the
+ * block has a cycle to advance through.
+ *
+ * The steps are the descriptor's, in this order, and a block only has the ones
+ * it can actually take:
+ *
+ * 1. **its rendered form**, where it has more than one (a table: text → sheet);
+ * 2. **its interaction axis**, where it has one (a diagram: viewing → editing);
+ * 3. **source**, which every block but `source_block` has.
+ *
+ * and then it wraps to the first. The form and the interaction axis are separate
+ * steps rather than two spellings of one because they are separate mechanisms —
+ * a form is a document attr and a mode flip is not (§4.3) — but a block
+ * carrying both would spend a step on each, which is why the checks fall through
+ * rather than being exclusive.
+ *
+ * Two transitions carry the ordering rule of §3 with them:
+ *
+ * - **editing → source.** `enterSourceMode` cannot finish a pending diagram
+ *   field (it is in the other direction of the import, and finishing it is a
+ *   commit rather than a mode change), so the subsystem's own `exit` accepts it
+ *   first and this call goes on to build its own transaction against the
+ *   document that exit left behind. Calling `enterSourceMode` on its own would
+ *   drop the half-typed label on the floor — the exact failure
+ *   `exitDiagramEditMode` documents. `pos` needs no remapping across that exit,
+ *   and this is why: the accept is a `setNodeMarkup` on the block itself, and a
+ *   block start maps to its own start either way — the same reason the record's
+ *   own `apply` can carry a position across a visual commit.
+ * - **source → visual.** `releaseSourceBlock` rather than `exitBlockMode`,
+ *   because the commit is a document edit and re-parsing a block can move it by
+ *   an arbitrary amount; the wrap is then written against wherever the block
+ *   ended up. It wraps to the cycle's *first* step rather than to whatever the
+ *   block was drawn as before, because a table that entered source as a sheet
+ *   would otherwise oscillate sheet ⇄ source and never reach text again.
+ */
+export function advanceBlockMode(view: EditorView, pos: number): boolean {
+  const node = view.state.doc.nodeAt(pos)
+  if (node === null) return false
+  const type = node.type.name
+  const descriptor = blockModeFor(node)
+  if (!descriptor.representation) return false
+
+  const mode = modeFor(view.state, pos)
+  const representation = mode?.representation ?? 'visual'
+  const interaction = mode?.interaction ?? 'viewing'
+
+  if (representation === 'source') {
+    const at = releaseSourceBlock(view, pos)
+    // The wrap lands on the cycle's *first* step, which for a table is its
+    // default form: wrapping onto whatever the block was drawn as before would
+    // leave a sheet table oscillating sheet ⇄ source and never reaching text.
+    const back = view.state.doc.nodeAt(at)
+    const fallback = defaultFormOf(descriptor)
+    if (back !== null && fallback !== undefined && mode?.form !== undefined) {
+      setBlockForm(view, at, fallback)
+    }
+    return true
+  }
+
+  if (interaction === 'editing') {
+    BLOCK_MODE_HANDLERS[type]?.exit?.(view, pos)
+    enterSourceMode(view, pos)
+    return true
+  }
+
+  // Visual. The form comes before the interaction axis because a block that has
+  // both is asking to be drawn a different way before it is asking to be edited.
+  if (descriptor.forms !== undefined && (mode?.form ?? defaultFormOf(descriptor))
+    === defaultFormOf(descriptor)) {
+    const other = descriptor.forms.find((entry) => entry.id !== defaultFormOf(descriptor))
+    if (other !== undefined) {
+      setBlockForm(view, pos, other.id)
       return true
     }
   }
-  return exitBlockMode(view)
+  if (descriptor.interaction === 'toggle') {
+    BLOCK_MODE_HANDLERS[type]?.enter?.(view, pos)
+    return true
+  }
+  enterSourceMode(view, pos)
+  return true
 }
 
 /**
@@ -470,10 +803,19 @@ export function placeCaretInText(tr: Transaction, pos: number, fromBound: number
 
 /**
  * Reparse a block's markdown into the document, as one transaction, so undo
- * takes the whole edit back. A table's form (`_plain`) is not part of its
- * markdown, so re-parsing resets it to the default — carry it onto the reparsed
- * table when the block is still a table, or a table edited in source returns to
- * the view it was opened from.
+ * takes the whole edit back.
+ *
+ * A table's **form** has to survive this, because a re-parse rebuilds the table
+ * from its markdown and a form is not part of its markdown. The record is cleared
+ * here — the block left its source form, and the round-trip is a document edit
+ * that must not be holding a mode — so the form is read off the outgoing record
+ * and written onto the one that replaces it.
+ *
+ * That is the same special case §4.3 described as the *cost* of a form living in
+ * the document, and the debt did not go away when the attr did: the carry is still
+ * needed. What did go away is the half where it had to reconstruct an attribute
+ * and the half where the switch was a document edit at all — this now moves one
+ * field of one plugin record, and only for a block that had one.
  */
 function buildSourceCommitTransaction(
   view: EditorView,
@@ -482,22 +824,11 @@ function buildSourceCommitTransaction(
   markdown: string,
 ): Transaction {
   const tr = view.state.tr
-  const original = view.state.doc.nodeAt(pos)
+  const outgoing = modeFor(view.state, pos)
+  const carriedForm = outgoing?.form
   const newDoc = markdownToProse(markdown, view.state.schema)
   const nodes: ProseNode[] = []
   newDoc.forEach((child) => nodes.push(child))
-  if (original?.type.name === 'table') {
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i]!
-      if (node.type.name === 'table' && node.attrs._plain !== original.attrs._plain) {
-        nodes[i] = node.type.create(
-          { ...node.attrs, _plain: original.attrs._plain },
-          node.content,
-          node.marks,
-        )
-      }
-    }
-  }
   if (nodes.length > 0) {
     tr.replaceWith(pos, pos + nodeSize, nodes)
     const insertedSize = nodes.reduce((sum, n) => sum + n.nodeSize, 0)
@@ -506,7 +837,14 @@ function buildSourceCommitTransaction(
     tr.delete(pos, pos + nodeSize)
     placeCaretInText(tr, pos, 0, tr.doc.content.size)
   }
-  setBlockMode(tr, null)
+  // A re-parse can produce any number of blocks, so the form only survives onto
+  // the one at the old position — and only if what landed there is still a block
+  // that can take it.
+  if (carriedForm !== undefined && tr.doc.nodeAt(pos)?.type.name === outgoing?.type) {
+    setBlockModeAt(view.state, tr, pos, { form: carriedForm })
+  } else {
+    setBlockMode(tr, null)
+  }
   return tr
 }
 
@@ -597,7 +935,7 @@ export function enterSourceMode(view: EditorView, pos: number): void {
   const at = releaseSourceBlock(view, pos)
 
   const tr = view.state.tr
-  setBlockModeAt(tr, at, { representation: 'source' })
+  setBlockModeAt(view.state, tr, at, { representation: 'source' })
   const end = at + (tr.doc.nodeAt(at)?.nodeSize ?? 0)
   placeCaretInText(tr, sourceCaret(view.state, tr, at), at + 1, end)
   view.dispatch(tr)

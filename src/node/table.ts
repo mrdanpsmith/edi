@@ -1,4 +1,4 @@
-import { Plugin, TextSelection, type EditorState, type NodeSelection, type Transaction } from 'prosemirror-state'
+import { NodeSelection, Plugin, TextSelection, type EditorState } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, DELIMITER_CELL, type TableAlign } from '../spreadsheet-util'
@@ -14,7 +14,14 @@ import { undoNoScroll, redoNoScroll, undoDepth, redoDepth } from 'prosemirror-hi
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText, readText } from '../clipboard'
 import { blockNodeView, showsSource } from '../blockview'
-import { BLOCK_MODE_HANDLERS, attachBlockControls, blockModeFor } from '../block-modes'
+import {
+  BLOCK_MODE_HANDLERS,
+  attachBlockControls,
+  blockFormMode,
+  blockModeFor,
+  setBlockForm,
+  setBlockModeAt,
+} from '../block-modes'
 import {
   setActiveCellHost,
   type CellLinkContext,
@@ -90,41 +97,50 @@ function cellTitle(raw: string, cellSol: CellSolution | undefined): string {
 }
 
 /**
- * The form a table is drawn in. This is not one of the two mode axes: it is
- * per-block and not exclusive (one table can be a sheet while another is text),
- * and it outlives a visit to the block, so a single record cannot hold it and it
- * lives in the document as `_plain` instead. The descriptor still names both
- * forms and their labels, which is what the control, the context menu and
- * Alt+click are built from.
+ * The form a table at `pos` is drawn in, read from the one record.
+ *
+ * A form is a **third piece of the record**, beside the representation and the
+ * interaction axis, and that is a reversal of §4.3's original reasoning — that a
+ * form is per-block and non-exclusive, so no single record could hold it. That
+ * described the behaviour at the time rather than a constraint, and the app's
+ * rule is now that at most one block in the whole page is in a non-visual state.
+ * Keeping the form in the document could not express that: two tables could both
+ * be sheets, a sheet could be open while a diagram was being edited, and the
+ * switch was a `setNodeMarkup` that dirtied the user's file for what is a view
+ * preference.
+ *
+ * **A table in plain text holds no record at all** — plain text is a table's
+ * rendering, not a mode — which is what still lets a document contain any number
+ * of tables. Only the sheet takes the record, and only while it is being viewed;
+ * a table that entered its source form as a sheet keeps the value there and comes
+ * back as a sheet.
  */
-export function tableFormOf(node: ProseNode): string {
-  return node.attrs._plain === true ? 'text' : 'sheet'
-}
-
-/** Put the table at `pos` into the named form. */
-export function setTableForm(view: EditorView, pos: number | undefined, form: string): void {
-  if (pos === undefined) return
-  if (form === 'text') enterPlainMode(view, pos)
-  else enterSpreadsheetMode(view, pos)
+export function tableFormOf(state: EditorState, pos: number | undefined): string {
+  return tableFormAt(state, pos) ?? 'text'
 }
 
 /**
- * What Alt+click on a table does (§5.2): its rendered form, and never its
- * interaction axis — a sheet is live whenever it is open, and the descriptor
- * says `interaction: 'none'` because there is nothing to finish. Registered on
- * the one table type, alongside the diagram's registration of the axis it does
- * have.
+ * The form the table at `pos` is in, or null when there is no table there to ask.
+ *
+ * The three answers are load-bearing for `update()`. A node view decides whether
+ * it has been rebuilt by comparing the form it was built for with the form the
+ * block is in now, and reading an unknown position as "text" turns *every* update
+ * into a rebuild for a node view built for a sheet — which is a grid that
+ * replaces itself under the caret on every keystroke and never keeps focus.
+ * Null is the "do not rebuild" answer, and it is only ever null when there is no
+ * block there, which is exactly when there is nothing to redraw.
  */
-export function toggleTableForm(view: EditorView, pos: number): void {
-  const node = view.state.doc.nodeAt(pos)
-  if (node === null || node.type.name !== TABLE_TYPE) return
-  setTableForm(view, pos, tableFormOf(node) === 'sheet' ? 'text' : 'sheet')
+function tableFormAt(state: EditorState, pos: number | undefined): string | null {
+  if (pos === undefined) return null
+  const node = state.doc.nodeAt(pos)
+  if (node === null || node.type.name !== TABLE_TYPE) return null
+  return blockFormMode(state, pos) ?? 'text'
 }
 
 /**
- * The block's **Show as text** / **Show as sheet** control, labelled from the
- * descriptor's own form list so the cluster, the context menu and Alt+click can
- * never drift into three spellings of the same two words.
+ * The block's **Text** / **Sheet** control, labelled from the descriptor's own
+ * form list so the cluster, the context menu and the cycle can never drift into
+ * three spellings of the same two words.
  */
 function formControl(
   view: EditorView,
@@ -138,7 +154,7 @@ function formControl(
     blockModeFor(node).forms?.find((entry) => entry.id !== form)?.label ?? 'Change form'
   const paint = (): void => {
     const at = getPos()
-    const current = at === undefined ? 'sheet' : tableFormOf(view.state.doc.nodeAt(at) ?? node)
+    const current = tableFormOf(view.state, at)
     button.textContent = other(current)
     button.title = current === 'sheet'
       ? 'Draw this table as plain text'
@@ -148,10 +164,10 @@ function formControl(
     event.preventDefault()
     event.stopPropagation()
     const at = getPos()
-    // Read at press time, like every other control: the form is a document
-    // attribute, so the node captured when the cluster was built is a snapshot.
-    const current = at === undefined ? node : view.state.doc.nodeAt(at) ?? node
-    setTableForm(view, at, tableFormOf(current) === 'sheet' ? 'text' : 'sheet')
+    if (at === undefined) return
+    // Read at press time, like every other control: the node captured when the
+    // cluster was built is a snapshot, and the form is plugin state.
+    setBlockForm(view, at, tableFormOf(view.state, at) === 'sheet' ? 'text' : 'sheet')
   })
   paint()
   return button
@@ -410,7 +426,9 @@ class TableNodeView implements NodeView, InlineCellHost {
     // mode changed", and refusing the update is the rebuild. Asked of the record,
     // which is where the representation lives now that no node carries one.
     if (showsSource(this.view, this.getPos())) return false
-    if (node.attrs._plain !== this.node.attrs._plain) return false
+    // This view is only ever built for a sheet, so the rebuild is the block
+    // having stopped being one.
+    if (tableFormAt(this.view.state, this.getPos()) === 'text') return false
     this.node = node
     // `_resolved` only changes how the table serializes, so sync the checkbox
     // in place instead of rebuilding — a rebuild would reset the active cell
@@ -2952,7 +2970,9 @@ class TablePlainView implements NodeView {
   update(node: ProseNode): boolean {
     if (node.type.name !== TABLE_TYPE) return false
     if (showsSource(this.view, this.getPos())) return false
-    if (node.attrs._plain !== this.node.attrs._plain) return false
+    // This view is only ever built for plain text, so the rebuild is the block
+    // having stopped being text.
+    if (tableFormAt(this.view.state, this.getPos()) === 'sheet') return false
     this.node = node
     const value = String(node.attrs.value ?? '')
     const rows = parsePipes(value)
@@ -2985,55 +3005,6 @@ class TablePlainView implements NodeView {
   }
 }
 
-/**
- * The open sheet, or null.
- *
- * A table's form — text or sheet — is *not* one of the two block-mode axes: it
- * is per-block and not exclusive (one table can be a sheet while another is
- * text), and it outlives leaving the block, so a single record cannot hold it.
- * It therefore lives in the document (`_plain`), which means the sheet position
- * is read back *from* the document rather than tracked in a registry of its own.
- * `enterSpreadsheetMode`/`enterPlainMode` keep the invariant that at most one
- * table is a sheet, so there is at most one to find.
- */
-function currentSpreadPos(state: EditorState): number | null {
-  let found: number | null = null
-  state.doc.forEach((node, offset) => {
-    if (found === null && node.type.name === TABLE_TYPE && node.attrs._plain === false) {
-      found = offset
-    }
-  })
-  return found
-}
-
-function setTableModeAttr(tr: Transaction, pos: number, plain: boolean): void {
-  const node = tr.doc.nodeAt(pos)
-  if (!node || node.type.name !== TABLE_TYPE) return
-  if (node.attrs._plain === plain) return
-  tr.setNodeMarkup(pos, undefined, { ...node.attrs, _plain: plain })
-  // View mode is not content: keep it out of undo so Ctrl+Z in the grid never
-  // rewinds (or, by history grouping, collapses with) the switch into the mode.
-  tr.setMeta('addToHistory', false)
-}
-
-/**
- * Switch a table into spreadsheet mode. Like block source mode, only one
- * spreadsheet is open per document: the previously open one (if any) drops
- * back to the plain view. The table node is also deselected so that typing
- * can never replace the whole table while it is being edited.
- */
-function buildEnterSpreadsheetTr(tr: Transaction, state: EditorState, pos: number): void {
-  const current = currentSpreadPos(state)
-  if (current !== null && current !== pos) {
-    setTableModeAttr(tr, tr.mapping.map(current), true)
-  }
-  setTableModeAttr(tr, pos, false)
-  const sel = tr.selection as NodeSelection | null
-  if (sel && sel.node && sel.node.type.name === TABLE_TYPE) {
-    tr.setSelection(TextSelection.create(tr.doc, pos))
-  }
-}
-
 function focusSpreadsheetGrid(view: EditorView): void {
   requestAnimationFrame(() => {
     const grid = view.dom.querySelector<HTMLElement>('.ss-grid')
@@ -3041,12 +3012,17 @@ function focusSpreadsheetGrid(view: EditorView): void {
   })
 }
 
+/** Open the table at `pos` as a sheet: take the record, deselect, focus the grid. */
 export function enterSpreadsheetMode(view: EditorView, pos: number | undefined): void {
   if (pos === undefined) return
   const node = view.state.doc.nodeAt(pos)
   if (!node || node.type.name !== TABLE_TYPE) return
   const tr = view.state.tr
-  buildEnterSpreadsheetTr(tr, view.state, pos)
+  setBlockModeAt(view.state, tr, pos, { form: 'sheet' })
+  const sel = tr.selection as NodeSelection | null
+  if (sel && sel.node && sel.node.type.name === TABLE_TYPE) {
+    tr.setSelection(TextSelection.create(tr.doc, pos))
+  }
   view.dispatch(tr)
   focusSpreadsheetGrid(view)
 }
@@ -3055,8 +3031,8 @@ export function enterPlainMode(view: EditorView, pos: number | undefined): void 
   if (pos === undefined) return
   const node = view.state.doc.nodeAt(pos)
   if (!node || node.type.name !== TABLE_TYPE) return
+  setBlockForm(view, pos, 'text')
   const tr = view.state.tr
-  setTableModeAttr(tr, pos, true)
   tr.setSelection(TextSelection.create(tr.doc, pos + node.nodeSize))
   view.dispatch(tr)
 }
@@ -3081,18 +3057,36 @@ export function spreadsheetMenuEntries(target: EventTarget | null): ContextMenuE
  * state to finish. Registered rather than imported into `block-modes.ts`, which
  * cannot import this file.
  */
-BLOCK_MODE_HANDLERS[TABLE_TYPE] = { toggle: toggleTableForm }
+/**
+ * A table is the one block whose form is a *live* surface: the grid takes the
+ * caret and typing edits cells, so a sheet has to deselect the table and focus
+ * the grid. That is what `entered` is for — the record write belongs to
+ * `setBlockForm` and must not be repeated here (see `BlockModeHandlers.forms`).
+ */
+BLOCK_MODE_HANDLERS[TABLE_TYPE] = {
+  forms: {
+    entered: (view, pos, form) => {
+      if (form !== 'sheet') return
+      const tr = view.state.tr
+      const sel = tr.selection
+      if (sel instanceof NodeSelection && sel.node.type.name === TABLE_TYPE) {
+        tr.setSelection(TextSelection.create(tr.doc, pos))
+        view.dispatch(tr)
+      }
+      focusSpreadsheetGrid(view)
+    },
+  },
+}
 
 export const tableNodeViewPlugin = new Plugin({
   props: {
     nodeViews: {
       [TABLE_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
-        // The source form is the record's business and is asked of it directly
-        // (`table` is never a `source_block`); the form (`_plain`) is the one
-        // thing a table keeps on the document, because it is per-block, not
-        // exclusive, and outlives a visit.
+        // Which form is the record's business, like the representation: a table
+        // is either text or a sheet because the one record says so, and a table
+        // in plain text says nothing at all because that is its rendering.
         if (showsSource(view, getPos())) return blockNodeView(node, view, getPos) as NodeView
-        if (node.attrs._plain) return new TablePlainView(node, view, getPos)
+        if (tableFormOf(view.state, getPos()) === 'text') return new TablePlainView(node, view, getPos)
         return new TableNodeView(node, view, getPos)
       },
     },
@@ -3115,7 +3109,13 @@ export function insertTable(view: EditorView, cols: number, rows: number): boole
     tablePos = $from.pos
     tr.insert($from.pos, node)
   }
-  buildEnterSpreadsheetTr(tr, view.state, tablePos)
+  setBlockModeAt(view.state, tr, tablePos, { form: 'sheet' })
+  // The grid is live wherever the caret is, so a NodeSelection left on the table
+  // would let the next keystroke replace the whole block. Deselect it in the same
+  // transaction, so one undo takes the whole insert away and nothing else.
+  if (tr.selection instanceof NodeSelection && tr.selection.node.type.name === TABLE_TYPE) {
+    tr.setSelection(TextSelection.create(tr.doc, tablePos))
+  }
   view.dispatch(tr)
   focusSpreadsheetGrid(view)
   return true

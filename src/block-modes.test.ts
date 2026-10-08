@@ -9,7 +9,7 @@ import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { encryptedBlockNodeViewPlugin } from './node/encryptedblock'
 import { enterDiagramEditMode, mermaidNodeViewPlugin } from './node/mermaid'
-import { tableNodeViewPlugin } from './node/table'
+import { enterSpreadsheetMode, tableNodeViewPlugin } from './node/table'
 import {
   BLOCK_CONTROLS_CLASS,
   BLOCK_MODE_CLASS,
@@ -17,12 +17,15 @@ import {
   BLOCK_MODE_KEY,
   BLOCK_MODE_SOURCE_CLASS,
   BLOCK_MODE_VISUAL_CLASS,
+  advanceBlockMode,
+  blockFormMode,
   blockModeFor,
   blockModePlugin,
   currentBlockMode,
   enterBlockMode,
   enterSourceMode,
   exitBlockMode,
+  keepOneNonVisualBlock,
   modeFor,
   toggleBlockMode,
   toggleSourceMode,
@@ -368,7 +371,7 @@ describe('one cluster per top-level block', () => {
     expect(diagram.querySelector('.block-control-interaction')?.textContent).toBe('Edit')
 
     const table = view.dom.querySelector<HTMLElement>('.ss-plain')!
-    expect(table.querySelector('.block-control-form')?.textContent).toBe('Show as sheet')
+    expect(table.querySelector('.block-control-form')?.textContent).toBe('Sheet')
     view.destroy()
   })
 
@@ -450,27 +453,49 @@ describe('the Escape ladder (§5.3)', () => {
 })
 
 describe('the Alt+click gesture (§5.2)', () => {
-  /** Alt+click, the gesture that toggles a block's interaction axis. */
+  /** Alt+click, the gesture that advances a block one step through its cycle. */
   function altClick(target: EventTarget | null): void {
     ;(target as Element).dispatchEvent(
       new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
     )
   }
 
-  it('toggles a diagram, and leaves it alone for a bare double click', async () => {
+  it('cycles a diagram visual → edit → source → visual, and leaves a double click alone', async () => {
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
-    const diagram = view.dom.querySelector<HTMLElement>('.mermaid-preview')!
 
-    altClick(diagram)
+    // Each step is aimed at the block's own node view. A step's element is
+    // detached by the step after it, and the gesture's listener is on the
+    // scroller, so an Alt+click on a detached node reaches nothing at all — and
+    // aiming *inside* a block in its source form reaches nothing either, because
+    // that is a CodeMirror instance and `chromeOwnsClick` rightly calls an
+    // Alt+click in a text field the field's own business.
+    const step = (): void => {
+      altClick(view.nodeDOM(board))
+    }
+
+    step()
     expect(modeFor(view.state, board)?.interaction).toBe('editing')
 
-    altClick(diagram)
+    // Edit is not a terminal state: the step on from it is the block's own source,
+    // and the diagram's pending field is accepted on the way out of edit mode
+    // rather than dropped — `enterSourceMode` cannot finish it, the exit does.
+    step()
+    expect(modeFor(view.state, board)).toMatchObject({
+      representation: 'source',
+      interaction: 'viewing',
+    })
+    expect((view.nodeDOM(board) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
+
+    // ...and the cycle wraps, committing the source buffer on the way through.
+    step()
     expect(modeFor(view.state, board)).toBeNull()
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
 
     // The gesture the mode used to claim, given back: a double click is the
     // browser selecting a word inside the diagram.
+    const diagram = view.dom.querySelector<HTMLElement>('.mermaid-preview')!
     const notPrevented = diagram.dispatchEvent(
       new MouseEvent('dblclick', { bubbles: true, cancelable: true, button: 0 }),
     )
@@ -479,40 +504,234 @@ describe('the Alt+click gesture (§5.2)', () => {
     view.destroy()
   })
 
-  it('finishes the interaction axis from anywhere else in the editor', async () => {
-    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')
+  it('steps back down the cycle with Escape, which is the only way off it', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
-    enterDiagramEditMode(view, board)
-    const paragraph = Array.from(view.dom.querySelectorAll<HTMLElement>('p')).find(
-      (el) => el.textContent === 'After the diagram',
-    )!
-    altClick(paragraph)
-    expect(currentBlockMode(view.state)).toBeNull()
+
+    enterSourceMode(view, board)
+    expect(exitBlockMode(view)).toBe(true)
+    expect(modeFor(view.state, board)).toBeNull()
+    // Visual is the bottom of the ladder, so from there Escape is handed on to
+    // every other handler — selection, dialogs, a diagram's own.
+    expect(exitBlockMode(view)).toBe(false)
     view.destroy()
   })
 
-  it('toggles a table\'s form and never its interaction axis', () => {
+  it('cycles a table text → sheet → source → text, and never its interaction axis', () => {
     const view = createEditor('| A |\n| --- |\n| 1 |')
     const [table] = allBlockPositions(view)
     expect(view.state.doc.nodeAt(table)!.type.name).toBe('table')
     expect(blockModeFor(view.state.doc.nodeAt(table)!).interaction).toBe('none')
 
-    altClick(view.dom.querySelector('.ss-plain-table tbody td'))
-    expect(view.state.doc.nodeAt(table)!.attrs._plain).toBe(false)
+    const step = (): void => {
+      altClick(view.nodeDOM(table))
+    }
+
+    step()
+    expect(blockFormMode(view.state, table)).toBe('sheet')
     expect(view.dom.querySelector('.spreadsheet')).not.toBeNull()
 
-    altClick(view.dom.querySelector('.spreadsheet .ss-grid tbody td')!)
-    expect(view.state.doc.nodeAt(table)!.attrs._plain).toBe(true)
+    step()
+    expect(modeFor(view.state, table)?.representation).toBe('source')
+
+    // The wrap lands on the cycle's *first* step rather than on whatever the
+    // block was drawn as before, or a sheet table would oscillate sheet ⇄ source
+    // and never reach text again.
+    step()
+    expect(blockFormMode(view.state, table)).toBeUndefined()
     expect(view.dom.querySelector('.ss-plain')).not.toBeNull()
-    // A form is not on either axis, so no record ever names it.
+    // Plain text is a table's *rendering*, not a mode, so the wrap releases the
+    // record entirely rather than leaving a formless one sitting in the slot.
     expect(currentBlockMode(view.state)).toBeNull()
     view.destroy()
   })
 
-  it('is inert on a block type that registers nothing to toggle', () => {
+  it('cycles a plain block straight to its source, and gives it no middle step', () => {
     const view = createEditor('# Hello\n\nSecond paragraph')
+    const [heading] = allBlockPositions(view)
+    expect(blockModeFor(view.state.doc.nodeAt(heading)!).forms).toBeUndefined()
+    expect(blockModeFor(view.state.doc.nodeAt(heading)!).interaction).toBe('none')
+
     altClick(view.dom.querySelector('h1'))
+    expect(modeFor(view.state, heading)?.representation).toBe('source')
+    expect(view.dom.querySelector('.block-source-exit')?.textContent).toBe('Visual')
+    view.destroy()
+  })
+
+  it('has no cycle on a block that is permanently its own source', () => {
+    // `source_block` has no markdown syntax — it is built programmatically — and
+    // it *is* its source form, so `advanceBlockMode` declines it and the gesture
+    // keeps its older meaning for this one type: finish whatever is open.
+    const view = createEditor('# Hello')
+    const only = view.state.schema.nodes.source_block.create({ markdown: 'plain text\n' })
+    const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, only)
+    view.dispatch(tr)
+
+    expect(blockModeFor(view.state.doc.nodeAt(0)!).representation).toBe(false)
+    expect(advanceBlockMode(view, 0)).toBe(false)
+    view.destroy()
+  })
+
+  it('advances a code block from its own text, which is a CodeMirror and not a field', () => {
+    // A code block's visual form *is* a CodeMirror instance, so the rule that
+    // hands an Alt+click in a text field to that field used to claim it — which
+    // made the cycle unreachable on the only part of a code block anyone clicks.
+    const view = createEditor('```python\nprint(1)\n```')
+    const [code] = allBlockPositions(view)
+    const editor = view.dom.querySelector<HTMLElement>('.cm-content')!
+    expect(editor.closest('.cm-editor')).not.toBeNull()
+
+    altClick(editor)
+    expect(modeFor(view.state, code)?.representation).toBe('source')
+    view.destroy()
+  })
+
+  it('cycles a block out of its own source form, from inside the buffer', () => {
+    // A cycle that can only be entered is not a cycle. A block in Source is a
+    // raw-markdown editor, and that editor used to be claimed as "a text field",
+    // so the block Alt+click had just opened could not be Alt+clicked closed —
+    // and the same claim made a code block's visual form unreachable to begin
+    // with, since a code block's text is the whole block.
+    const view = createEditor('```python\nprint(1)\n```')
+    const [code] = allBlockPositions(view)
+    enterSourceMode(view, code)
+
+    altClick(view.dom.querySelector<HTMLElement>('.cm-content')!)
+    expect(modeFor(view.state, code)).toBeNull()
+    expect(
+      (view.nodeDOM(code) as HTMLElement).classList.contains('block-source-mode'),
+    ).toBe(false)
+    view.destroy()
+  })
+
+it('still hands an Alt+click on a real control to that control', () => {
+    // The claim is not gone — it is the *interactively editable* things that keep
+    // it. A link is the browser's: nothing about the block's mode happened.
+    const view = createEditor('[a link](https://example.com)')
+    const link = view.dom.querySelector<HTMLAnchorElement>('a[href]')!
+    expect(link).not.toBeNull()
+    altClick(link)
     expect(currentBlockMode(view.state)).toBeNull()
+
+    // The cluster's own button is the block's, and a press on it is a press on
+    // that button — so it does its own job rather than the gesture's, which is
+    // the Source toggle and nothing to do with a cycle step.
+    const button = view.dom.querySelector<HTMLButtonElement>('.block-control-representation')!
+    expect(button).not.toBeNull()
+    altClick(button)
+    expect(modeFor(view.state, 0)?.representation).toBe('source')
+    view.destroy()
+  })
+
+  it('still finishes whatever is open for a click that names no block at all', () => {
+    // The gesture that turns a mode off need not land back on the block that
+    // turned it on, and the page under a lone board is not even inside the
+    // editor's own box — which is why the listener is on the scroller.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+
+    const outside = view.dom.parentElement!
+    expect(outside.contains(view.dom)).toBe(true)
+    expect(view.dom.contains(outside)).toBe(false)
+    outside.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
+    )
+    expect(modeFor(view.state, board)).toBeNull()
+    view.destroy()
+  })
+})
+
+describe('one non-visual block in the whole page', () => {
+  // The rule is that at most one block anywhere is in a non-visual state, and it
+  // spans editors: an unlocked encrypted block is a *whole nested* editor with its
+  // own record, so "at most one" is a statement about the page. That needs
+  // something the plugin state cannot hold — a pointer to the editor that has the
+  // slot — so it is the one thing here that lives outside plugin state, and these
+  // are the tests that say what it may and may not do.
+  /**
+   * Two editors that keep the page's one slot, built the way the app builds them.
+   *
+   * `keepOneNonVisualBlock` is called from `createBlockEditor`'s
+   * `dispatchTransaction`, and an editor that does not call it opts *out* of the
+   * rule — it never claims the slot, so nothing can release it. Calling the same
+   * function here is therefore part of being a second editor, not a workaround:
+   * it is the one requirement, and it is stated in one place.
+   */
+  function editor(md: string): EditorView {
+    const view = createEditor(md)
+    const dispatch = view.dispatch.bind(view)
+    view.dispatch = (tr: Parameters<typeof dispatch>[0]) => {
+      dispatch(tr)
+      keepOneNonVisualBlock(view)
+    }
+    return view
+  }
+
+  function editors(): { a: EditorView; b: EditorView } {
+    const md = '| A |\n| --- |\n| 1 |\n\n```mermaid\ngraph TD\n  A[Alpha]\n```'
+    return { a: editor(md), b: editor(md) }
+  }
+
+  /** The table in `view`, which is the first top-level block of its document. */
+  const tableOf = (view: EditorView): number => allBlockPositions(view)[0]!
+  /** The diagram in `view`, which is the second. */
+  const boardOf = (view: EditorView): number => allBlockPositions(view)[1]!
+
+  it('releases the other editor when one takes a mode, whichever it is', () => {
+    const { a, b } = editors()
+
+    advanceBlockMode(a, tableOf(a))
+    expect(blockFormMode(a.state, tableOf(a))).toBe('sheet')
+
+    // The other editor wins, and the sheet it had is committed and put back.
+    enterDiagramEditMode(b, boardOf(b))
+    expect(modeFor(b.state, boardOf(b))?.interaction).toBe('editing')
+    expect(blockFormMode(a.state, tableOf(a))).toBeUndefined()
+    expect(a.dom.querySelector('.ss-plain')).not.toBeNull()
+
+    // ...and symmetrically, because it is one slot and not two.
+    enterSpreadsheetMode(b, tableOf(b))
+    expect(modeFor(b.state, boardOf(b))?.interaction).toBeUndefined()
+    expect(blockFormMode(b.state, tableOf(b))).toBe('sheet')
+    a.destroy()
+    b.destroy()
+  })
+
+  it('forgets an editor that has gone away, rather than being stuck behind it', () => {
+    // A closed tab, or a re-locked encrypted block, takes its editor out of the
+    // document. Holding a dead reference must not stop the page taking a mode —
+    // and `dom.isConnected` is what says so, because a destroyed `EditorView`
+    // keeps its `dom`.
+    const { a, b } = editors()
+    advanceBlockMode(a, tableOf(a))
+    a.destroy()
+
+    expect(() => enterDiagramEditMode(b, boardOf(b))).not.toThrow()
+    expect(modeFor(b.state, boardOf(b))?.interaction).toBe('editing')
+    b.destroy()
+  })
+
+  it('lets any number of blocks sit in their default rendering', () => {
+    // Plain text is a table's rendering, not a mode, so it holds nothing. Without
+    // this a document could not contain two tables.
+    const view = createEditor('| A |\n| --- |\n| 1 |\n\n| B |\n| --- |\n| 2 |')
+    expect(allBlockPositions(view).length).toBe(2)
+    expect(currentBlockMode(view.state)).toBeNull()
+    expect(view.dom.querySelectorAll('.ss-plain').length).toBe(2)
+    view.destroy()
+  })
+
+  it('does not let a sheet and an edit mode coexist in one document', () => {
+    const view = createEditor('| A |\n| --- |\n| 1 |\n\n```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [table, board] = allBlockPositions(view)
+    advanceBlockMode(view, table)
+    expect(blockFormMode(view.state, table)).toBe('sheet')
+
+    // One block holds the record, so the diagram cannot also be being edited.
+    enterDiagramEditMode(view, board)
+    expect(blockFormMode(view.state, table)).toBeUndefined()
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
     view.destroy()
   })
 })

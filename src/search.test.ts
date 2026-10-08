@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NodeSelection, TextSelection } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import { createBlockEditor, type BlockEditor } from './editor'
+import { setBlockModeAt } from './block-modes'
 import { proseToMarkdown } from './markdown'
 import {
   buildSearchRegex,
@@ -254,9 +255,9 @@ describe('table-cell search highlighting (highlight on the rendered version)', (
   function toSpreadsheet(editor: BlockEditor): void {
     const view = editor.getView()
     const pos = tablePos(view)
-    const node = view.state.doc.nodeAt(pos)
-    if (!node) throw new Error('no table node at pos')
-    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, _plain: false }))
+    const tr = view.state.tr
+    setBlockModeAt(view.state, tr, pos, { form: 'sheet' })
+    view.dispatch(tr)
   }
 
   it('wraps matching cell text in the spreadsheet grid', () => {

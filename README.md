@@ -47,9 +47,9 @@ signature and an example. This section is the short version.
   the rendering back, so the rendered document and the markdown behind it are
   never more than a hover apart. `Ctrl+Shift+E` does the same for the block the
   caret is in.
-- `Alt+click` a diagram to edit it in place — labels, cards and columns — or a
-  table to swap it between plain text and a spreadsheet; `Esc` leaves whatever
-  is open.
+- `Alt+click` any block to step it through its modes: a diagram goes
+  visual → edit → source, a table goes plain text → spreadsheet → source, and
+  everything else goes visual → source. `Esc` steps back down one.
 - Click a link to open it, right-click one to edit its address — clearing the
   address leaves the text behind, unlinked. A link whose text and destination
   disagree is underlined, and opening it asks first.

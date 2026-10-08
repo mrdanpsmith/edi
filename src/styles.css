@@ -16,6 +16,7 @@
 
   --editor-bg: #ffffff;
   --active-line: #f0f3f6;
+  --block-hover: #f2f5f8;
   --selection: #b6d7ff;
   --selection-strong: #9ecbff;
 
@@ -52,6 +53,7 @@
 
   --editor-bg: #0d1117;
   --active-line: #161b22;
+  --block-hover: #171d26;
   --selection: #264f78;
   --selection-strong: #1e4d7a;
 
@@ -590,6 +592,58 @@ body {
   margin-right: 0;
   margin-top: 0.5em;
   margin-bottom: 0.5em;
+}
+
+/* ── Which block would Alt+click alter? ──────────────────────────────────────
+ * The mode cycle (§5.2 of the block-modes spec) is one gesture over every
+ * top-level block, which makes "which block is this?" a question the pointer
+ * raises constantly and the answer was nowhere on the page. This is it: a band
+ * behind the block under the pointer, in the manner of Slack's hovered row — one
+ * step off the page, per scheme, so it reads as "not selected" rather than as a
+ * selection or as a mode.
+ *
+ * **It is a band, and behind, rather than a background on the block.** A
+ * background is painted below a child's own, and a code block's editor, a table's
+ * chrome and a diagram's preview all paint theirs — so a background tint was
+ * invisible on exactly the blocks a reader most wants to point at. A band
+ * positioned behind the block shows in the margin that surrounds every one of
+ * them, which is not a workaround: the margin is always there, so the affordance
+ * works for every block type from one rule, and the band reaches the page edges
+ * because a block does not.
+ *
+ * The geometry is the block's own box, taken out to the editor's padding edge —
+ * 24px of the block's left margin and 24px of the editor's own padding on the
+ * left, the padding alone on the right — and a few px into the gap above and
+ * below so consecutive blocks read as one band rather than as separate cards.
+ *
+ * The block list is the control cluster's own (`styles.css` §6.1's reveal rule),
+ * reused rather than a second spelling of it, and that is the point rather than
+ * the tidiness: a block shows its cluster on exactly this hover, so the same set
+ * of blocks is the set an Alt+click would do something to — which is the question
+ * the band answers. `:not(.edi-block-mode)` is the other half of that statement: a
+ * block already in a mode carries the accent rule from §7.2, and banding it would
+ * claim it was available when the gesture on it is about finishing something
+ * rather than moving on. A block in its source form needs no exclusion of its own
+ * — `block-source-mode` is not in the list. */
+.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode) {
+  /* The band is positioned against this box, and `isolation` makes the block a
+   * stacking context so `z-index: -1` puts the band behind the block's *content*
+   * and not behind the editor's own background. */
+  position: relative;
+  isolation: isolate;
+}
+
+.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: -4px;
+  bottom: -4px;
+  left: -48px;
+  right: -24px;
+  border-radius: 6px;
+  background: var(--block-hover);
+  pointer-events: none;
 }
 
 /* ── The one control cluster per block ─────────────────────────────────────

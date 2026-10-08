@@ -138,7 +138,7 @@ const nodes: SchemaSpec['nodes'] = {
     marks: '',
     code: true,
     atom: true,
-    attrs: { value: { default: '' }, _plain: { default: true }, _resolved: { default: false } },
+    attrs: { value: { default: '' }, _resolved: { default: false } },
     parseDOM: [
       {
         tag: 'table',

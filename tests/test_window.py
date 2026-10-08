@@ -2732,7 +2732,7 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
         window,
         "(() => { const b = document.querySelector('.block-control-form');"
         " if (!b) return { missing: true };"
-        " if (b.textContent === 'Show as sheet') b.click();"
+        " if (b.textContent === 'Sheet') b.click();"
         " return { sheet: !!document.querySelector('.spreadsheet'),"
         "  label: b.textContent }; })()",
         lambda d: d.get("sheet") is True,
@@ -2769,9 +2769,11 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
                          " plain: !!document.querySelector('.ss-plain'),"
                          " form: (document.querySelector('.block-control-form') || {}).textContent }))()")
     assert after["sheet"] and not after["plain"], after
-    assert after["form"] == "Show as text", after
+    assert after["form"] == "Text", after
 
-    # ...and the gesture that *does* change the form still does, from the cell.
+    # ...and the gesture that *does* advance the block still does, from the cell:
+    # a table's cycle is text → sheet → source, so the step on from a sheet is the
+    # block's own source rather than back to text (§5.2).
     _dump(
         window,
         "(() => { const cell = document.querySelector('.spreadsheet .ss-grid tbody td');"
@@ -2779,14 +2781,34 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
         " { bubbles: true, cancelable: true, button: 0, altKey: true }));"
         " return { clicked: true }; })()",
     )
-    text = _wait(
+    sourced = _wait(
         window,
-        "(() => ({ plain: !!document.querySelector('.ss-plain'),"
-        " form: (document.querySelector('.block-control-form') || {}).textContent }))()",
-        lambda d: d.get("plain") is True,
+        "(() => ({ source: !!document.querySelector('.block-source-mode'),"
+        " sheet: !!document.querySelector('.spreadsheet') }))()",
+        lambda d: d.get("source") is True,
         timeout=10,
     )
-    assert text["form"] == "Show as sheet", text
+    assert not sourced["sheet"], sourced
+
+    # The banner's Visual button is the other way out of a source block, and it is
+    # what puts the table back on the cycle's *first* step — the form it left in.
+    # (Escape is the ladder's job and is covered as such; here the point is that
+    # the wrap does not land the block on the form it happened to be in.)
+    _dump(
+        window,
+        "(() => { const b = document.querySelector('.block-source-exit');"
+        " if (!b) return { missing: true };"
+        " b.click(); return { clicked: true }; })()",
+    )
+    back = _wait(
+        window,
+        "(() => ({ sheet: !!document.querySelector('.spreadsheet'),"
+        " plain: !!document.querySelector('.ss-plain'),"
+        " form: (document.querySelector('.block-control-form') || {}).textContent }))()",
+        lambda d: d.get("sheet") is True,
+        timeout=10,
+    )
+    assert not back["plain"] and back["form"] == "Text", back
 
 
 # What a code block's one control row holds, and — the claim this test exists
@@ -3390,3 +3412,303 @@ def test_every_offered_label_rename_resolves(window, source, needle, expect):
     else:
         assert state["notice"], "mermaid refused the source without saying so"
         assert not drawn(state), state
+
+
+# The mode cycle's one gesture, asked the question that made it necessary: which
+# block is under the pointer? `.cm-editor` in the `chromeOwnsClick` list used to
+# answer "none of them", because a code block's visual form is a CodeMirror
+# instance and a click in a text field was being handed to that field — on the
+# one block type whose whole content is that field, so by aiming at the code you
+# were guaranteed to aim at something the gesture declined.
+#
+# Real engine, real build, real coordinates on a real `.cm-line`: this is the
+# gesture with the mouse where a user's would be, and the only place the geometry
+# is real.
+CODE_BLOCK_CYCLE_DOC = """An ordinary paragraph.
+
+```python
+print(1)
+```
+"""
+
+
+def _altclick_on(win, selector):
+    """Alt+click the middle of the first match, at real coordinates."""
+    return _dump(win, """(() => {
+      const el = document.querySelector(%s);
+      if (!el) return { missing: true };
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      const at = document.elementFromPoint(x, y) || el;
+      const opts = { bubbles: true, cancelable: true, button: 0, altKey: true,
+                     clientX: x, clientY: y };
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(type, opts));
+      }
+      return { tag: at.tagName, cls: String(at.className).slice(0, 40) };
+    })()""" % json.dumps(selector))
+
+
+def test_alt_click_on_a_code_blocks_text_advances_the_cycle(window):
+    """Alt+click the code, not its language bar, and the block advances.
+
+    The distinction being pinned is `.cm-editor`'s: a code block's visual form is
+    a CodeMirror instance, and the rule that hands an Alt+click in a text field to
+    that field made the cycle unreachable on the only part of the block anyone
+    clicks. A block in its *source* form is the other half and must still keep
+    the click, which is what the second assertion here is for.
+    """
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps(CODE_BLOCK_CYCLE_DOC)
+    )
+    _wait(window, "(() => ({ line: !!document.querySelector('.cm-content .cm-line') }))()",
+          lambda d: d.get("line") is True, timeout=20)
+
+    # A real click lands on a real code line, not on the block's chrome.
+    spot = _altclick_on(window, ".cm-content .cm-line")
+    assert not spot.get("missing"), "no code block line to click"
+    assert spot["cls"], spot
+
+    state = _wait(
+        window,
+        "(() => ({ source: !!document.querySelector('.block-source-mode'),"
+        " editor: !!document.querySelector('.ProseMirror .block-source-mode .cm-content') }))()",
+        lambda d: d.get("source") is True,
+        timeout=10,
+    )
+    assert state["editor"], "the block did not become its own source form"
+
+    # ...and the same click, in the block's *own source form*, cycles back out.
+    # That is the second half of §5.2's cycle and it is the reason `.cm-editor` is
+    # not in `chromeOwnsClick`: with it there, a block Alt+click had just opened
+    # could not be Alt+clicked closed, which is a cycle that can only be entered.
+    again = _altclick_on(window, ".block-source-mode .cm-content .cm-line")
+    assert not again.get("missing"), again
+    back = _wait(
+        window,
+        "(() => ({ source: !!document.querySelector('.block-source-mode'),"
+        " editor: !!document.querySelector('.cm-editor') }))()",
+        lambda d: d.get("source") is False,
+        timeout=10,
+    )
+    assert back["editor"], "the block did not come back to its rendered form"
+
+
+# The hover affordance that answers "which block would Alt+click alter?", added
+# because the cycle is one gesture over every top-level block and the page had no
+# way to say which one the pointer was over.
+#
+# `:hover` cannot be exercised here: `QTest` mouse injection never reaches the
+# page, which is why every gesture above is dispatched by hand. So what this pins
+# is the three things a synthetic pointer *can* reach — that the rule is in the
+# sheet the page actually loaded, that it is keyed off the control cluster's own
+# block list rather than a second spelling of it, and that the value it paints
+# with is defined once per scheme.
+HOVER_BAND_RULE = """(() => {
+  const HIT = ['.block-visual-mode', '.mermaid', '.runnable-block',
+               '.spreadsheet', '.ss-plain', '.encrypted-block'];
+  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+  let rule = null;
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try { rules = sheet.cssRules; } catch (err) { continue; }
+    for (const r of rules) { if (r.selectorText === SEL) rule = r; }
+  }
+  if (!rule) return { missing: true };
+  const style = rule.style;
+  return {
+    css: style.background || style.backgroundColor,
+    absolute: style.position,
+    behind: style.zIndex,
+    // Inset, because the minifier collapses the four offsets — read back as one
+    // value so the assertion is on the geometry rather than on the spelling.
+    inset: style.inset || [style.top, style.right, style.bottom, style.left].join(' '),
+    blocks: HIT.filter((c) => SEL.includes(c)),
+    notMode: SEL.includes(':not(.edi-block-mode)'),
+  };
+})()"""
+
+
+HOVER_BAND_HIT = (
+    ".block-visual-mode", ".mermaid", ".runnable-block",
+    ".spreadsheet", ".ss-plain", ".encrypted-block",
+)
+
+
+def test_the_hover_band_says_which_block_alt_click_would_alter(window):
+    """One rule, the cluster's own block list, and a value per scheme.
+
+    The list is the control cluster's own reveal list on purpose: a block shows
+    its cluster on exactly this hover, so the same set of blocks is the set an
+    Alt+click would do something to — and the band cannot claim a block already in
+    a mode, which carries the accent rule instead. The geometry is measured
+    separately, by `test_the_hover_band_reaches_the_page_edges`.
+    """
+    document = """A paragraph.
+
+```python
+print(1)
+```
+
+| A | B |
+| --- | --- |
+| 1 | 2 |
+
+```mermaid
+graph TD
+  A[Alpha]
+```
+"""
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps(document)
+    )
+    _wait(window, "(() => ({ m: !!document.querySelector('.ProseMirror .mermaid') }))()",
+          lambda d: d.get("m") is True, timeout=20)
+
+    band = _dump(window, HOVER_BAND_RULE)
+    assert not band.get("missing"), "no band rule in the loaded sheet: the affordance is dead"
+    assert band["absolute"] == "absolute", (
+        "the band must be positioned: a background on the block is painted below "
+        "its children and was invisible on a code block. %r" % band)
+    assert band["behind"] == "-1", (
+        "the band must paint behind the block's content, or it covers the text: %r"
+        % band["behind"])
+    assert band["blocks"] == list(HOVER_BAND_HIT), (
+        "the band list has drifted from the control cluster's own: %s" % band["blocks"])
+    assert band["notMode"], (
+        "a block already in a mode must keep the accent rule, not be banded")
+
+    # Every top-level block in this document is a candidate, and a block in its
+    # source form is not — which is what `:not(.edi-block-mode)` plus the list's
+    # own silence about `block-source-mode` together buy.
+    reached = _dump(window, """(() => {
+      const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+        + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)';
+      return { classes: [...document.querySelectorAll('.ProseMirror > *')]
+        .map((el) => String(el.className).split(' ')[0]) };
+    })()""")
+    assert set(reached["classes"]) <= {
+        "block-visual-mode", "mermaid", "runnable-block", "spreadsheet", "ss-plain",
+    }, reached
+
+    # One step off the page, per scheme, so it reads as "not selected" rather
+    # than as a selection — and distinct, so the dark one is not the light one.
+    for scheme in ("light", "dark"):
+        value = _dump(window, """(() => {
+          const root = document.documentElement;
+          const was = root.dataset.colorScheme;
+          root.dataset.colorScheme = %s;
+          const v = getComputedStyle(root).getPropertyValue('--block-hover').trim();
+          root.dataset.colorScheme = was;
+          return { v };
+        })()""" % json.dumps(scheme))
+        assert value["v"], f"--block-hover is undefined in {scheme}"
+        assert value["v"] != "#f2f5f8" or scheme == "light", (
+            "the dark scheme must not reuse the light tint: %s" % value)
+
+
+# The band's geometry. `:hover` cannot be exercised by this harness (QTest mouse
+# injection never reaches the page), so the rule is injected with `:hover` swapped
+# for a class and the box is *measured*. That is a legitimate instrument for the
+# one question that can actually be wrong — does the band reach the page edges, and
+# does it clear the block on every type — and it is an instrument, not the claim:
+# the `:hover` match itself is still CSS that only a real pointer exercises.
+BAND_GEOMETRY_PROBE = """(() => {
+  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+  let rule = null;
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (const r of rules) { if (r.selectorText === SEL) rule = r; }
+  }
+  if (!rule) return { missing: true };
+  const css = rule.style.background || rule.style.backgroundColor;
+  // The rule's own declarations, wholesale: rebuilding them property by property
+  // is how this probe first measured a band that had not moved horizontally.
+  const style = document.createElement('style');
+  style.textContent = SEL.replace(':hover', '.edi-band-probe') + '{' + rule.style.cssText + '}';
+  document.head.appendChild(style);
+  const pm = document.querySelector('.ProseMirror');
+  const pmBox = pm.getBoundingClientRect();
+  // A pseudo-element has no rect of its own — `getBoundingClientRect()` on the
+  // host returns the *host's* box, which is how this probe first "measured" a
+  // band that had not moved at all. Its computed offsets are what there is.
+  const rows = [...pm.children].map((el) => {
+    const box = el.getBoundingClientRect();
+    el.classList.add('edi-band-probe');
+    const cs = getComputedStyle(el, '::before');
+    const inset = {
+      top: parseFloat(cs.top), right: parseFloat(cs.right),
+      bottom: parseFloat(cs.bottom), left: parseFloat(cs.left),
+    };
+    el.classList.remove('edi-band-probe');
+    return {
+      cls: String(el.className).split(' ')[0],
+      blockTop: Math.round(box.top), blockBottom: Math.round(box.bottom),
+      bandTop: Math.round(box.top + inset.top),
+      bandBottom: Math.round(box.bottom - inset.bottom),
+      bandLeft: Math.round(box.left + inset.left),
+      bandRight: Math.round(box.right - inset.right),
+    };
+  });
+  style.remove();
+  return {
+    css, decls: rule.style.cssText,
+    pmLeft: Math.round(pmBox.left), pmRight: Math.round(pmBox.right),
+    rows,
+  };
+})()"""
+
+
+def test_the_hover_band_reaches_the_page_edges(window):
+    """Full width, window edge to window edge, and clear of the block's content.
+
+    The measurement is of a band produced by the *same* declarations as the live
+    rule, so what is pinned is the geometry: the left edge cancels the block's 24px
+    margin and the editor's 24px padding, the right cancels the padding, and the
+    band reaches past the block's own box above and below so consecutive blocks
+    read as one band.
+    """
+    import json
+    document = """A paragraph.
+
+- a list item
+- another
+
+```python
+print(1)
+```
+
+| A | B |
+| --- | --- |
+| 1 | 2 |
+
+```mermaid
+graph TD
+  A[Alpha]
+```
+"""
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps(document)
+    )
+    _wait(window, "(() => ({ m: !!document.querySelector('.ProseMirror .mermaid') }))()",
+          lambda d: d.get("m") is True, timeout=20)
+
+    probe = _dump(window, BAND_GEOMETRY_PROBE)
+    assert not probe.get("missing"), "the band rule is not in the loaded sheet"
+    assert probe["css"], f"the band paints nothing: {probe['css']!r}"
+
+    rows = probe["rows"]
+    assert len(rows) == 5, rows
+    for row in rows:
+        # Both edges land on the editor's own box, which is the page edge: the
+        # scroller has no other width to reach.
+        assert abs(row["bandLeft"] - probe["pmLeft"]) <= 1, (
+            f"{row['cls']}: band left {row['bandLeft']} vs editor {probe['pmLeft']}")
+        assert abs(row["bandRight"] - probe["pmRight"]) <= 1, (
+            f"{row['cls']}: band right {row['bandRight']} vs editor {probe['pmRight']}")
+        # And it stands off the block, which is what gives an opaque interior
+        # (a code block's editor) somewhere to show.
+        assert row["bandTop"] < row["blockTop"], row
+        assert row["bandBottom"] > row["blockBottom"], row

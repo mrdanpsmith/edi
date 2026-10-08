@@ -697,12 +697,17 @@ describe('mermaid visual mode rendering', () => {
 
   /** The cluster's interaction-axis button, generated from the descriptor. */
   function editToggle(view: EditorView): HTMLButtonElement {
-    const button = view.dom.querySelector<HTMLButtonElement>('.block-control-interaction')
+    const button = editToggleOrNull(view)
     expect(button).not.toBeNull()
     return button!
   }
 
-  /** Alt+click, the gesture that toggles a block's interaction axis. */
+  /** ...and the same lookup without the assertion, for a block with no cluster. */
+  function editToggleOrNull(view: EditorView): HTMLButtonElement | null {
+    return view.dom.querySelector<HTMLButtonElement>('.block-control-interaction')
+  }
+
+  /** Alt+click, the gesture that advances a block one step through its cycle. */
   function altClick(target: EventTarget): void {
     ;(target as Element).dispatchEvent(
       new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true }),
@@ -919,7 +924,7 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
-  it('toggles edit mode on Alt+click, and a bare double click does neither', async () => {
+  it('advances a diagram one mode at a time on Alt+click, and a double click does neither', async () => {
     mockFlowchart()
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
 
@@ -932,9 +937,27 @@ describe('mermaid visual mode rendering', () => {
     expect(editModeOf(view)).toBe(true)
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
 
-    altClick(preview)
+    // The step on from Edit is the block's own source, not "not editing": a cycle
+    // has no off-ramp, and Escape is the way back down. Aim at the block's own
+    // node view — an Alt+click inside a CodeMirror instance is the field's own
+    // business, which is what `chromeOwnsClick` is for.
+    altClick(view.nodeDOM(firstBlockPos(view)) as HTMLElement)
     expect(editModeOf(view)).toBe(false)
     expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+    expect(
+      (view.nodeDOM(firstBlockPos(view)) as HTMLElement).classList.contains('block-source-mode'),
+    ).toBe(true)
+
+    // A block in Source is showing a raw-markdown editor, not a rendering, so it
+    // has no floating cluster at all (§6.5) — its way out is the banner's.
+    expect(editToggleOrNull(view)).toBeNull()
+    // Escape is the other way down, and it commits the buffer rather than
+    // discarding it.
+    expect(exitBlockMode(view)).toBe(true)
+    expect(editModeOf(view)).toBe(false)
+    expect(
+      (view.nodeDOM(firstBlockPos(view)) as HTMLElement).classList.contains('block-source-mode'),
+    ).toBe(false)
 
     // A double click belongs to the browser again: selecting a word inside a
     // diagram is what it always meant, and §5.2 gives it back rather than
@@ -1019,7 +1042,7 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
-  it('leaves edit mode on an Alt+click outside the diagram', async () => {
+  it('cycles the block it lands on, and never swallows the click', async () => {
     mockFlowchart()
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')
 
@@ -1027,31 +1050,33 @@ describe('mermaid visual mode rendering', () => {
     await flush()
     await flush()
 
-    // Edit mode is a mode of one diagram; the gesture that ends it should not
-    // have to land back on that diagram.
-    // The paragraph after the diagram. The diagram's own labels are `<p>`
-    // elements too, and a double click on one of those is a request about the
-    // diagram, so pick the one that is not inside a `.mermaid` block.
+    // Alt+click is a *cycle*, so a press on any other block is a request about
+    // that block and nothing to do with the diagram: the paragraph goes to its
+    // own source. There is deliberately no off-ramp on a block that cycles —
+    // Escape is the way back down, one mode at a time. The record is exclusive,
+    // so the paragraph taking it necessarily finishes the diagram's edit mode:
+    // the same outcome the old "finish whatever is editing" fallback reached, but
+    // by answering the block the press was aimed at instead of discarding it.
+    // The diagram's own labels are `<p>` elements too, and a click on one of
+    // those is a request about the diagram, so pick the one outside it.
     const paragraph = Array.from(view.dom.querySelectorAll<HTMLElement>('p')).find(
       (el) => el.textContent === 'After the diagram' && el.closest('.mermaid') === null,
     )!
-    altClick(paragraph)
-    expect(editModeOf(view)).toBe(false)
+    const paragraphPos = firstBlockPos(view) + (view.state.doc.nodeAt(firstBlockPos(view))!.nodeSize)
 
     enterDiagramEditMode(view, firstBlockPos(view))
     expect(editModeOf(view)).toBe(true)
-    expect(await rendered(view, '.mermaid-editables')).toBe(true)
 
-    altClick(paragraph)
-    expect(editModeOf(view)).toBe(false)
-    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
+    // ...and the click is not swallowed, which is the whole reason the mode
+    // gestures moved off double click in the first place.
+    const notPrevented = paragraph.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
+    )
+    expect(notPrevented).toBe(true)
+    expect(modeFor(view.state, paragraphPos)?.representation).toBe('source')
 
-    // A paragraph carries no toggle of its own, so the gesture there is the
-    // ladder: there is nothing in a mode to finish and it says nothing.
-    altClick(paragraph)
-    expect(currentBlockMode(view.state)).toBeNull()
-
-    // ...but the click is not swallowed, so it still does what it was aimed at.
+    // An open field owns the gesture: Alt+click inside the label editor is a
+    // click in a text field, not a request to leave the diagram's edit mode.
     enterDiagramEditMode(view, firstBlockPos(view))
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
     const editor = view.dom.querySelector<HTMLElement>('.mermaid-editing')!
@@ -1059,8 +1084,6 @@ describe('mermaid visual mode rendering', () => {
       new MouseEvent('click', { bubbles: true, button: 0 }),
     )
     const input = view.dom.querySelector<HTMLInputElement>('.mermaid-edit-input')!
-    // An open field owns the gesture: Alt+click inside the label editor is a
-    // click in a text field, not a request to finish the diagram.
     altClick(input)
     expect(editModeOf(view)).toBe(true)
 
@@ -1134,7 +1157,7 @@ describe('mermaid visual mode rendering', () => {
       ...view.state.doc.nodeAt(pos)!.attrs,
       value: 'graph TD\n  A[Gamma]\n  B[Beta]\n  A --> B',
     })
-    setBlockModeAt(tr, pos, { interaction: 'editing' })
+    setBlockModeAt(view.state, tr, pos, { interaction: 'editing' })
     view.dispatch(tr)
     expect(await rendered(view, '.mermaid-editing')).toBe(true)
     expect(view.dom.querySelectorAll('.mermaid-editables').length).toBeGreaterThan(0)

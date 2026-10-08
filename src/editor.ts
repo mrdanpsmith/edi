@@ -14,6 +14,7 @@ import {
   blockModePlugin,
   commitSourceMode,
   currentBlockMode,
+  keepOneNonVisualBlock,
   enterSourceMode,
   exitBlockMode,
   setBlockMode,
@@ -315,9 +316,14 @@ export function createBlockEditor(
     if (transaction.docChanged) {
       options.onChange?.()
     }
-    if (currentBlockMode(next) !== before) {
-      options.onModeChange?.(currentBlockMode(next))
+    const held = currentBlockMode(next)
+    if (held !== before) {
+      options.onModeChange?.(held)
     }
+    // The one non-visual block in the *page*, not in this document: an unlocked
+    // encrypted block is a whole nested editor with its own record, so a sheet
+    // inside one and a diagram out here would otherwise both be in a mode.
+    keepOneNonVisualBlock(cur)
   }
   const view = new EditorView(parent, {
     state: createState(initialMarkdown),

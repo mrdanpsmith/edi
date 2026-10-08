@@ -377,7 +377,7 @@ export function enterDiagramEditMode(view: EditorView, pos: number | undefined):
   if (view.state.doc.nodeAt(at)?.type.name !== MERMAID_TYPE) return
 
   const tr = view.state.tr
-  setBlockModeAt(tr, at, { interaction: 'editing' })
+  setBlockModeAt(view.state, tr, at, { interaction: 'editing' })
   const sel = tr.selection
   if (sel instanceof NodeSelection && sel.node.type.name === MERMAID_TYPE) {
     // `between` lands on the nearest real text position (or a selection over a
@@ -446,7 +446,7 @@ export function insertKanbanSource(view: EditorView, source: string): boolean {
   // The mode rides along in the same transaction, so one undo takes the whole
   // board away: the mode is the record's own state and costs the document
   // nothing, but it still belongs to the insert rather than to a second step.
-  setBlockModeAt(tr, boardPos, { interaction: 'editing' })
+  setBlockModeAt(view.state, tr, boardPos, { interaction: 'editing' })
   view.dispatch(tr)
   return true
 }

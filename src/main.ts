@@ -43,6 +43,8 @@ import {
   blockModeFor,
   blockPosForElement,
   modeFor,
+  blockFormMode,
+  setBlockForm,
   toggleBlockMode,
   type BlockMode,
 } from './block-modes'
@@ -73,7 +75,7 @@ import welcomeMarkdown from './docs/welcome.md?raw'
 import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
 import { setEncryptedBlockImageResolver, primeEncryptedBlockShow, getActiveEncryptedBlockView } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
-import { insertTable as insertSpreadsheetTable, setTableForm, spreadsheetMenuEntries, tableFormOf } from './node/table'
+import { insertTable as insertSpreadsheetTable, spreadsheetMenuEntries } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
 import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
 import { headingSlug } from './schema'
@@ -1187,8 +1189,12 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
 
   // A table's rendered form, labelled from the descriptor's own form list.
   if (descriptor.forms) {
-    const other = descriptor.forms.find((form) => form.id !== tableFormOf(node))
-    if (other) addItem(other.label, () => setTableForm(view, pos, other.id))
+    // The record, not the table node view: a form is plugin state now, so asking
+    // `block-modes` for it is the direction the dependency should run — and it is
+    // the only one that works from the mocked module boundary anyway.
+    const current = blockFormMode(view.state, pos) ?? 'text'
+    const other = descriptor.forms.find((form) => form.id !== current)
+    if (other) addItem(other.label, () => setBlockForm(view, pos, other.id))
   }
 
   if (descriptor.interaction === 'toggle') {

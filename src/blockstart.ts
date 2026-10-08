@@ -88,7 +88,7 @@ function insertFence(state: EditorState, blockFrom: number, blockTo: number, inf
       })
     }
     if (pos >= 0) {
-      setBlockModeAt(tr, pos, { representation: 'source' })
+      setBlockModeAt(state, tr, pos, { representation: 'source' })
       tr.setSelection(TextSelection.create(tr.doc, pos + built.node.nodeSize))
     }
     return tr
