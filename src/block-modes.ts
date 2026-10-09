@@ -1094,13 +1094,21 @@ export interface BlockControls {
 }
 
 /**
- * Build a block's one control cluster: its mode buttons, generated from
- * `blockModeFor`, followed by whatever actions the node view contributes.
+ * Build a block's one control cluster: whatever actions the node view contributes
+ * and its own mode buttons, with **Source last**.
  *
  * This replaces five places controls used to be built and four of them had a
  * hover rule and a geometry of their own (§6.2). Every top-level block now gets
  * the same row at the same place, so which control a block has is a question
  * about what the block *can do* rather than about which node view drew it.
+ *
+ * **Source is always the right-most control**, and that is a position rather than
+ * an accident of what a block happens to have: it is the one button every block
+ * has, so pinning it right means the eye finds it in the same place on a
+ * paragraph, a diagram, a table and a code block — and a block's own actions
+ * (a code block's **Copy** and **Run**, a diagram's zoom pills) read to its left
+ * in the order the block itself does, instead of the row being split either side
+ * of a button that used to come first.
  *
  * Every button reads its position from `getPos()` **when it is pressed**. That is
  * the single position authority (§6.4): the alternative every one of these had
@@ -1125,16 +1133,22 @@ export function attachBlockControls(
   if (pos === undefined || view.state.doc.resolve(pos).parent.type.name !== 'doc') return null
 
   const descriptor = blockModeFor(node)
-  const buttons: ControlButton[] = []
-  if (descriptor.representation) buttons.push(representationButton(view, getPos))
-  if (descriptor.interaction === 'toggle') buttons.push(interactionButton(view, getPos))
+  // Everything the row carries but Source, then Source itself: the order is the
+  // answer, so it is read here and nowhere else. A block with neither (a
+  // `source_block`) has already been turned away above, so `source` is null only
+  // for a type that can contribute actions and nothing else.
+  const rest: ControlButton[] = []
+  if (descriptor.interaction === 'toggle') rest.push(interactionButton(view, getPos))
+  const source = descriptor.representation ? representationButton(view, getPos) : null
+  const buttons = source === null ? rest : [...rest, source]
   if (buttons.length === 0 && actions.length === 0) return null
 
   const dom = document.createElement('div')
   dom.className = BLOCK_CONTROLS_CLASS
   const actionSlot = document.createElement('span')
   actionSlot.className = 'block-control-actions'
-  dom.append(...buttons.map((entry) => entry.button), actionSlot)
+  dom.append(...rest.map((entry) => entry.button), actionSlot)
+  if (source !== null) dom.append(source.button)
   // Keep the caret out of the labels: clicking a <button> natively puts the text
   // cursor inside its text, and a press that moved the caret into a diagram's
   // zoom pill would deselect the block the user was working on.

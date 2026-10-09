@@ -546,6 +546,16 @@ body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-primary);
+  /* **The band escapes into here**, and this is what it escapes into: the hover
+     band's `z-index: -1` is only above this element's own background — and below
+     every block's — while `.ProseMirror` itself is what puts it on screen. Remove
+     this and the band drops to the root stacking context, `body`'s own
+     background paints over it, and the affordance vanishes on every block at
+     once. `zoom` (declared below) already gives this element that property at
+     every zoom factor including the default `1`, which is measured and is exactly
+     why it cannot be left to: the band would then be one Blink implementation
+     detail away from being invisible, with nothing in the sheet to say so. */
+  isolation: isolate;
   /* ProseMirror's default `pre-wrap` renders a single newline inside a
    * paragraph as a visible line break, which looks identical to a hard break.
    * CommonMark collapses single newlines to a space (soft line break), so
@@ -577,9 +587,8 @@ body {
  *
  * The `z-index` is not styling, it is the checkbox's half of the hover band's
  * contract (§ "Which block would Alt+click alter?", below): the band is a
- * `z-index: -1` sibling so it can reach the margins a code block's editor and a
- * diagram's preview do not, and a **native form control is painted underneath a
- * negative-z-index sibling** unless it asks for a positive one of its own. So
+ * `z-index: -1` pseudo-element, and a **native form control is painted underneath
+ * a negative-z-index sibling** unless it asks for a positive one of its own. So
  * hovering a task list — the one block type whose own content is a row of bare
  * controls — drew the band straight over every checkbox in it, and the checkboxes
  * came and went with the pointer. Measured in the real engine: `z-index: 0` does
@@ -662,13 +671,32 @@ body {
  * a sheet's tools are in the cluster, and a sheet is never banded anyway because
  * being a sheet is a mode (`edi-block-mode-form`) — but that is a survey of what
  * is inside these blocks *today*, so a new native control in one wants checking
- * against this rule rather than against the pixels. */
+ * against this rule rather than against the pixels.
+ *
+ * **Where the band lands is load-bearing, and it is the editor — not the block.**
+ * A `z-index: -1` element lands in the nearest *ancestor* stacking context, and
+ * which one it is decides what the band paints over. A block that isolated itself
+ * trapped the band in its own painting order, where a negative layer is step 2:
+ * **above the block's own background and border**, below its content. Every other
+ * block type survived that by having a child whose own surface covers the whole
+ * inset. A code block has no such child — its frame *is* its own, and the
+ * CodeMirror host it wraps is transparent, so hovering one painted the band over
+ * its 1px border and over the 12px of padding between that border and the
+ * editor. The code block's chrome did not vanish into the band by being covered;
+ * it *was* the band, which is why the screenshot of it read as the frame coming
+ * apart rather than as a tint. So the block rule above must not isolate (or
+ * transform, or filter, or contain, or set `opacity` < 1 — anything that makes it
+ * a stacking context in its own right), and `.ProseMirror`'s `isolation: isolate`
+ * is what the band escapes into instead: one level up, above the editor's own
+ * background and below every block's, which is what "a band behind the block"
+ * means and what the geometry above was computed for. */
 .ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode) {
-  /* The band is positioned against this box, and `isolation` makes the block a
-   * stacking context so `z-index: -1` puts the band behind the block's *content*
-   * and not behind the editor's own background. */
+  /* The band is positioned against this box. Nothing here isolates it: the
+   * band is `z-index: -1`, and a block that made itself a stacking context
+   * would trap that in its *own* painting order — where a negative layer is
+   * step 2, **above** the block's own background and border and only below its
+   * content. See the band rule below. */
   position: relative;
-  isolation: isolate;
 }
 
 .ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before {

@@ -373,9 +373,30 @@ describe('one cluster per top-level block', () => {
     expect(diagram.querySelector('.block-control-interaction')?.textContent).toBe('Edit')
 
     // A spreadsheet is a table's *Edit*, so a table's cluster reads exactly like a
-    // diagram's: Source, Edit. One vocabulary for the whole cycle.
+    // diagram's: Edit, then Source. One vocabulary, and one order.
     const table = view.dom.querySelector<HTMLElement>('.ss-plain')!
     expect(table.querySelector('.block-control-form')?.textContent).toBe('Edit')
+    view.destroy()
+  })
+
+  it('puts Source last in the row, whatever else the block carries', () => {
+    // The one button every block has is pinned to the right, so the eye finds it
+    // in the same place on a heading, a diagram and a code block, and a block's
+    // own actions read to its left. Nothing else in the row moves: a diagram's
+    // Edit still sits to the left of the pills it shares the row with.
+    const view = createEditor(DOC)
+    const labels = (dom: HTMLElement): string[] =>
+      [...dom.querySelectorAll('.block-controls button')].map((b) => b.textContent ?? '')
+
+    expect(labels(view.nodeDOM(0) as HTMLElement)).toEqual(['Source'])
+    expect(labels(view.dom.querySelector<HTMLElement>('.ss-plain')!)).toEqual(['Edit', 'Source'])
+    const diagram = view.dom.querySelector<HTMLElement>('.mermaid')!
+    expect(labels(diagram).at(-1)).toBe('Source')
+    expect(labels(diagram).indexOf('Edit')).toBeLessThan(labels(diagram).length - 1)
+    // ...and a block's own actions sit left of it, so a code block's row is Copy,
+    // then Source: the block's own control first, the one every block has last.
+    const withCopy = clusters(view).find((c) => labels(c).includes('Copy'))
+    expect(labels(withCopy!)).toEqual(['Copy', 'Source'])
     view.destroy()
   })
 

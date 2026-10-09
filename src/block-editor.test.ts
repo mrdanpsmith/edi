@@ -750,13 +750,13 @@ describe('mermaid visual mode rendering', () => {
     expect(svg!.style.width).toBe('900px')
     expect(svg!.style.maxWidth).toBe('none')
 
-    // The zoom buttons are in the block's one cluster, beside Source and Edit,
+    // The zoom buttons are in the block's one cluster, beside Edit and Source,
     // rather than in a toolbar of their own in this block's corner.
     const cluster = block!.querySelector<HTMLElement>('.block-controls')
     expect(cluster).not.toBeNull()
     expect(block!.querySelector('.mermaid-toolbar')).toBeNull()
     expect(Array.from(cluster!.querySelectorAll('button')).map((b) => b.textContent))
-      .toEqual(['Source', 'Edit', '−', '+', '100%'])
+      .toEqual(['Edit', '−', '+', '100%', 'Source'])
 
     const zoomIn = Array.from(cluster!.querySelectorAll('button')).find((b) => b.textContent === '+')
     zoomIn!.click()

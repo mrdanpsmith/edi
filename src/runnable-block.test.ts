@@ -348,9 +348,10 @@ describe('code block copy buttons', () => {
       expect(copy).toBeTruthy()
       expect(cluster).toBeTruthy()
       expect(cluster.contains(copy)).toBe(true)
-      // The mode button comes first, then the block's own actions.
+      // The block's own actions first, then Source — the one control every block
+      // has is pinned to the right of the row (§6.3).
       expect([...cluster.querySelectorAll('button')].map((b) => b.textContent))
-        .toEqual(['Source', 'Copy', ...(md.includes('#!') ? ['Run'] : [])])
+        .toEqual(['Copy', ...(md.includes('#!') ? ['Run'] : []), 'Source'])
       // Nothing is left floating over the code, and nothing reserves room for it.
       expect(view.dom.querySelectorAll('.code-copy-float').length)
         .toBeLessThanOrEqual(1)

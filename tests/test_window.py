@@ -2930,7 +2930,9 @@ def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
     time.sleep(0.5)
     plain = _dump(window, CODE_BLOCK_CONTROLS)
     assert not plain.get("missing"), plain
-    assert plain["buttons"] == ["Source", "Copy"], plain
+    # Copy, then Source: Source is the right-most control on every block (§6.3),
+    # so a block's own actions read to its left in the order the block itself does.
+    assert plain["buttons"] == ["Copy", "Source"], plain
     # Nothing is left floating over the code, and nothing reserves room for it.
     assert plain["floating"] == [], plain
     assert not plain["reserve"], plain
@@ -2947,8 +2949,9 @@ def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
     time.sleep(0.5)
     runnable = _dump(window, CODE_BLOCK_CONTROLS)
     assert not runnable.get("missing"), runnable
-    # Copy, then Run: the order the block reads in.
-    assert runnable["buttons"] == ["Source", "Copy", "Run"], runnable
+    # Copy, then Run, then Source — the block's own actions in the order the block
+    # reads in, with the one control every block has pinned to the right.
+    assert runnable["buttons"] == ["Copy", "Run", "Source"], runnable
     assert runnable["floating"] == [], runnable
     assert all(runnable["hits"]), runnable
     assert len(set(runnable["heights"])) == 1, runnable
@@ -3023,7 +3026,10 @@ def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
         lambda d: d["editing"] is False and "Source" in d["labels"],
         timeout=10,
     )
-    assert back["labels"][0] == "Source", back
+    # Source is the right-most control on every block (§6.3), and coming back
+    # from Source is what put the board on screen again — so it is where the
+    # record's own button is found, not merely one of the labels.
+    assert back["labels"][-1] == "Source", back
 
 
 def test_alt_click_below_a_lone_board_ends_its_edit_session(window):
@@ -3862,7 +3868,17 @@ def test_the_hover_band_does_not_hide_a_tasks_checkbox(window):
 
         # The checkbox itself, first in the stack: nothing between it and the
         # pointer, which is the hit-test form of "still visible".
-        assert probe["stack"][:2] == ["input", "block-visual-mode"], probe
+        assert probe["stack"][0] == "input", probe
+        # And the band below it. A pseudo-element is not an element, so the band
+        # cannot be named in a hit test: it answers as the element whose stacking
+        # context it is painted in, and that is `.ProseMirror` — one level up from
+        # the block, which is where a `z-index: -1` sibling is supposed to land. So
+        # the claim is "under the checkbox, and in the editor rather than in the
+        # block", not a fixed neighbour: a band that had found its way back inside
+        # the block would pass `stack[0] == 'input'` here and paint over the block's
+        # own frame, which is what
+        # `test_the_hover_band_does_not_paint_over_a_code_blocks_own_frame` catches.
+        assert probe["stack"].index("ProseMirror") > 0, probe
         # And the declaration that is what puts it there. `z-index: 0` is not
         # enough — a form control needs a *positive* one to clear a negative
         # sibling — so the claim is about the value, not about being positioned.
@@ -3872,6 +3888,189 @@ def test_the_hover_band_does_not_hide_a_tasks_checkbox(window):
         # The window is session-scoped: a page left with the band permanently on
         # would hand every later test a document that is hovered.
         _dump(window, BAND_OVER_CONTROL_OFF)
+
+
+# The band's other half again, and the half a hit test cannot answer: what it
+# paints over *silently*. `:hover` still cannot be exercised, so the rule is
+# rewritten into one that always matches, exactly as `BAND_OVER_CONTROL_ON` does
+# — but the instrument has to change with it. Lifting `pointer-events` answers
+# "what is on top of the checkbox", because a checkbox is a hit-test target; a
+# 1px border is not, and neither is the transparent padding ring between a code
+# block's border and its CodeMirror editor. So this one reads **pixels**, out of a
+# real grab of the page, and compares the band on against the band off.
+#
+# It is that comparison which makes it a test of paint order and not a reading of
+# the stylesheet: the two frames are the same document, one rule apart, and the
+# question is not "what colour is the border" but "did the band change it".
+#
+# The bug it pins is where a `z-index: -1` element *lands*. It lands in the
+# nearest ancestor stacking context, and a block that isolated itself trapped it
+# in its own painting order, where a negative layer is step 2 — above the block's
+# own background and border, below its content. Every other banded type hid that
+# behind a child painting the whole inset; a code block's frame *is* its own, so
+# hovering one painted `--block-hover` over its 1px border and over the 12px of
+# padding around the editor. The chrome did not get covered — it was the band.
+BAND_OVER_FRAME_ON = """(() => {
+  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+  const always = SEL.replace(':hover', ':not(.edi-never-hover)');
+  let forced = 0;
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i];
+      if (rule.selectorText !== SEL) continue;
+      window.__ediFrame = { sheet, index: i, selector: SEL, cssText: rule.style.cssText };
+      rule.selectorText = always;
+      forced++;
+    }
+  }
+  return { forced };
+})()"""
+
+BAND_FRAME_POINTS = """(() => {
+  const block = document.querySelector('.runnable-block');
+  if (!block) return { missing: true };
+  const host = block.querySelector('.code-editor-host');
+  if (!host) return { noHost: true };
+  const b = block.getBoundingClientRect();
+  const h = host.getBoundingClientRect();
+  const pm = getComputedStyle(document.querySelector('.ProseMirror'));
+  const s = getComputedStyle(block);
+  return {
+    points: {
+      // Sampled off the block's own box, because a band's frame problem is
+      // exactly a disagreement between the block's box and what sits over it.
+      borderLeft: [b.left + 0.5, b.top + b.height - 8],
+      borderRight: [b.right - 1.5, b.top + b.height - 8],
+      borderBottom: [b.left + 60, b.bottom - 1.5],
+      // `.code-editor-host` declares no background of its own, so its own 12px of
+      // padding is whatever is behind it: the block's surface while the band is
+      // behind that, the band while it is not. Sampled *inside* the host's edge —
+      // one pixel further out and this is the margin, which is banded either way
+      // and would pass for the wrong reason.
+      padLeft: [h.left + 6, h.top + h.height / 2],
+      padTop: [h.left + 60, h.top + 3],
+      // And the margin the affordance exists for, which must still be banded.
+      marginLeft: [b.left - 20, b.top + b.height / 2],
+      marginAbove: [b.left + 60, b.top - 2],
+    },
+    // Why, not only what: the band escapes one level up, and the block must not be
+    // the thing that stops it. Every one of these is a way to become a stacking
+    // context, which is the bug.
+    pmIsolation: pm.isolation,
+    block: {
+      isolation: s.isolation, opacity: s.opacity, transform: s.transform,
+      filter: s.filter, contain: s.contain, mixBlendMode: s.mixBlendMode,
+      willChange: s.willChange, perspective: s.perspective,
+      zIndex: s.zIndex, position: s.position,
+    },
+  };
+})()"""
+
+BAND_OVER_FRAME_OFF = """(() => {
+  const saved = window.__ediFrame;
+  if (!saved) return { missing: true };
+  const rule = saved.sheet.cssRules[saved.index];
+  if (rule) { rule.selectorText = saved.selector; rule.style.cssText = saved.cssText; }
+  delete window.__ediFrame;
+  return { restored: true };
+})()"""
+
+
+def _band_frame_pixels(window, points):
+    """The colour at each named point, read out of a real grab of the page.
+
+    A screenshot of a just-mutated DOM is a stale frame, so the caller settles
+    first; what is *not* stale is a rule that has been rewritten in the loaded
+    sheet, which is what both halves of this comparison turn on.
+    """
+    import time
+
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QApplication
+
+    end = time.monotonic() + 0.4
+    while time.monotonic() < end:
+        QApplication.processEvents()
+        time.sleep(0.02)
+    image = window._web.grab().toImage()
+    out = {}
+    for name, (x, y) in points.items():
+        colour = QColor(image.pixelColor(int(x), int(y)))
+        out[name] = (colour.red(), colour.green(), colour.blue())
+    return out
+
+
+def test_the_hover_band_does_not_paint_over_a_code_blocks_own_frame(window):
+    """The band is behind every block, including the one it is attached to.
+
+    `z-index: -1` lands in the nearest ancestor stacking context, so a band that
+    was trapped in the block's own painted over the block's own `background` and
+    `border` — the 1px frame a code block *is*, and the transparent padding ring
+    around its editor. Measured here in pixels, band on against band off: the
+    frame and the editor's own inset must be identical in both, and the margin
+    must be the band. A fix that made the band positive would pass the first half
+    and fail the second, and a fix that hid the frame without the band still
+    reaching the margins would pass the second and fail the first.
+    """
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true"
+        % json.dumps("before\n\n```python\nprint(1)\n```\n\nafter\n")
+    )
+    _wait(window, "(() => ({ c: document.querySelectorAll('.runnable-block').length }))()",
+          lambda d: d.get("c") == 1, timeout=20)
+
+    try:
+        geom = _dump(window, BAND_FRAME_POINTS)
+        assert not geom.get("missing"), "the document has no code block"
+        assert not geom.get("noHost"), "the code block has no CodeMirror editor"
+
+        # Band off first: the page is in that state already, and measuring it before
+        # anything is rewritten is what makes the second frame a comparison rather
+        # than a second reading of the same rule.
+        off_pixels = _band_frame_pixels(window, geom["points"])
+
+        turned_on = _dump(window, BAND_OVER_FRAME_ON)
+        assert turned_on["forced"] == 1, (
+            "the band's own rule was not found in the loaded sheet, so nothing was "
+            "banded and this would pass for the wrong reason: %r" % turned_on)
+        on_pixels = _band_frame_pixels(window, geom["points"])
+
+        frame = ("borderLeft", "borderRight", "borderBottom", "padLeft", "padTop")
+        for name in frame:
+            assert on_pixels[name] == off_pixels[name], (
+                "the band painted over the code block's own %s: %r with the band, "
+                "%r without it" % (name, on_pixels[name], off_pixels[name]))
+
+        margin = ("marginLeft", "marginAbove")
+        for name in margin:
+            assert on_pixels[name] != off_pixels[name], (
+                "the band no longer reaches %s, which is the whole affordance: %r"
+                % (name, on_pixels[name]))
+
+        # And the reason, so a failure names the mechanism rather than a hex. The
+        # band is a `z-index: -1` child, so what it paints over is decided by the
+        # nearest *ancestor* stacking context — `.ProseMirror` has to be one, and
+        # the block must not be.
+        assert geom["pmIsolation"] == "isolate", (
+            "the band escapes into the editor, and .ProseMirror is what has to be "
+            "the stacking context it escapes into: %r" % geom["pmIsolation"])
+        trapping = {
+            key: value for key, value in geom["block"].items()
+            if key in ("isolation", "transform", "filter", "contain", "mixBlendMode",
+                       "willChange", "perspective")
+            and value not in ("none", "auto", "normal", "")
+        }
+        assert not trapping, (
+            "a banded block must not be its own stacking context: the band would be "
+            "trapped in it and paint over the block's own background and border "
+            "instead of behind them: %r" % trapping)
+        assert geom["block"]["opacity"] == "1", geom["block"]
+    finally:
+        # The window is session-scoped: a page left with the band permanently on
+        # would hand every later test a document that is hovered.
+        _dump(window, BAND_OVER_FRAME_OFF)
 
 
 # The sheet's own controls, and the mode buttons they were competing with. §6.3
@@ -3965,21 +4164,20 @@ def test_a_sheets_own_controls_stay_in_its_own_row_at_the_left(window):
 
     # The cluster is the block's, holds the block's modes and nothing else, and —
     # being an open sheet — its form control names where it *goes*, so `Visual`.
-    assert out["modeButtons"] == ["Source", "Visual"], out["modeButtons"]
-
-    assert out["modeButtons"] == ["Source", "Visual"], out["modeButtons"]
+    assert out["modeButtons"] == ["Visual", "Source"], out["modeButtons"]
 
 
-def test_a_plain_tables_cluster_uses_the_cycles_own_vocabulary(window):
-    """`Source`, then `Edit` — the same three words every cycled operation uses.
+def test_a_plain_tables_cluster_uses_the_modes_own_vocabulary(window):
+    """`Edit`, then `Source` — the same words every mode control uses, in the same
+    order a diagram's are, because Source is always the right-most one.
 
     The table's forms were `Show as text` / `Show as sheet` and then `Text` /
-    `Sheet`, both of which name the *rendering* and neither of which says where
-    the block is in its cycle. So a table said "Sheet" where a diagram said "Edit",
+    `Sheet`, both of which name the *rendering* and neither of which says which
+    mode the block is in. So a table said "Sheet" where a diagram said "Edit",
     three surfaces had to be taught two vocabularies, and the chip had to
-    special-case which of them it was in. A spreadsheet **is** a table's edit mode
+    special-case which of the two it was in. A spreadsheet **is** a table's edit mode
     — the form you change the table in, as a diagram's editing layer is the form
-    you change a diagram in — so the cycle's own words are the right ones.
+    you change a diagram in — so the app's own words are the right ones.
     """
     window._web.page().runJavaScript(
         "window.ediSetContent(%s); true" % json.dumps("| A | B |\n| --- | --- |\n| 1 | 2 |\n"))
@@ -3990,7 +4188,7 @@ def test_a_plain_tables_cluster_uses_the_cycles_own_vocabulary(window):
       return { labels: [...t.querySelectorAll('.block-control-representation, .block-control-form')]
         .map((b) => b.textContent) };
     })()""")['labels']
-    assert labels == ["Source", "Edit"], labels
+    assert labels == ["Edit", "Source"], labels
 
 
 def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
