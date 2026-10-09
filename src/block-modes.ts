@@ -147,22 +147,22 @@ const INTERACTIVE_BLOCKS = new Set(['mermaid_block'])
 const SOURCE_ONLY_BLOCKS = new Set(['source_block'])
 
 /**
- * A table's forms, named in the **cycle's own vocabulary** rather than a second
- * one.
+ * A table's forms, named in **the app's own vocabulary for modes** rather than a
+ * second one.
  *
  * They used to be `Show as text` / `Show as sheet`, then `Text` / `Sheet` — both
- * of which describe the *rendering* and neither of which says where the block is
- * in its cycle. So a table said "Sheet" where a diagram said "Edit", three
+ * of which describe the *rendering* and neither of which says which mode the
+ * block is in. So a table said "Sheet" where a diagram said "Edit", three
  * surfaces had to be taught both vocabularies, and the chip had to special-case
  * which of the two it was in.
  *
  * A spreadsheet **is** a table's edit mode: it is the form you change the table
  * in, exactly as a diagram's editing layer is the form you change a diagram in,
- * and its markdown is its form either way. So the labels are the cycle's: plain
+ * and its markdown is its form either way. So the labels are the app's: plain
  * text is the table's **Visual** (its rendering as a document, which is what it
- * is by default), and the sheet is its **Edit**. One vocabulary, three steps, and
- * `Visual` is the step every block starts at — which is what makes a table's cycle
- * read exactly like a diagram's.
+ * is by default), and the sheet is its **Edit**. One vocabulary, one pair, and
+ * `Visual` is the end every block starts at — which is what makes a table's
+ * Alt+click read exactly like a diagram's.
  *
  * The ids stay `text` and `sheet`: they are internal, and renaming them would
  * churn every assertion about a form for no gain.
@@ -175,8 +175,9 @@ const TABLE_FORMS: BlockModeDescriptor['forms'] = [
 /**
  * The form a block is drawn in when nothing has asked for another — its
  * rendering rather than a mode, so it holds no record and any number of blocks
- * may be in it. `forms` is written in cycle order, so this could be `forms[0]`,
- * but the descriptor is a declaration and `isDefault` is what it declares;
+ * may be in it. `forms` is written with the default first, so this could be
+ * `forms[0]`, but the descriptor is a declaration and `isDefault` is what it
+ * declares;
  * reading the flag keeps the two from disagreeing if the list is reordered.
  */
 function defaultFormOf(descriptor: BlockModeDescriptor): string | undefined {
@@ -238,7 +239,7 @@ function blockModeDecorations(state: EditorState): DecorationSet {
  * rather than an import because the two node views that have one — the diagram
  * and the table — both import this module, and what entering costs is a
  * subsystem concern: finishing a pending label before an interaction mode
- * changes is an ordering rule of `mermaid-edit.ts`, and cycling a table's
+ * changes is an ordering rule of `mermaid-edit.ts`, and switching a table's
  * rendered form is a document edit of `node/table.ts`.
  */
 export interface BlockModeHandlers {
@@ -483,8 +484,8 @@ let holder: EditorView | null = null
  *
  * This is the whole cross-editor mechanism, and it is one function called after
  * every transaction rather than a list of the routes that can take a mode: the
- * cycle, the cluster's buttons, the keymap, the context menu and a node view's
- * own `enterDiagramEditMode` are five today and a sixth is a bug.
+ * Alt+click gesture, the cluster's buttons, the keymap, the context menu and a
+ * node view's own `enterDiagramEditMode` are five today and a sixth is a bug.
  *
  * **An editor that does not call this opts out of the rule**, silently — nothing
  * about it is invalid, it simply never claims the slot and so can never be
@@ -512,9 +513,10 @@ function claimFor(view: EditorView, mode: BlockMode | null): void {
  *
  * Called from the one `dispatchTransaction` every editor shares (`editor.ts`),
  * after the transaction has been applied, rather than from each route that takes
- * a mode. That placement is the point: a mode can be taken by the cycle, by the
- * cluster's buttons, by the keymap, by the context menu, or by a node view's own
- * `enterDiagramEditMode`, and a list of them is a list that will grow a gap.
+ * a mode. That placement is the point: a mode can be taken by the Alt+click
+ * gesture, by the cluster's buttons, by the keymap, by the context menu, or by a
+ * node view's own `enterDiagramEditMode`, and a list of them is a list that will
+ * grow a gap.
  *
  * The release goes through `leaveBlockMode`, so a block being dropped out of its
  * source form has its buffer committed rather than discarded — the same rule §3
@@ -609,16 +611,16 @@ export function blockPosForElement(view: EditorView, target: EventTarget | null)
  * the diagram's `stopEvent` match the same ones.
  *
  * **A CodeMirror is deliberately *not* on this list**, which it was, and which
- * cost the cycle two whole blocks. A block in its source form is a raw-markdown
+ * cost the gesture two whole blocks. A block in its source form is a raw-markdown
  * editor, so a click in one looked like a click in a text field; but so is a
  * **code block's visual form**, and a *code block's text is the entire block* —
  * claiming it meant Alt+click did nothing on the one block type a reader most
  * wants to see as markdown, aimed at the only part of it anyone clicks. It then
- * cost the cycle its own way back out: the block that Alt+click had just opened
+ * cost the gesture its own way back out: the block that Alt+click had just opened
  * could not be Alt+clicked closed, because by then its editor *was* the source
- * form and so was claimed. A cycle that can only be entered is not a cycle.
+ * form and so was claimed. A toggle that can only be entered is not a toggle.
  *
- * What Alt+click does inside a buffer is the cycle's, and that is the right
+ * What Alt+click does inside a buffer is the block's, and that is the right
  * answer for a modifier gesture: a raw-markdown editor is selected with a plain
  * drag or double click, so Alt+click there is nobody's business but the block's.
  * The genuinely interactive fields are still claimed, and each is a real control
@@ -637,13 +639,32 @@ function chromeOwnsClick(event: MouseEvent): boolean {
 
 
 /**
- * The Alt+click gesture (§5.2), for every block type at once: **advance the
- * block under the pointer one step through its cycle.**
+ * The Alt+click gesture (§5.2), for every block type at once: **toggle the block
+ * under the pointer between the two modes it has.**
  *
- * Every block that has a source form cycles — **visual → edit → source → visual**
- * — so the descriptor is the only thing consulted and the cycle reads the same on
- * a paragraph, a diagram and a table. `Alt+Shift+click` walks the same three steps
- * the other way, **source → edit → visual → source**.
+ * What "two modes" means is the descriptor's answer, not a fixed list:
+ *
+ * - **a block with an edit step toggles that step** — a diagram's editing layer,
+ *   a table's sheet: **visual ⇄ edit**, in both directions, and *never* into its
+ *   source form. Source is not on this gesture's list at all; it is what
+ *   `Ctrl+Shift+E` and the cluster's **Source** button are for, and the reason it
+ *   is kept off is that going out through Source is not free — it commits the
+ *   buffer, re-parses the block and re-renders the drawing. A toggle that had to
+ *   walk through it to reach its own other end was the complaint, not the fix.
+ * - **a block with no edit step toggles visual ⇄ source**, which is every
+ *   paragraph, heading, list and code block.
+ *
+ * **A block already in its source form is committed and left**, whichever kind of
+ * block it is. Alt+click has always been the way out of a raw-markdown buffer —
+ * it is aimed at the buffer itself, and `chromeOwnsClick` deliberately does not
+ * claim CodeMirror — so the gesture that opens a code block's source has to be
+ * the gesture that closes it. A table keeps the form it left, since a form is
+ * sticky (§4.3), so a sheet table Alt+clicked into source comes back a sheet.
+ *
+ * `Alt+Shift+click` used to walk the same three steps the other way. It does not
+ * any more: with every pair of modes two-way, a backwards gesture had nothing
+ * left to be backwards *from*, and Shift is not read here at all — it is an
+ * ignored modifier, so Alt+Shift+click is exactly Alt+click.
  *
  * Two cases fall through to `finishWhateverIsOpen`, and both are deliberate:
  *
@@ -654,7 +675,7 @@ function chromeOwnsClick(event: MouseEvent): boolean {
  *   there has to be answered by the editor and not by Chrome selecting the
  *   document name in the status bar.
  * - **`source_block`**, which *is* its source form and so has one state and
- *   nothing to advance to.
+ *   nothing to toggle to.
  *
  * The click is never swallowed — a word to select, a caret to place and a cell to
  * mark all still happen, which is the whole reason the mode gestures moved off
@@ -664,25 +685,7 @@ export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
   if (!event.altKey || event.button !== 0) return false
   if (chromeOwnsClick(event)) return false
   const pos = blockPosForElement(view, event.target)
-  // **Alt+Shift+click is the same cycle, walked backwards.**
-  //
-  // It is a mirror rather than a shortcut out, which is what makes the gesture
-  // worth learning: `visual → edit → source` and `source → edit → visual` are the
-  // same three steps in two directions, so the block under the pointer is the only
-  // thing either has to be told. An earlier version jumped straight to Visual from
-  // anywhere, and it was strictly worse — it could not get you *back* to Edit
-  // without going forward through Source, so a second press was needed to get
-  // anywhere the single press had skipped.
-  //
-  // Escape is not the third direction (§5.3): it is a cancel, and the only step
-  // that reads as one is leaving a raw-markdown buffer. A click that names no
-  // block still ends whatever is open, which is the one thing the pointer offers
-  // that a block cannot.
-  if (event.shiftKey) {
-    if (pos < 0) return finishWhateverIsOpen(view)
-    return retreatBlockMode(view, pos) || finishWhateverIsOpen(view)
-  }
-  if (pos >= 0 && advanceBlockMode(view, pos)) return true
+  if (pos >= 0 && toggleBlockModeFromGesture(view, pos)) return true
   return finishWhateverIsOpen(view)
 }
 
@@ -704,42 +707,45 @@ function finishWhateverIsOpen(view: EditorView): boolean {
 
 
 /**
- * Advance the block at `pos` one step through its cycle, and report whether the
- * block has a cycle to advance through.
+ * Toggle the block at `pos` between the two modes it has, and report whether the
+ * block has modes to toggle at all.
  *
- * The steps are the descriptor's, in this order, and a block only has the ones
- * it can actually take:
+ * Which two is the descriptor's answer, and the two cases are not variants of
+ * one thing — they are the two shapes of block the app has:
  *
- * 1. **its rendered form**, where it has more than one (a table: text → sheet);
- * 2. **its interaction axis**, where it has one (a diagram: viewing → editing);
- * 3. **source**, which every block but `source_block` has.
+ * - **a block with an edit step toggles that step.** A diagram's editing layer
+ *   (`interaction: 'toggle'`) and a table's sheet (`forms`) are the same step in
+ *   §5.1's vocabulary, so the gesture is `visual ⇄ edit` for both, and it is the
+ *   subsystem's own handler that says which: a diagram's `enter`/`exit` and a
+ *   table's `setBlockForm`. Neither is a walk *through* source to reach its own
+ *   other end, which is the whole of what changed: leaving a diagram's edit mode
+ *   used to commit its source buffer and re-render the drawing on the way, so a
+ *   gesture whose job was "put this back" cost a document edit.
+ * - **a block with no edit step toggles its representation**, `visual ⇄ source`,
+ *   which is every paragraph, heading, list and code block.
  *
- * and then it wraps to the first. The form and the interaction axis are separate
- * steps rather than two spellings of one because they are separate mechanisms —
- * a form is a document attr and a mode flip is not (§4.3) — but a block
- * carrying both would spend a step on each, which is why the checks fall through
- * rather than being exclusive.
+ * The checks fall through rather than being exclusive, so a block that carried
+ * both an interaction axis and a form would spend its edit step on the form
+ * first — the same order the old three-step cycle used, kept so a block type
+ * gaining an axis does not change what Alt+click does to the form it already
+ * had.
  *
- * Two transitions carry the ordering rule of §3 with them:
+ * Three transitions carry the ordering rule of §3 with them:
  *
- * - **editing → source.** `enterSourceMode` cannot finish a pending diagram
- *   field (it is in the other direction of the import, and finishing it is a
- *   commit rather than a mode change), so the subsystem's own `exit` accepts it
- *   first and this call goes on to build its own transaction against the
- *   document that exit left behind. Calling `enterSourceMode` on its own would
- *   drop the half-typed label on the floor — the exact failure
- *   `exitDiagramEditMode` documents. `pos` needs no remapping across that exit,
- *   and this is why: the accept is a `setNodeMarkup` on the block itself, and a
- *   block start maps to its own start either way — the same reason the record's
- *   own `apply` can carry a position across a visual commit.
- * - **source → visual.** `releaseSourceBlock` rather than `exitBlockMode`,
- *   because the commit is a document edit and re-parsing a block can move it by
- *   an arbitrary amount; the wrap is then written against wherever the block
- *   ended up. It wraps to the cycle's *first* step rather than to whatever the
- *   block was drawn as before, because a table that entered source as a sheet
- *   would otherwise oscillate sheet ⇄ source and never reach text again.
+ * - **source → visual**, from either direction of the toggle, and the one case
+ *   shared by both kinds of block: the buffer is the only copy of what was typed
+ *   there, so this has to be `exitBlockMode` (which commits it) rather than a
+ *   plain record write. A form is sticky (§4.3), so a sheet table Alt+clicked
+ *   into its source form comes back a sheet, and the next Alt+click puts it back
+ *   to plain text — the toggle's own two ends, in the order the press asked for.
+ * - **editing → visual**, for a diagram. The subsystem's own `exit` runs, which
+ *   accepts a pending diagram field: `enterSourceMode` could not do it (it is in
+ *   the other direction of the import, and finishing a field is a commit rather
+ *   than a mode change), and a field accepted after the mode moved commits to a
+ *   block that is no longer editable.
+ * - **visual → editing**, for the same block, through the same handler.
  */
-export function advanceBlockMode(view: EditorView, pos: number): boolean {
+export function toggleBlockModeFromGesture(view: EditorView, pos: number): boolean {
   const node = view.state.doc.nodeAt(pos)
   if (node === null) return false
   const type = node.type.name
@@ -747,38 +753,30 @@ export function advanceBlockMode(view: EditorView, pos: number): boolean {
   if (!descriptor.representation) return false
 
   const mode = modeFor(view.state, pos)
-  const representation = mode?.representation ?? 'visual'
-  const interaction = mode?.interaction ?? 'viewing'
 
-  // Source is the last step, so advancing out of it wraps to the first: the
-  // block's own rendering, and for a table its default form. Wrapping onto
-  // whatever the block was drawn as before would leave a sheet table oscillating
-  // sheet ⇄ source and never reaching plain text again.
-  if (representation === 'source') {
-    const at = releaseSourceBlock(view, pos)
-    const fallback = defaultFormOf(descriptor)
-    const back = view.state.doc.nodeAt(at)
-    if (fallback !== undefined && back !== null && mode?.form !== undefined) {
-      setBlockForm(view, at, fallback)
-    }
+  // A block in its source form is being shown as markdown, which is neither of
+  // the two modes this gesture toggles — so it is the way *out*, whichever kind
+  // of block it is, and it commits rather than forgets. `exitBlockMode` is the
+  // right function for it, and not by accident: this is the same rung Escape
+  // pulls (§5.3), because the two questions are the same one — a raw-markdown
+  // buffer you opened and do not want.
+  if (mode?.representation === 'source') {
+    exitBlockMode(view)
     return true
   }
 
-  // Edit is the middle step, so advancing out of it is the source form. The
-  // subsystem's own `exit` runs first because `enterSourceMode` cannot finish a
-  // pending diagram field, and a field accepted after the mode moved commits to a
-  // block that is no longer editable.
-  if (interaction === 'editing') {
+  if (mode?.interaction === 'editing') {
     BLOCK_MODE_HANDLERS[type]?.exit?.(view, pos)
-    enterSourceMode(view, pos)
     return true
   }
 
-  // Visual. The form is the same step as the interaction axis — a spreadsheet is
-  // a table's Edit — so it comes first for a block that somehow has both.
-  if (descriptor.forms !== undefined && (mode?.form ?? defaultFormOf(descriptor))
-    === defaultFormOf(descriptor)) {
-    const other = descriptor.forms.find((entry) => entry.id !== defaultFormOf(descriptor))
+  // Visual, on a block that has an edit step: take it. The form is checked
+  // first for a block carrying both, and `setBlockForm` releases the record
+  // outright for a table's default form, which is what makes text ⇄ sheet a
+  // toggle of two states rather than a step somewhere in a longer list.
+  if (descriptor.forms !== undefined) {
+    const current = mode?.form ?? defaultFormOf(descriptor)
+    const other = descriptor.forms.find((entry) => entry.id !== current)
     if (other !== undefined) {
       setBlockForm(view, pos, other.id)
       return true
@@ -789,71 +787,6 @@ export function advanceBlockMode(view: EditorView, pos: number): boolean {
     return true
   }
   enterSourceMode(view, pos)
-  return true
-}
-
-/**
- * The same cycle as `advanceBlockMode`, one step **backwards** — the
- * backwards gesture of §5.2.
- *
- * Deliberately written as its own decision tree rather than as a table of steps
- * indexed forwards, because the two directions are not symmetric in what they
- * cost: advancing *into* source builds a raw-markdown editor, and retreating out
- * of it commits that editor and re-parses the block. The order is
- * **source → edit → visual → source**, and the wrap lands in the block's rendering
- * however that block spells it — a diagram's drawing, a table's plain text.
- *
- * Every transition here *finishes* something rather than opening something, which
- * is why this is not `exitBlockMode`: that is the Escape rung and it only ever
- * leaves source (§5.3).
- */
-export function retreatBlockMode(view: EditorView, pos: number): boolean {
-  const node = view.state.doc.nodeAt(pos)
-  if (node === null) return false
-  const type = node.type.name
-  const descriptor = blockModeFor(node)
-  if (!descriptor.representation) return false
-
-  const mode = modeFor(view.state, pos)
-  if (mode === null) {
-    // Visual, so backwards is the *last* step: this block's source form.
-    enterSourceMode(view, pos)
-    return true
-  }
-
-  if (mode.representation === 'source') {
-    // Source → edit, where "edit" is whatever the middle step is for this block,
-    // and the form it left is still on the record (a form is sticky, §4.3), so a
-    // table that was a sheet goes back to being one.
-    const at = releaseSourceBlock(view, pos)
-    if (descriptor.forms !== undefined && mode.form !== undefined) {
-      setBlockForm(view, at, mode.form)
-      return true
-    }
-    if (descriptor.interaction === 'toggle') {
-      const enter = BLOCK_MODE_HANDLERS[type]?.enter
-      if (enter !== undefined) {
-        enter(view, at)
-        return true
-      }
-    }
-    return true
-  }
-
-  if (mode.interaction === 'editing') {
-    BLOCK_MODE_HANDLERS[type]?.exit?.(view, pos)
-    return true
-  }
-
-  // A form on its own — a table as a sheet — retreats to the block's rendering.
-  if (mode.form !== undefined) {
-    const fallback = defaultFormOf(descriptor)
-    if (fallback !== undefined) {
-      setBlockForm(view, pos, fallback)
-      return true
-    }
-  }
-  view.dispatch(view.state.tr.setMeta(BLOCK_MODE_KEY, null))
   return true
 }
 
@@ -887,17 +820,17 @@ export function enterBlockMode(
  *
  * This is deliberately narrower than "leave whatever this block is in", and the
  * narrowing is the point rather than a gap. Escape is a *cancel*, and the only
- * thing in the cycle that reads as a cancel is a raw-markdown editor you opened
+ * mode of a block's that reads as a cancel is a raw-markdown editor you opened
  * and do not want: it has a buffer whose only copy of what you typed lives in a
  * CodeMirror instance, so committing it **is** the exit, and discarding it is the
  * bug §1.5 exists about.
  *
- * The other two steps of the cycle are **not** Escape's to undo. Leaving a
- * diagram's editing layer, or dropping a sheet back to plain text, are moves
- * through the cycle rather than cancellations, so they belong to the cycle's own
- * backwards gesture (§5.2) and to the controls on the block. Escape hands on
- * instead — which is what keeps a cell editor, a kanban field and a menu able to
- * claim it first without a mode handler getting in front of them.
+ * A block's other mode is **not** Escape's to undo. Leaving a diagram's editing
+ * layer, or dropping a sheet back to plain text, are moves between modes rather
+ * than cancellations, so they belong to the Alt+click toggle (§5.2) and to the
+ * controls on the block. Escape hands on instead — which is what keeps a cell
+ * editor, a kanban field and a menu able to claim it first without a mode handler
+ * getting in front of them.
  *
  * Returns whether it did anything, so the ladder's last rung can hand Escape on to
  * every other handler.
@@ -911,11 +844,10 @@ export function exitBlockMode(view: EditorView): boolean {
 
 /**
  * Leave whatever non-default state the block at `pos` is in, whichever way round
- * that is — the **backwards** half of the cycle (§5.2), and what the page's
- * one-slot rule releases through (§2.1).
+ * that is, and what the page's one-slot rule releases through (§2.1).
  *
- * Where `exitBlockMode` is Escape and only Escape, this is the cycle's own
- * backwards step: source commits, an editing layer finishes accepting what was
+ * Where `exitBlockMode` is Escape and only Escape, this is whichever way *out* a
+ * block's mode goes: source commits, an editing layer finishes accepting what was
  * typed, and a form goes back to the block's rendering. A block that is merely
  * being viewed is left alone and reported as such, so the gesture that calls this
  * does not consume a click that was not about anything.
@@ -1284,8 +1216,11 @@ function interactionButton(
       const at = getPos()
       const editing = at !== undefined && modeFor(view.state, at)?.interaction === 'editing'
       button.textContent = editing ? 'Done' : 'Edit'
+      // Not "(Esc)" on the Done button: Escape is a cancel and answers only a
+      // source form (§5.3), so naming it here would offer an exit the key does
+      // not provide. Alt+click is what actually toggles this axis.
       button.title = editing
-        ? 'Finish editing the diagram (Esc)'
+        ? 'Finish editing the diagram (Alt+click)'
         : 'Edit the diagram in place (Alt+click)'
       button.classList.toggle('block-control-on', editing)
       button.setAttribute('aria-pressed', String(editing))

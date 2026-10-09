@@ -935,21 +935,22 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
-  it('cycles a table text → sheet → source on Alt+click, from anywhere on it', () => {
+  it('toggles a table text ⇄ sheet on Alt+click, from anywhere on it', () => {
     const view = createPlainTable('| A |\n| --- |\n| 1 |')
     const plain = view.dom.querySelector('.ss-plain-table') as HTMLElement
     const table = blockPosForElement(view, plain)
     altClick(plain)
     expect(view.dom.querySelector('.spreadsheet')).toBeTruthy()
 
-    // Anywhere on the table, the gesture advances the block's cycle: the step on
-    // from the sheet is the block's source, not back to text. There is no
-    // "inside the grid but outside the block" corner any more, because a double
-    // click inside a cell used to mean "select this word".
+    // Anywhere on the table, the gesture toggles the block's edit mode, so the
+    // press from a cell goes back to text rather than into the block's source:
+    // a sheet *is* a table's Edit, and there is no "inside the grid but outside
+    // the block" corner, because a double click inside a cell used to mean
+    // "select this word".
     altClick(view.dom.querySelector('.ss-grid tbody td') as HTMLElement)
     expect(view.dom.querySelector('.spreadsheet')).toBeNull()
-    expect(modeFor(view.state, table)?.representation).toBe('source')
-    expect((view.nodeDOM(table) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
+    expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    expect(modeFor(view.state, table)).toBeNull()
     view.destroy()
   })
 
@@ -1654,7 +1655,7 @@ describe('TableNodeView grid', () => {
     // descriptor's own form list rather than from a per-call-site string.
     const cluster = view.dom.querySelector('.block-controls') as HTMLElement
     expect(cluster.querySelector('.block-control-representation')?.textContent).toBe('Source')
-    // A table's cycle reads like a diagram's: Source, then Edit.
+    // A table's pair of modes reads like a diagram's: Source, then Edit.
     expect(cluster.querySelector('.block-control-form')?.textContent).toBe('Edit')
     view.destroy()
   })

@@ -5,8 +5,9 @@ Edi is a fast markdown editor with Mermaid diagrams, in-line spreadsheets, execu
 ## Getting started
 
 - Hover any block for its controls — **Source** shows that block's markdown and **Visual** brings the rendering back — or press `Ctrl+Shift+E` to toggle the block the caret is in.
-- `Alt+click` any block to step it through its modes — **visual → edit → source** —
-  and `Alt+Shift+click` steps back. A table's edit mode is the spreadsheet.
+- `Alt+click` a block to toggle it: a diagram between the drawing and **Edit**, a
+  table between plain text and the spreadsheet, any other block between its
+  rendering and **Source**.
 - Use the **File** and **View** menus for document actions.
 - Open several documents side by side in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one).
 - Insert a spreadsheet, text file, or image with `Insert → …`.

@@ -139,11 +139,11 @@ const blockToggleKeymap = keymap({
   // on — which is what leaves selection handling, dialogs, the spreadsheet's own
   // cell editor and a diagram's own Escape alone.
   //
-  // Escape is deliberately **not** a way round the cycle. The other two steps are
-  // moves through it rather than cancellations, so they are the cycle's own
-  // backwards gesture's business (Alt+Shift+click, §5.2) and the controls on the
-  // block's; a key that undid any of them would be answering "cancel" for two
-  // different questions.
+  // Escape is deliberately **not** a way round a block's other mode. Leaving a
+  // diagram's editing layer, or dropping a sheet back to plain text, is a move
+  // between modes rather than a cancellation, so it is the Alt+click gesture's
+  // business (§5.2) and the controls on the block's; a key that undid either
+  // would be answering "cancel" for two different questions.
   'Escape': (_state, dispatch, view) => {
     if (!dispatch || !view) return false
     return exitBlockMode(view)

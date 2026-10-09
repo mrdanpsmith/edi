@@ -138,10 +138,10 @@ function tableFormAt(state: EditorState, pos: number | undefined): string | null
 }
 
 /**
- * The block's **Edit** / **Visual** control — the table's cycle, in the cycle's
- * own vocabulary (§5.1) — labelled from the descriptor's form list so the cluster,
- * the context menu and the cycle can never drift into three spellings of the same
- * two words. The button names the step it *goes to*, as every cluster control does.
+ * The block's **Edit** / **Visual** control — the table's edit mode, in the app's
+ * own vocabulary (§5.1) — labelled from the descriptor's form list so the cluster
+ * and the context menu can never drift into two spellings of the same two words.
+ * The button names the step it *goes to*, as every cluster control does.
  */
 function formControl(
   view: EditorView,

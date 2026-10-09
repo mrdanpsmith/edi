@@ -707,7 +707,7 @@ describe('mermaid visual mode rendering', () => {
     return view.dom.querySelector<HTMLButtonElement>('.block-control-interaction')
   }
 
-  /** Alt+click, the gesture that advances a block one step through its cycle. */
+  /** Alt+click, the gesture that toggles a block between the two modes it has. */
   function altClick(target: EventTarget): void {
     ;(target as Element).dispatchEvent(
       new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true }),
@@ -924,7 +924,7 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
-  it('advances a diagram one mode at a time on Alt+click, and a double click does neither', async () => {
+  it('toggles a diagram between visual and edit on Alt+click, and a double click does neither', async () => {
     mockFlowchart()
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
 
@@ -937,21 +937,26 @@ describe('mermaid visual mode rendering', () => {
     expect(editModeOf(view)).toBe(true)
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
 
-    // The step on from Edit is the block's own source, not "not editing": a cycle
-    // has no off-ramp, and Escape is the way back down. Aim at the block's own
-    // node view — an Alt+click inside a CodeMirror instance is the field's own
-    // business, which is what `chromeOwnsClick` is for.
+    // The next press is the toggle's other end: the drawing back, *not* the
+    // block's own source. A diagram's gesture is visual ⇄ edit and source is not
+    // on that list — going out through it would commit the buffer, re-parse the
+    // block and re-render the drawing to get back to the mode it just left. Aim
+    // at the block's own node view, since an Alt+click inside a CodeMirror
+    // instance is the field's own business and `chromeOwnsClick` is for.
     altClick(view.nodeDOM(firstBlockPos(view)) as HTMLElement)
     expect(editModeOf(view)).toBe(false)
     expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
     expect(
       (view.nodeDOM(firstBlockPos(view)) as HTMLElement).classList.contains('block-source-mode'),
-    ).toBe(true)
+    ).toBe(false)
 
-    // A block in Source is showing a raw-markdown editor, not a rendering, so it
-    // has no floating cluster at all (§6.5) — its way out is the banner's.
+    // Source is still a mode the block has — the cluster's Source button and
+    // Ctrl+Shift-E are for it — and a block in it shows a raw-markdown editor
+    // rather than a rendering, so it has no floating cluster at all (§6.5).
+    editModeOf(view)
+    view.dom.querySelector<HTMLButtonElement>('.block-control-representation')!.click()
     expect(editToggleOrNull(view)).toBeNull()
-    // Escape is the other way down, and it commits the buffer rather than
+    // Escape is the way out of *that*, and it commits the buffer rather than
     // discarding it.
     expect(exitBlockMode(view)).toBe(true)
     expect(editModeOf(view)).toBe(false)
@@ -1042,7 +1047,7 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
-  it('cycles the block it lands on, and never swallows the click', async () => {
+  it('answers for the block it lands on, and never swallows the click', async () => {
     mockFlowchart()
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter the diagram')
 
@@ -1050,11 +1055,10 @@ describe('mermaid visual mode rendering', () => {
     await flush()
     await flush()
 
-    // Alt+click is a *cycle*, so a press on any other block is a request about
-    // that block and nothing to do with the diagram: the paragraph goes to its
-    // own source. There is deliberately no off-ramp on a block that cycles —
-    // Escape is the way back down, one mode at a time. The record is exclusive,
-    // so the paragraph taking it necessarily finishes the diagram's edit mode:
+    // Alt+click answers for the block it lands on, so a press on any other block
+    // is a request about that block and nothing to do with the diagram: the
+    // paragraph goes to its own source. The record is exclusive, so the paragraph
+    // taking it necessarily finishes the diagram's edit mode:
     // the same outcome the old "finish whatever is editing" fallback reached, but
     // by answering the block the press was aimed at instead of discarding it.
     // The diagram's own labels are `<p>` elements too, and a click on one of

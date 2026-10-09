@@ -17,7 +17,6 @@ import {
   BLOCK_MODE_KEY,
   BLOCK_MODE_SOURCE_CLASS,
   BLOCK_MODE_VISUAL_CLASS,
-  advanceBlockMode,
   blockFormMode,
   blockModeFor,
   blockModePlugin,
@@ -30,6 +29,7 @@ import {
   modeFor,
   setBlockForm,
   toggleBlockMode,
+  toggleBlockModeFromGesture,
   toggleSourceMode,
 } from './block-modes'
 import { Plugin } from 'prosemirror-state'
@@ -431,10 +431,11 @@ describe('the Escape ladder (§5.3)', () => {
     view.destroy()
   })
 
-  it('is not a way round the cycle: only a source form answers it', () => {
-    // Escape is a *cancel*, and the only step that reads as one is a raw-markdown
-    // buffer you opened and do not want. The other two steps are moves through the
-    // cycle, so they belong to Alt+Shift+click (§5.2) and to the block's controls.
+  it('is not a way round the modes: only a source form answers it', () => {
+    // Escape is a *cancel*, and the only mode that reads as one is a
+    // raw-markdown buffer you opened and do not want. The other two are moves
+    // between modes, so they belong to Alt+click (§5.2) and to the block's
+    // controls.
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
 
@@ -462,14 +463,15 @@ describe('the Escape ladder (§5.3)', () => {
     view.destroy()
   })
 
-  it("leaves a diagram's editing layer through the backwards gesture, not Escape", () => {
+  it("leaves a diagram's editing layer through leaveBlockMode, not Escape", () => {
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
     enterDiagramEditMode(view, board)
     expect(modeFor(view.state, board)?.interaction).toBe('editing')
 
-    // `leaveBlockMode` is the cycle's backwards step, and what
-    // `Mod-Shift-e` and the page's one-slot rule both use.
+    // `leaveBlockMode` is the API the Alt+click gesture's own toggle goes
+    // through for a source form, and what `Mod-Shift-e` and the page's one-slot
+    // rule both use.
     expect(leaveBlockMode(view, board)).toBe(true)
     expect(currentBlockMode(view.state)).toBeNull()
     // A block that was merely being viewed is left alone and reported as such, so
@@ -480,7 +482,7 @@ describe('the Escape ladder (§5.3)', () => {
 })
 
 describe('the Alt+click gesture (§5.2)', () => {
-  /** Alt+click, the gesture that advances a block one step through its cycle. */
+  /** Alt+click, the gesture that toggles a block between the two modes it has. */
   function altClick(target: EventTarget | null, shift = false): void {
     ;(target as Element).dispatchEvent(
       new MouseEvent('click', {
@@ -489,38 +491,41 @@ describe('the Alt+click gesture (§5.2)', () => {
     )
   }
 
-  it('cycles a diagram visual → edit → source → visual, and leaves a double click alone', async () => {
+  it('toggles a diagram visual ⇄ edit, and never reaches its source form', async () => {
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
 
-    // Each step is aimed at the block's own node view. A step's element is
-    // detached by the step after it, and the gesture's listener is on the
-    // scroller, so an Alt+click on a detached node reaches nothing at all — and
-    // aiming *inside* a block in its source form reaches nothing either, because
-    // that is a CodeMirror instance and `chromeOwnsClick` rightly calls an
-    // Alt+click in a text field the field's own business.
-    const step = (): void => {
+    // Each press is aimed at the block's own node view. The gesture's listener
+    // is on the scroller, so an Alt+click on a detached node reaches nothing at
+    // all — and aiming *inside* a block in its source form reaches nothing
+    // either, because that is a CodeMirror instance and `chromeOwnsClick` rightly
+    // calls an Alt+click in a text field the field's own business.
+    const press = (): void => {
       altClick(view.nodeDOM(board))
     }
 
-    step()
+    press()
     expect(modeFor(view.state, board)?.interaction).toBe('editing')
 
-    // Edit is not a terminal state: the step on from it is the block's own source,
-    // and the diagram's pending field is accepted on the way out of edit mode
-    // rather than dropped — `enterSourceMode` cannot finish it, the exit does.
-    step()
-    expect(modeFor(view.state, board)).toMatchObject({
-      representation: 'source',
-      interaction: 'viewing',
-    })
-    expect((view.nodeDOM(board) as HTMLElement).classList.contains('block-source-mode')).toBe(true)
-
-    // ...and the cycle wraps, committing the source buffer on the way through.
-    step()
+    // The other end of the toggle, and *that* is all it is: a diagram has an edit
+    // step, so its gesture is visual ⇄ edit, and pressing again puts the editing
+    // layer away rather than walking through the block's source to do it. The
+    // pending field is accepted on the way out (it is a commit, not a mode
+    // change) — the diagram's own exit is what does it.
+    press()
     expect(modeFor(view.state, board)).toBeNull()
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid-editables')).toBeNull())
+    expect(
+      (view.nodeDOM(board) as HTMLElement).classList.contains('block-source-mode'),
+    ).toBe(false)
+
+    // And it is a toggle, so the second round is the first round again.
+    press()
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    press()
+    expect(modeFor(view.state, board)).toBeNull()
 
     // The gesture the mode used to claim, given back: a double click is the
     // browser selecting a word inside the diagram.
@@ -533,7 +538,7 @@ describe('the Alt+click gesture (§5.2)', () => {
     view.destroy()
   })
 
-  it('steps back down the cycle with Escape, which is the only way off it', () => {
+  it('leaves a source form with Escape, which commits it', () => {
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
 
@@ -546,36 +551,31 @@ describe('the Alt+click gesture (§5.2)', () => {
     view.destroy()
   })
 
-  it('cycles a table text → sheet → source → text, and never its interaction axis', () => {
+  it('toggles a table text ⇄ sheet, and never reaches its source form', () => {
     const view = createEditor('| A |\n| --- |\n| 1 |')
     const [table] = allBlockPositions(view)
     expect(view.state.doc.nodeAt(table)!.type.name).toBe('table')
     expect(blockModeFor(view.state.doc.nodeAt(table)!).interaction).toBe('none')
 
-    const step = (): void => {
+    const press = (): void => {
       altClick(view.nodeDOM(table))
     }
 
-    step()
+    press()
     expect(blockFormMode(view.state, table)).toBe('sheet')
     expect(view.dom.querySelector('.spreadsheet')).not.toBeNull()
 
-    step()
-    expect(modeFor(view.state, table)?.representation).toBe('source')
-
-    // The wrap lands on the cycle's *first* step rather than on whatever the
-    // block was drawn as before, or a sheet table would oscillate sheet ⇄ source
-    // and never reach text again.
-    step()
+    press()
+    // A sheet is a table's *edit mode*, so this is the toggle's other end: back
+    // to the block's own rendering, which is not a mode at all and so releases
+    // the record entirely rather than leaving a formless one in the slot.
     expect(blockFormMode(view.state, table)).toBeUndefined()
     expect(view.dom.querySelector('.ss-plain')).not.toBeNull()
-    // Plain text is a table's *rendering*, not a mode, so the wrap releases the
-    // record entirely rather than leaving a formless one sitting in the slot.
     expect(currentBlockMode(view.state)).toBeNull()
     view.destroy()
   })
 
-  it('cycles a plain block straight to its source, and gives it no middle step', () => {
+  it('toggles a plain block visual ⇄ source, and gives it no edit step', () => {
     const view = createEditor('# Hello\n\nSecond paragraph')
     const [heading] = allBlockPositions(view)
     expect(blockModeFor(view.state.doc.nodeAt(heading)!).forms).toBeUndefined()
@@ -584,27 +584,33 @@ describe('the Alt+click gesture (§5.2)', () => {
     altClick(view.dom.querySelector('h1'))
     expect(modeFor(view.state, heading)?.representation).toBe('source')
     expect(view.dom.querySelector('.block-source-exit')?.textContent).toBe('Visual')
+
+    // ...and the same press again, in the raw-markdown buffer, is the other end.
+    // A CodeMirror is deliberately not `chromeOwnsClick`'s, precisely so this
+    // works.
+    altClick(view.dom.querySelector<HTMLElement>('.block-source-mode .cm-content')!)
+    expect(modeFor(view.state, heading)).toBeNull()
     view.destroy()
   })
 
-  it('has no cycle on a block that is permanently its own source', () => {
+  it('has no modes to toggle on a block that is permanently its own source', () => {
     // `source_block` has no markdown syntax — it is built programmatically — and
-    // it *is* its source form, so `advanceBlockMode` declines it and the gesture
-    // keeps its older meaning for this one type: finish whatever is open.
+    // it *is* its source form, so `toggleBlockModeFromGesture` declines it and the
+    // gesture keeps its older meaning for this one type: finish whatever is open.
     const view = createEditor('# Hello')
     const only = view.state.schema.nodes.source_block.create({ markdown: 'plain text\n' })
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, only)
     view.dispatch(tr)
 
     expect(blockModeFor(view.state.doc.nodeAt(0)!).representation).toBe(false)
-    expect(advanceBlockMode(view, 0)).toBe(false)
+    expect(toggleBlockModeFromGesture(view, 0)).toBe(false)
     view.destroy()
   })
 
-  it('advances a code block from its own text, which is a CodeMirror and not a field', () => {
+  it('toggles a code block from its own text, which is a CodeMirror and not a field', () => {
     // A code block's visual form *is* a CodeMirror instance, so the rule that
     // hands an Alt+click in a text field to that field used to claim it — which
-    // made the cycle unreachable on the only part of a code block anyone clicks.
+    // made the gesture unreachable on the only part of a code block anyone clicks.
     const view = createEditor('```python\nprint(1)\n```')
     const [code] = allBlockPositions(view)
     const editor = view.dom.querySelector<HTMLElement>('.cm-content')!
@@ -615,77 +621,75 @@ describe('the Alt+click gesture (§5.2)', () => {
     view.destroy()
   })
 
-  it('walks the cycle backwards on Alt+Shift+click, and forwards on Alt+click', async () => {
-    // A mirror, not a shortcut out. `visual → edit → source` and
-    // `source → edit → visual` are the same three steps in two directions, so the
-    // block under the pointer is all either has to be told — and either can reach
-    // every step, which an earlier "straight to Visual" version could not.
+  it('treats Alt+Shift+click as plain Alt+click, in both directions', async () => {
+    // Shift used to walk the same cycle backwards. It does not any more: with
+    // every block's gesture a two-way toggle there is nothing left for a
+    // backwards step to be backwards *from*, so Shift is not read at all.
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
-    const click = (back: boolean) => altClick(view.nodeDOM(board) as HTMLElement, back)
+    const press = (shift: boolean) => altClick(view.nodeDOM(board) as HTMLElement, shift)
 
-    const step = (): string => {
+    const state = (): string => {
       const mode = modeFor(view.state, board)
       return mode === null ? 'visual' : mode.representation === 'source'
         ? 'source'
         : mode.interaction === 'editing' ? 'edit' : mode.form ?? 'visual'
     }
 
-    expect(step()).toBe('visual')
-    click(false)
-    expect(step()).toBe('edit')
-    click(false)
-    expect(step()).toBe('source')
-    // Forward wraps to the start of the cycle.
-    click(false)
-    expect(step()).toBe('visual')
-
-    click(false)
-    expect(step()).toBe('edit')
-    // Backwards goes edit → visual, which is the step a shortcut-out could not do
-    // without going forward through source first.
-    click(true)
-    expect(step()).toBe('visual')
-    // ...and from visual, backwards is the last step.
-    click(true)
-    expect(step()).toBe('source')
-    click(true)
-    expect(step()).toBe('edit')
+    expect(state()).toBe('visual')
+    press(true)
+    expect(state()).toBe('edit')
 
     // The editing layer really goes, not merely unrecorded.
-    click(true)
+    press(true)
+    expect(state()).toBe('visual')
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid-editing')).toBeNull())
     expect(view.dom.querySelector('.mermaid-editables')).toBeNull()
+
+    // ...and on a block with no edit step, where the toggle *is* the
+    // representation, Shift changes nothing either.
+    const plain = createEditor('# Hello')
+    const [heading] = allBlockPositions(plain)
+    altClick(plain.dom.querySelector('h1'), true)
+    expect(modeFor(plain.state, heading)?.representation).toBe('source')
+    altClick(plain.nodeDOM(heading), true)
+    expect(modeFor(plain.state, heading)).toBeNull()
+
+    plain.destroy()
     view.destroy()
   })
 
-  it('comes back from Source as a sheet, because a form is sticky', () => {
-    // Source → edit on a table returns the *form it left in*, which is what makes
-    // the backwards gesture a mirror rather than a reset.
+  it('comes back from a source form as the sheet it left, because a form is sticky', () => {
+    // Source is not on the toggle's list, but it is still a place a block can be
+    // put (Ctrl+Shift-E, the Source button), and Alt+click is how a block gets
+    // *out* of one. It commits the buffer rather than forgetting it, and the
+    // sticky form (§4.3) is what it comes back as — so the next press is the
+    // toggle's other end.
     const view = createEditor('| A |\n| --- |\n| 1 |')
     const [table] = allBlockPositions(view)
-    const dom = () => view.nodeDOM(table) as HTMLElement
 
-    altClick(dom())
-    expect(blockFormMode(view.state, table)).toBe('sheet')
-    altClick(dom())
-    expect(modeFor(view.state, table)?.representation).toBe('source')
-    altClick(dom(), true)
+    setBlockForm(view, table, 'sheet')
+    enterSourceMode(view, table)
+    expect(modeFor(view.state, table)).toMatchObject({ representation: 'source', form: 'sheet' })
+
+    altClick(view.dom.querySelector<HTMLElement>('.block-source-mode .cm-content')!)
     expect(blockFormMode(view.state, table)).toBe('sheet')
     expect(view.dom.querySelector('.spreadsheet')).not.toBeNull()
+
+    altClick(view.nodeDOM(table))
+    expect(blockFormMode(view.state, table)).toBeUndefined()
     view.destroy()
   })
 
   it('moves the block it lands on, and only ever one block', () => {
-    // Visual is the *start* of the cycle, so backwards from it is the last step:
-    // there is nothing to leave, but there is somewhere to go, and it is that
-    // block which goes.
+    // A press on another block is a request about *that* block, and the record is
+    // exclusive, so the block that was holding it is released on the way.
     const view = createEditor('# Hello\n\nSecond paragraph')
     const [heading] = allBlockPositions(view)
     enterSourceMode(view, heading)
 
-    altClick(view.nodeDOM(allBlockPositions(view)[1]!) as HTMLElement, true)
+    altClick(view.nodeDOM(allBlockPositions(view)[1]!) as HTMLElement)
     // Positions are re-read: entering the paragraph's source committed the
     // heading's, and a re-parse moves whatever follows it.
     const positions = allBlockPositions(view)
@@ -697,8 +701,8 @@ describe('the Alt+click gesture (§5.2)', () => {
     view.destroy()
   })
 
-  it('cycles a block out of its own source form, from inside the buffer', () => {
-    // A cycle that can only be entered is not a cycle. A block in Source is a
+  it('toggles a block out of its own source form, from inside the buffer', () => {
+    // A toggle that can only be entered is not a toggle. A block in Source is a
     // raw-markdown editor, and that editor used to be claimed as "a text field",
     // so the block Alt+click had just opened could not be Alt+clicked closed —
     // and the same claim made a code block's visual form unreachable to begin
@@ -725,8 +729,8 @@ it('still hands an Alt+click on a real control to that control', () => {
     expect(currentBlockMode(view.state)).toBeNull()
 
     // The cluster's own button is the block's, and a press on it is a press on
-    // that button — so it does its own job rather than the gesture's, which is
-    // the Source toggle and nothing to do with a cycle step.
+    // that button — so it does its own job rather than the gesture's, which for a
+    // block with no edit step happens to be the same axis.
     const button = view.dom.querySelector<HTMLButtonElement>('.block-control-representation')!
     expect(button).not.toBeNull()
     altClick(button)
@@ -792,7 +796,7 @@ describe('one non-visual block in the whole page', () => {
   it('releases the other editor when one takes a mode, whichever it is', () => {
     const { a, b } = editors()
 
-    advanceBlockMode(a, tableOf(a))
+    toggleBlockModeFromGesture(a, tableOf(a))
     expect(blockFormMode(a.state, tableOf(a))).toBe('sheet')
 
     // The other editor wins, and the sheet it had is committed and put back.
@@ -815,7 +819,7 @@ describe('one non-visual block in the whole page', () => {
     // and `dom.isConnected` is what says so, because a destroyed `EditorView`
     // keeps its `dom`.
     const { a, b } = editors()
-    advanceBlockMode(a, tableOf(a))
+    toggleBlockModeFromGesture(a, tableOf(a))
     a.destroy()
 
     expect(() => enterDiagramEditMode(b, boardOf(b))).not.toThrow()
@@ -836,7 +840,7 @@ describe('one non-visual block in the whole page', () => {
   it('does not let a sheet and an edit mode coexist in one document', () => {
     const view = createEditor('| A |\n| --- |\n| 1 |\n\n```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [table, board] = allBlockPositions(view)
-    advanceBlockMode(view, table)
+    toggleBlockModeFromGesture(view, table)
     expect(blockFormMode(view.state, table)).toBe('sheet')
 
     // One block holds the record, so the diagram cannot also be being edited.

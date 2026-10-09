@@ -2794,9 +2794,9 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
     assert after["sheet"] and not after["plain"], after
     assert after["form"] == "Visual", after
 
-    # ...and the gesture that *does* advance the block still does, from the cell:
-    # a table's cycle is text → sheet → source, so the step on from a sheet is the
-    # block's own source rather than back to text (§5.2).
+    # ...and the gesture that *does* toggle the block still does, from the cell: a
+    # sheet IS a table's Edit mode (§5.1), so the press from a cell goes back to
+    # plain text rather than into the block's own source (§5.2).
     _dump(
         window,
         "(() => { const cell = document.querySelector('.spreadsheet .ss-grid tbody td');"
@@ -2807,16 +2807,42 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
     sourced = _wait(
         window,
         "(() => ({ source: !!document.querySelector('.block-source-mode'),"
-        " sheet: !!document.querySelector('.spreadsheet') }))()",
+        " sheet: !!document.querySelector('.spreadsheet'),"
+        " plain: !!document.querySelector('.ss-plain') }))()",
+        lambda d: d.get("plain") is True,
+        timeout=10,
+    )
+    assert not sourced["source"] and not sourced["sheet"], sourced
+
+    # And a table still reaches Source by its own route — the cluster's Source
+    # button, which is not a mode gesture and never was. Back to the sheet first,
+    # so there is a sticky form to come home to.
+    _dump(
+        window,
+        "(() => { const b = document.querySelector('.block-control-form');"
+        " if (!b) return { missing: true };"
+        " b.click(); return { clicked: true }; })()",
+    )
+    _wait(window, "(() => ({ sheet: !!document.querySelector('.spreadsheet') }))()",
+          lambda d: d.get("sheet") is True, timeout=10)
+    _dump(
+        window,
+        "(() => { const b = document.querySelector('.block-control-representation');"
+        " if (!b) return { missing: true };"
+        " b.click(); return { clicked: true }; })()",
+    )
+    _wait(
+        window,
+        "(() => ({ source: !!document.querySelector('.block-source-mode'),"
+        " sheet: !!document.querySelector('.spreadsheet'),"
+        " plain: !!document.querySelector('.ss-plain') }))()",
         lambda d: d.get("source") is True,
         timeout=10,
     )
-    assert not sourced["sheet"], sourced
 
-    # The banner's Visual button is the other way out of a source block, and it is
-    # what puts the table back on the cycle's *first* step — the form it left in.
-    # (Escape is the ladder's job and is covered as such; here the point is that
-    # the wrap does not land the block on the form it happened to be in.)
+    # The banner's Visual button is the way out of a source block, and a form is
+    # sticky: it is the sheet this block left that comes back, not its default.
+    # (Escape is the ladder's job and is covered as such.)
     _dump(
         window,
         "(() => { const b = document.querySelector('.block-source-exit');"
@@ -2831,7 +2857,7 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
         lambda d: d.get("sheet") is True,
         timeout=10,
     )
-    assert not back["plain"] and back["form"] == "Visual", back
+    assert back["sheet"] and not back["plain"] and back["form"] == "Visual", back
 
 
 # What a code block's one control row holds, and — the claim this test exists
@@ -3472,14 +3498,15 @@ def _altclick_on(win, selector):
     })()""" % json.dumps(selector))
 
 
-def test_alt_click_on_a_code_blocks_text_advances_the_cycle(window):
-    """Alt+click the code, not its language bar, and the block advances.
+def test_alt_click_on_a_code_blocks_text_toggles_its_modes(window):
+    """Alt+click the code, not its language bar, and the block toggles.
 
     The distinction being pinned is `.cm-editor`'s: a code block's visual form is
     a CodeMirror instance, and the rule that hands an Alt+click in a text field to
-    that field made the cycle unreachable on the only part of the block anyone
+    that field made the gesture unreachable on the only part of the block anyone
     clicks. A block in its *source* form is the other half and must still keep
-    the click, which is what the second assertion here is for.
+    the click, which is what the second assertion here is for — a code block has no
+    edit step, so visual ⇄ source is the whole of its Alt+click.
     """
     window._web.page().runJavaScript(
         "window.ediSetContent(%s); true" % json.dumps(CODE_BLOCK_CYCLE_DOC)
@@ -3501,10 +3528,11 @@ def test_alt_click_on_a_code_blocks_text_advances_the_cycle(window):
     )
     assert state["editor"], "the block did not become its own source form"
 
-    # ...and the same click, in the block's *own source form*, cycles back out.
-    # That is the second half of §5.2's cycle and it is the reason `.cm-editor` is
-    # not in `chromeOwnsClick`: with it there, a block Alt+click had just opened
-    # could not be Alt+clicked closed, which is a cycle that can only be entered.
+    # ...and the same click, in the block's *own source form*, toggles back out.
+    # That is the second half of §5.2's toggle and it is the reason `.cm-editor`
+    # is not in `chromeOwnsClick`: with it there, a block Alt+click had just
+    # opened could not be Alt+clicked closed, which is a toggle that can only be
+    # entered.
     again = _altclick_on(window, ".block-source-mode .cm-content .cm-line")
     assert not again.get("missing"), again
     back = _wait(
@@ -3518,7 +3546,7 @@ def test_alt_click_on_a_code_blocks_text_advances_the_cycle(window):
 
 
 # The hover affordance that answers "which block would Alt+click alter?", added
-# because the cycle is one gesture over every top-level block and the page had no
+# because the gesture is one click over every top-level block and the page had no
 # way to say which one the pointer was over.
 #
 # `:hover` cannot be exercised here: `QTest` mouse injection never reaches the
