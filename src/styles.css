@@ -573,7 +573,24 @@ body {
   margin-left: 24px;
 }
 
-/* Task list checkboxes */
+/* Task list checkboxes.
+ *
+ * The `z-index` is not styling, it is the checkbox's half of the hover band's
+ * contract (§ "Which block would Alt+click alter?", below): the band is a
+ * `z-index: -1` sibling so it can reach the margins a code block's editor and a
+ * diagram's preview do not, and a **native form control is painted underneath a
+ * negative-z-index sibling** unless it asks for a positive one of its own. So
+ * hovering a task list — the one block type whose own content is a row of bare
+ * controls — drew the band straight over every checkbox in it, and the checkboxes
+ * came and went with the pointer. Measured in the real engine: `z-index: 0` does
+ * not lift a checkbox clear of the band and `1` does, and the same is true of the
+ * item around it (`li` is `position: relative` from ProseMirror's own base sheet,
+ * so it takes a `z-index` too and still loses).
+ *
+ * The control cluster is the other half of the same contract — it carries
+ * `z-index: 3` and a band has never hidden it. Anything else that has to stay
+ * visible inside a banded block needs the same, and the band's own list below is
+ * where to check what those blocks contain. */
 .ProseMirror li[data-checked] {
   list-style: none;
   display: flex !important;
@@ -586,6 +603,8 @@ body {
   flex-shrink: 0;
   cursor: pointer;
   accent-color: var(--accent, #3b82f6);
+  position: relative;
+  z-index: 1;
 }
 .ProseMirror li[data-checked] p {
   margin: 0;
@@ -629,7 +648,21 @@ body {
  * block already in a mode carries the accent rule from §7.2, and banding it would
  * claim it was available when the gesture on it is about finishing something
  * rather than moving on. A block in its source form needs no exclusion of its own
- * — `block-source-mode` is not in the list. */
+ * — `block-source-mode` is not in the list.
+ *
+ * **`z-index: -1` is what a native form control has to be lifted over**, and that
+ * is a cost of the band rather than an incident: a form control is painted below
+ * a negative-z-index sibling unless it carries a positive `z-index` of its own
+ * (`z-index: 0` does not count — measured, both by pixels and by hit test). A
+ * task list is therefore the one block type whose own content the band could hide,
+ * and it did: hovering a list drew the band over every checkbox in it, so they
+ * came and went with the pointer. The task checkbox's rule above is the other half
+ * of this contract, and so is the control cluster's `z-index: 3`. Nothing else in
+ * the list needs one — a masked field's buttons sit inside an inline-block pill,
+ * a sheet's tools are in the cluster, and a sheet is never banded anyway because
+ * being a sheet is a mode (`edi-block-mode-form`) — but that is a survey of what
+ * is inside these blocks *today*, so a new native control in one wants checking
+ * against this rule rather than against the pixels. */
 .ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode) {
   /* The band is positioned against this box, and `isolation` makes the block a
    * stacking context so `z-index: -1` puts the band behind the block's *content*

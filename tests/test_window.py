@@ -3744,6 +3744,107 @@ graph TD
         assert row["bandBottom"] > row["blockBottom"], row
 
 
+# The band's other half: what it paints *over*. `:hover` cannot be exercised here,
+# so the rule's own selector is rewritten into one that always matches — the same
+# band the pointer draws, from the same declarations — and `pointer-events` is
+# lifted from `none` so a hit test can reach it. That is what makes this a test
+# rather than a reading of the stylesheet: **Chromium hit-tests in paint order**,
+# so the answer to "who is on top at the checkbox" is the answer to "who is on
+# top of it to look at", and it is available without reading a pixel.
+#
+# The bug it pins is a `z-index: -1` sibling painting over a *native form
+# control*: the band is negative so it can reach the margin past a code block's
+# editor, and a form control sits below a negative-z-index sibling unless it asks
+# for a positive one of its own. A task list is the only banded block whose own
+# content is a row of bare controls, so hovering one drew the band over every
+# checkbox in it and they came and went with the pointer.
+BAND_OVER_CONTROL_ON = """(() => {
+  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+  const always = SEL.replace(':hover', ':not(.edi-never-hover)');
+  let forced = 0;
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i];
+      if (rule.selectorText !== SEL) continue;
+      window.__ediBandProbe = {
+        sheet, index: i, selector: SEL, cssText: rule.style.cssText,
+      };
+      rule.selectorText = always;
+      rule.style.setProperty('pointer-events', 'auto');
+      forced++;
+    }
+  }
+  const cb = document.querySelector('li[data-checked] > input[type=checkbox]');
+  if (!cb) return { missing: true };
+  const r = cb.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const stack = document.elementsFromPoint(x, y).map((el) => String(el.className).split(' ')[0]
+    || el.tagName.toLowerCase());
+  return {
+    forced, at: { x: Math.round(x), y: Math.round(y) }, stack,
+    zIndex: getComputedStyle(cb).zIndex,
+    position: getComputedStyle(cb).position,
+    // A pseudo-element is not an element, so the band cannot be named in a hit
+    // test: it answers as the block that owns it, which is why what is asserted
+    // is the whole run above the checkbox rather than the checkbox alone.
+    bandZ: getComputedStyle(cb.closest('.block-visual-mode'), '::before').zIndex,
+  };
+})()"""
+
+BAND_OVER_CONTROL_OFF = """(() => {
+  const saved = window.__ediBandProbe;
+  if (!saved) return { missing: true };
+  const rule = saved.sheet.cssRules[saved.index];
+  if (rule) { rule.selectorText = saved.selector; rule.style.cssText = saved.cssText; }
+  delete window.__ediBandProbe;
+  return { restored: true };
+})()"""
+
+
+def test_the_hover_band_does_not_hide_a_tasks_checkbox(window):
+    """The band's `z-index: -1` and the task checkbox's `z-index: 1` are one rule.
+
+    A task list is the one block type in the band's own list whose content is a
+    row of bare native controls, and it is the one that lost: the band painted
+    over every checkbox in the list, so they appeared and disappeared as the
+    pointer crossed the block. The control cluster is the other end of the same
+    contract (`z-index: 3`, never hidden), so the two are asserted together —
+    a fix that only lifted the checkbox would leave the band free to swallow the
+    next control, and a band that stopped being negative would stop reaching the
+    margins the affordance exists for.
+    """
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps("- [ ] one\n- [x] two\n")
+    )
+    _wait(window, "(() => ({ c: document.querySelectorAll('li[data-checked] > input[type=checkbox]').length }))()",
+          lambda d: d.get("c") == 2, timeout=20)
+
+    try:
+        probe = _dump(window, BAND_OVER_CONTROL_ON)
+        assert not probe.get("missing"), "the document has no task checkbox to protect"
+        assert probe["forced"] == 1, (
+            "the band's own rule was not found in the loaded sheet, so nothing was "
+            "banded and this would pass for the wrong reason: %r" % probe)
+        assert probe["bandZ"] == "-1", (
+            "the band must still be behind the block's content, or it covers the "
+            "text: %r" % probe["bandZ"])
+
+        # The checkbox itself, first in the stack: nothing between it and the
+        # pointer, which is the hit-test form of "still visible".
+        assert probe["stack"][:2] == ["input", "block-visual-mode"], probe
+        # And the declaration that is what puts it there. `z-index: 0` is not
+        # enough — a form control needs a *positive* one to clear a negative
+        # sibling — so the claim is about the value, not about being positioned.
+        assert probe["zIndex"] == "1", probe
+        assert probe["position"] == "relative", probe
+    finally:
+        # The window is session-scoped: a page left with the band permanently on
+        # would hand every later test a document that is hovered.
+        _dump(window, BAND_OVER_CONTROL_OFF)
+
 
 # The sheet's own controls, and the mode buttons they were competing with. §6.3
 # moves a block's *actions* into its cluster and this is that rule finishing its
