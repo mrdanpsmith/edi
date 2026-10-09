@@ -846,6 +846,126 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  // `registerShortcuts` in `main.ts` binds Mod-c/Mod-x/Mod-v on `window` and
+  // routes them to the *document*'s selection, so a keydown that reaches it from
+  // here copies nothing (the cell range is `anchor`/`active`, not a ProseMirror
+  // selection) and pastes a paragraph into the document beside the grid. The
+  // grid claims them instead, which `reached` below is the whole claim about.
+  describe('clipboard keys', () => {
+    function reached(press: () => void): string[] {
+      const seen: string[] = []
+      const listener = (event: Event): void => {
+        seen.push((event as KeyboardEvent).key)
+      }
+      window.addEventListener('keydown', listener)
+      try {
+        press()
+      } finally {
+        window.removeEventListener('keydown', listener)
+      }
+      return seen
+    }
+
+    it('Ctrl+C copies the cells, not the document', () => {
+      const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+      selectRegion(view, 1, 0, 2, 1)
+      const keys = reached(() => gridkey(view, 'c', true))
+      expect(copyText).toHaveBeenCalledWith('1\t2\r\n3\t4')
+      // Stopped at the grid: `main.ts` never sees a clipboard key from a cell.
+      expect(keys).toEqual([])
+      view.destroy()
+    })
+
+    it('Ctrl+X cuts the cells and marquees the source', () => {
+      const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
+      selectRegion(view, 1, 0, 2, 1)
+      const keys = reached(() => gridkey(view, 'x', true))
+      expect(copyText).toHaveBeenCalledWith('1\t2\r\n3\t4')
+      expect(cell(view, 1, 0).classList.contains('ss-cut')).toBe(true)
+      expect(keys).toEqual([])
+      view.destroy()
+    })
+
+    it('Ctrl+V pastes the clipboard into the cells, not the document', async () => {
+      const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+      mousedown(cell(view, 1, 0))
+      vi.mocked(readText).mockResolvedValue('x\ty')
+      const keys = reached(() => gridkey(view, 'v', true))
+      await vi.waitFor(() =>
+        expect(parsePipes(docValue(view))).toEqual([
+          ['A', 'B'],
+          ['x', 'y'],
+        ]),
+      )
+      expect(keys).toEqual([])
+      view.destroy()
+    })
+
+    it('the as-markdown Shift variants are the same command', async () => {
+      // A cell range *is* the cells' raw markdown and there is no rich-text
+      // rendering of a range, so there is one payload and one command. What
+      // must not happen is the window handler copying the document instead.
+      const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+      selectRegion(view, 1, 0, 1, 1)
+      vi.mocked(copyText).mockClear()
+      expect(reached(() => gridkey(view, 'C', true))).toEqual([])
+      expect(copyText).toHaveBeenCalledWith('1\t2')
+
+      mousedown(cell(view, 1, 0))
+      vi.mocked(readText).mockResolvedValue('x\ty')
+      expect(reached(() => gridkey(view, 'V', true))).toEqual([])
+      await vi.waitFor(() =>
+        expect(parsePipes(docValue(view))).toEqual([
+          ['A', 'B'],
+          ['x', 'y'],
+        ]),
+      )
+      view.destroy()
+    })
+
+    it('leaves Ctrl+Alt+Shift+C for the page', () => {
+      // That is copy *file path* in `main.ts`, not a clipboard-content command.
+      const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+      mousedown(cell(view, 1, 0))
+      const keys = reached(() =>
+        tableGrid(view).dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'c',
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: true,
+            shiftKey: true,
+            altKey: true,
+          }),
+        ),
+      )
+      expect(keys).toEqual(['c'])
+      expect(copyText).not.toHaveBeenCalled()
+      view.destroy()
+    })
+
+    it('leaves Ctrl+C alone inside the in-cell editor', () => {
+      const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+      const grid = tableGrid(view)
+      grid.focus()
+      mousedown(cell(view, 1, 0))
+      gridkey(view, 'Enter')
+      const editInput = grid.querySelector('.ss-edit-input') as HTMLInputElement
+      editInput.focus()
+      editInput.value = 'FOO'
+      const keys = reached(() =>
+        editInput.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'c', bubbles: true, cancelable: true, ctrlKey: true }),
+        ),
+      )
+      // A selection made inside a text field is the field's to copy, and the
+      // page's own handler stands down for form fields too.
+      expect(keys).toEqual(['c'])
+      expect(copyText).not.toHaveBeenCalled()
+      view.destroy()
+    })
+  })
+
   it('pastes TSV over the grid, growing it as needed', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |')
     mousedown(cell(view, 1, 1))

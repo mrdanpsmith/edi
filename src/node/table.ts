@@ -1769,6 +1769,38 @@ class TableNodeView implements NodeView, InlineCellHost {
       return
     }
 
+    // **The cells own the clipboard keys, and the document must not take them.**
+    // `registerShortcuts` in `main.ts` binds Mod-c/Mod-x/Mod-v (and their
+    // *-as-markdown Shift variants) on `window`, precisely because a webview
+    // whose selection is managed in JavaScript does not reliably produce a
+    // native `copy` event — and it routes them to `editCopy`/`editPaste`, which
+    // act on the *ProseMirror selection*. A cell selection is not that: it is
+    // `anchor`/`active` plus a CSS class, so the document's selection is
+    // normally empty and `Ctrl+C` copied nothing at all, while `Ctrl+V` pasted
+    // the clipboard's text into the document as a new paragraph beside the grid.
+    // Nothing stopped the event here, so it bubbled to `window` and the page
+    // handled it there. The same grid methods back the right-click menu, so
+    // `Ctrl+C` is now the same command as that menu's Copy.
+    //
+    // The Shift variants fold in deliberately: a cell range *is* the cells'
+    // raw markdown, and there is no rich-text rendering of a range to carry a
+    // second payload for, so `Mod-Shift-C`/`Mod-Shift-V` are these — what must
+    // not happen is the window handler copying the document instead.
+    // `Ctrl+Alt+Shift+C` (copy file path) is left alone; it is not a clipboard
+    // *content* shortcut and `main.ts` claims it.
+    if (mod && !event.altKey && ['c', 'x', 'v'].includes(key.toLowerCase())) {
+      // An editable host inside the grid — the fx bar, the in-cell editor — keeps
+      // its own native copy/cut/paste, which is the only thing that can carry a
+      // selection made inside it.
+      if (!this.isSpreadsheetClipboardTarget(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (key.toLowerCase() === 'x') this.cutSelection()
+      else if (key.toLowerCase() === 'c') this.copySelection()
+      else void this.pasteFromClipboard()
+      return
+    }
+
     // ProseMirror never sees keydowns from inside this node view (`stopEvent`),
     // so its Mod-b/Mod-i formatting keymap can't fire here. Route bold/italic
     // through the same whole-cell toggle the toolbar buttons use. This runs
