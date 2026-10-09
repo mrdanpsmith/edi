@@ -3814,7 +3814,7 @@ def test_a_sheets_own_controls_stay_in_its_own_row_at_the_left(window):
     assert out["hasCluster"], "the sheet has no cluster"
     assert out["hasTools"], "the sheet lost its own control row"
 
-    for name in ("align", "values"):
+    for name in ("align", "values", "resolve"):
         entry = out[name]
         assert entry["present"], f"{name} is gone"
         assert entry["inTools"], f"{name} left the sheet's own row for the cluster"
@@ -3824,11 +3824,15 @@ def test_a_sheets_own_controls_stay_in_its_own_row_at_the_left(window):
         assert entry["left"] is not None and entry["left"] < out["status"]["left"], (
             f"{name} is not at the left of the sheet's row: {entry}")
 
-    # The two things that are not controls stay in that row too.
+    # The one thing in that row that is not a control stays in it too.
     assert out["status"]["present"] and out["status"]["inTools"], (
         "the status readout belongs in the row: a hover-only readout is unreadable")
-    assert out["resolve"]["present"] and out["resolve"]["inTools"], (
-        "the Resolve checkbox belongs in the row: it is a labelled setting")
+
+    # And the Resolve checkbox sits *beside* "Use values", which it answers for
+    # the whole sheet rather than the selection — not stranded at the row's far
+    # right, which is what "after the readout" put it at.
+    assert out["resolve"]["left"] > out["values"]["left"], (
+        f"the Resolve checkbox is not beside Use values: {out}")
 
     # The cluster is the block's, holds the block's modes and nothing else, and —
     # being an open sheet — its form control names where it *goes*, so `Visual`.

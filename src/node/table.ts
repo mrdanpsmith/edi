@@ -460,8 +460,8 @@ class TableNodeView implements NodeView, InlineCellHost {
 
   /**
    * The sheet's own control row, at the **left** of the sheet's chrome and below
-   * the grid's own header: the three alignment buttons, **Use values**, the status
-   * readout and the "Resolve formulas?" checkbox.
+   * the grid's own header: the three alignment buttons, **Use values**, the
+   * "Resolve formulas?" checkbox, and the status readout on their own.
    *
    * These were briefly moved into the block's cluster, on the argument that §6.3
    * puts a block's actions there. That was the wrong call and it was tried rather
@@ -509,13 +509,9 @@ class TableNodeView implements NodeView, InlineCellHost {
     // **Before** the status, not after it. `.ss-status` is `margin-left: auto`, so
     // it takes the slack in the row and shoves everything after it to the far
     // right — which put "Use values" 970px from the alignment buttons it belongs
-    // beside. The buttons are the left of the row; the readout and the labelled
-    // setting take the right.
+    // beside. The controls are the left of the row; the readout alone takes the
+    // right, and the label of the group next to it is what says so.
     tools.appendChild(valuesBtn)
-    const status = document.createElement('span')
-    status.className = 'ss-status'
-    tools.appendChild(status)
-    this.statusEl = status
     const resolveLabel = document.createElement('label')
     resolveLabel.className = 'ss-tool ss-tool-check'
     resolveLabel.title =
@@ -532,7 +528,15 @@ class TableNodeView implements NodeView, InlineCellHost {
     resolveText.textContent = 'Resolve formulas?'
     resolveLabel.appendChild(resolveInput)
     resolveLabel.appendChild(resolveText)
+    // Also **before** the status, and for the same reason: it is a control about
+    // the values in this sheet — the same question "Use values" answers, for the
+    // whole sheet rather than the selection — so it belongs beside that button,
+    // not stranded at the far right of the row with the readout.
     tools.appendChild(resolveLabel)
+    const status = document.createElement('span')
+    status.className = 'ss-status'
+    tools.appendChild(status)
+    this.statusEl = status
     return tools
   }
 
