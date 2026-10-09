@@ -727,7 +727,7 @@ body {
  * same rule, and its mode buttons come from `blockModeFor` (src/block-modes.ts)
  * while its other controls are the block's own actions. This one rule replaces
  * six hover lists that each named their own blocks — which is how a diagram's
- * zoom pill, a plain table's lone button and an encrypted block's (invisible)
+ * zoom toolbar, a plain table's lone button and an encrypted block's (invisible)
  * handle ended up as three different things in three different corners. */
 .block-controls {
   position: absolute;
@@ -1588,55 +1588,6 @@ body {
 .ProseMirror .mermaid .items > .node,
 .ProseMirror .mermaid .kanban-drag-layer .node {
   -webkit-user-drag: none;
-}
-
-.mermaid-toolbar {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 3;
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  opacity: 0;
-  transition: opacity 150ms;
-  user-select: none;
-}
-
-.mermaid:hover > .mermaid-toolbar {
-  opacity: 1;
-}
-
-/* A diagram in the editor has no toolbar of its own: its zoom buttons are in the
-   block's control cluster, the same row every other block's controls are in.
-   This bar is what a diagram gets when it is rendered outside an editor — pasted
-   or exported — where there is no cluster to put them in. */
-
-.mermaid-toolbar-btn {
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 4px 6px;
-  min-width: 24px;
-  cursor: pointer;
-}
-
-.mermaid-toolbar-btn:hover:not(:disabled) {
-  background: var(--bg);
-  color: var(--text-primary);
-  border-color: var(--border);
-}
-
-.mermaid-toolbar-btn:disabled {
-  color: var(--text-muted);
-  cursor: default;
 }
 
 .ProseMirror .mermaid-error {

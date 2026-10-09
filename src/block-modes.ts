@@ -602,8 +602,8 @@ export function blockPosForElement(view: EditorView, target: EventTarget | null)
 
 /**
  * A click Chrome already owns: a button, a text field, a link, a diagram's own
- * layer. Such a click is the control's own business — Alt+click on a zoom button
- * is a zoom, not a request about the block it happens to sit on.
+ * layer. Such a click is the control's own business — Alt+click on a button is
+ * that button's, not a request about the block it happens to sit on.
  *
  * The two diagram classes are spelled out rather than imported from
  * `mermaid-edit.ts`, which would put the whole rendering library behind this
@@ -1081,14 +1081,6 @@ export interface BlockControls {
   dom: HTMLElement
   /** Re-read the record and repaint the mode buttons. */
   refresh(): void
-  /**
-   * Replace the block's *own* actions (everything after the mode buttons).
-   *
-   * A node view owns the elements it contributes — a diagram's zoom buttons are
-   * rebuilt on every render, because they bind to the drawing that render
-   * produced — so they arrive as elements rather than as descriptors.
-   */
-  setActions(elements: readonly HTMLElement[]): void
   /** Take the cluster down: the block is showing its source, or is going away. */
   remove(): void
 }
@@ -1106,9 +1098,9 @@ export interface BlockControls {
  * an accident of what a block happens to have: it is the one button every block
  * has, so pinning it right means the eye finds it in the same place on a
  * paragraph, a diagram, a table and a code block — and a block's own actions
- * (a code block's **Copy** and **Run**, a diagram's zoom pills) read to its left
- * in the order the block itself does, instead of the row being split either side
- * of a button that used to come first.
+ * (a code block's **Copy** and **Run**) read to its left in the order the block
+ * itself does, instead of the row being split either side of a button that used
+ * to come first.
  *
  * Every button reads its position from `getPos()` **when it is pressed**. That is
  * the single position authority (§6.4): the alternative every one of these had
@@ -1150,17 +1142,14 @@ export function attachBlockControls(
   dom.append(...rest.map((entry) => entry.button), actionSlot)
   if (source !== null) dom.append(source.button)
   // Keep the caret out of the labels: clicking a <button> natively puts the text
-  // cursor inside its text, and a press that moved the caret into a diagram's
-  // zoom pill would deselect the block the user was working on.
+  // cursor inside its text, and a press that moved the caret into a control would
+  // deselect the block the user was working on.
   dom.addEventListener('mousedown', (event) => {
     event.preventDefault()
     event.stopPropagation()
   })
 
-  const setActions = (elements: readonly HTMLElement[]): void => {
-    actionSlot.replaceChildren(...elements)
-  }
-  setActions(actions)
+  actionSlot.replaceChildren(...actions)
   for (const entry of buttons) entry.paint()
 
   return {
@@ -1168,7 +1157,6 @@ export function attachBlockControls(
     refresh: () => {
       for (const entry of buttons) entry.paint()
     },
-    setActions,
     remove: () => dom.remove(),
   }
 }

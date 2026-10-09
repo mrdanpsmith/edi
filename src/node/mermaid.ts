@@ -221,9 +221,6 @@ class MermaidNodeView implements NodeView {
     const visual = document.createElement('div')
     visual.className = 'mermaid-preview'
     this.dom.appendChild(visual)
-    // The cluster is what carries the zoom buttons now, and it is the thing a
-    // render replaces: those buttons bind to the svg and the natural width *this*
-    // render produced, so they are rebuilt with it and handed back to the cluster.
     this.controls = attachBlockControls(this.node, this.view, this.getPos)
     if (this.controls) this.dom.appendChild(this.controls.dom)
     void this.renderVisual(visual, code)
@@ -252,7 +249,6 @@ class MermaidNodeView implements NodeView {
     // rendered and never part of what is committed — the document holds the
     // board, and the slots are derived from it on every render.
     const drawn = this.editing ? kanbanAuthoringSource(code) : code
-    const controls = this.controls
     await renderDiagram(container, drawn, {
       host: this.dom,
       // A commit handler is what puts the diagram into edit mode.
@@ -262,14 +258,6 @@ class MermaidNodeView implements NodeView {
           // itself — and drops one still holding its placeholder.
           (patched) => this.commitSource(kanbanRealSource(patched))
         : undefined,
-      // The cluster holds the zoom buttons; the Edit/Done beside them is
-      // generated from the record, so a render never has to carry it in.
-      placeActions: (buttons) => {
-        // A render can outlive the block it drew (a newer one took over, or the
-        // block went to its source form), and the cluster it would have gone into
-        // is gone with it.
-        if (this.controls === controls) this.controls?.setActions(buttons)
-      },
     })
   }
 

@@ -818,7 +818,8 @@ KANBAN_CARD_SLOT = "+ Add a card"
 KANBAN_COLUMN_SLOT = "+ Add a column"
 
 # The drawn slots, with the band each belongs to: a card slot *is* the drawing, so
-# a zoom that rescales the section rects has to keep the two agreeing.
+# magnifying the document, which rescales the section rects, has to keep the two
+# agreeing.
 KANBAN_SLOTS = (
     "(() => { const box = (el) => { const r = el.getBoundingClientRect();"
     "   return { x: r.left + r.width / 2, y: r.top + r.height / 2,"
@@ -1353,24 +1354,19 @@ def _altclick_below_document(win):
     return out
 
 
-def _zoom(win, label):
-    """Press one of the diagram's zoom buttons ('+', '−' or '100%').
+def _zoom(win, level):
+    """Set the document's own zoom (``src/zoom.ts``) to ``level``.
 
-    They live in the block's one control cluster (§6.2), beside Source and Edit,
-    rather than in a toolbar of this block's own.
+    There is no per-diagram zoom left to press: the drawing is sized at its
+    natural width and this is what scales it, so a test that needs the whole
+    drawing to move goes through the document like the user does.
     """
-    out = _dump(
-        win,
-        f"""(() => {{
-          const bar = document.querySelector('.mermaid .block-controls');
-          const b = bar && [...bar.querySelectorAll('button')]
-            .find((x) => x.textContent === {json.dumps(label)});
-          if (!b) return {{ missing: true }};
-          b.click();
-          return {{ pressed: true }};
-        }})()""",
-    )
-    assert not out.get("missing"), f"no {label!r} zoom button"
+    win._menu_command("zoomTo", str(level))
+    assert _pump_until(
+        lambda: _dump(win, "(() => ({ zoom: getComputedStyle(document.documentElement).getPropertyValue('--doc-zoom').trim() }))()").get("zoom")
+        == str(level),
+        timeout=5,
+    ), f"the document never reached {level}"
 
 
 COLUMNS = (
@@ -1424,6 +1420,14 @@ DOC_SOURCE = (
     " const root = document.querySelector('.ProseMirror');"
     " if (root && root.pmViewDesc && root.pmViewDesc.node) walk(root.pmViewDesc.node);"
     " return { n: out.length, sources: out }; })()"
+)
+
+# The raster behind a baked diagram, read as the bitmap's own pixel width rather
+# than as how it looks on screen: a document zoom applied to a fixed-density
+# bitmap changes nothing here, and a re-bake does.
+RASTER = (
+    "(() => { const img = document.querySelector('.mermaid img.mermaid-img');"
+    " return img ? { w: img.naturalWidth } : { w: 0 }; })()"
 )
 
 

@@ -59,6 +59,7 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     KANBAN_TRASH,
     LABEL_INVENTORY,
     LABEL_STATE,
+    RASTER,
     SEQUENCE,
     SECTIONS,
     _cancel_board_dialog,
@@ -2042,10 +2043,10 @@ def test_kanban_drawn_slot_creates_a_card(window):
 
     assert band_height(board["bands"][1]) < band_height(board["bands"][0]), board
 
-    # A zoom rescales the whole drawing, and there is nothing to keep in step: the
-    # slot *is* the board's own card, so it is in the same column after a zoom as
-    # before it.
-    _zoom(window, "+")
+    # Magnifying rescales the whole drawing, and there is nothing to keep in step:
+    # the slot *is* the board's own card, so it is in the same column after the
+    # document is magnified as before it.
+    _zoom(window, "1.25")
     zoomed = _wait(
         window,
         KANBAN_SLOTS,
@@ -2054,7 +2055,7 @@ def test_kanban_drawn_slot_creates_a_card(window):
         timeout=15,
     )
     assert _slots_in_their_bands(_dump(window, KANBAN_CHROME), zoomed), zoomed
-    _zoom(window, "100%")
+    _zoom(window, "1")
 
     opened = _click_kanban_slot(window, 1)
     # The slot's own caption becomes the editor — same box as the card that is
@@ -3280,6 +3281,31 @@ def test_kanban_board_command_inserts_a_board_ready_to_fill(window):
     assert _dump(window, DOC_SOURCE)["sources"] == [
         "kanban\n  col1[Todo]\n  col2[Doing]\n    [Write the spec]\n  col3[Done]"
     ]
+
+
+def test_magnifying_the_document_redraws_a_baked_diagram(window):
+    """A baked diagram is a bitmap, so the document zoom has to redraw it.
+
+    There is no per-diagram zoom left, so the document's one zoom is the only way
+    to make a diagram bigger — and at 150% a bitmap rasterized for 100% is
+    magnified rather than redrawn. Read the raster's own pixel width rather than
+    trusting the look of it: `naturalWidth` is what the bake produced, and the
+    displayed width is unchanged either way.
+    """
+    _set_scheme(window, True)
+    _render(window, SEQUENCE)
+    assert _wait_baked(window, timeout=25)
+
+    base = _wait(window, RASTER, lambda d: d.get("w", 0) > 0, timeout=25)
+    _zoom(window, "1.5")
+    magnified = _wait(window, RASTER, lambda d: d.get("w", 0) > base["w"], timeout=25)
+    # 2x at 100%, 3x at 150% — a bitmap scaled by the document rather than redrawn
+    # would report the same number as `base`.
+    assert magnified["w"] > base["w"] * 1.2, (base, magnified)
+    # ...and back down again, waited for rather than read: the re-bake is
+    # asynchronous, so the raster behind the diagram catches up a frame later.
+    _zoom(window, "1")
+    assert _wait(window, RASTER, lambda d: d.get("w") == base["w"], timeout=25)["w"] == base["w"]
 
 
 def test_sequence_participant_wrapped_in_a_tspan_is_editable(window):

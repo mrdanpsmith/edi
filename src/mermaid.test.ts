@@ -7,8 +7,6 @@ import {
   pinSvgTextColors,
   adaptDiagramColors,
   diagramNeedsBake,
-  attachMermaidToolbar,
-  mermaidZoomButtons,
   bakeDiagram,
   reinitializeMermaidTheme,
   copyMermaidAsImage,
@@ -31,6 +29,8 @@ vi.mock('mermaid', () => ({
     render: vi.fn(),
   },
 }))
+
+import { applyZoom } from './zoom'
 
 import * as mermaidModule from 'mermaid'
 import * as bridgeModule from './bridge'
@@ -70,7 +70,6 @@ describe('renderPendingMermaid', () => {
     const done = container.querySelectorAll<HTMLElement>('.mermaid[data-state="done"]')
     expect(done).toHaveLength(2)
     expect(done[0]!.querySelector('svg#out')).not.toBeNull()
-    expect(done[0]!.querySelector('.mermaid-toolbar')).not.toBeNull()
     expect(container.querySelector('.mermaid[data-state="pending"]')).toBeNull()
   })
 
@@ -127,85 +126,6 @@ describe('responsifySvg', () => {
     expect(svg.style.width).toBe('100%')
     expect(responsifySvg(makeSvg(null))).toBeNull()
     expect(responsifySvg(makeSvg('0 0 100'))).toBeNull()
-  })
-})
-
-describe('attachMermaidToolbar', () => {
-  function buttons(host: HTMLElement): HTMLButtonElement[] {
-    return Array.from(host.querySelectorAll<HTMLButtonElement>('.mermaid-toolbar button'))
-  }
-
-  function button(host: HTMLElement, label: string): HTMLButtonElement {
-    const found = buttons(host).find((b) => b.textContent === label)
-    if (!found) throw new Error(`no toolbar button "${label}"`)
-    return found
-  }
-
-  function makeBlock(): { host: HTMLElement; svg: SVGSVGElement } {
-    const host = document.createElement('div')
-    host.className = 'mermaid'
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    svg.setAttribute('viewBox', '0 0 800 400')
-    responsifySvg(svg)
-    const preview = document.createElement('div')
-    preview.className = 'mermaid-preview'
-    preview.appendChild(svg)
-    host.append(preview)
-    attachMermaidToolbar(host, mermaidZoomButtons(host, svg, 800))
-    return { host, svg }
-  }
-
-  it('creates zoom in/out and reset buttons on the host block', () => {
-    const { host } = makeBlock()
-    const bar = host.querySelector<HTMLElement>('.mermaid-toolbar')
-    expect(bar).not.toBeNull()
-    expect(buttons(host).map((b) => b.textContent)).toEqual(['−', '+', '100%'])
-  })
-
-  it('zooms in and out in 1.25x steps from the natural width', () => {
-    const { host, svg } = makeBlock()
-    button(host, '+').click()
-    expect(svg.style.width).toBe('1000px')
-    button(host, '+').click()
-    expect(svg.style.width).toBe('1250px')
-    button(host, '−').click()
-    expect(svg.style.width).toBe('1000px')
-  })
-
-  it('clamps the zoom factor between 0.5x and 4x', () => {
-    const { host, svg } = makeBlock()
-    for (let i = 0; i < 20; i++) button(host, '+').click()
-    expect(svg.style.width).toBe('3200px')
-    for (let i = 0; i < 40; i++) button(host, '−').click()
-    expect(svg.style.width).toBe('400px')
-  })
-
-  it('reset restores the natural size', () => {
-    const { host, svg } = makeBlock()
-    button(host, '+').click()
-    expect(svg.style.width).toBe('1000px')
-    button(host, '100%').click()
-    expect(svg.style.width).toBe('800px')
-    expect(svg.style.minWidth).toBe('')
-    expect(svg.style.maxWidth).toBe('none')
-  })
-
-  it('reset emits the zoom event so a baked image is re-rasterized', () => {
-    const { host } = makeBlock()
-    const seen: number[] = []
-    host.addEventListener('edi-mermaid-zoom', (event) => {
-      seen.push(Number((event as CustomEvent<{ factor: number }>).detail.factor))
-    })
-    button(host, '+').click()
-    button(host, '100%').click()
-    expect(seen).toEqual([1.25, 1])
-  })
-
-  it('disables the buttons when the natural width is unavailable', () => {
-    const host = document.createElement('div')
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    attachMermaidToolbar(host, mermaidZoomButtons(host, svg, null))
-    for (const b of buttons(host)) expect(b.disabled).toBe(true)
   })
 })
 
@@ -547,17 +467,48 @@ describe('bakeDiagram', () => {
     expect(holder.querySelector('.mermaid-preview svg')).toBe(svg)
   })
 
-  it('re-bakes at the current zoom factor on a zoom event', async () => {
+  it('rasterizes at the document zoom, so a magnified document stays crisp', async () => {
     const { holder, svg, ctx } = makeBlock()
-    attachMermaidToolbar(holder, mermaidZoomButtons(holder, svg, 800))
-    await bakeDiagram(holder, svg, 800)
-    expect(ctx.fillRect).toHaveBeenCalledTimes(1)
-
-    holder.querySelector<HTMLButtonElement>('.mermaid-toolbar-btn[title="Zoom in"]')!.click()
-    await vi.waitFor(() => expect(ctx.fillRect).toHaveBeenCalledTimes(2))
+    document.documentElement.style.setProperty('--doc-zoom', '1.5')
+    try {
+      await bakeDiagram(holder, svg, 800)
+    } finally {
+      document.documentElement.style.removeProperty('--doc-zoom')
+    }
+    // 800px of diagram at 2x for the retina, times the 150% the document is at.
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 2400, 1350)
     const img = holder.querySelector<HTMLImageElement>('.mermaid-img')
-    expect(img!.style.width).toBe('1000px')
-    await vi.waitFor(() => expect(img!.style.height).toBe('563px'))
+    expect(img!.style.width).toBe('800px')
+  })
+
+  it('caps the bake density, so the top of the ladder is not unbounded work', async () => {
+    const { holder, svg, ctx } = makeBlock()
+    document.documentElement.style.setProperty('--doc-zoom', '3')
+    try {
+      await bakeDiagram(holder, svg, 800)
+    } finally {
+      document.documentElement.style.removeProperty('--doc-zoom')
+    }
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 3200, 1800)
+  })
+
+  it('re-bakes when the document is magnified, rather than magnifying the bitmap', async () => {
+    const { holder, svg, ctx } = makeBlock()
+    document.body.appendChild(holder)
+    try {
+      await bakeDiagram(holder, svg, 800)
+      expect(ctx.fillRect).toHaveBeenCalledTimes(1)
+
+      applyZoom(1.5)
+      await vi.waitFor(() => expect(ctx.fillRect).toHaveBeenCalledTimes(2))
+      // The diagram itself is unchanged on screen — only the raster behind it is.
+      const img = holder.querySelector<HTMLImageElement>('.mermaid-img')
+      expect(img!.style.width).toBe('800px')
+      expect(ctx.fillRect).toHaveBeenLastCalledWith(0, 0, 2400, 1350)
+    } finally {
+      applyZoom(1)
+      holder.remove()
+    }
   })
 
   it('is a no-op when the natural size is unavailable', async () => {

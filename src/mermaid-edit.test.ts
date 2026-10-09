@@ -36,8 +36,6 @@ vi.mock('./mermaid', () => ({
   responsifySvg: vi.fn(() => 800),
   adaptDiagramColors: vi.fn(),
   pinSvgTextColors: vi.fn(),
-  attachMermaidToolbar: vi.fn(),
-  mermaidZoomButtons: vi.fn(() => []),
   bakeDiagram: hoisted.bake,
 }))
 
@@ -2695,11 +2693,11 @@ describe('kanban delete buttons', () => {
     expect(preview.querySelector('.mermaid-kanban-column-slot .mermaid-kanban-btn')).toBeNull()
   })
 
-  it('follows the diagram when it is resized, as a zoom makes it', async () => {
+  it('follows the diagram when it is resized', async () => {
     const { preview, svg } = await renderKanbanBoard(vi.fn())
     const menu = menus(preview)[0]!
-    // What the zoom toolbar does: the whole diagram gets wider, so the first
-    // column's band grows with it and the `⋯` has to move.
+    // The whole diagram gets wider, so the first column's band grows with it and
+    // the `⋯` has to move.
     const section = svg.querySelectorAll<SVGElement>('.sections > g')[0]!
     section.querySelector('rect')!.getBoundingClientRect = () => rect(0, 20, 260, 110)
     fireResizeCallbacks()
@@ -2897,8 +2895,8 @@ describe('the editing session', () => {
 
     click(editables(preview)[0]!)
     input().value = 'Gamma'
-    // A theme change, a zoom and a re-layout are all just this: the same source
-    // rendered again, with every element of the drawing replaced.
+    // A theme change, a resize and a re-layout are all just this: the same
+    // source rendered again, with every element of the drawing replaced.
     await renderDiagram(preview, source, { host, commit })
 
     // The same field, with what was typed in it — a render nobody asked for is not

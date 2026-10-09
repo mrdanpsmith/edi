@@ -735,7 +735,7 @@ describe('mermaid visual mode rendering', () => {
     })
   })
 
-  it('renders the diagram at natural size and attaches the zoom toolbar', async () => {
+  it('renders the diagram at natural size with only the mode controls', async () => {
     const view = createEditor('```mermaid\ngraph TD\n  A-->B\n```')
 
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -750,17 +750,13 @@ describe('mermaid visual mode rendering', () => {
     expect(svg!.style.width).toBe('900px')
     expect(svg!.style.maxWidth).toBe('none')
 
-    // The zoom buttons are in the block's one cluster, beside Edit and Source,
-    // rather than in a toolbar of their own in this block's corner.
+    // A diagram carries the block's mode controls and nothing else: there is one
+    // zoom in the app and it is the document's, so there is no per-diagram zoom
+    // for the cluster to hold.
     const cluster = block!.querySelector<HTMLElement>('.block-controls')
     expect(cluster).not.toBeNull()
-    expect(block!.querySelector('.mermaid-toolbar')).toBeNull()
     expect(Array.from(cluster!.querySelectorAll('button')).map((b) => b.textContent))
-      .toEqual(['Edit', '−', '+', '100%', 'Source'])
-
-    const zoomIn = Array.from(cluster!.querySelectorAll('button')).find((b) => b.textContent === '+')
-    zoomIn!.click()
-    expect(svg!.style.width).toBe('1125px')
+      .toEqual(['Edit', 'Source'])
 
     view.destroy()
   })

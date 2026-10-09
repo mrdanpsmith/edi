@@ -1,5 +1,6 @@
 import { hasBridge, invoke } from './bridge'
 import { pickImageSavePath, writeBinaryFile } from './files'
+import { DOC_ZOOM_EVENT } from './zoom'
 
 export const MERMAID_LANG = 'mermaid'
 export const MERMAID_CLASS = 'mermaid'
@@ -378,7 +379,15 @@ async function applyBake(holder: HTMLElement, svg: SVGSVGElement, requestedWidth
 
     const ratio = svgViewBoxRatio(svg) ?? 1
     const height = Math.round(width * ratio)
-    const data = await rasterizeSvgToBase64Png(svg, width * 2, height * 2)
+    // 2x for a crisp result at 100%, times the document's own zoom: a bitmap
+    // rasterized at one density and displayed at another is the blurry diagram
+    // this whole treatment exists to avoid.
+    const density = bakeDensity()
+    const data = await rasterizeSvgToBase64Png(
+      svg,
+      Math.round(width * density),
+      Math.round(height * density),
+    )
     if (!data) return false
 
     let img = existing
@@ -406,9 +415,44 @@ function previewOf(holder: HTMLElement, svg: SVGSVGElement): HTMLElement {
 }
 
 /**
- * Show a diagram as a baked bitmap (see ``applyBake``) and keep it current as
- * the window/toolbar zoom changes. Intended to run right after a fresh render.
- * Falls back to the live SVG whenever a bake is impossible.
+ * Re-bake every baked diagram when the document's zoom changes.
+ *
+ * The document's zoom (`--doc-zoom`, `src/zoom.ts`) is the only zoom there is,
+ * and it changes without the diagram being re-rendered at all — so a bitmap made
+ * for 100% would be magnified rather than redrawn. `bakeDensity` covers the bake
+ * itself; this covers the ladder step after it.
+ *
+ * **One listener for the page, registered once**, and the diagrams are found by
+ * their own marker rather than kept in a set: a block that is torn down leaves
+ * nothing behind, and there is no registry to prune.
+ */
+let rebakeListener: ((event: Event) => void) | null = null
+
+function rebakeOnDocumentZoom(): void {
+  if (rebakeListener !== null) return
+  rebakeListener = (): void => {
+    for (const holder of document.querySelectorAll<HTMLElement>('[data-edi-bake="1"]')) {
+      // Only a diagram that is *currently* showing a baked image. The marker
+      // outlives the image — a render in edit mode replaces the preview
+      // wholesale and leaves the vector live — and re-baking that would put a
+      // bitmap over an editable drawing.
+      const shown = holder.querySelector(`.${MERMAID_IMG_CLASS}`)
+      const natural = Number(holder.dataset.ediNatural ?? 0)
+      const svg = holder.querySelector<SVGSVGElement>('.mermaid-preview svg[id]')
+      if (shown && natural > 0 && svg) void applyBake(holder, svg, natural)
+    }
+  }
+  document.documentElement.addEventListener(DOC_ZOOM_EVENT, rebakeListener)
+}
+
+/**
+ * Show a diagram as a baked bitmap (see ``applyBake``). Intended to run right
+ * after a fresh render. Falls back to the live SVG whenever a bake is
+ * impossible.
+ *
+ * The diagram is baked at its natural size and scaled by the document's one zoom,
+ * rasterized at `bakeDensity` device pixels per CSS pixel — so magnifying the
+ * document draws a sharper diagram rather than a larger bitmap.
  */
 export async function bakeDiagram(
   holder: HTMLElement,
@@ -420,18 +464,17 @@ export async function bakeDiagram(
   // HTML labels aren't hit by the repaint bug, so those stay crisp vectors.
   if (!diagramNeedsBake(svg)) return false
   try {
+    // The natural width is what the drawing is scaled from, and a re-render can
+    // change it, so it is written every time rather than once. The marker is what
+    // the one document-zoom listener finds this diagram by, and it is only set on
+    // a bake that actually landed — an `<img>` that is not there is a live
+    // vector, and a vector does not need re-baking.
     holder.dataset.ediNatural = String(natural)
-    if (!holder.dataset.ediBake) {
-      holder.dataset.ediBake = '1'
-      holder.addEventListener(ZOOM_EVENT, (event) => {
-        const factor = Number((event as CustomEvent<{ factor: number }>).detail?.factor ?? 1)
-        const current = holder.querySelector<SVGSVGElement>('.mermaid-preview svg[id]')
-        if (current) {
-          void applyBake(holder, current, Number(holder.dataset.ediNatural ?? natural) * factor)
-        }
-      })
-    }
     const ok = await applyBake(holder, svg, natural)
+    if (ok) {
+      holder.dataset.ediBake = '1'
+      rebakeOnDocumentZoom()
+    }
     // Fonts needed for the diagram may still be loading on the very first paint;
     // re-bake once they are guaranteed so label metrics don't shift mid-display.
     if (ok && 'fonts' in document && document.fonts?.ready) {
@@ -469,7 +512,6 @@ function svgViewBoxRatio(svg: SVGSVGElement): number | null {
 
 const MERMAID_IMG_CLASS = 'mermaid-img'
 const MERMAID_SOURCE_CLASS = 'mermaid-source'
-const ZOOM_EVENT = 'edi-mermaid-zoom'
 
 /** Parse '#fff'/'#rrggbb'/'rgb()'/'rgba()' CSS color strings to RGB. */
 function cssColorToRgb(value: string): { r: number; g: number; b: number } | null {
@@ -505,94 +547,22 @@ export function diagramNeedsBake(svg: SVGSVGElement): boolean {
   })
 }
 
-const ZOOM_STEP = 1.25
-const ZOOM_MIN = 0.5
-const ZOOM_MAX = 4
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value))
-}
-
-function createToolbarButton(label: string, title: string): HTMLButtonElement {
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.className = 'mermaid-toolbar-btn'
-  button.textContent = label
-  button.title = title
-  button.setAttribute('aria-label', title)
-  return button
-}
-
 /**
- * The three zoom buttons, wired to `svg` and to `host`'s zoom event.
+ * Device pixels per CSS pixel a bake is rasterized at: 2x, times whatever the
+ * document's own zoom is. A diagram is drawn at its natural size and scaled by
+ * `#editor-container .ProseMirror { zoom: var(--doc-zoom) }`, so at 200% the
+ * bitmap is displayed at twice the resolution it was rasterized for and the
+ * labels go soft — the same defect a per-diagram zoom had to answer with its own
+ * re-bake, now answered once for the whole document.
  *
- * They are returned rather than wrapped in a toolbar because they no longer live
- * in one of their own: a diagram in the editor gets them in the block's control
- * cluster (`attachBlockControls`), the same row every other block's controls are
- * in, and each render replaces them because they bind to the drawing *it*
- * produced. `attachMermaidToolbar` below is the standalone bar a diagram gets
- * when it is not in an editor — a pasted or exported one — where there is no
- * cluster to hold them.
+ * Capped at 4x: the ladder tops out at 300%, and a raster past that costs
+ * seconds of canvas work for pixels nobody is reading.
  */
-export function mermaidZoomButtons(
-  host: HTMLElement,
-  svg: SVGSVGElement,
-  natural: number | null,
-): HTMLButtonElement[] {
-  const zoomOut = createToolbarButton('\u2212', 'Zoom out')
-  const zoomIn = createToolbarButton('+', 'Zoom in')
-  const reset = createToolbarButton('100%', 'Reset zoom')
-
-  if (natural === null) {
-    zoomOut.disabled = true
-    zoomIn.disabled = true
-    reset.disabled = true
-    return [zoomOut, zoomIn, reset]
-  }
-
-  let factor = 1
-
-  const applyZoom = (): void => {
-    svg.style.width = `${natural * factor}px`
-    svg.style.minWidth = '0'
-    svg.style.maxWidth = 'none'
-    svg.style.height = 'auto'
-    host.dispatchEvent(new CustomEvent(ZOOM_EVENT, { detail: { factor } }))
-  }
-
-  const resetZoom = (): void => {
-    factor = 1
-    responsifySvg(svg)
-    // Re-bake so a baked <img> (which replaced the now-invisible vector) is
-    // rasterized back at natural size; without the event it keeps the zoomed
-    // width and "100%" silently does nothing.
-    host.dispatchEvent(new CustomEvent(ZOOM_EVENT, { detail: { factor } }))
-  }
-
-  zoomIn.addEventListener('click', () => {
-    factor = clamp(factor * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
-    applyZoom()
-  })
-  zoomOut.addEventListener('click', () => {
-    factor = clamp(factor / ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
-    applyZoom()
-  })
-  reset.addEventListener('click', resetZoom)
-  return [zoomOut, zoomIn, reset]
-}
-
-export function attachMermaidToolbar(
-  host: HTMLElement,
-  buttons: readonly HTMLButtonElement[],
-): void {
-  const bar = document.createElement('div')
-  bar.className = 'mermaid-toolbar'
-  bar.append(...buttons)
-  bar.addEventListener('mousedown', (event) => {
-    event.preventDefault()
-    event.stopPropagation()
-  })
-  host.appendChild(bar)
+function bakeDensity(): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--doc-zoom').trim()
+  const zoom = Number(raw)
+  const factor = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  return Math.min(4, 2 * factor)
 }
 
 export async function renderPendingMermaid(container: HTMLElement): Promise<void> {
@@ -620,7 +590,6 @@ export async function renderPendingMermaid(container: HTMLElement): Promise<void
         const natural = responsifySvg(svgEl)
         adaptDiagramColors(svgEl)
         pinSvgTextColors(svgEl)
-        attachMermaidToolbar(holder, mermaidZoomButtons(holder, svgEl, natural))
         void bakeDiagram(holder, svgEl, natural)
       }
       el.replaceWith(holder)
@@ -676,7 +645,7 @@ function bytesToBase64(bytes: Uint8Array): string {
  * readable; the PNG bytes are handed to the native side for the clipboard.
  *
  * The live element is only read (for its displayed size); the serialized
- * snapshot freezes the current zoom level. ``var(--font-sans)`` is a
+ * snapshot is frozen at the pixel footprint asked for. ``var(--font-sans)`` is a
  * page-level custom property a standalone SVG document cannot resolve, so it is
  * replaced with the concrete font stack.
  */

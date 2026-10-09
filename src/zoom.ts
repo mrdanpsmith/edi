@@ -76,12 +76,22 @@ export function saveZoom(factor: number): void {
   }
 }
 
+/** Announced on `documentElement` by `applyZoom`, with the clamped level. */
+export const DOC_ZOOM_EVENT = 'edi-doc-zoom'
+
 /**
  * Point the editor content at `factor`. The chrome lives outside
  * `#editor-container`, so it never scales; every node view's own overlay (block
- * handles, table toolbars, diagram toolbars) does, because it is part of the
+ * handles, table toolbars, diagram overlays) does, because it is part of the
  * document.
+ *
+ * The level is also announced as an event, which is what lets a derived
+ * rendering ask to be redone at the new size — a baked diagram rasterizes at
+ * `2 ×` this factor (`bakeDensity` in `mermaid.ts`) and would otherwise stay a
+ * bitmap made for the old one.
  */
 export function applyZoom(factor: number, root: HTMLElement = document.documentElement): void {
-  root.style.setProperty('--doc-zoom', String(clampZoom(factor)))
+  const level = clampZoom(factor)
+  root.style.setProperty('--doc-zoom', String(level))
+  root.dispatchEvent(new CustomEvent(DOC_ZOOM_EVENT, { detail: { factor: level } }))
 }

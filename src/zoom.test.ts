@@ -5,6 +5,7 @@ import {
   canZoomOut,
   clampZoom,
   DEFAULT_ZOOM,
+  DOC_ZOOM_EVENT,
   formatZoom,
   isDefaultZoom,
   loadZoom,
@@ -72,5 +73,22 @@ describe('applyZoom', () => {
     expect(document.documentElement.style.getPropertyValue('--doc-zoom')).toBe('1.5')
     applyZoom(99)
     expect(document.documentElement.style.getPropertyValue('--doc-zoom')).toBe('3')
+  })
+
+  it('announces the level, so a derived rendering can redraw at the new size', () => {
+    const seen: number[] = []
+    const listener = (event: Event): void => {
+      seen.push(Number((event as CustomEvent<{ factor: number }>).detail.factor))
+    }
+    document.documentElement.addEventListener(DOC_ZOOM_EVENT, listener)
+    try {
+      applyZoom(1.5)
+      applyZoom(1.23)
+    } finally {
+      document.documentElement.removeEventListener(DOC_ZOOM_EVENT, listener)
+    }
+    // The announced level is the *clamped* one — the same number written to the
+    // CSS variable, so a listener cannot redraw at a size that was never used.
+    expect(seen).toEqual([1.5, 1.25])
   })
 })

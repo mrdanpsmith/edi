@@ -5,7 +5,7 @@
  * The block's `value` is the source of truth and the SVG is derived state:
  * every visual edit (retitling a label, dragging a kanban card) patches the
  * mermaid source and re-renders through `renderDiagram` — the same pipeline
- * the initial render, node updates and the zoom toolbar already use. When a
+ * the initial render and node updates already use. When a
  * patch produces source mermaid refuses to parse, the last good diagram stays
  * on screen and a transient notice explains why, instead of the whole diagram
  * being replaced by an error block.
@@ -22,11 +22,9 @@
 
 import {
   adaptDiagramColors,
-  attachMermaidToolbar,
   bakeDiagram,
   errorBlock,
   loadMermaid,
-  mermaidZoomButtons,
   pinSvgTextColors,
   responsifySvg,
 } from './mermaid'
@@ -1846,7 +1844,7 @@ export function moveKanbanColumn(source: string, from: number, to: number): stri
 // ── rendering ──────────────────────────────────────────────────────────────
 
 export interface MermaidDiagramOptions {
-  /** The `.mermaid` block that owns the preview, the zoom toolbar and the overlays. */
+  /** The `.mermaid` block that owns the preview and the overlays. */
   host: HTMLElement
   /**
    * Called with the patched source; the node view turns it into a transaction.
@@ -1857,16 +1855,6 @@ export interface MermaidDiagramOptions {
    * usual.
    */
   commit?: (source: string) => void
-  /**
-   * Where the diagram's zoom buttons go.
-   *
-   * In the editor they belong to the block's control cluster — one row at one
-   * place on every block, rather than a pill of their own in this block's corner
-   * — and a render hands them over because they bind to the drawing it produced.
-   * Without a sink they get the standalone hover toolbar, which is what a diagram
-   * rendered outside an editor has.
-   */
-  placeActions?: (buttons: readonly HTMLButtonElement[]) => void
 }
 
 /**
@@ -1892,7 +1880,7 @@ export async function renderDiagram(
   code: string,
   options: MermaidDiagramOptions,
 ): Promise<void> {
-  const { host, commit, placeActions } = options
+  const { host, commit } = options
   const session = sessionFor(host, commit ?? noop)
   session.bind(commit, container)
   const ticket = session.beginRender()
@@ -1924,10 +1912,6 @@ export async function renderDiagram(
     const natural = responsifySvg(svgEl)
     adaptDiagramColors(svgEl)
     pinSvgTextColors(svgEl)
-    host.querySelector('.mermaid-toolbar')?.remove()
-    const zoom = mermaidZoomButtons(host, svgEl, natural)
-    if (placeActions) placeActions(zoom)
-    else attachMermaidToolbar(host, zoom)
     // A baked diagram is a bitmap under an invisible vector, which would put
     // every native label out of reach while editing, so edit mode keeps the
     // live SVG on top instead.

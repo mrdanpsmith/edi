@@ -349,8 +349,8 @@ describe('one cluster per top-level block', () => {
     const view = createEditor(DOC)
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
     // Compared by geometry rather than by counting buttons: what the
-    // consolidation promises is *one place*, and a block type with more controls
-    // (a diagram's zoom) must not push its own cluster somewhere else.
+    // consolidation promises is *one place*, and a block type carrying its own
+    // actions (a code block's Copy and Run) must not push its cluster elsewhere.
     const rights = new Set<number>()
     for (const cluster of clusters(view)) {
       cluster.getBoundingClientRect = () =>
