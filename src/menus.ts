@@ -12,6 +12,7 @@ export interface MenuCommands {
   insertKanban: () => void
   export: () => void
   toggleToolbar: () => void
+  toggleHoverBand: () => void
   zoomIn: () => void
   zoomOut: () => void
   zoomReset: () => void

@@ -8,8 +8,7 @@ import { insertMaskedFieldCommand } from './node/masked'
 import { insertTable } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
 import { getActiveCellHost, type InlineCellHost, type InlineCellKind } from './inline-format'
-
-const TOOLBAR_VISIBLE_KEY = 'edi.toolbarVisible'
+import { currentPreferences, savePreference } from './preferences'
 
 function icon(markup: string, viewBox = '0 0 16 16'): string {
   return (
@@ -545,7 +544,7 @@ export class Toolbar {
     private readonly ctx: ToolbarContext,
     private readonly fileActions: FileActionSpec[] = [],
   ) {
-    this.visible = readBool(TOOLBAR_VISIBLE_KEY, true)
+    this.visible = currentPreferences().toolbarVisible
     this.build()
     this.applyVisibility()
     updateBlockTypeSelect(this.ctx.getView())
@@ -561,7 +560,7 @@ export class Toolbar {
 
   setVisible(visible: boolean): void {
     this.visible = visible
-    localStorage.setItem(TOOLBAR_VISIBLE_KEY, String(visible))
+    savePreference('toolbarVisible', visible)
     this.applyVisibility()
   }
 
@@ -743,11 +742,6 @@ export class Toolbar {
       this.bar.append(button)
     }
   }
-}
-
-function readBool(key: string, fallback: boolean): boolean {
-  const value = localStorage.getItem(key)
-  return value === null ? fallback : value === 'true'
 }
 
 /**

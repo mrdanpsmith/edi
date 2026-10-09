@@ -26,6 +26,13 @@ class StubWindow(QObject):
         self.can_revert = False
         self.can_rename = False
         self.toolbar_visible = True
+        self.hover_band = True
+        self.preference_store = {
+            "zoomFactor": 1.0,
+            "toolbarVisible": True,
+            "hoverBand": True,
+        }
+        self.preference_writes: list[tuple[str, object]] = []
         self.opened_urls: list[str] = []
         self.recent_files_list: list[str] = []
 
@@ -49,6 +56,7 @@ class StubWindow(QObject):
         can_copy_path=False,
         toolbar_visible=True,
         can_rename=False,
+        hover_band=True,
         zoom_factor=1.0,
         can_zoom_in=True,
         can_zoom_out=True,
@@ -57,9 +65,18 @@ class StubWindow(QObject):
         self.can_copy_path = can_copy_path
         self.toolbar_visible = toolbar_visible
         self.can_rename = can_rename
+        self.hover_band = hover_band
         self.zoom_factor = zoom_factor
         self.can_zoom_in = can_zoom_in
         self.can_zoom_out = can_zoom_out
+
+    def preferences(self) -> dict:
+        return dict(self.preference_store)
+
+    def set_preference(self, name: str, value) -> None:
+        self.preference_writes.append((name, value))
+        if name in self.preference_store:
+            self.preference_store[name] = value
 
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
@@ -200,6 +217,71 @@ def test_set_menu_state(bridge):
     assert window.can_revert is True
     assert window.toolbar_visible is False
     assert window.can_rename is True
+
+
+def test_set_menu_state_defaults_the_hover_band_on(bridge):
+    """A page that does not mention the option has not turned it off.
+
+    ``bool(args.get("hoverBand"))`` would make an omitted key read as ``False``
+    and uncheck View → Hover Band in every window whose frontend predates the
+    option. The option is on by default, so the bridge's default has to say so.
+    """
+    bridge_obj, window, result = bridge
+    _invoke(
+        bridge_obj,
+        "setMenuState",
+        {"canRevert": False, "toolbarVisible": True},
+    )
+    _wait_for(lambda: result.get(1))
+    assert window.hover_band is True
+
+    _invoke(
+        bridge_obj,
+        "setMenuState",
+        {"canRevert": False, "toolbarVisible": True, "hoverBand": False},
+        request_id=2,
+    )
+    _wait_for(lambda: result.get(2))
+    assert window.hover_band is False
+
+
+def test_get_preferences_returns_the_whole_store(bridge):
+    bridge_obj, _window, result = bridge
+    _invoke(bridge_obj, "getPreferences")
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == {
+        "zoomFactor": 1.0,
+        "toolbarVisible": True,
+        "hoverBand": True,
+    }
+
+
+def test_set_preference_writes_one_named_preference(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "setPreference", {"name": "hoverBand", "value": False}, request_id=1)
+    assert _wait_for(lambda: result.get(1))["ok"] is True
+    assert window.preference_writes == [("hoverBand", False)]
+
+    _invoke(
+        bridge_obj, "setPreference", {"name": "zoomFactor", "value": 1.5}, request_id=2
+    )
+    assert _wait_for(lambda: result.get(2))["ok"] is True
+    assert window.preference_writes[-1] == ("zoomFactor", 1.5)
+    assert window.preferences()["zoomFactor"] == 1.5
+
+
+def test_set_preference_without_a_name_is_a_no_op(bridge):
+    """The name is the store's, not the page's: no name means no write.
+
+    A page cannot ask to change "whatever the first one is", and an empty name
+    must not reach ``setValue`` — the store refuses unknown names, and "" is
+    just one more unknown name.
+    """
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "setPreference", {"value": False})
+    assert _wait_for(lambda: result.get(1))["ok"] is True
+    assert window.preference_writes == []
 
 
 def test_pick_import_path(bridge):

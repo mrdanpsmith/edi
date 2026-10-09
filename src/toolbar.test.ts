@@ -101,7 +101,7 @@ function makeHeadingFixture(level: number, withParagraph = false) {
 
 describe('Toolbar', () => {
   beforeEach(() => {
-    localStorage.clear()
+    delete window.ediPreferences
   })
 
   afterEach(() => {
@@ -169,11 +169,18 @@ describe('Toolbar', () => {
     expect(focus).not.toHaveBeenCalled()
   })
 
-  it('is hidden by default only when the user hid it before', () => {
-    localStorage.setItem('edi.toolbarVisible', 'false')
+  it('is hidden by default only when the user hid it before', async () => {
+    // The answer comes from the shell's injected snapshot (see
+    // `src/preferences.ts`), so a fresh module generation stands in for a fresh
+    // launch of the app rather than a seeded store.
+    window.ediPreferences = { toolbarVisible: false }
+    vi.resetModules()
+    const { Toolbar } = await import('./toolbar')
     const { bar, ctx } = makeFixture()
     new Toolbar(bar, ctx)
     expect(bar.hidden).toBe(true)
+    delete window.ediPreferences
+    vi.resetModules()
   })
 
   it('hides and shows the toolbar on setVisible', () => {

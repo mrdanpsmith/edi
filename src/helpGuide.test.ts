@@ -24,6 +24,7 @@ describe('buildHelpGuideMarkdown', () => {
     expect(guide).toContain('`Ctrl+N` new, `Ctrl+W` close, `Ctrl+O` open,')
     expect(guide).toContain('`Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+Q` quit.')
     expect(guide).toContain('`View → Toolbar`')
+    expect(guide).toContain('`View → Hover Band`')
   })
 
   it('says how a link is opened and edited', () => {

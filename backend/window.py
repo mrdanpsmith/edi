@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .bridge import Bridge
+from .preferences import Preferences
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
@@ -292,11 +293,13 @@ class MainWindow(QMainWindow):
         self._copy_path_action = None
         self._rename_action = None
         self._toolbar_action = None
+        self._hover_band_action = None
         self._insert_actions = None
         self._zoom_in_action = None
         self._zoom_out_action = None
         self._zoom_actions: dict[float, QAction] = {}
 
+        self._preferences = Preferences()
         self._bridge = Bridge(self, pending_files)
         self._web = _AppWebView()
         self._web.setPage(_AppPage(self._web))
@@ -322,7 +325,42 @@ class MainWindow(QMainWindow):
         script.setSourceCode(_load_qwebchannel_js())
         self._web.page().scripts().insert(script)
 
+        # The preferences, injected before the app's own bundle runs — see
+        # `backend/preferences.py` for why they cannot simply be read over the
+        # bridge at boot. Same injection point as `qwebchannel.js` and, like it,
+        # a static string: which is why `set_preference` rewrites this script's
+        # source on every write, so that a document created later in the run
+        # replays the current answers instead of the ones this window booted with.
+        self._preferences_script = QWebEngineScript()
+        self._preferences_script.setName("edi-preferences")
+        self._preferences_script.setInjectionPoint(
+            QWebEngineScript.InjectionPoint.DocumentCreation
+        )
+        self._preferences_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        self._preferences_script.setSourceCode(self._preferences_source())
+        self._web.page().scripts().insert(self._preferences_script)
+
         self._web.load(_app_url(is_selftest=os.environ.get("EDI_SELFTEST") == "1"))
+
+    def _preferences_source(self) -> str:
+        """The page's one line of preferences, as JavaScript.
+
+        Assigned to a single global rather than passed to a function: the reader
+        in ``src/preferences.ts`` runs at module load, during the bundle's own
+        execution, and there is no earlier point at which the bridge exists to
+        call. ``json.dumps`` of the coerced dict is safe to inline — every value
+        is a float or a bool, and the keys are the store's own names.
+        """
+        return "window.ediPreferences = %s;" % json.dumps(self._preferences.all())
+
+    def preferences(self) -> dict:
+        """Every persisted preference, defaults filled in."""
+        return self._preferences.all()
+
+    def set_preference(self, name: str, value) -> None:
+        """Persist one preference and keep the injected copy in step."""
+        if self._preferences.set(name, value):
+            self._preferences_script.setSourceCode(self._preferences_source())
 
     def _menubar_action(self, label: str, command: str, *, shell_owns_key: bool) -> QAction:
         """Build a menubar item, and decide explicitly who owns its key.
@@ -507,6 +545,23 @@ class MainWindow(QMainWindow):
         )
         view_menu.addAction(self._toolbar_action)
 
+        # The hover band — the faint band behind the block under the pointer, the
+        # page's answer to "which block would Alt+click alter?". Same shape as the
+        # Toolbar item above, and for the same reason: the page owns the persisted
+        # value, so this action is a blind toggle that never reads its own check
+        # state, and the checkmark arrives in the next `setMenuState`. The
+        # provisional `setChecked(True)` is a boot-time guess only — the option is
+        # on unless the reader has turned it off, and the real answer comes from
+        # storage in the page, which is why the bridge's default here is `True`
+        # rather than `bool(None) == False`.
+        self._hover_band_action = QAction("&Hover Band", self)
+        self._hover_band_action.setCheckable(True)
+        self._hover_band_action.setChecked(True)
+        self._hover_band_action.triggered.connect(
+            lambda _checked=False: self._menu_command("toggleHoverBand")
+        )
+        view_menu.addAction(self._hover_band_action)
+
         view_menu.addSeparator()
 
         # Zoom shortcuts are registered as *real* QAction shortcuts, unlike the
@@ -618,6 +673,7 @@ class MainWindow(QMainWindow):
         can_copy_path: bool,
         toolbar_visible: bool,
         can_rename: bool = False,
+        hover_band: bool = True,
         zoom_factor: float = 1.0,
         can_zoom_in: bool = True,
         can_zoom_out: bool = True,
@@ -630,6 +686,8 @@ class MainWindow(QMainWindow):
             self._rename_action.setEnabled(can_rename)
         if self._toolbar_action is not None:
             self._toolbar_action.setChecked(toolbar_visible)
+        if self._hover_band_action is not None:
+            self._hover_band_action.setChecked(hover_band)
         if self._insert_actions is not None:
             for action in self._insert_actions:
                 action.setEnabled(True)

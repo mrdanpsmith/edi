@@ -9,6 +9,9 @@ the preview renders it live — and a few block types go much further.
   `Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+Q` quit.
 - File actions also live as toolbar buttons; hide that row with
   `View → Toolbar`.
+- Hovering a block puts a faint band behind it, marking which block
+  `Alt+click` would alter. `View → Hover Band` turns that band off; it is on by
+  default and the answer is remembered.
 - Hover a block for its controls at the right edge: **Source** shows that
   block's markdown and **Visual** brings the rendering back. `Ctrl+Shift+E`
   does the same for the block the caret is in.

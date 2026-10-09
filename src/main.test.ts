@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { Plugin } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
@@ -439,7 +439,7 @@ const FILE_MOCKS = [
 beforeEach(() => {
   document.body.innerHTML = DOM_TEMPLATE
   window.history.replaceState(null, '', '/')
-  localStorage.clear()
+  delete window.ediPreferences
   window.matchMedia = matchMediaStub()
   mainState.hasBridge.mockReturnValue(false)
   mainState.invoke.mockReset().mockResolvedValue(undefined)
@@ -2082,7 +2082,15 @@ describe('document zoom', () => {
   const applied = (): string => document.documentElement.style.getPropertyValue('--doc-zoom')
 
   it('applies a saved level at boot', async () => {
-    localStorage.setItem('edi.zoom', '1.25')
+    // The level arrives from the shell, injected before this bundle runs
+    // (`backend/window.py`) — standing in for a second launch of the app here.
+    window.ediPreferences = { zoomFactor: 1.25 }
+    await loadMain()
+    expect(applied()).toBe('1.25')
+  })
+
+  it('clamps a saved level that is not on the ladder', async () => {
+    window.ediPreferences = { zoomFactor: 1.23 }
     await loadMain()
     expect(applied()).toBe('1.25')
   })
@@ -2144,5 +2152,111 @@ describe('document zoom', () => {
     menu('zoomReset')
     await flushAsync()
     expect(indicator.hidden).toBe(true)
+  })
+})
+
+describe('persisted View options', () => {
+  const bandOff = (): boolean =>
+    document.documentElement.classList.contains('edi-hover-band-off')
+
+  function lastMenuState(): { hoverBand?: boolean; toolbarVisible?: boolean; zoomFactor?: number } {
+    const calls = mainState.invoke.mock.calls.filter((call) => call[0] === 'setMenuState')
+    return calls[calls.length - 1]?.[1] as {
+      hoverBand?: boolean
+      toolbarVisible?: boolean
+      zoomFactor?: number
+    }
+  }
+
+  // `beforeEach` deletes the injected snapshot but not the class the option puts
+  // on `documentElement`, and the document outlives every test here — so each of
+  // these puts it back, for the next test's document as much as for its own.
+  afterEach(() => {
+    document.documentElement.classList.remove('edi-hover-band-off')
+  })
+
+  /** The `setPreference` calls this window has made, by name. */
+  function savedPreferences(): Record<string, unknown> {
+    const saved: Record<string, unknown> = {}
+    for (const call of mainState.invoke.mock.calls) {
+      if (call[0] !== 'setPreference') continue
+      const payload = call[1] as { name: string; value: unknown }
+      saved[payload.name] = payload.value
+    }
+    return saved
+  }
+
+  it('draws the band on a first run', async () => {
+    await loadMain()
+    expect(bandOff()).toBe(false)
+    expect(lastMenuState().hoverBand).toBe(true)
+  })
+
+  it('honours a saved opt-out at boot, before the first hover', async () => {
+    // The answer arrives from the shell's settings store, injected before this
+    // bundle runs; the second launch is this snapshot.
+    window.ediPreferences = { hoverBand: false }
+    await loadMain()
+    expect(bandOff()).toBe(true)
+    expect(lastMenuState().hoverBand).toBe(false)
+  })
+
+  it('toggles from the View command, persists, and republishes the checkmark',
+    async () => {
+      await loadMain()
+      menu('toggleHoverBand')
+      await flushAsync()
+      expect(bandOff()).toBe(true)
+      expect(savedPreferences().hoverBand).toBe(false)
+      // The checkmark has to follow the answer, not the press: nothing else tells
+      // the shell what the page decided.
+      expect(lastMenuState().hoverBand).toBe(false)
+
+      menu('toggleHoverBand')
+      await flushAsync()
+      expect(bandOff()).toBe(false)
+      expect(savedPreferences().hoverBand).toBe(true)
+      expect(lastMenuState().hoverBand).toBe(true)
+    })
+
+  it('persists every controllable View option through the same store', async () => {
+    // One store, one key per option, and the zoom level on it too — all three
+    // answering to the shell, which is what survives a restart. These answers
+    // used to sit in the page's `localStorage`, which cannot outlive the
+    // process at all: the webview runs on the *default* QtWebEngine profile and
+    // that one is off-the-record (`backend/preferences.py` has the detail).
+    await loadMain()
+    menu('toggleToolbar')
+    menu('toggleHoverBand')
+    menu('zoomTo', '2')
+    await flushAsync()
+    expect(savedPreferences()).toEqual({
+      toolbarVisible: false,
+      hoverBand: false,
+      zoomFactor: 2,
+    })
+  })
+
+  it('starts with the toolbar hidden when the last run hid it', async () => {
+    window.ediPreferences = { toolbarVisible: false }
+    await loadMain()
+    const toolbar = document.querySelector<HTMLElement>('#toolbar')
+    expect(toolbar?.hidden).toBe(true)
+    expect(lastMenuState().toolbarVisible).toBe(false)
+  })
+
+  it('restores all three answers from one launch', async () => {
+    // What a second launch of the app looks like, after a first that turned
+    // everything off and zoomed in.
+    window.ediPreferences = { zoomFactor: 1.5, toolbarVisible: false, hoverBand: false }
+    await loadMain()
+    expect(document.documentElement.style.getPropertyValue('--doc-zoom')).toBe('1.5')
+    expect(document.querySelector<HTMLElement>('#toolbar')?.hidden).toBe(true)
+    expect(bandOff()).toBe(true)
+    expect(lastMenuState()).toMatchObject({
+      zoomFactor: 1.5,
+      toolbarVisible: false,
+      hoverBand: false,
+    })
   })
 })

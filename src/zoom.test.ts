@@ -8,14 +8,11 @@ import {
   DOC_ZOOM_EVENT,
   formatZoom,
   isDefaultZoom,
-  loadZoom,
-  saveZoom,
   zoomIn,
   zoomOut,
 } from './zoom'
 
 beforeEach(() => {
-  localStorage.clear()
   document.documentElement.style.removeProperty('--doc-zoom')
 })
 
@@ -52,18 +49,14 @@ describe('zoom ladder', () => {
 })
 
 describe('zoom persistence', () => {
-  it('round-trips through localStorage', () => {
-    saveZoom(1.5)
-    expect(localStorage.getItem('edi.zoom')).toBe('1.5')
-    expect(loadZoom()).toBe(1.5)
-  })
-
-  it('falls back to 100% when unset or unusable', () => {
-    expect(loadZoom()).toBe(1)
-    localStorage.setItem('edi.zoom', 'nonsense')
-    expect(loadZoom()).toBe(1)
-    localStorage.setItem('edi.zoom', '1.23')
-    expect(loadZoom()).toBe(1.25)
+  // The level is stored by the shell, not by the page (`src/preferences.ts`),
+  // so there is nothing to round-trip here: what is left for this module to
+  // answer is what counts as a stored level, which is the clamp. A saved
+  // 1.23 comes back as the rung nearest it, and nonsense as 100%.
+  it('clamps a stored level onto the ladder', () => {
+    expect(clampZoom(1.5)).toBe(1.5)
+    expect(clampZoom(Number('nonsense'))).toBe(1)
+    expect(clampZoom(1.23)).toBe(1.25)
   })
 })
 

@@ -521,6 +521,18 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert toolbar_actions[0].isCheckable()
     assert toolbar_actions[0].isChecked() is True
 
+    # The hover band is a View option the reader can turn off, so it has to be
+    # *shown* as one — checkable, and checked at boot because the band is on
+    # unless it has been turned off.
+    band_actions = [
+        action
+        for action in window._view_menu.actions()
+        if action.text().startswith("&Hover Band")
+    ]
+    assert band_actions
+    assert band_actions[0].isCheckable()
+    assert band_actions[0].isChecked() is True
+
 
 def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
@@ -617,6 +629,39 @@ def test_view_menu_toolbar_action_invokes_js_command(visible, qtbot):
     _assert_menu_action_sends_command(
         visible, qtbot, _menu_action(visible._view_menu, "&Toolbar"), "toggleToolbar"
     )
+
+
+def test_view_menu_hover_band_action_invokes_js_command(visible, qtbot):
+    _assert_menu_action_sends_command(
+        visible, qtbot, _menu_action(visible._view_menu, "&Hover Band"), "toggleHoverBand"
+    )
+
+
+def test_update_menu_state_reports_the_hover_band(visible):
+    """The checkmark follows the page's stored answer, and on by default.
+
+    ``hover_band`` defaults to ``True`` for the same reason the option does: a
+    caller that does not know about the option (an older bridge, a test that
+    only cares about the File menu) must not be read as having turned the band
+    off. ``bridge.py``'s ``args.get("hoverBand", True)`` is the other half of
+    that same default, and ``bool(None)`` would have quietly shipped the band
+    switched off for every page that omitted the key.
+    """
+    window = visible
+    window.update_menu_state(
+        can_revert=False, can_copy_path=False, toolbar_visible=True
+    )
+    assert window._hover_band_action.isChecked() is True
+
+    window.update_menu_state(
+        can_revert=False, can_copy_path=False, toolbar_visible=True, hover_band=False
+    )
+    assert window._hover_band_action.isChecked() is False
+
+    window.update_menu_state(
+        can_revert=False, can_copy_path=False, toolbar_visible=True, hover_band=True
+    )
+    assert window._hover_band_action.isChecked() is True
 
 
 def _read_zoom(window):
@@ -3705,6 +3750,197 @@ graph TD
         assert b > g >= r, f"--block-hover must lean blue in {scheme}: {value['v']}"
         assert max(r, g, b) - min(r, g, b) < 24, (
             f"--block-hover must be *very* faint in {scheme}: {value['v']}")
+
+
+# The option, not the rule: does turning the band off actually take the band off
+# the page? As with the geometry below, `:hover` cannot be exercised here, so the
+# band's own declarations are re-injected with `:hover` swapped for a class and
+# the *computed* `content` is read — which is the one declaration the option
+# owns, and the one that answers the question: the band is drawn by
+# `content: var(--hover-band-content, '')`, so "off" has to arrive as `none`.
+BAND_OPTION_PROBE = """(() => {
+  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
+    + ':not(.encrypted-block-reveal-editor *):hover::before';
+  let rule = null;
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (const r of rules) { if (r.selectorText === SEL) rule = r; }
+  }
+  if (!rule) return { missing: true };
+  const style = document.createElement('style');
+  style.textContent = SEL.replace(':hover', '.edi-band-probe') + '{' + rule.style.cssText + '}';
+  document.head.appendChild(style);
+  const block = document.querySelector('.ProseMirror .runnable-block')
+    || document.querySelector('.ProseMirror .block-visual-mode');
+  if (!block) { style.remove(); return { missing: true }; }
+  block.classList.add('edi-band-probe');
+  const cs = getComputedStyle(block, '::before');
+  const out = {
+    content: cs.content,
+    // Read straight off the pseudo-element: a `content: none` draws nothing at
+    // all, so there is no box to measure — and a band "hidden" some other way
+    // (opacity, a transparent colour) would still have one, which is the
+    // difference this option is supposed to make.
+    height: cs.height,
+    background: cs.backgroundColor,
+    off: document.documentElement.classList.contains('edi-hover-band-off'),
+    declared: getComputedStyle(document.documentElement)
+      .getPropertyValue('--hover-band-content').trim(),
+  };
+  block.classList.remove('edi-band-probe');
+  style.remove();
+  return out;
+})()"""
+
+
+def test_the_hover_band_is_a_view_option_that_actually_turns_the_band_off(window):
+    """View → Hover Band, off, removes the band from the page and is remembered.
+
+    Driven through the real dispatcher (`window.ediMenuCommand`) rather than by
+    writing the answer and reloading, because the chain this test is about is
+    the whole one: the menu command, the class, the pseudo-element, and the
+    write all the way into the shell's settings store — which is the last leg
+    that never existed while these answers lived in the page's `localStorage`.
+    """
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps("```python\nprint(1)\n```\n")
+    )
+    _wait(window, "(() => ({ c: document.querySelectorAll('.runnable-block').length }))()",
+          lambda d: d.get("c") == 1, timeout=20)
+
+    def toggle():
+        window._web.page().runJavaScript("window.ediMenuCommand('toggleHoverBand'); true")
+
+    def settle(enabled):
+        """Wait for the page's class *and* the shell's store to agree on ``enabled``.
+
+        Two hops, and they disagree about direction: the class reads ``off``
+        while the store holds ``hoverBand``, and the write itself is a
+        ``QWebChannel`` round trip returning a promise the command dispatcher
+        does not wait on — so the class can be set while the write is still in
+        flight, and a test that read the store immediately would race.
+        """
+        _wait(window, "(() => ({ off: document.documentElement"
+                       ".classList.contains('edi-hover-band-off') }))()",
+              lambda d: d.get("off") is (not enabled), timeout=10)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if window.preferences()["hoverBand"] is enabled:
+                return
+            QApplication.processEvents()
+            time.sleep(0.02)
+        raise AssertionError(
+            "the page asked for hoverBand=%s and the settings store never heard it"
+            % enabled
+        )
+
+    try:
+        on = _dump(window, BAND_OPTION_PROBE)
+        assert not on.get("missing"), "no band rule or no banded block on the page"
+        assert on["off"] is False, "a first run draws the band: %r" % on
+        assert on["content"] == '""' and on["height"] != "auto", (
+            "the band is drawn by default, so the pseudo-element exists: %r" % on)
+        assert on["declared"] == "", (
+            "--hover-band-content must be unset by default, so the band draws "
+            "from var()'s own fallback: %r" % on)
+
+        toggle()
+        settle(False)
+        off = _dump(window, BAND_OPTION_PROBE)
+        assert off["declared"] == "none", (
+            "the off class must resolve the band's content to none: %r" % off)
+        assert off["content"] == "none", (
+            "an off band must not be generated at all, rather than generated and "
+            "hidden — the whole point of `content: none`: %r" % off)
+
+        # Back on, and the band is the same band: same colour, same pseudo-element.
+        toggle()
+        settle(True)
+        again = _dump(window, BAND_OPTION_PROBE)
+        assert again["content"] == on["content"], (
+            "the band must come back as itself, not as a different one: %r vs %r"
+            % (again, on))
+        assert again["background"] == on["background"], (again, on)
+    finally:
+        # The window is session-scoped and the probes above re-inject the band's
+        # declarations, which resolve `var(--hover-band-content, …)` against the
+        # live root — so a page left with the band off would leave every later
+        # band's geometry measurements measuring nothing. The store is the
+        # developer's own, so it goes back too.
+        window.set_preference("hoverBand", True)
+        window._web.page().runJavaScript(
+            "document.documentElement.classList.remove('edi-hover-band-off'); true"
+        )
+
+
+# The persisted preferences, and the promise they are kept on. These answers used
+# to live in the page's `localStorage`, which cannot survive a run of this app:
+# `MainWindow` never creates a `QWebEngineProfile`, so the page runs on the
+# default profile, which is off-the-record, and a packaged build showed it most
+# plainly (`build-pyzip.sh` extracts to a fresh temp directory per run). The
+# store is `backend/preferences.py` — `QSettings`, beside the recent-files list —
+# and the page's copy arrives *injected*, because zoom has to be applied before
+# the editor's first paint and a bridge round trip cannot be waited on there.
+PREFERENCES_PROBE = """(() => ({
+  injected: window.ediPreferences || null,
+  // Read back off the page rather than off the store, so this asserts the round
+  // trip the app actually takes and not just the Python side of it.
+  zoom: getComputedStyle(document.documentElement).getPropertyValue('--doc-zoom').trim(),
+  bandOff: document.documentElement.classList.contains('edi-hover-band-off'),
+  toolbarHidden: (document.querySelector('#toolbar') || {}).hidden === true,
+}))()"""
+
+
+def test_preferences_reach_the_page_before_its_own_bundle_runs(window):
+    """The injected snapshot is on the page, whole, and already applied.
+
+    Ordering is the claim: `window.ediPreferences` has to exist by the time the
+    bundle executes, because `src/preferences.ts` reads it at module load and
+    `init()` applies zoom synchronously right after. A snapshot that arrived a
+    tick later would be a document painted at 100% and then resized under the
+    reader.
+    """
+    seen = _dump(window, PREFERENCES_PROBE)
+    assert seen["injected"] == {
+        "zoomFactor": 1.0,
+        "toolbarVisible": True,
+        "hoverBand": True,
+    }, seen
+    # And the page acted on it rather than merely holding it: 100% by default,
+    # the toolbar row shown, the band drawn.
+    assert seen["zoom"] == "1", seen
+    assert seen["toolbarHidden"] is False, seen
+    assert seen["bandOff"] is False, seen
+
+
+def test_a_written_preference_is_what_the_next_window_would_inject(window):
+    """A write reaches the store *and* the injection, which is a static string.
+
+    `window.py`'s preferences script is built once and re-injected on every
+    document creation, so it is a snapshot taken when this window booted. Left
+    alone it would replay this launch's answers into any document created later
+    in the same run — which is why `set_preference` rewrites its source.
+    """
+    try:
+        window.set_preference("hoverBand", False)
+        window.set_preference("zoomFactor", 1.5)
+        assert window.preferences()["hoverBand"] is False
+        assert window.preferences()["zoomFactor"] == 1.5
+        source = window._preferences_source()
+        assert '"hoverBand": false' in source, source
+        assert '"zoomFactor": 1.5' in source, source
+    finally:
+        # The window is session-scoped, and these are the developer's own
+        # settings: put them back.
+        window.set_preference("hoverBand", True)
+        window.set_preference("zoomFactor", 1.0)
+
+
+def test_an_unknown_preference_is_not_written(window):
+    before = window.preferences()
+    window.set_preference("somethingElse", "x")
+    assert window.preferences() == before
 
 
 # The band's geometry. `:hover` cannot be exercised by this harness (QTest mouse

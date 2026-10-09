@@ -59,11 +59,11 @@ import {
   DEFAULT_ZOOM,
   formatZoom,
   isDefaultZoom,
-  loadZoom,
-  saveZoom,
   zoomIn,
   zoomOut,
 } from './zoom'
+import { currentPreferences, savePreference } from './preferences'
+import { applyHoverBand, isHoverBandEnabled, setHoverBand } from './hoverBand'
 import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
 import { serializeBlock } from './markdown'
@@ -236,7 +236,7 @@ function updateZoomIndicator(): void {
 function setZoom(factor: number): void {
   documentZoom = clampZoom(factor)
   applyZoom(documentZoom)
-  saveZoom(documentZoom)
+  savePreference('zoomFactor', documentZoom)
   updateZoomIndicator()
   syncMenuState()
 }
@@ -281,6 +281,7 @@ function syncMenuState(): void {
     canCopyPath: Boolean(active?.path),
     canRename: Boolean(active?.path),
     toolbarVisible: toolbar?.isVisible() ?? true,
+    hoverBand: isHoverBandEnabled(),
     zoomFactor: documentZoom,
     canZoomIn: canZoomIn(documentZoom),
     canZoomOut: canZoomOut(documentZoom),
@@ -786,6 +787,11 @@ function requestQuit(event?: CloseRequestEvent): void {
 
 function toggleToolbar(): void {
   toolbar?.toggle()
+  syncMenuState()
+}
+
+function toggleHoverBand(): void {
+  setHoverBand(!isHoverBandEnabled())
   syncMenuState()
 }
 
@@ -1306,9 +1312,20 @@ async function encryptBlockAt(view: ReturnType<BlockEditor['getView']>, pos: num
 
 function init(): void {
   // Document zoom is global and applied before the first paint of the editor.
-  documentZoom = loadZoom()
+  // The saved level comes from the shell, which injected it before this bundle
+  // ran — so this read is synchronous, which is the only way an apply-here can
+  // be first — and is clamped on the way in, since `Edi.conf` is a file a person
+  // can edit. (It is not `localStorage`: the page's web profile is
+  // off-the-record, so nothing stored there outlives the process. See
+  // `src/preferences.ts`.)
+  documentZoom = clampZoom(currentPreferences().zoomFactor)
   applyZoom(documentZoom)
   updateZoomIndicator()
+  // The hover band is on by default and read from the same place, before the
+  // first paint for the same reason: the answer decides a pseudo-element's
+  // existence, and a class added after the first hover would leave the first
+  // hover band drawn for a reader who has already turned the band off.
+  applyHoverBand(isHoverBandEnabled())
   setEncryptedBlockImageResolver(resolveImageFileUrl)
   blockEditor = createBlockEditor(editorContainer, '', {
     onOpenLink: openLink,
@@ -1372,6 +1389,7 @@ function init(): void {
     insertKanban: () => void insertKanban(),
     export: () => void exportHtml(),
     toggleToolbar: () => toggleToolbar(),
+    toggleHoverBand: () => toggleHoverBand(),
     zoomIn: () => setZoom(zoomIn(documentZoom)),
     zoomOut: () => setZoom(zoomOut(documentZoom)),
     zoomReset: () => setZoom(DEFAULT_ZOOM),

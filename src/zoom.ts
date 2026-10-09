@@ -5,8 +5,13 @@
  * The whole app is the chrome (tab bar, toolbar, status bar, menus, dialogs);
  * only `#editor-container` is the document. `applyZoom` writes a single CSS
  * variable that the editor content scales by, so the chrome is untouched.
+ *
+ * The level itself is not this module's business: `src/preferences.ts` owns
+ * where it is kept, and `main.ts` owns the one write. This module owns the
+ * ladder and what counts as a rung on it — which is also the clamp a stored
+ * value goes through on the way back in, since `Edi.conf` is a file a person
+ * can edit.
  */
-const STORAGE_KEY = 'edi.zoom'
 
 export const DEFAULT_ZOOM = 1
 
@@ -54,26 +59,6 @@ export function isDefaultZoom(factor: number): boolean {
 /** `"125%"` for the status indicator and the View menu. */
 export function formatZoom(factor: number): string {
   return `${Math.round(clampZoom(factor) * 100)}%`
-}
-
-/** The saved level, or 100% when unset or unusable. */
-export function loadZoom(): number {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw === null) return DEFAULT_ZOOM
-    const value = Number(raw)
-    return Number.isFinite(value) ? clampZoom(value) : DEFAULT_ZOOM
-  } catch {
-    return DEFAULT_ZOOM
-  }
-}
-
-export function saveZoom(factor: number): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, String(clampZoom(factor)))
-  } catch {
-    // Storage can be unavailable; the zoom still works for the session.
-  }
 }
 
 /** Announced on `documentElement` by `applyZoom`, with the clamped level. */

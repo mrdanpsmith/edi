@@ -45,6 +45,11 @@ declare global {
     ) => unknown
     ediMenuCommand?: (command: string, argument?: string) => void
     ediSetContent?: (markdown: string) => void
+    /**
+     * The persisted preferences, injected by `backend/window.py` before this
+     * bundle runs. Absent when there is no shell (`npm run dev` in a browser).
+     */
+    ediPreferences?: Partial<Record<'zoomFactor' | 'toolbarVisible' | 'hoverBand', unknown>>
   }
 }
 

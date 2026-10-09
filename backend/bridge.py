@@ -66,6 +66,8 @@ class Bridge(QObject):
             "setDirty": self._set_dirty,
             "setTitle": self._set_title,
             "setMenuState": self._set_menu_state,
+            "getPreferences": self._get_preferences,
+            "setPreference": self._set_preference,
             "getRecentFiles": self._get_recent_files,
             "addRecentFile": self._add_recent_file,
             "getPendingFiles": self._get_pending_files,
@@ -392,11 +394,26 @@ class Bridge(QObject):
             can_revert=bool(args.get("canRevert")),
             can_copy_path=bool(args.get("canCopyPath")),
             toolbar_visible=bool(args.get("toolbarVisible")),
+            hover_band=bool(args.get("hoverBand", True)),
             can_rename=bool(args.get("canRename")),
             zoom_factor=float(args.get("zoomFactor") or 1.0),
             can_zoom_in=bool(args.get("canZoomIn", True)),
             can_zoom_out=bool(args.get("canZoomOut", True)),
         )
+        self._reply(request_id, None)
+
+    def _get_preferences(self, request_id: int, _args: dict) -> None:
+        # Normally unused: the page is handed its preferences by an injected
+        # script before the bundle runs (`window.py`), because a round trip
+        # cannot be awaited before the editor's first paint. This exists so the
+        # store is still reachable over the bridge — which is what makes the
+        # injected snapshot verifiable rather than the only way in.
+        self._reply(request_id, self._window.preferences())
+
+    def _set_preference(self, request_id: int, args: dict) -> None:
+        name = str(args.get("name", ""))
+        if name:
+            self._window.set_preference(name, args.get("value"))
         self._reply(request_id, None)
 
     def _get_recent_files(self, request_id: int, _args: dict) -> None:

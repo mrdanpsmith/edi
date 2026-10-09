@@ -710,7 +710,18 @@ body {
    the pointer, and its content is on screen. An encrypted block holds exactly one
    block by design, so the inner one can never be the answer to anything. */
 .ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
-  content: '';
+  /* **`var()`'s fallback is the band's default: drawn.** One declaration of
+     `--hover-band-content` in the whole sheet, below, is what turns it off —
+     which is the whole of the View → Hover Band option (`src/hoverBand.ts`,
+     one persisted boolean, one class on `documentElement`). Hiding the band by
+     restating this selector with a `content: none` of its own would be a
+     second spelling of *which block would Alt+click alter?*, and that list is
+     the one thing about this rule that has to be kept to a single source. The
+     selector above is therefore left byte-identical whether the band is on or
+     off, so nothing downstream — including the geometry tests, which re-inject
+     this very declaration with `:hover` swapped for a class — can tell which
+     state the reader is in. */
+  content: var(--hover-band-content, '');
   position: absolute;
   z-index: -1;
   top: -4px;
@@ -720,6 +731,17 @@ body {
   border-radius: 6px;
   background: var(--block-hover);
   pointer-events: none;
+}
+
+/* **View → Hover Band, off.** The band's only shape decision is whether its
+   pseudo-element exists, so this is the whole of the option on the stylesheet
+   side: `none` is not a hidden box, it is no box, which leaves a turned-off
+   band costing nothing to paint and nothing for the block's own stacking to
+   reason about. It inherits down to every banded block and every future one,
+   including one inside a revealed encrypted block, so no second rule has to
+   know the block list. */
+.edi-hover-band-off {
+  --hover-band-content: none;
 }
 
 /* ── The one control cluster per block ─────────────────────────────────────

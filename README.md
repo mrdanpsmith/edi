@@ -148,14 +148,16 @@ match.
 Document actions live in the native menu bar, with the four most common ones
 (New, Open, Save, Save As) also as toolbar buttons; the rest of the toolbar
 toggles markdown formatting on the selection. Hide the row with
-`View → Toolbar`.
+`View → Toolbar`. `View → Hover Band` turns off the band that marks the block
+the pointer is over; it is on by default. Both answers, and the zoom level, are
+remembered between runs (`~/.config/Edi/Edi.conf`).
 
 | Menu | Items |
 | --- | --- |
 | **File** | New, Open, Open Recent, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
-| **View** | Toolbar, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
+| **View** | Toolbar, Hover Band, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
 | **Help** | Edi Guide…, Formula Reference…, About Edi… |
 
 `Revert` and `Rename…` need a document that has been saved somewhere; renaming
