@@ -794,14 +794,14 @@ body {
  * | the block is… | drawn as |
  * |---|---|
  * | **selected** — in the selection | a **solid** accent outline, plus a tint |
- * | **in a non-visual mode** — source, or being edited | a **dashed** accent outline |
+ * | **not being viewed as its document** — source, being edited, or a sheet | a **dashed** accent outline |
  * | neither | nothing |
  *
- * **A block in a non-visual mode gets a dashed outline, whatever the mode and
- * whatever the block type.** That was not true: §7.2 drew a 3px accent bar down the
- * left edge, and a block in its source form additionally had a *solid* accent
- * border of its own, so the two alternate states of a document looked nothing like
- * each other and neither matched a third. Three separate treatments for three
+ * **A block that is not being viewed as its document gets a dashed outline, whatever
+ * the mode and whatever the block type.** That was not true: §7.2 drew a 3px accent
+ * bar down the left edge, and a block in its source form additionally had a *solid*
+ * accent border of its own, so the two alternate states of a document looked nothing
+ * like each other and neither matched a third. Three separate treatments for three
  * states, none of them the rule.
  *
  * One rule, one mark. Dashed is the choice because these states are the reader's own
@@ -810,13 +810,20 @@ body {
  * `outline` rather than a `box-shadow`, so it costs the block no layout: the rule
  * is chrome and must never reflow the document.
  *
- * A **form-only** mode — a table as a sheet — is deliberately not in it. A
- * spreadsheet is a rendering, not an alternate document: it is what you *edit* a
- * table in (§5.1 calls it `Edit`), so it is the table being worked on rather than
- * the table being suspended. The chip names it, and the cluster button says `Edit`.
- * Its decoration class is still set regardless, because that is what makes a form
- * flip reach the node view at all (§4.3). */
-.ProseMirror :is(.edi-block-mode-source, .edi-block-mode-editing) {
+ * A **form-only** mode — a table as a sheet — is in it too, and used to be excluded
+ * on the reasoning that a spreadsheet is a *rendering* rather than an alternate
+ * document. That left the one mark that answers "which block am I working in"
+ * answering differently per block type: a diagram being edited was dashed and a table
+ * being edited was not, and the sheet is the block where the reader is demonstrably
+ * working. It costs nothing in meaning to include it — a table in plain text holds no
+ * record and so stays unmarked, which is exactly the distinction the mark was carrying
+ * — and the sheet then wears a mark *and* its cells wear the grid's own selection
+ * highlight, which is the relationship a source form has with its buffer.
+ *
+ * So the rule is one sentence: **anything not being viewed as its document**. The
+ * chip names the state (`Source`, `Edit`, …) and the cluster button offers the way
+ * back; the outline says *where*, which is the half the chip cannot give. */
+.ProseMirror :is(.edi-block-mode-source, .edi-block-mode-editing, .edi-block-mode-form) {
   outline: 2px dashed var(--accent);
   outline-offset: 2px;
   border-radius: 6px;

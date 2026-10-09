@@ -905,7 +905,7 @@ describe('capstone builtins (CHOOSE/STDEV/VAR/XLOOKUP)', () => {
 describe('utility builtins (UUID/B64ENCODE/B64DECODE)', () => {
   const env = BUILTIN_ENV
 
-  it('UUID returns a lowercase dotted RFC 4122 v4 string', () => {
+  it('UUID returns a lowercase dashed RFC 4122 v4 string', () => {
     const value = applyFunction('UUID', [], env)
     expect(value.kind).toBe('text')
     expect(value.kind === 'text' ? value.value : '').toMatch(

@@ -3966,13 +3966,13 @@ def test_a_plain_tables_cluster_uses_the_cycles_own_vocabulary(window):
 
 
 def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
-    """A sheet wears no accent rule, and the chip names it as an Edit.
+    """A sheet wears the shared outline, never a bar of its own, and the chip says Edit.
 
-    The bar's vocabulary is the two axes — "is this block being shown as something
-    other than its document" — and a sheet is a rendering. It used to be marked
-    anyway, in `--warning`, which drew an amber rule down the left edge of every
-    open spreadsheet and read as a fault; that only began when the form moved onto
-    the record (§4.3), since before that a sheet held no record to decorate.
+    The bar was a 3px accent rule down the left edge, in `--warning` — and it read as a
+    fault on an entirely ordinary state. It is gone for every mode; what says "this
+    block is being worked in" is the shared **dashed** outline, which a sheet wears like
+    anything else. What must not come back is a *second*, heavier mark on the sheet
+    alone, so this asks the one question that is still separable: no `box-shadow`.
     """
     _open_a_sheet(window)
     out = _dump(window, """(() => {
@@ -4032,6 +4032,7 @@ RECORD_BAR_IS_NOT_RED = r"""(() => {
     visual: kindOf(document.querySelector('#editor-container .mermaid')),
     editing: kindOf(document.querySelector('#editor-container .mermaid-editing')),
     sheet: kindOf(document.querySelector('#editor-container .spreadsheet')),
+    plain: kindOf(document.querySelector('#editor-container .ss-plain')),
     chip: (document.querySelector('#status-mode') || {}).textContent || '',
   };
 })()"""
@@ -4042,9 +4043,8 @@ def test_a_block_in_a_non_visual_mode_is_never_marked_in_red(window):
 
     `--danger` is this app's destructive colour — the delete dialog's button, the
     kanban bin's dressing — so wearing it for "you are editing this diagram" made an
-    ordinary state look like a fault, and it was reported as an artifact. Editing and
-    Source now share one dotted accent outline, and a sheet wears none at all,
-    because a spreadsheet is a rendering rather than an alternate document.
+    ordinary state look like a fault, and it was reported as an artifact. Editing,
+    Source and a table's sheet now share one **dashed** accent outline.
     """
     import json
     from tests.mermaid_render import _render
@@ -4064,8 +4064,8 @@ def test_a_block_in_a_non_visual_mode_is_never_marked_in_red(window):
 
     sheet = _dump(window, RECORD_BAR_IS_NOT_RED)
     assert not sheet["hits"], f"something in the editor is drawn in red: {sheet['hits']}"
-    assert sheet["sheet"] is None or sheet["sheet"]["style"] == "none", (
-        f"a sheet is a rendering, so it wears no mode outline: {sheet['sheet']}")
+    assert sheet["sheet"] and sheet["sheet"]["dashed"], (
+        f"a sheet is a block being worked in, so it wears the shared mark: {sheet['sheet']}")
     # ...but the chip still names the state, in the cycle's vocabulary.
     assert sheet["chip"].startswith("Edit"), (
         f"the chip must name the state: {sheet['chip']!r}")
@@ -4082,7 +4082,7 @@ def test_a_block_in_a_non_visual_mode_is_never_marked_in_red(window):
     _wait(window, "(() => ({ e: !!document.querySelector('.mermaid-editing') }))()",
           lambda d: d.get("e") is True, timeout=15)
 
-    # Whether the diagram's outline is dotted or solid here depends on whether the
+    # Whether the diagram's outline is dashed or solid here depends on whether the
     # render also *selected* it — and it is, because `_render` leaves a NodeSelection
     # on the block it inserted. That is the documented precedence (selection wins
     # over the mode), and it is the subject of the other test; what matters here is
@@ -4093,14 +4093,20 @@ def test_a_block_in_a_non_visual_mode_is_never_marked_in_red(window):
     assert during["editing"]["colour"] != "rgb(209, 36, 47)", during["editing"]
 
 
-def test_a_table_as_a_sheet_is_not_marked_at_all(window):
-    """A spreadsheet wears no mode outline, and the chip says `Edit`.
+def test_a_table_as_a_sheet_is_marked_like_any_other_mode(window):
+    """A sheet wears the shared dashed outline, and a plain-text table wears none.
 
-    Two halves that are easy to confuse. The sheet must be **unmarked**, because
-    §7.2's rule is about the two alternate *document* states and a sheet is neither;
-    and the chip must still **name** the state, because that is where "what" is
-    answered. Its decoration class is set either way — that is what makes a form
-    flip reach the node view at all (§4.3).
+    The sheet used to be the one block in a non-default state with **no mark at all**,
+    on the reasoning that a spreadsheet is a rendering rather than an alternate
+    document. That made the one mark answering "which block am I working in" answer
+    differently per block type — a diagram being edited was dashed and a table being
+    edited was not — and the sheet is the block where the reader is demonstrably
+    working.
+
+    Both halves matter. Including it costs nothing in meaning, because a table in
+    plain text holds no record and so stays unmarked; that is the distinction the mark
+    was carrying, and it is asserted here rather than assumed. The chip still names the
+    state, because that is where "what" is answered and the outline only says "where".
     """
     import json
     window._web.page().runJavaScript(
@@ -4116,12 +4122,28 @@ def test_a_table_as_a_sheet_is_not_marked_at_all(window):
           lambda d: d.get("s") is True, timeout=10)
 
     out = _dump(window, RECORD_BAR_IS_NOT_RED)
-    assert out["sheet"] is None or out["sheet"]["style"] == "none", out["sheet"]
+    assert out["sheet"] and out["sheet"]["dashed"], (
+        f"a sheet is a block being worked in, so it wears the shared mark: {out['sheet']}")
     assert out["chip"].startswith("Edit"), f"the chip must name the state: {out['chip']!r}"
+
+    # **The other half**, and the one that keeps the inclusion free: a table left in
+    # its default rendering holds no record, so it is not a block in a mode and wears
+    # nothing. Without this the rule could be satisfied by marking every table.
+    _dump(window, """(() => {
+      const b = document.querySelector('#editor-container .block-control-form');
+      b.click();
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=10)
+    plain = _dump(window, RECORD_BAR_IS_NOT_RED)
+    assert plain["plain"] and plain["plain"]["style"] == "none", (
+        f"a table in its default rendering is not a block in a mode: {plain['plain']}")
 
 
 # The two outlines of the block-level vocabulary (styles.css §7.2): a **solid**
-# accent outline means *selected*, a **dotted** one means *in a non-visual mode*.
+# accent outline means *selected*, a **dashed** one means *not being viewed as its
+# document*.
 #
 # The selection half is checked by actually selecting, because the report was that
 # `Ctrl+A` shows no indication at all on `spreadsheets.md` — and that turned out to
@@ -4322,7 +4344,7 @@ def test_select_all_marks_every_selected_atom(window):
 def test_entering_a_mode_drops_a_document_wide_selection(window):
     """Ctrl+A, *then* Alt+click: the block shows the mode's mark, not selection's.
 
-    This is what made the dotted outline invisible in practice. Both marks are an
+    This is what made the dashed outline invisible in practice. Both marks are an
     `outline` on the same element and selection is declared second, so it wins — and
     a mode taken while the whole document was selected therefore read as *merely
     selected*, on every block, forever. Taking a mode now collapses the selection,
@@ -4361,19 +4383,19 @@ def test_entering_a_mode_drops_a_document_wide_selection(window):
     assert after["marked"] == 0, (
         f"entering a mode must drop the selection, not carry it: {after}")
     assert after["domSelectionEmpty"], f"the document selection survived: {after}"
-    # The table is a sheet, so no mode outline is expected — the point is that
-    # nothing is claiming to be selected any more.
-    assert after["sheetOutline"] in ("none", ""), after
+    # With the selection gone, the sheet's own mark is what reads — the same dashed
+    # outline any other non-visual block wears.
+    assert after["sheetOutline"] == "dashed", after
     assert after["chip"].startswith("Edit"), after["chip"]
 
 
-def test_a_non_visual_mode_is_a_dotted_outline_whatever_the_mode(window):
-    """Editing and Source get the *same* mark: dotted, in the accent colour.
+def test_a_non_visual_mode_is_a_dashed_outline_whatever_the_mode(window):
+    """Editing, Source and a sheet get the *same* mark: dashed, in the accent colour.
 
-    A block in a non-visual mode is the reader's own doing and temporary, so a solid
-    line is spent on selection. This was three separate treatments for three states
-    — a 3px left bar, a source block's own solid accent border, and whatever a form
-    did — and none of them matched.
+    A block that is not being viewed as its document is the reader's own doing and
+    temporary, so a solid line is spent on selection. This was three separate
+    treatments for three states — a 3px left bar, a source block's own solid accent
+    border, and whatever a form did — and none of them matched.
     """
     _set_scheme(window, False)
     _render(window, FLOW)
@@ -4382,9 +4404,9 @@ def test_a_non_visual_mode_is_a_dotted_outline_whatever_the_mode(window):
 
     # `_render` leaves a `NodeSelection` on the block it inserted, so this diagram
     # is **selected and being edited at once** — which is the precedence worth
-    # pinning. Selection's solid outline is declared after the mode's dotted one and
+    # pinning. Selection's solid outline is declared after the mode's dashed one and
     # deliberately wins: selection is the transient state a next keystroke or Ctrl+X
-    # will act on, where the mode is the standing one. The dotted mark on its own is
+    # will act on, where the mode is the standing one. The dashed mark on its own is
     # checked below, on a block that is only in a mode.
     _dump(window, """(() => {
       const el = document.querySelector('.mermaid .mermaid-preview')
