@@ -761,17 +761,17 @@ body {
  * | the block is… | drawn as |
  * |---|---|
  * | **selected** — in the selection | a **solid** accent outline, plus a tint |
- * | **in a non-visual mode** — source, or being edited | a **dotted** accent outline |
+ * | **in a non-visual mode** — source, or being edited | a **dashed** accent outline |
  * | neither | nothing |
  *
- * **A block in a non-visual mode gets a dotted outline, whatever the mode and
+ * **A block in a non-visual mode gets a dashed outline, whatever the mode and
  * whatever the block type.** That was not true: §7.2 drew a 3px accent bar down the
  * left edge, and a block in its source form additionally had a *solid* accent
  * border of its own, so the two alternate states of a document looked nothing like
  * each other and neither matched a third. Three separate treatments for three
  * states, none of them the rule.
  *
- * One rule, one mark. Dotted is the choice because these states are the reader's own
+ * One rule, one mark. Dashed is the choice because these states are the reader's own
  * doing and temporary — a block you are editing right now — and a solid line is
  * spent on selection, where it belongs (§ *selected* below). It is also drawn with
  * `outline` rather than a `box-shadow`, so it costs the block no layout: the rule
@@ -784,12 +784,12 @@ body {
  * Its decoration class is still set regardless, because that is what makes a form
  * flip reach the node view at all (§4.3). */
 .ProseMirror :is(.edi-block-mode-source, .edi-block-mode-editing) {
-  outline: 2px dotted var(--accent);
+  outline: 2px dashed var(--accent);
   outline-offset: 2px;
   border-radius: 6px;
 }
 
-/* A block in its source form no longer wears the record's *bar* — the dotted
+/* A block in its source form no longer wears the record's *bar* — the dashed
    outline above says so — so nothing here needs to cancel a shadow. */
 .ProseMirror .block-source-mode {
   box-shadow: none;
@@ -797,7 +797,7 @@ body {
 
 /* ── Selected block: one solid accent outline, for ATOMS ONLY ───────────────
  * The other half of the vocabulary above, and the reason the mode outline is
- * *dotted*: a solid accent line means **this block is selected**.
+ * *dashed*: a solid accent line means **this block is selected**.
  *
  * **This applies to atoms and nothing else**, which is the whole design and not a
  * limitation. The browser's own selection highlight is better for anything made of
@@ -1579,7 +1579,7 @@ body {
    outline that occasionally occurs for some blocks" was — and a dashed frame at a
    different weight and offset is not a rule, it is a leftover.
 
-   It is gone, and the dotted accent outline every non-visual mode now uses (see
+   It is gone, and the dashed accent outline every non-visual mode now uses (see
    "Two outlines" above) says this instead. Edit mode is still explicit — the
    cluster's **Edit**, Alt+click, the context menu — so the preview stays a preview
    until the reader asks to edit it; what marks that they have is now the same mark
@@ -2165,7 +2165,7 @@ body {
 /* The frame around the raw-markdown editor is **chrome**, not a mode: it is what
    makes an editor read as a panel, and it is why a source block has rounded
    corners and clips its own contents. It is `--border` for the same reason the mode
-   outline is dotted and the selection outline solid — a solid accent line here would
+   outline is dashed and the selection outline solid — a solid accent line here would
    be a third statement about the same fact, and it used to be the loudest one: an
    open source block wore a bright accent frame around the whole editor while a
    diagram being edited wore something else entirely. */

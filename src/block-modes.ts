@@ -376,7 +376,7 @@ export function setBlockModeAt(
   // **Taking a mode drops the selection.** A mode is a fresh start on one block, and
   // carrying a document-wide selection into it is what made the mode's mark
   // invisible: with everything selected, *every* block wore the selection outline, and
-  // the dotted one underneath it was never seen. Selection wins the shared `outline`
+  // the dashed one underneath it was never seen. Selection wins the shared `outline`
   // property (§7.2), so a mode on a still-selected block reads as merely selected.
   //
   // Collapsed rather than cleared, and to the nearest text position at the block's

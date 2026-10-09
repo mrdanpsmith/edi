@@ -3891,7 +3891,7 @@ def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
 # §7.2's block-level indication. It has been `--warning` for a plain view,
 # `--accent` for source and `--danger` for editing; the last of those put the same
 # red on a diagram being edited that the delete dialog and the kanban bin use, and it
-# was reported as an artifact twice. It is now a dotted accent outline, shared by
+# was reported as an artifact twice. It is now a dashed accent outline, shared by
 # every non-visual mode.
 #
 # The scan is deliberately broad — every computed background, border, outline and
@@ -3919,6 +3919,7 @@ RECORD_BAR_IS_NOT_RED = r"""(() => {
     if (!el) return null;
     const cs = getComputedStyle(el);
     return { style: cs.outlineStyle, colour: cs.outlineColor,
+             dashed: cs.outlineStyle === 'dashed',
              width: parseFloat(cs.outlineWidth) || 0 };
   };
   return {
@@ -4029,7 +4030,7 @@ BLOCK_OUTLINES = r"""(() => {
       style: cs.outlineStyle,
       width: parseFloat(cs.outlineWidth) || 0,
       colour: cs.outlineColor,
-      dot: cs.outlineStyle === 'dotted',
+      dashed: cs.outlineStyle === 'dashed',
       solid: cs.outlineStyle === 'solid',
     };
   };
@@ -4308,8 +4309,8 @@ def test_a_non_visual_mode_is_a_dotted_outline_whatever_the_mode(window):
           lambda d: d.get("s") is True, timeout=10)
 
     source = _dump(window, BLOCK_OUTLINES)
-    assert source["source"] and source["source"][0]["dot"], (
-        f"a block in Source needs a DOTTED outline: {source['source']}")
+    assert source["source"] and source["source"][0]["dashed"], (
+        f"a block in Source needs a DASHED outline: {source['source']}")
     assert _outline_colour_rgb(source["source"][0]["colour"]) == accent, (
         f"the mode outline is not --accent: {source['source'][0]}")
     # Its own border is chrome — `--border`, not the accent — so the frame around
