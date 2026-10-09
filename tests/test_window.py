@@ -3565,7 +3565,8 @@ HOVER_BAND_RULE = """(() => {
   const HIT = ['.block-visual-mode', '.mermaid', '.runnable-block',
                '.spreadsheet', '.ss-plain', '.encrypted-block'];
   const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
+    + ':not(.encrypted-block-reveal-editor *):hover::before';
   let rule = null;
   for (const sheet of document.styleSheets) {
     let rules;
@@ -3583,6 +3584,10 @@ HOVER_BAND_RULE = """(() => {
     inset: style.inset || [style.top, style.right, style.bottom, style.left].join(' '),
     blocks: HIT.filter((c) => SEL.includes(c)),
     notMode: SEL.includes(':not(.edi-block-mode)'),
+    // A revealed encrypted block is a second editor inside the encrypted block
+    // that already has a band, and its one block can never be what Alt+click would
+    // alter. So the band has to be able to say "not in there".
+    notReveal: SEL.includes(':not(.encrypted-block-reveal-editor *)'),
   };
 })()"""
 
@@ -3635,6 +3640,10 @@ graph TD
         "the band list has drifted from the control cluster's own: %s" % band["blocks"])
     assert band["notMode"], (
         "a block already in a mode must keep the accent rule, not be banded")
+    assert band["notReveal"], (
+        "a revealed encrypted block is an editor inside the encrypted block that "
+        "already has a band, and its one block can never be the one Alt+click "
+        "would alter: %r" % band)
 
     # Every top-level block in this document is a candidate, and a block in its
     # source form is not — which is what `:not(.edi-block-mode)` plus the list's
@@ -3680,7 +3689,8 @@ graph TD
 # the `:hover` match itself is still CSS that only a real pointer exercises.
 BAND_GEOMETRY_PROBE = """(() => {
   const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
+    + ':not(.encrypted-block-reveal-editor *):hover::before';
   let rule = null;
   for (const sheet of document.styleSheets) {
     let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
@@ -3794,7 +3804,8 @@ graph TD
 # checkbox in it and they came and went with the pointer.
 BAND_OVER_CONTROL_ON = """(() => {
   const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
+    + ':not(.encrypted-block-reveal-editor *):hover::before';
   const always = SEL.replace(':hover', ':not(.edi-never-hover)');
   let forced = 0;
   for (const sheet of document.styleSheets) {
@@ -3912,7 +3923,8 @@ def test_the_hover_band_does_not_hide_a_tasks_checkbox(window):
 # padding around the editor. The chrome did not get covered — it was the band.
 BAND_OVER_FRAME_ON = """(() => {
   const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before';
+    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
+    + ':not(.encrypted-block-reveal-editor *):hover::before';
   const always = SEL.replace(':hover', ':not(.edi-never-hover)');
   let forced = 0;
   for (const sheet of document.styleSheets) {
@@ -4000,6 +4012,99 @@ def _band_frame_pixels(window, points):
         colour = QColor(image.pixelColor(int(x), int(y)))
         out[name] = (colour.red(), colour.green(), colour.blue())
     return out
+
+
+# The band's fourth exclusion: not inside a revealed encrypted block. This one is
+# answered by `matches()` rather than by pixels or a hit test, because the question
+# is purely "does the shipped selector match this shape of DOM" — and because a
+# revealed block needs a password to reach, which this harness has no way to supply.
+# The DOM is built outside the editor for the same reason it cannot be reached in
+# the document: ProseMirror owns its own subtree and discards what it did not put
+# there, so a fixture inside it would be gone before it was read.
+BAND_MATCHES_PROBE = """(() => {
+  // The rule is found by its *stable* anchors — the band list up to
+  // `.encrypted-block)` and the `:hover::before` tail — and its selector is then
+  // read out of the sheet rather than spelled here. A probe that hardcoded the
+  // whole selector reported a missing exclusion as "the rule is not in the sheet",
+  // which sends the next person looking in the wrong place.
+  const HEAD = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+    + ' .spreadsheet, .ss-plain, .encrypted-block)';
+  const TAIL = ':hover::before';
+  document.querySelectorAll('.edi-band-fixture').forEach((el) => el.remove());
+  const root = document.createElement('div');
+  root.className = 'edi-band-fixture';
+  root.innerHTML = [
+    '<div class="ProseMirror">',
+    '  <div class="encrypted-block">',
+    '    <div class="block-visual-mode">outer</div>',
+    '    <div class="encrypted-block-reveal">',
+    // The reveal's editor is `createBlockEditor` — the document's own factory — so
+    // it marks its content exactly as the document does, and without the exclusion
+    // this block was banded inside a block that already had a band of its own.
+    '      <div class="ProseMirror encrypted-block-reveal-editor">',
+    '        <div class="block-visual-mode">inner</div>',
+    '      </div>',
+    '    </div>',
+    '  </div>',
+    '  <div class="runnable-block has-code-lang">code</div>',
+    '  <div class="runnable-block has-code-lang edi-block-mode">code in a mode</div>',
+    '</div>',
+  ].join('\\n');
+  document.body.appendChild(root);
+
+  let found = null;
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (err) { continue; }
+    for (const r of rules) {
+      const sel = r.selectorText;
+      if (sel && sel.startsWith(HEAD) && sel.endsWith(TAIL)) found = sel;
+    }
+  }
+  if (!found) { root.remove(); return { missing: true }; }
+
+  // `:hover` is never true under `matches()` and `::before` is not a target at all,
+  // so both come off and what is left is the selector's own list and exclusions.
+  const probe = found.replace(TAIL, '');
+  const out = {};
+  root.querySelectorAll('.block-visual-mode, .runnable-block').forEach((el) => {
+    const where = el.closest('.encrypted-block-reveal-editor') ? 'inside reveal'
+      : el.closest('.encrypted-block') ? 'encrypted block' : 'document';
+    const mode = el.classList.contains('edi-block-mode') ? ', in a mode' : '';
+    out[where + mode] = el.matches(probe);
+  });
+  root.remove();
+  return { selector: found, probe, out };
+})()"""
+
+
+def test_the_hover_band_stays_out_of_a_revealed_encrypted_block(window):
+    """One encrypted block, so an inner band can never be the answer.
+
+    A revealed encrypted block holds exactly one block by design, and the pointer
+    over it is unambiguously over the encrypted block — which has a band of its
+    own, in its margin. The reveal's editor is built by the document's own factory,
+    so its content carries the same `.block-visual-mode` the document's blocks do
+    and the band matched it too: two bands, one of them a rectangle drawn *inside*
+    a frame the reader is already looking into. The encrypted block keeps its band;
+    only the nested one loses it, and the mode exclusion is unaffected.
+    """
+    probe = _dump(window, BAND_MATCHES_PROBE)
+    assert not probe.get("missing"), (
+        "the band's own rule is not in the loaded sheet, so this would pass for the "
+        "wrong reason: %r" % probe)
+    assert ":not(.encrypted-block-reveal-editor *)" in probe["selector"], (
+        "the band must be able to say \"not inside a revealed encrypted block\", "
+        "or it bands that block too: %s" % probe["selector"])
+    out = probe["out"]
+    assert out.get("document") is True, (
+        "an ordinary block must still be banded: %r" % out)
+    assert out.get("encrypted block") is True, (
+        "the encrypted block keeps its own band — it is the block the pointer is "
+        "over: %r" % out)
+    assert out.get("inside reveal") is False, (
+        "a revealed encrypted block's one block must not be banded: %r" % out)
+    assert out.get("document, in a mode") is False, (
+        "a block already in a mode keeps the accent rule instead: %r" % out)
 
 
 def test_the_hover_band_does_not_paint_over_a_code_blocks_own_frame(window):

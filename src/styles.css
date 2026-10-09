@@ -699,7 +699,17 @@ body {
   position: relative;
 }
 
-.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):hover::before {
+/* **Not inside a revealed encrypted block.** An encrypted block's reveal is a
+   second editor — `createBlockEditor`, the same factory as the document, so its
+   blocks are `.block-visual-mode` like any other — and it arrives inside the
+   encrypted block that already has a band of its own. So the pointer over a
+   revealed block drew two: the encrypted block's, in its margin, and an inner
+   one, inside its own reveal frame. Two bands, one of them a rectangle *inside*
+   a frame the reader is already looking into, and the question the band exists to
+   answer is already answered: there is one encrypted block, it is the thing under
+   the pointer, and its content is on screen. An encrypted block holds exactly one
+   block by design, so the inner one can never be the answer to anything. */
+.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
   content: '';
   position: absolute;
   z-index: -1;
