@@ -667,6 +667,22 @@ function reportError(message: string, error: unknown): void {
   void showError(`${message}${detail}`)
 }
 
+/**
+ * Is a dialog, a CodeMirror buffer or a form field holding the caret?
+ *
+ * Clipboard shortcuts must not be taken from any of them. Each has its own: a
+ * masked field's revealed input, a spreadsheet cell editor, the raw-markdown editor
+ * in a block's Source form — and a document-level Copy in the middle of one would
+ * either copy the wrong thing or nothing.
+ */
+function focusIsForeign(): boolean {
+  const active = document.activeElement
+  return (
+    active instanceof HTMLElement &&
+    !!active.closest('.edi-dialog-overlay, .cm-editor, input, textarea')
+  )
+}
+
 function registerShortcuts(): void {
   window.addEventListener('keydown', (event) => {
     if (!(event.ctrlKey || event.metaKey)) {
@@ -723,16 +739,34 @@ function registerShortcuts(): void {
       event.preventDefault()
       openSearch(true)
     } else if (key === 'v' && event.shiftKey) {
-      // While a dialog or a CodeMirror source editor owns focus, its own paste
-      // belongs there — never steal it.
-      const active = document.activeElement
-      const inforeign =
-        active instanceof HTMLElement &&
-        !!active.closest('.edi-dialog-overlay, .cm-editor, input, textarea')
-      if (!inforeign) {
+      if (!focusIsForeign()) {
         event.preventDefault()
         void pasteAsMarkdownCommand()
       }
+    } else if (key === 'c' || key === 'x' || key === 'v') {
+      /* Cut, Copy and Paste are handled *here* rather than left to the browser, and
+       * they have to be: the page has no other route for them.
+       *
+       * The shell's Edit menu items for these called the same functions, so a click
+       * worked and the keyboard did nothing at all — which is not a shortcut that is
+       * bound to the wrong thing, it is a shortcut that is bound to *nothing*. Qt
+       * never claimed it (a `\t` in a QAction label gives the action no shortcut at
+       * all), and ProseMirror has no `Mod-c` binding: it answers a native `copy`
+       * DOM event, which a webview whose selection is managed in JavaScript does not
+       * reliably produce. Nothing was handling it.
+       *
+       * So these three route to `editCut`/`editCopy`/`editPaste`, which is what the
+       * menu items call — **including the rich-text payload**. `editCopy` sends
+       * `serializeForClipboard`'s HTML *and* its text through the bridge, so
+       * `Ctrl+C` carries the document as rich text the way the menu always has, and
+       * `Ctrl+Shift+C` stays plain Markdown, which is the difference between the
+       * two keys and the reason both exist.
+       */
+      if (event.defaultPrevented || focusIsForeign()) return
+      event.preventDefault()
+      if (key === 'c') editCopy()
+      else if (key === 'x') editCut()
+      else void editPaste()
     }
   })
 }

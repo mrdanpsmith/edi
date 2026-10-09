@@ -795,23 +795,31 @@ body {
   box-shadow: none;
 }
 
-/* ── Selected block: one solid accent outline ───────────────────────────────
+/* ── Selected block: one solid accent outline, for ATOMS ONLY ───────────────
  * The other half of the vocabulary above, and the reason the mode outline is
  * *dotted*: a solid accent line means **this block is selected**.
  *
- * Two ways a block ends up selected, one rule. A block selected whole is a
- * `NodeSelection`, which ProseMirror tags `.ProseMirror-selectednode` on the node
- * itself; a block the selection merely *covers* is tagged `.edi-block-selected` by
- * `selectionHighlightPlugin`. Both were the same accent treatment before, and still
- * are — the point is that a reader does not have to know which mechanism fired.
+ * **This applies to atoms and nothing else**, which is the whole design and not a
+ * limitation. The browser's own selection highlight is better for anything made of
+ * text — it is what a browser does, it follows the text exactly, and it is free. An
+ * atom (a table, a diagram, a code block) has no selectable text inside it, so a
+ * range across one shows *nothing at all* and the reader cannot tell whether it is
+ * in the selection or whether the selection stopped there. So the split is by what
+ * the browser can already express: text keeps the browser's, and only what the
+ * browser cannot show is marked.
  *
- * The tint is the second half of the mark because an outline alone is easy to miss
- * on a tall block, and the native text highlight is deliberately suppressed inside
- * these blocks (see `.edi-block-selected::selection`) so that the two do not stack.
+ * Marking *every* top-level block was tried, to make the two look alike. It made
+ * them worse on both counts — an outline round ordinary paragraphs reads as a
+ * decorative border around running text rather than as a selection, and because the
+ * native highlight is suppressed inside a marked block (see
+ * `.edi-block-selected::selection`) below, marking everything erased the browser's
+ * selection across the entire document at once: everything selected, nothing visible
+ * as selected. Two marks for one idea, and both of them wrong.
  *
- * **Declared after the mode outline so that a block which is both selected and in a
- * mode reads as selected.** Selection is the transient, actionable state and the one
- * a next keystroke or Ctrl+X will act on; the mode is the standing one.
+ * So the class is only ever put on an atom — `selectionHighlightPlugin` decides, and
+ * ProseMirror puts `.ProseMirror-selectednode` on a whole-block `NodeSelection`,
+ * which is also an atom by definition. Declared after the mode outline, so a block
+ * that is both an atom in a mode and in the selection reads as selected.
  */
 .ProseMirror .ProseMirror-selectednode,
 .ProseMirror .edi-block-selected {
@@ -1955,12 +1963,17 @@ body {
   color: inherit;
 }
 
-/* A block the range covers is selected *as a unit* (its markdown is what is
-   copied), so the block's own outline/tint is the selection — the native
-   highlight is suppressed across the whole block, chrome included. The chrome
-   stays visible; it just is not painted as selected text. (`::selection` alone
-   was not enough for the CodeMirror gutter, which the browser paints as part
-   of the covered line, so `.edi-block-selected *` covers it too.) */
+/* The native highlight is suppressed inside a marked block, because the block's own
+   outline and tint *are* the selection there — the markdown of the whole block is
+   what gets copied, and a half-native highlight drawn across a table would say
+   something the copy does not do. `::selection` alone is not enough for the
+   CodeMirror gutter, which the browser paints as part of the covered line, hence
+   the descendant selector.
+
+   **This rule is why the marked set must stay small.** It erases the browser's own
+   selection across everything it matches, so applying it to ordinary text would
+   replace a real, familiar highlight with a decorative outline. It exists for
+   atoms, which have nothing else to show. */
 .ProseMirror .edi-block-selected::selection,
 .ProseMirror .edi-block-selected *::selection {
   background: transparent;

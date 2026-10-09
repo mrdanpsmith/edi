@@ -329,22 +329,35 @@ export const selectionExpandPlugin = new Plugin<ExpandState>({
 })
 
 /**
- * Mark every **top-level block** the selection covers as a unit, so a selected
- * block looks selected by the same rule whatever it is and however it was
- * selected.
+ * Mark the **atomic** blocks a selection covers, so a table or a diagram bracketed
+ * by a selection looks selected instead of skipped.
  *
- * **The selection's kind is not consulted, which is the fix.** This used to require
- * a `TextSelection`, so `Ctrl+A` — which ProseMirror makes an `AllSelection` —
- * highlighted nothing at all: open `spreadsheets.md`, press select-all, and not one
- * block looked selected. Every kind of non-empty selection has `from` and `to`, and
- * the question this plugin answers is only "is this block inside them", so the kind
- * was never needed. A whole-block `NodeSelection` is styled separately, via the
+ * **Atoms only, and that is the whole design.** A block the reader thinks of as a
+ * unit of *text* is better served by the browser's own selection highlight: it is
+ * what a browser does, it follows the text exactly, and it costs nothing. An atom —
+ * a table, a diagram, a code block — has no selectable text inside it, so a range
+ * across one shows *nothing at all*, and the reader cannot tell whether it is in
+ * the selection or whether the selection stopped there. So the rule is split by what
+ * the browser can already express: text keeps the browser's, and only what the
+ * browser cannot show is marked here.
+ *
+ * Marking *every* top-level block was tried, to make the two look the same. It made
+ * them worse: the outline went on ordinary paragraphs, which read as decorative
+ * borders around running text rather than as a selection, and because
+ * `.edi-block-selected::selection` suppresses the native highlight inside a marked
+ * block (§ styles), marking everything erased the browser's selection across the
+ * whole document at once — the state where everything is selected and nothing can
+ * be seen to be. Two marks for one idea, both of them wrong.
+ *
+ * **The selection's kind is not consulted**, which is the one thing that was fixed
+ * here and kept. This used to require a `TextSelection`, so `Ctrl+A` — which
+ * ProseMirror makes an `AllSelection` — marked *nothing*: an atom in a select-all
+ * was invisible, the same bug from the other direction. Every kind of non-empty
+ * selection has `from` and `to`, and the question is only "is this atom inside
+ * them".
+ *
+ * A whole-block `NodeSelection` is styled separately, via the
  * `.ProseMirror-selectednode` class ProseMirror puts on the node itself.
- *
- * **Only top-level blocks.** A list item or a paragraph inside a blockquote is not
- * a block the reader thinks of as a unit, and outlining every one of them turns
- * select-all into a wall of boxes. The native text highlight still covers the text
- * inside them.
  */
 export const selectionHighlightPlugin = new Plugin({
   key: SELECTION_HIGHLIGHT_KEY,
@@ -353,11 +366,11 @@ export const selectionHighlightPlugin = new Plugin({
       const sel = state.selection
       if (sel.empty) return null
       const decos: Decoration[] = []
-      // `doc.children`, not `descendants`: see the note above.
-      state.doc.forEach((node, pos) => {
-        if (pos >= sel.from && pos + node.nodeSize <= sel.to) {
+      state.doc.descendants((node, pos) => {
+        if (isSelectionAtom(state, node, pos) && pos >= sel.from && pos + node.nodeSize <= sel.to) {
           decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'edi-block-selected' }))
         }
+        return true
       })
       return decos.length ? DecorationSet.create(state.doc, decos) : null
     },

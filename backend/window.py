@@ -324,6 +324,40 @@ class MainWindow(QMainWindow):
 
         self._web.load(_app_url(is_selftest=os.environ.get("EDI_SELFTEST") == "1"))
 
+    def _menubar_action(self, label: str, command: str, *, shell_owns_key: bool) -> QAction:
+        """Build a menubar item, and decide explicitly who owns its key.
+
+        **The ``\t`` in a label is not a shortcut, and this file used to believe it
+        was.** A ``\t`` in a ``QAction`` label gives the action no ``QShortcut`` at
+        all in PySide6 — verified by reading ``action.shortcut()`` back, which is
+        empty for every action built the old way, while the zoom actions a few lines
+        below, which call ``setShortcut()``, do have one. So ``Ctrl+C`` and ``Ctrl+A``
+        were *labels*: the keys reached the webview, where there was no DOM selection
+        to copy, and nothing happened at all. The menu item worked and the keyboard
+        did not, which is the whole of the symptom.
+
+        So the shortcut is now set explicitly, and only where the **shell** should
+        own the key (``shell_owns_key=True``, which binds the sequence the label
+        declared). The document commands pass ``shell_owns_key=False`` and have the
+        ``\t`` stripped instead: the page implements them, and it implements them
+        better, because it is the only thing that knows about a CodeMirror buffer's
+        own selection or a spreadsheet grid's. A window-level shortcut would shadow
+        the page's handling of precisely the case the shortcut exists for.
+
+        Stripping rather than honouring is the point. A menu item advertising a
+        shortcut that does not work is the bug, and it is a worse bug than a menu
+        item with no hint on it.
+        """
+        text, _, declared = label.partition("\t")
+        action = QAction(text, self)
+        if shell_owns_key:
+            if not declared:
+                raise ValueError(f"{label!r} claims a key but declares no sequence")
+            action.setShortcut(QKeySequence(declared))
+        action.setShortcutContext(Qt.WindowShortcut)
+        action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
+        return action
+
     def _build_menus(self) -> None:
         menubar = self.menuBar()
 
@@ -335,9 +369,7 @@ class MainWindow(QMainWindow):
             ("&New\tCtrl+N", "new"),
             ("&Open…\tCtrl+O", "open"),
         ):
-            action = QAction(label, self)
-            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
-            file_menu.addAction(action)
+            file_menu.addAction(self._menubar_action(label, command, shell_owns_key=True))
 
         # The recent list lives in QSettings and can change between launches, so
         # the submenu is repopulated every time it is opened rather than once
@@ -350,9 +382,7 @@ class MainWindow(QMainWindow):
             ("&Save\tCtrl+S", "save"),
             ("Save &As…\tCtrl+Shift+S", "saveAs"),
         ):
-            action = QAction(label, self)
-            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
-            file_menu.addAction(action)
+            file_menu.addAction(self._menubar_action(label, command, shell_owns_key=True))
 
         # No shortcut: F2 is the spreadsheet cell editor's key to edit in place,
         # and a menubar shortcut wins over the page, so one would cost that.
@@ -371,7 +401,11 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._revert_action)
 
         # Enabled by the frontend only while the document in view has a path.
-        self._copy_path_action = QAction("Copy File &Path\tCtrl+Alt+Shift+C", self)
+        # `setShortcut` rather than a `\t` in the label, for the reason
+        # `_menubar_action` documents — and the label carries no shortcut because Qt
+        # renders a real one in the menu item itself, so a `\t` would show it twice.
+        self._copy_path_action = QAction("Copy File &Path", self)
+        self._copy_path_action.setShortcut(QKeySequence("Ctrl+Alt+Shift+C"))
         self._copy_path_action.setEnabled(False)
         self._copy_path_action.triggered.connect(
             lambda _checked=False: self._menu_command("copyFilePath")
@@ -390,7 +424,8 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        quit_action = QAction("&Quit\tCtrl+Q", self)
+        quit_action = QAction("&Quit", self)
+        quit_action.setShortcut(QKeySequence("Ctrl+Q"))
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
@@ -400,9 +435,7 @@ class MainWindow(QMainWindow):
             ("&Undo\tCtrl+Z", "undo"),
             ("&Redo\tCtrl+Shift+Z", "redo"),
         ):
-            action = QAction(label, self)
-            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
-            edit_menu.addAction(action)
+            edit_menu.addAction(self._menubar_action(label, command, shell_owns_key=False))
 
         edit_menu.addSeparator()
 
@@ -413,13 +446,11 @@ class MainWindow(QMainWindow):
             ("&Paste\tCtrl+V", "paste"),
             ("Paste as &Markdown\tCtrl+Shift+V", "pasteAsMarkdown"),
         ):
-            action = QAction(label, self)
-            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
-            edit_menu.addAction(action)
+            edit_menu.addAction(self._menubar_action(label, command, shell_owns_key=False))
 
         edit_menu.addSeparator()
 
-        select_all_action = QAction("Select &All\tCtrl+A", self)
+        select_all_action = QAction("Select &All", self)
         select_all_action.triggered.connect(lambda _checked=False: self._menu_command("selectAll"))
         edit_menu.addAction(select_all_action)
 
@@ -435,9 +466,7 @@ class MainWindow(QMainWindow):
             ("&Find…\tCtrl+F", "find"),
             ("&Replace…\tCtrl+H", "replace"),
         ):
-            action = QAction(label, self)
-            action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
-            edit_menu.addAction(action)
+            edit_menu.addAction(self._menubar_action(label, command, shell_owns_key=False))
 
         self._insert_menu = menubar.addMenu("&Insert")
         insert_menu = self._insert_menu

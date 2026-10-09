@@ -373,7 +373,31 @@ export function setBlockModeAt(
   const named = changes.form
   const kept = modeFor(state, pos)?.form
   const form = named === undefined ? kept : formId(descriptor, named)
+  // **Taking a mode drops the selection.** A mode is a fresh start on one block, and
+  // carrying a document-wide selection into it is what made the mode's mark
+  // invisible: with everything selected, *every* block wore the selection outline, and
+  // the dotted one underneath it was never seen. Selection wins the shared `outline`
+  // property (§7.2), so a mode on a still-selected block reads as merely selected.
+  //
+  // Collapsed rather than cleared, and to the nearest text position at the block's
+  // own start, because a mode needs a caret: `enterSourceMode` refines this into its
+  // buffer immediately afterwards, `enterSpreadsheetMode` focuses the grid, and a
+  // diagram's edit mode places its own. Doing it here rather than in each of those
+  // is the point — this is the one place every route into a mode goes through, and a
+  // per-subscriber version is a list that grows a gap.
+  //
+  // Skipped when the selection is already collapsed *inside* this block, so a route
+  // that has deliberately placed a caret there is not fought over.
+  if (!tr.selection.empty && !selectionIsInside(tr, pos, node.nodeSize)) {
+    tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(pos, tr.doc.content.size))))
+  }
   setBlockMode(tr, { pos, type: node.type.name, representation, interaction, form })
+}
+
+/** Is `tr`'s selection a collapsed caret within the block at `pos`? */
+function selectionIsInside(tr: Transaction, pos: number, size: number): boolean {
+  const sel = tr.selection
+  return sel.empty && sel.from >= pos && sel.from <= pos + size
 }
 
 /** The stored form for `form`, or undefined when it is the block's own default. */

@@ -164,6 +164,12 @@ the old file in one step, so it is never left under both names.
 
 ## Keyboard shortcuts
 
+Shortcuts on **file and app commands** (`Ctrl+N`, `Ctrl+S`, `Ctrl+Q`, …) are Qt
+menubar actions. The **document** ones — `Ctrl+C`, `Ctrl+V`, `Ctrl+Z`, `Ctrl+A`,
+`Ctrl+F` — belong to the editor instead, because it is the only thing that knows
+about a CodeMirror buffer's own selection or a spreadsheet grid's; a menubar
+shortcut would shadow exactly that.
+
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+N` | New tab |

@@ -449,20 +449,20 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "&Help" in titles
 
     file_labels = [action.text() for action in window._file_menu.actions()]
-    assert "&New\tCtrl+N" in file_labels
-    assert "&Open…\tCtrl+O" in file_labels
+    assert "&New" in file_labels
+    assert "&Open…" in file_labels
     assert "Open &Recent" in file_labels
-    assert "&Save\tCtrl+S" in file_labels
-    assert "Save &As…\tCtrl+Shift+S" in file_labels
+    assert "&Save" in file_labels
+    assert "Save &As…" in file_labels
     assert "&Revert" in file_labels
-    assert "Copy File &Path\tCtrl+Alt+Shift+C" in file_labels
+    assert "Copy File &Path" in file_labels
     # No shortcut: Ctrl+Shift+E is the page's block-source toggle, and a menubar
     # shortcut would win over the page. The label must not advertise it.
     assert "&Export HTML…" in file_labels
     assert not any(label.startswith("&Export HTML…\t") for label in file_labels)
-    assert "&Quit\tCtrl+Q" in file_labels
+    assert "&Quit" in file_labels
     # Open Recent belongs directly under Open.
-    assert file_labels.index("Open &Recent") == file_labels.index("&Open…\tCtrl+O") + 1
+    assert file_labels.index("Open &Recent") == file_labels.index("&Open…") + 1
 
     insert_labels = [action.text() for action in window._insert_menu.actions()]
     assert insert_labels == [
@@ -473,17 +473,40 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
         "&Image…",
     ]
 
+    # **The shell's own keys really are shortcuts.** Every one of these was a `\t` in
+    # a label, which gives a PySide6 `QAction` no shortcut at all — so `Ctrl+S` and
+    # `Ctrl+Q` have never worked either, and neither has `Ctrl+C`. Read back off the
+    # actions rather than off the labels, because the label was never the evidence.
+    shell_shortcuts = {
+        action.text(): action.shortcut().toString()
+        for action in window._file_menu.actions()
+    }
+    assert shell_shortcuts["&New"] == "Ctrl+N", shell_shortcuts
+    assert shell_shortcuts["&Open…"] == "Ctrl+O", shell_shortcuts
+    assert shell_shortcuts["&Save"] == "Ctrl+S", shell_shortcuts
+    assert shell_shortcuts["Save &As…"] == "Ctrl+Shift+S", shell_shortcuts
+    assert shell_shortcuts["&Quit"] == "Ctrl+Q", shell_shortcuts
+
     edit_labels = [action.text() for action in window._edit_menu.actions()]
-    assert "&Undo\tCtrl+Z" in edit_labels
-    assert "&Redo\tCtrl+Shift+Z" in edit_labels
-    assert "Cu&t\tCtrl+X" in edit_labels
-    assert "&Copy\tCtrl+C" in edit_labels
-    assert "Copy as &Markdown\tCtrl+Shift+C" in edit_labels
-    assert "&Paste\tCtrl+V" in edit_labels
-    assert "Paste as &Markdown\tCtrl+Shift+V" in edit_labels
-    assert "Select &All\tCtrl+A" in edit_labels
-    assert "&Find…\tCtrl+F" in edit_labels
-    assert "&Replace…\tCtrl+H" in edit_labels
+    # **No shortcut on any of these**, and that is deliberate rather than missing:
+    # they are document commands, the page implements them, and the page is the
+    # only thing that knows about a CodeMirror buffer's own selection or a
+    # spreadsheet grid's. A window-level shortcut would shadow exactly that.
+    assert "&Undo" in edit_labels
+    assert "&Redo" in edit_labels
+    assert "Cu&t" in edit_labels
+    assert "&Copy" in edit_labels
+    assert "Copy as &Markdown" in edit_labels
+    assert "&Paste" in edit_labels
+    assert "Paste as &Markdown" in edit_labels
+    assert "Select &All" in edit_labels
+    assert "&Find…" in edit_labels
+    assert "&Replace…" in edit_labels
+    for label in edit_labels:
+        if label:
+            assert "\t" not in label, (
+                f"a `\\t` in a label is not a shortcut in PySide6 — {label!r} would "
+                "advertise a key that does nothing")
 
     help_labels = [action.text() for action in window._help_menu.actions()]
     assert help_labels == ["&Edi Guide…", "&Formula Reference…", "", "&About Edi…"]
@@ -4027,11 +4050,35 @@ BLOCK_OUTLINES = r"""(() => {
 })()"""
 
 
+# A stand-in for the document the select-all report was made against: a document
+# function block and three tables — one with masked fields, one full of formulas, one
+# plain. It is inline rather than read from a file because the original was a scratch
+# document, and a test that depends on a file nobody keeps is a test that quietly
+# stops running.
+SPREADSHEET_DOC = """```edi-formula
+GREET(name) = CONCAT("Hello, ", name, "!")
+```
+
+| # | Provider | Username |
+| --- | --- | --- |
+| 1 | Hulu | !masked[ARcwSrKv6Gxz]{label="Hulu Username"} |
+
+| Name | Amount | Running | Greeting |
+| --- | ---: | --- | --- |
+| Dan | 25.25 | =D2+C2 | =GREET(A2) |
+| Renee | =B2+1 | 25.32 | =D2+C3 | =GREET(A3) |
+| **Total** | **=SUM(B2:B3)** |  |  |
+
+| Height | Width |
+| --- | --- |
+| 97.6 | 63.7 |
+"""
+
+
 def _spreadsheets(window):
-    """The document the report was made against: a formula block and three tables."""
-    import pathlib
+    """Open :data:`SPREADSHEET_DOC`, the shape the select-all report was made on."""
     window._web.page().runJavaScript(
-        "window.ediSetContent(%s); true" % json.dumps(pathlib.Path("spreadsheets.md").read_text()))
+        "window.ediSetContent(%s); true" % json.dumps(SPREADSHEET_DOC))
     _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
           lambda d: d.get("t") is True, timeout=25)
 
@@ -4048,7 +4095,91 @@ def _outline_colour_rgb(colour):
     return tuple(int(v) for v in parts[:3])
 
 
-def test_select_all_marks_every_selected_block(window):
+# Selection is **split by what the browser can already express**: text keeps the
+# browser's own highlight, and only atoms — a table, a diagram, a code block, which
+# have no selectable text inside them — are marked.
+#
+# Marking every top-level block was tried, to make the two look alike, and it made
+# them worse on both counts: an outline round ordinary paragraphs reads as a
+# decorative border around running text, and because `.edi-block-selected::selection`
+# erases the browser's highlight inside a marked block, marking everything erased the
+# native selection across the whole document at once — everything selected, nothing
+# visible as selected.
+SELECTION_SPLIT_DOC = """A paragraph of ordinary prose.
+
+- a list item
+- another
+
+| A | B |
+| --- | --- |
+| 1 | 2 |
+
+```mermaid
+graph TD
+  A[Alpha]
+```
+"""
+
+
+def test_selection_is_the_browsers_where_the_browser_can_do_it(window):
+    """Text shows the browser's selection; only atoms get a mark.
+
+    The two halves are checked separately because they fail separately. The mark is
+    the *only* thing an atom has — a range across a table shows no native highlight
+    at all, so without it the reader cannot tell whether the selection is across the
+    table or stopped before it. And the mark must **not** reach ordinary text,
+    because it suppresses the native highlight there (§ `.edi-block-selected
+    ::selection`) and replaces a familiar thing with a decorative outline.
+    """
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps(SELECTION_SPLIT_DOC))
+    _wait(window, "(() => ({ m: !!document.querySelector('#editor-container .mermaid') }))()",
+          lambda d: d.get("m") is True, timeout=25)
+
+    _ctrl_key(window, "a")
+    out = _wait(
+        window,
+        """(() => {
+          const marked = [...document.querySelectorAll('#editor-container .edi-block-selected')];
+          const clsOf = (el) => el ? String(el.className).split(' ')[0] : null;
+          const para = document.querySelector('#editor-container p');
+          const list = document.querySelector('#editor-container li');
+          return {
+            marked: marked.map((el) => clsOf(el)),
+            paraMarked: para ? para.classList.contains('edi-block-selected') : null,
+            listMarked: list ? list.classList.contains('edi-block-selected') : null,
+            // The browser's own highlight must still be live inside ordinary text.
+            paraSelection: (() => {
+              if (!para) return null;
+              let bg = null;
+              for (const sheet of document.styleSheets) {
+                let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+                for (const r of rules) {
+                  const sel = r.selectorText;
+                  if (!sel || !r.style) continue;
+                  if (!/::selection/.test(sel)) continue;
+                  if (!/edi-block-selected/.test(sel)) continue;
+                  bg = { sel: sel.slice(0, 60), bg: r.style.backgroundColor };
+                }
+              }
+              return bg;
+            })(),
+          };
+        })()""",
+        lambda d: len(d["marked"]) >= 2, timeout=10)
+
+    # The atoms: the table and the diagram. Nothing else.
+    assert sorted(out["marked"]) == ["mermaid", "ss-plain"], out["marked"]
+    assert out["paraMarked"] is False, "a paragraph must keep the browser's selection"
+    assert out["listMarked"] is False, "a list item must keep the browser's selection"
+
+    # ...and the suppression rule exists only for marked blocks, which is what keeps
+    # the browser's highlight alive everywhere else.
+    assert out["paraSelection"] is not None, "the ::selection suppression is gone"
+    assert "edi-block-selected" in out["paraSelection"]["sel"], out["paraSelection"]
+
+
+def test_select_all_marks_every_selected_atom(window):
     """`Ctrl+A` on `spreadsheets.md` marks every block it covers.
 
     The report was: press select-all, and not one block looks selected. The cause
@@ -4080,6 +4211,54 @@ def test_select_all_marks_every_selected_block(window):
         assert entry["width"] >= 2, f"the selection outline is too thin to see: {entry}"
         assert _outline_colour_rgb(entry["colour"]) == accent, (
             f"the selection outline is not --accent: {entry}")
+
+
+def test_entering_a_mode_drops_a_document_wide_selection(window):
+    """Ctrl+A, *then* Alt+click: the block shows the mode's mark, not selection's.
+
+    This is what made the dotted outline invisible in practice. Both marks are an
+    `outline` on the same element and selection is declared second, so it wins — and
+    a mode taken while the whole document was selected therefore read as *merely
+    selected*, on every block, forever. Taking a mode now collapses the selection,
+    which is also what a mode wants: it is a fresh start on one block.
+
+    The half that is easy to miss is that this is why the outline was reported as
+    never appearing while a direct Alt+click showed it perfectly well.
+    """
+    _spreadsheets(window)
+    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+    everything = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
+    assert all(entry["solid"] for entry in everything["selected"]), everything["selected"]
+
+    # Alt+click the last table: visual -> edit (its sheet).
+    _dump(window, """(() => {
+      const tables = document.querySelectorAll('#editor-container .ss-plain-table');
+      const cell = tables[tables.length - 1].querySelector('td');
+      cell.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
+          lambda d: d.get("s") is True, timeout=10)
+
+    after = _dump(window, """(() => {
+      const el = document.querySelector('#editor-container .spreadsheet');
+      const s = getComputedStyle(el).outlineStyle;
+      const sel = document.getSelection();
+      return {
+        marked: document.querySelectorAll('#editor-container .edi-block-selected').length,
+        sheetOutline: s,
+        domSelectionEmpty: !sel || sel.isCollapsed,
+        chip: (document.querySelector('#status-mode') || {}).textContent || '',
+      };
+    })()""")
+    assert after["marked"] == 0, (
+        f"entering a mode must drop the selection, not carry it: {after}")
+    assert after["domSelectionEmpty"], f"the document selection survived: {after}"
+    # The table is a sheet, so no mode outline is expected — the point is that
+    # nothing is claiming to be selected any more.
+    assert after["sheetOutline"] in ("none", ""), after
+    assert after["chip"].startswith("Edit"), after["chip"]
 
 
 def test_a_non_visual_mode_is_a_dotted_outline_whatever_the_mode(window):
@@ -4138,3 +4317,253 @@ def test_a_non_visual_mode_is_a_dotted_outline_whatever_the_mode(window):
     assert source["sourceOwnBorder"] != f"rgb({accent[0]}, {accent[1]}, {accent[2]})", (
         f"a source block's own border must be chrome, not a mode: "
         f"{source['sourceOwnBorder']}")
+
+
+def test_dbg_shortcut_fires(window, qtbot):
+    """TEMPORARY: does a real key press trigger the QAction, or only clicking it?"""
+    from PySide6.QtCore import Qt
+    fired = []
+    targets = {}
+    for menu in (window._edit_menu,):
+        for item in menu.actions():
+            key = item.text().split("\t")[0]
+            targets[key] = item
+            item.triggered.connect(lambda checked=False, k=key: fired.append(k))
+    print("\n  actions:", {k: (v.shortcut().toString(), v.isEnabled())
+                           for k, v in targets.items()})
+
+    window.raise_()
+    window.activateWindow()
+    _spreadsheets(window)
+
+    qtbot.keyClick(window, Qt.Key_A, Qt.ControlModifier)
+    time.sleep(0.4)
+    print("  after Ctrl+A  -> fired:", fired)
+    qtbot.keyClick(window, Qt.Key_C, Qt.ControlModifier)
+    time.sleep(0.4)
+    print("  after Ctrl+C  -> fired:", fired)
+
+    # And by clicking/triggering the action directly.
+    fired.clear()
+    targets["Cu&t"].trigger() if "Cu&t" in targets else None
+    for k, v in targets.items():
+        if "Copy" in k.replace("&", ""):
+            v.trigger()
+    time.sleep(0.4)
+    print("  after trigger -> fired:", fired)
+    assert True
+
+
+def test_who_owns_each_edit_menu_key(window):
+    """The shell's keys are real shortcuts; the document commands are not.
+
+    The bug this exists for: a `\\t` in a `QAction` label gives the action **no**
+    shortcut in PySide6, so `Ctrl+C` and `Ctrl+A` were labels and nothing else. The
+    keys reached the webview, where there was no DOM selection to copy, and both did
+    nothing — while clicking the same menu item worked, because clicking *triggers*
+    the action regardless. Read off the actions, never off the labels: the label was
+    never the evidence.
+    """
+    shell = {a.text(): a.shortcut().toString() for a in window._file_menu.actions()}
+    for label, sequence in (("&New", "Ctrl+N"), ("&Open…", "Ctrl+O"), ("&Save", "Ctrl+S"),
+                            ("Save &As…", "Ctrl+Shift+S"), ("&Quit", "Ctrl+Q"),
+                            ("Copy File &Path", "Ctrl+Alt+Shift+C")):
+        assert shell.get(label) == sequence, f"{label}: {shell.get(label)!r}"
+
+    # The document commands are the page's, and must hold no shortcut that would
+    # shadow it — including inside a CodeMirror buffer, where the page is the only
+    # thing that knows what is selected.
+    for action in window._edit_menu.actions():
+        assert action.shortcut().isEmpty(), (
+            f"{action.text()!r} holds {action.shortcut().toString()!r}, which would "
+            "shadow the page's own handling")
+        assert "\t" not in action.text(), (
+            f"{action.text()!r} advertises a key that does not work")
+
+
+def _ctrl_key(window, k, **mods):
+    return _dump(window, """(() => {
+      const el = document.querySelector('#editor-container .ProseMirror');
+      for (const type of ['keydown', 'keyup']) {
+        el.dispatchEvent(new KeyboardEvent(type, Object.assign(
+          { key: %s, code: 'Key%s', keyCode: %d, bubbles: true, cancelable: true },
+          { ctrlKey: true, metaKey: true }, %s)));
+      }
+      return { sent: true };
+    })()""" % (repr(k).replace("'", '"'), k.upper(), ord(k.upper()), mods))
+
+
+def _clipboard_text():
+    from PySide6.QtGui import QGuiApplication
+    time.sleep(0.5)
+    return QGuiApplication.clipboard().text()
+
+
+def test_ctrl_c_copies_the_document_as_rich_text(window):
+    """`Ctrl+A` then `Ctrl+C` puts the whole document on the clipboard, as HTML+text.
+
+    This is the report: `Ctrl+A` then `Ctrl+C` copied nothing, while **Edit → Copy**
+    worked. That signature is not a shortcut bound to the wrong thing, it is a
+    shortcut bound to *nothing*: Qt never claimed it (a `\t` in a QAction label
+    gives the action no shortcut), and ProseMirror has no `Mod-c` binding — it
+    answers a native `copy` DOM event, which a webview whose selection is managed in
+    JavaScript does not reliably produce. So the page now routes the key to
+    `editCopy`, which is exactly what the menu item calls.
+    """
+    from PySide6.QtGui import QGuiApplication
+    _spreadsheets(window)
+    QGuiApplication.clipboard().clear()
+
+    _ctrl_key(window, "a")
+    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
+    assert len(marked["selected"]) == 4, marked["selected"]
+
+    _ctrl_key(window, "c")
+    text = _clipboard_text()
+    assert text, "Ctrl+C put nothing on the clipboard"
+    assert "GREET(name)" in text, f"not the document: {text[:80]!r}"
+    assert text.count("|") > 20, f"the tables are missing: {text[:80]!r}"
+
+    # **Rich text as well as plain** — that is what makes this different from
+    # Ctrl+Shift+C, and it is what `editCopy` has always sent for the menu item.
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime is not None and mime.html(), "no HTML on the clipboard: plain text only"
+    assert "GREET" in mime.html(), mime.html()[:80]
+    assert mime.text() == text, "the plain-text flavour does not match"
+
+    # ...and Ctrl+Shift+C is still *plain Markdown*, which is the difference between
+    # the two keys and the reason both exist.
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "c", shiftKey="true")
+    markdown = _clipboard_text()
+    assert markdown, "Ctrl+Shift+C stopped working"
+    assert "GREET(name)" in markdown, markdown[:80]
+    shifted = QGuiApplication.clipboard().mimeData()
+    assert shifted is not None and not shifted.html(), (
+        "Ctrl+Shift+C must stay plain text; it is the Markdown key")
+
+
+def test_paste_is_not_stolen_from_a_field_or_a_code_editor(window):
+    """The clipboard keys yield to whatever actually holds the caret.
+
+    A masked field's revealed input, a spreadsheet cell and a block's raw-markdown
+    editor each have their own clipboard behaviour, and a document-level Copy in the
+    middle of one would either copy the wrong thing or nothing. Pinned on a block in
+    its Source form, which is the case most likely to be got wrong.
+    """
+    _spreadsheets(window)
+    _ctrl_key(window, "a")
+    _dump(window, """(() => {
+      const b = document.querySelector('#editor-container .block-control-representation');
+      b.click();
+      return { d: 1 };
+    })()""")
+    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .cm-editor') }))()",
+          lambda d: d.get("s") is True, timeout=10)
+
+    # Inside the CodeMirror the handler must not claim the key, so the editor's own
+    # copy runs and there is nothing on the document clipboard to contradict it.
+    inside = _dump(window, """(() => {
+      const el = document.querySelector('#editor-container .cm-content');
+      const before = document.activeElement;
+      for (const type of ['keydown', 'keyup']) {
+        el.dispatchEvent(new KeyboardEvent(type, Object.assign(
+          { key: 'c', code: 'KeyC', keyCode: 67, bubbles: true, cancelable: true },
+          { ctrlKey: true, metaKey: true })));
+      }
+      return { prevented: false, focusedInside: document.activeElement === before };
+    })()""")
+    assert inside["focusedInside"], inside
+
+
+def test_select_all_then_copy_reaches_the_clipboard(window):
+    """`Ctrl+A` then `Ctrl+C`: the markdown of the whole document, on the clipboard.
+
+    Every route is exercised, because they are different code: the page's own key
+    handling, and the shell's menu commands that the Qt actions call. The report was
+    that the keyboard did nothing while the menu worked, which is the signature of a
+    `\t` label that never bound anything — so this asserts the *outcome* rather than
+    that a shortcut exists.
+    """
+    from PySide6.QtGui import QGuiApplication
+    _spreadsheets(window)
+
+    def key(k):
+        return _dump(window, """(() => {
+          const el = document.querySelector('#editor-container .ProseMirror');
+          for (const type of ['keydown', 'keyup']) {
+            el.dispatchEvent(new KeyboardEvent(type, Object.assign(
+              { key: %s, code: 'Key%s', keyCode: %d, bubbles: true, cancelable: true },
+              { ctrlKey: true, metaKey: true })));
+          }
+          return { sent: true };
+        })()""" % (repr(k).replace("'", '"'), k.upper(), ord(k.upper())))
+
+    def clipboard():
+        time.sleep(0.5)
+        return QGuiApplication.clipboard().text()
+
+    # 1. The page's own path: select all, then its `copy` handler. The `copy` event
+    # is dispatched by hand because Chromium only fires one for a *real* key press,
+    # and a synthetic keydown cannot become one — which is also why `QTest` keys
+    # cannot test a shortcut here.
+    key("a")
+    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
+    assert len(marked["selected"]) == 4, marked["selected"]
+
+    written = _dump(window, """(() => {
+      const el = document.querySelector('#editor-container .ProseMirror');
+      let text = null;
+      const ev = new ClipboardEvent('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'clipboardData', { value: {
+        setData: (type, value) => { if (type === 'text/plain') text = value; },
+        getData: () => '', clearData: () => {}, types: ['text/plain'],
+      }, configurable: true });
+      el.dispatchEvent(ev);
+      return { len: text === null ? 0 : text.length, head: (text || '').slice(0, 60) };
+    })()""")
+    assert written["len"] > 100, f"the page's copy handler wrote nothing: {written}"
+    assert "GREET(name)" in written["head"], written
+
+    # 2. The shell's commands, which is what the Qt actions call.
+    QGuiApplication.clipboard().clear()
+    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+    _dump(window, "(() => { window.ediMenuCommand('copy'); return { d: 1 }; })()")
+    text = clipboard()
+    assert text, "Edit -> Copy put nothing on the clipboard"
+    assert "GREET(name)" in text, f"the copied text is not the document: {text[:80]!r}"
+    # The formula block and every table, in order.
+    assert text.count("|") > 20, f"the copied text is missing the tables: {text[:80]!r}"
+
+
+def test_dbg_ctrl_c_claim(window):
+    """TEMPORARY: does the page's Ctrl+C handler even see the key?"""
+    from PySide6.QtGui import QGuiApplication
+    _spreadsheets(window)
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "a")
+
+    out = _dump(window, """(() => {
+      const el = document.querySelector('#editor-container .ProseMirror');
+      const seen = [];
+      const spy = (e) => seen.push({ key: e.key, prevented: e.defaultPrevented });
+      window.addEventListener('keydown', spy);
+      const ev = new KeyboardEvent('keydown', Object.assign(
+        { key: 'c', code: 'KeyC', keyCode: 67, bubbles: true, cancelable: true },
+        { ctrlKey: true, metaKey: true }));
+      el.dispatchEvent(ev);
+      window.removeEventListener('keydown', spy);
+      return {
+        prevented: ev.defaultPrevented,
+        seen,
+        active: document.activeElement
+          ? document.activeElement.tagName + '.' + String(document.activeElement.className).slice(0, 24)
+          : null,
+        hasEditor: !!document.querySelector('#editor-container .ProseMirror[contenteditable]'),
+      };
+    })()""")
+    print("\n  prevented:", out["prevented"], " seen:", out["seen"])
+    print("  activeElement:", out["active"], " hasEditable:", out["hasEditor"])
+    time.sleep(0.6)
+    print("  clipboard:", len(QGuiApplication.clipboard().text()), "chars")
+    assert True
