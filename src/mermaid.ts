@@ -17,6 +17,31 @@ export const MERMAID_THEME_LIGHT: Record<string, string> = {
   lineColor: '#57606a',
   secondaryColor: '#f6f8fa',
   tertiaryColor: '#eaeef2',
+  // Diagrams that colour by *category* rather than by role — treemap sections,
+  // radar curves, pie slices — read `cScale0..11`, an ordinal scale: the first
+  // name a diagram meets takes slot 0, the next slot 1, and so on. Left to
+  // itself the `base` theme fills it by hue-rotating `primaryColor`, so our
+  // flowchart node fill was deciding the colours: `cScale0` *was* `primaryColor`
+  // and `cScale3..11` were it at +30° of hue apiece. From a light blue that
+  // spends the early slots on blue/indigo/violet and leaves `cScale1`/`cScale2`
+  // holding `secondaryColor`/`tertiaryColor` — two near-white greys — so a
+  // treemap came out one blue board with its first two sections indistinguishable.
+  // Slot 0 keeps `primaryColor`'s hue so a node fill and a first section still
+  // agree; the rest are an even wheel around it, front-loaded so the four slots a
+  // diagram usually shows are the four furthest apart (ΔE 23 between them, 11.1
+  // across all twelve once treemap's 0.6/0.3 fills are composited onto the page).
+  cScale0: '#5487c9',
+  cScale1: '#c95487',
+  cScale2: '#87c954',
+  cScale3: '#54c997',
+  cScale4: '#9754c9',
+  cScale5: '#c99754',
+  cScale6: '#5c54c9',
+  cScale7: '#c95c54',
+  cScale8: '#54c95c',
+  cScale9: '#54c1c9',
+  cScale10: '#c954c1',
+  cScale11: '#c1c954',
 }
 
 const MERMAID_THEME_DARK: Record<string, string> = {
