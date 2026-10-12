@@ -11,6 +11,7 @@
  */
 
 import { BUILTIN_FUNCTION_NAMES } from './formulas'
+import { colToLetters, lettersToCol } from './cellRef'
 
 const MONTH_FULL = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -134,25 +135,6 @@ function namedCycle(seeds: readonly string[], count: number): string[] | null {
 }
 
 // --- Formula reference shifting ---
-
-function lettersToCol(letters: string): number {
-  let col = 0
-  for (const char of letters.toUpperCase()) {
-    col = col * 26 + (char.charCodeAt(0) - 64)
-  }
-  return col
-}
-
-function colToLetters(col: number): string {
-  let n = col
-  let letters = ''
-  while (n > 0) {
-    const rem = (n - 1) % 26
-    letters = String.fromCharCode(65 + rem) + letters
-    n = Math.floor((n - 1) / 26)
-  }
-  return letters
-}
 
 const REF_TOKEN = /(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)/g
 

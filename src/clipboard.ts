@@ -103,7 +103,17 @@ async function webClipboardWrite(payload: ClipboardPayload): Promise<boolean> {
   return execCommandCopy(payload.text)
 }
 
-function execCommandCopy(text: string): boolean {
+/**
+ * The last-resort clipboard write: a hidden off-screen textarea and the
+ * synchronous `document.execCommand('copy')`, for a page where neither the
+ * native bridge nor the async web Clipboard API is available.
+ *
+ * Exported because the table copy control needs the same fallback for its
+ * text-only leg. It cannot reach for `copyText` there: it writes its own rich
+ * `ClipboardItem` first and drops to plain text only if that throws, so it
+ * must not also re-enter the bridge.
+ */
+export function execCommandCopy(text: string): boolean {
   const textarea = document.createElement('textarea')
   textarea.value = text
   textarea.style.position = 'fixed'

@@ -1,4 +1,6 @@
 import { parseCellSegments, renderCellHtml, styleCellDisplay, type CellMark } from './inline-md'
+import { colToLetters, lettersToCol } from './cellRef'
+import { FormulaScanner } from './formulaScanner'
 import {
   BUILTIN_ENV,
   add,
@@ -20,7 +22,6 @@ import {
   toText,
   type CellValue,
   type CellValueThunk,
-  type CompareOp,
   type FormulaEnv,
 } from './formulas'
 
@@ -318,15 +319,15 @@ function evaluateFormula(
   }
 }
 
-class FormulaParser {
-  private pos = 0
-
+class FormulaParser extends FormulaScanner {
   constructor(
-    private readonly source: string,
+    source: string,
     private readonly grid: SpreadsheetGrid,
     private readonly visiting: Set<string>,
     private readonly env: FormulaEnv,
-  ) {}
+  ) {
+    super(source)
+  }
 
   parse(): CellValue {
     const result = this.comparison()
@@ -347,16 +348,6 @@ class FormulaParser {
       if (!op) return left
       left = compareValues(left, this.additive(), op)
     }
-  }
-
-  private matchComparisonOp(): CompareOp | null {
-    if (this.match('<>')) return '<>'
-    if (this.match('<=')) return '<='
-    if (this.match('>=')) return '>='
-    if (this.match('=')) return '='
-    if (this.match('<')) return '<'
-    if (this.match('>')) return '>'
-    return null
   }
 
   private additive(): CellValue {
@@ -532,57 +523,8 @@ class FormulaParser {
     }
     return setValue(items, range.row2 - range.row1 + 1, range.col2 - range.col1 + 1, range.row1, range.col1)
   }
-
-  private readNumber(): number {
-    const start = this.pos
-    while (this.pos < this.source.length && /[0-9.]/.test(this.source[this.pos]!)) {
-      this.pos++
-    }
-    return Number(this.source.slice(start, this.pos))
-  }
-
-  /** A doubled `""` inside a literal is an escaped quote; `null` on an
-   * unterminated literal (no closing `"`). */
-  private readString(): string | null {
-    this.pos++ // opening "
-    let out = ''
-    let closed = false
-    while (this.pos < this.source.length) {
-      const ch = this.source[this.pos]!
-      if (ch === '"') {
-        if (this.source[this.pos + 1] === '"') {
-          out += '"'
-          this.pos += 2
-          continue
-        }
-        this.pos++
-        closed = true
-        break
-      }
-      out += ch
-      this.pos++
-    }
-    return closed ? out : null
-  }
-
-  private match(op: string): boolean {
-    if (this.source.startsWith(op, this.pos)) {
-      this.pos += op.length
-      return true
-    }
-    return false
-  }
-
-  private peek(): string | undefined {
-    return this.source[this.pos]
-  }
-
-  private skipWs(): void {
-    while (this.pos < this.source.length && /\s/.test(this.source[this.pos]!)) {
-      this.pos++
-    }
-  }
 }
+
 
 /**
  * Recover the plain text of a cell when its whole content is one inline run
@@ -643,25 +585,6 @@ function parseRange(raw: string): CellRange | null {
     row2: Math.max(row1, row2),
     col2: Math.max(col1, col2),
   }
-}
-
-function lettersToCol(letters: string): number {
-  let col = 0
-  for (const char of letters.toUpperCase()) {
-    col = col * 26 + (char.charCodeAt(0) - 64)
-  }
-  return col
-}
-
-export function colToLetters(col: number): string {
-  let n = col
-  let letters = ''
-  while (n > 0) {
-    const rem = (n - 1) % 26
-    letters = String.fromCharCode(65 + rem) + letters
-    n = Math.floor((n - 1) / 26)
-  }
-  return letters
 }
 
 function cellKey(row: number, col: number): string {

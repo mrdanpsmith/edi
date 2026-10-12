@@ -32,10 +32,10 @@ import {
   text,
   type CellValue,
   type CellValueThunk,
-  type CompareOp,
   type FormulaEnv,
   type FormulaFunction,
 } from './formulas'
+import { FormulaScanner } from './formulaScanner'
 
 export interface FormulaDefIssue {
   /** Index of the `edi-formula` source block the issue belongs to. */
@@ -327,15 +327,15 @@ function evaluateBody(
 /** Recursive-descent evaluator for a definition body. Mirrors the main
  * formula parser's precedence so `1 + 2 * 3` and `2 ^ 3 ^ 2` mean the same
  * thing in a body as they do in a cell. */
-class BodyParser {
-  private pos = 0
-
+class BodyParser extends FormulaScanner {
   constructor(
-    private readonly source: string,
+    source: string,
     private readonly scope: ReadonlyMap<string, CellValueThunk>,
     private readonly env: FormulaEnv,
     private readonly validateOnly = false,
-  ) {}
+  ) {
+    super(source)
+  }
 
   parse(): CellValue {
     const result = this.comparison()
@@ -366,16 +366,6 @@ class BodyParser {
     if (left.kind === 'error') return left
     if (right.kind === 'error') return right
     return num(0)
-  }
-
-  private matchComparisonOp(): CompareOp | null {
-    if (this.match('<>')) return '<>'
-    if (this.match('<=')) return '<='
-    if (this.match('>=')) return '>='
-    if (this.match('=')) return '='
-    if (this.match('<')) return '<'
-    if (this.match('>')) return '>'
-    return null
   }
 
   private additive(): CellValue {
@@ -518,55 +508,5 @@ class BodyParser {
   private validateFunction(name: string, fn: FormulaFunction | undefined): CellValue {
     if (!fn) return err('#NAME?', `Unknown function "${name}" in a function body`)
     return num(0)
-  }
-
-  private readNumber(): number {
-    const start = this.pos
-    while (this.pos < this.source.length && /[0-9.]/.test(this.source[this.pos]!)) {
-      this.pos++
-    }
-    return Number(this.source.slice(start, this.pos))
-  }
-
-  /** A doubled `""` inside a literal is an escaped quote; `null` on an
-   * unterminated literal. */
-  private readString(): string | null {
-    this.pos++ // opening "
-    let out = ''
-    let closed = false
-    while (this.pos < this.source.length) {
-      const ch = this.source[this.pos]!
-      if (ch === '"') {
-        if (this.source[this.pos + 1] === '"') {
-          out += '"'
-          this.pos += 2
-          continue
-        }
-        this.pos++
-        closed = true
-        break
-      }
-      out += ch
-      this.pos++
-    }
-    return closed ? out : null
-  }
-
-  private match(op: string): boolean {
-    if (this.source.startsWith(op, this.pos)) {
-      this.pos += op.length
-      return true
-    }
-    return false
-  }
-
-  private peek(): string | undefined {
-    return this.source[this.pos]
-  }
-
-  private skipWs(): void {
-    while (this.pos < this.source.length && /\s/.test(this.source[this.pos]!)) {
-      this.pos++
-    }
   }
 }

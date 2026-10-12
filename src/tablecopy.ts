@@ -1,4 +1,5 @@
 import { hasBridge, invoke } from './bridge'
+import { execCommandCopy } from './clipboard'
 
 export interface TableClipboardPayload {
   html: string
@@ -82,18 +83,6 @@ async function webClipboardCopy(payload: TableClipboardPayload): Promise<boolean
     // Fall through to the text-only fallback.
   }
   return execCommandCopy(payload.plain)
-}
-
-function execCommandCopy(text: string): boolean {
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.append(textarea)
-  textarea.select()
-  const copied = document.execCommand('copy')
-  textarea.remove()
-  return copied
 }
 
 export function previewExportBody(container: HTMLElement): string {

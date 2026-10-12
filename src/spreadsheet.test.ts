@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { BUILTIN_ENV } from './formulas'
+import { colToLetters } from './cellRef'
 import {
-  colToLetters,
   computeSpreadsheet,
   formatNumber,
   isFormula,

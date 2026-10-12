@@ -106,7 +106,7 @@ Invoke-Py -m venv '.venv-win'
 $PyVenv = Join-Path $PWD '.venv-win\Scripts\python.exe'
 & $PyVenv -m pip install --upgrade pip --quiet
 Assert-ExitCode 'pip upgrade'
-& $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' 'pefile==2024.8.26' 'pywin32-ctypes==0.2.3' 'defusedxml' --quiet
+& $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' 'pefile==2024.8.26' 'pywin32-ctypes==0.2.3' 'defusedxml==0.7.1' --quiet
 Assert-ExitCode 'pip install PySide6/pyinstaller'
 
 # --- Bundle Windows' system ICU next to Qt6Core.dll --------------------------

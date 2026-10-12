@@ -54,7 +54,7 @@ RUN python3 -m venv /opt/edi/venv \
         pytest \
         pytest-qt \
         pytest-cov \
-        defusedxml \
+        defusedxml==0.7.1 \
         bandit \
         pip-audit
 

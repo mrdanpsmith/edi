@@ -4,7 +4,8 @@
 // solver and the visual grid node-view work on.
 import { renderCellHtml } from './inline-md'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
-import { colToLetters, isFormula, parseCellRef, solve } from './spreadsheet'
+import { colToLetters } from './cellRef'
+import { isFormula, parseCellRef, solve } from './spreadsheet'
 
 export const DELIMITER_CELL = /^:?-+:?$/
 

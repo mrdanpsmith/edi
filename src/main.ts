@@ -64,14 +64,13 @@ import {
 } from './zoom'
 import { currentPreferences, savePreference } from './preferences'
 import { applyHoverBand, isHoverBandEnabled, setHoverBand } from './hoverBand'
-import { BUILTIN_FORMULAS } from './formulas'
 import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
 import { serializeBlock } from './markdown'
 import { promptForEncryptedBlockLabel, promptForNewPassword } from './crypto-dialog'
 import { encryptFieldVerified } from './crypto'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
-import welcomeMarkdown from './docs/welcome.md?raw'
+import { buildWelcomeMarkdown } from './welcomeDoc'
 import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
 import { setEncryptedBlockImageResolver, primeEncryptedBlockShow, getActiveEncryptedBlockView } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
@@ -85,12 +84,6 @@ import { promptForLink, promptForRename } from './urlDialog'
 import { Tabs } from './tabs'
 
 const IS_SELFTEST = new URLSearchParams(window.location.search).has('selftest')
-
-/** Comma-separated builtin names for the Welcome document, generated from the
- * registry so the list can never drift from what the evaluator supports. */
-const WELCOME_FUNCTIONS = BUILTIN_FORMULAS.map((fn) => `\`${fn.name}\``).join(', ')
-
-const WELCOME_DOCUMENT = welcomeMarkdown.replace('{{BUILTIN_FUNCTIONS}}', WELCOME_FUNCTIONS)
 
 const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
 const toolbarEl = document.querySelector<HTMLElement>('#toolbar')!
@@ -339,7 +332,7 @@ function openNewTab(): void {
 }
 
 function openWelcome(): void {
-  tabs.addSession(WELCOME_DOCUMENT)
+  tabs.addSession(buildWelcomeMarkdown())
   afterActivate()
 }
 
