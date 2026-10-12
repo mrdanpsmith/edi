@@ -946,19 +946,35 @@ function pasteEvent(): ClipboardEvent {
     : ({ clipboardData: null } as unknown as ClipboardEvent)
 }
 
+/**
+ * Select all — in **the editor the reader is in**, and without taking the caret out of
+ * a grid that has it.
+ *
+ * The first half is the same rule as the clipboard: a command bound to one editor is
+ * wrong the moment there is a second one, and `Ctrl+A` inside an open encrypted block
+ * used to select the document around it rather than the block the reader was standing
+ * in. The second half is the part that is only right because of it: routing through the
+ * focus resolver means a spreadsheet grid now resolves to the editor *containing* it,
+ * and the old unconditional `view.focus()` would have pulled the caret out of a grid
+ * the reader had a cell selected in — the two-selections state in reverse.
+ */
 function editSelectAll(): void {
-  const view = blockEditor?.getView()
-  if (view) {
-    const scrollTop = editorContainer.scrollTop
-    view.focus()
-    selectAll(view.state, view.dispatch)
-    // selectAll scrolls the full-document selection into view (the bottom),
-    // which jump-scrolls the editor. Restore the prior scroll position on the
-    // next frame once ProseMirror has performed its scrollIntoView.
-    requestAnimationFrame(() => {
-      editorContainer.scrollTop = scrollTop
-    })
-  }
+  const view = focusedEditor()
+  if (!view) return
+  // A grid owns its own selection and has no "select all" of its own, so the document
+  // command is not the reader's while one has the caret. Doing nothing is the only
+  // honest answer: selecting the whole document around a live sheet is the state
+  // §2.3 exists to prevent, and it is also what an inert document cannot express.
+  if (document.activeElement?.closest('.spreadsheet, .ss-plain')) return
+  const scrollTop = editorContainer.scrollTop
+  view.focus()
+  selectAll(view.state, view.dispatch)
+  // selectAll scrolls the full-document selection into view (the bottom),
+  // which jump-scrolls the editor. Restore the prior scroll position on the
+  // next frame once ProseMirror has performed its scrollIntoView.
+  requestAnimationFrame(() => {
+    editorContainer.scrollTop = scrollTop
+  })
 }
 
 function hasEditorSelection(): boolean {

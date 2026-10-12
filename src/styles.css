@@ -1029,6 +1029,34 @@ body {
   pointer-events: none;
 }
 
+/* ── A Visual table is text in a range ────────────────────────────────────────
+ * §2.2's table row: a table in its Visual rendering is mostly words laid out in
+ * rows, and a reader dragging across one expects to stop halfway down it. So it wears
+ * **the selection highlight, on its cells**, from the same `--selection` token as prose —
+ * not the solid accent outline, which says *this block is an object*, and which is what
+ * a diagram, a rule, an image and a CodeMirror code block still get.
+ *
+ * **On the cells rather than the block box**, because a header row and a cell's padding
+ * are chrome and not text: the fill goes where the words are, which is exactly where the
+ * browser puts it for prose.
+ *
+ * **The browser cannot do this.** The node view has no `contentDOM`, so Chromium will
+ * not paint a selection inside it — measured with the native highlight deliberately
+ * suppressed to be sure: prose beside the table painted `#3367d1` and the cell stayed
+ * `#ffffff`, while the DOM selection did span the table. Un-marking the table and
+ * letting the browser do it would leave a *hole* in the selection, which is worse than
+ * the outline it replaces. `TablePlainView` paints it instead, from the document's own
+ * selection — see `onSelectionChange`.
+ *
+ * The sheet is deliberately not painted: it holds the page's one working state, the
+ * record already marks it dashed, and its cells carry the grid's own selection
+ * (`.ss-range` / `.ss-selected`), which is a *cell* selection rather than a document
+ * range passing through.
+ */
+.ss-plain-table :is(th, td).ss-cell-in-selection {
+  background: var(--selection);
+}
+
 /* ── Headings ── */
 
 .ProseMirror h1,

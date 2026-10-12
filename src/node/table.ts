@@ -2896,12 +2896,69 @@ function bindMaskedPillsIn(
 }
 
 /**
+ * The class a Visual table puts on the **cells** a document selection covers.
+ *
+ * **On the cells, not on the block box.** A header row and a cell's padding are chrome,
+ * not text, so the fill goes where the words are — the same place a reader expects it,
+ * because it is exactly where the browser puts it for prose. An outline-and-tint round
+ * the block would be the old look with extra steps, and would say "this table is an
+ * object" about a block that is now text in a range.
+ */
+const CELL_SELECTED_CLASS = 'ss-cell-in-selection'
+
+/**
+ * Every open plain-table view, told when the page's selection moved.
+ *
+ * `selectionchange` on the document, because **this painter reads the browser's range
+ * and not ProseMirror's**. The model cannot express what it is painting: a table node
+ * has no content at all — the whole grid lives in `attrs.value` — so a document
+ * selection either covers the entire table or none of it, and "the first two rows and
+ * not the third" is not a position ProseMirror can hold. The browser *does* hold it:
+ * measured, a drag's DOM selection spans the cells it crosses and `toString()` returns
+ * their text, even though Chromium refuses to paint any of it. So the range is read from
+ * where it really lives.
+ *
+ * One listener for the page rather than one per view: the event fires for any selection
+ * anywhere, and a view that is not in the range simply paints nothing.
+ */
+const plainTableViews = new Set<() => void>()
+let selectionChangeWired = false
+
+function onNativeSelectionChange(listener: () => void): () => void {
+  plainTableViews.add(listener)
+  if (!selectionChangeWired) {
+    selectionChangeWired = true
+    document.addEventListener('selectionchange', () => {
+      for (const notify of [...plainTableViews]) notify()
+    })
+  }
+  return () => { plainTableViews.delete(listener) }
+}
+
+/**
  * View-mode rendering of a table: a plain markdown table (first row as a
  * header row) with no spreadsheet chrome — no column letters, row numbers,
  * tools row, fx bar, name box, or resize handles. Cell content keeps the
  * spreadsheet rendering (formulas solved, inline markdown, masked-field
  * pills). Enter spreadsheet mode with the ``Spreadsheet`` button or the
  * right-click menu.
+ *
+ * **It also paints the part of a document selection that falls inside it**, which is
+ * a new invariant and the only one here nobody held before: Chromium will not paint a
+ * selection inside a `contenteditable=false` host, so a range across this table shows
+ * *nothing at all* inside it — measured, with the browser's own highlight suppressed to
+ * be sure: the prose beside the table painted `#3367d1` and the cell stayed `#ffffff`,
+ * while the DOM selection genuinely spanned the table. So the fill is ours to draw, and
+ * it is drawn from `--selection`, the same token prose uses, so a range reading across
+ * prose → table → prose reads as one continuous highlight rather than as a hole with a
+ * frame round it.
+ *
+ * It cannot be a ProseMirror decoration. Without a `contentDOM` ProseMirror cannot put
+ * anything inside the node view, which is the whole reason the block-level mark existed
+ * — it puts a class on the block element and stops there. So this view reads the
+ * selection itself and stays in step with it, which is what `onSelectionChange` is for:
+ * a node view is only updated when its node or its decorations change, and an atom
+ * carrying no decorations is therefore never asked again.
  */
 class TablePlainView implements NodeView {
   dom: HTMLElement
@@ -2914,6 +2971,7 @@ class TablePlainView implements NodeView {
   private cells: HTMLElement[][] = []
   private unsubscribeFormulaEnv: (() => void) | null = null
   private unsubscribeSearchChanges: (() => void) | null = null
+  private unsubscribeSelection: (() => void) | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -2934,6 +2992,7 @@ class TablePlainView implements NodeView {
     this.renderBody()
     this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.renderBody())
     this.unsubscribeSearchChanges = subscribeSearchChanges(view, () => this.onSearchChange())
+    this.unsubscribeSelection = onNativeSelectionChange(() => this.paintSelection())
   }
 
   private renderBody(): void {
@@ -2946,6 +3005,55 @@ class TablePlainView implements NodeView {
 
     body.textContent = ''
     body.appendChild(scroll)
+    // A rebuild makes fresh cells, so the selection has to be painted onto *these*.
+    this.paintSelection()
+  }
+
+  /**
+   * Paint the cells this selection covers.
+   *
+   * **All of them, or none — and that is measured, not assumed.** §2.2 promises that a
+   * reader can "stop halfway down a table and select its first rows", and neither half
+   * of the app can deliver it:
+   *
+   * - **The model cannot hold it.** A table node has no content at all — the whole grid
+   *   lives in `attrs.value` — so a `TextSelection` covers the entire block or none of
+   *   it, and "rows one and two" is not a pair of positions that exist.
+   * - **The browser will not extend into it.** The range this painter would have to
+   *   read does not exist either: a drag starting in the prose above the table and
+   *   ending inside its second row leaves `getSelection().toString()` holding the prose
+   *   and nothing from the table, because everything inside is
+   *   `contenteditable=false`. §3.1 is that same wall, and it is why the cells are
+   *   painted at all rather than left to the engine.
+   *
+   * So the table is one highlight, in the selection's own colour, and what this buys is
+   * the thing §6's pixel gate is about: a range reading across prose → table → prose is
+   * **one continuous highlight** instead of a hole with a frame round it. It is a real
+   * improvement on the outline and it is not the same thing as per-row selection; §2.2's
+   * finer claim is unmet, and nothing here pretends otherwise.
+   */
+  private paintSelection(): void {
+    const pos = this.getPos()
+    const sel = this.view.state.selection
+    const node = pos === undefined ? null : this.view.state.doc.nodeAt(pos)
+    const inModel = pos !== undefined && node !== null &&
+      sel.from <= pos && pos + node.nodeSize <= sel.to
+    // **Either signal will do**, and taking the union is what makes the paint follow a
+    // real drag. ProseMirror maps a DOM range onto the document, and a range that runs
+    // across an atom can land on either side of it, so the model's answer alone leaves
+    // a table unpainted while the reader plainly sees a selection across it. The
+    // browser's own range is the other half of the truth — `intersectsNode` works on
+    // this subtree where `Selection.containsNode` answers "no" for everything (§3.1's
+    // wall again).
+    const native = document.getSelection()
+    const nativeRange = native !== null && native.rangeCount > 0 && !native.isCollapsed
+      ? native.getRangeAt(0)
+      : null
+    const inDom = nativeRange !== null && nativeRange.intersectsNode(this.dom)
+    const inside = inModel || inDom
+    this.cells.forEach((row) => row.forEach((cell) => {
+      cell.classList.toggle(CELL_SELECTED_CLASS, inside)
+    }))
   }
 
   private buildTable(): HTMLTableElement {
@@ -3073,6 +3181,8 @@ class TablePlainView implements NodeView {
     this.unsubscribeFormulaEnv = null
     this.unsubscribeSearchChanges?.()
     this.unsubscribeSearchChanges = null
+    this.unsubscribeSelection?.()
+    this.unsubscribeSelection = null
     this.body = null
   }
 }

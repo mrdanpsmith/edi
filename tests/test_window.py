@@ -4864,14 +4864,24 @@ graph TD
 
 
 def test_selection_is_the_browsers_where_the_browser_can_do_it(window):
-    """Text shows the browser's selection; only atoms get a mark.
+    """Text shows the selection highlight; only real objects get the block mark.
 
-    The two halves are checked separately because they fail separately. The mark is
-    the *only* thing an atom has — a range across a table shows no native highlight
-    at all, so without it the reader cannot tell whether the selection is across the
-    table or stopped before it. And the mark must **not** reach ordinary text,
-    because it suppresses the native highlight there (§ `.edi-block-selected
-    ::selection`) and replaces a familiar thing with a decorative outline.
+    **Expectation change, and deliberately: the table is no longer marked.** It used
+    to be, and the two marks now mean different things. A diagram has nothing the
+    browser can paint inside it, so a range across one shows *no highlight at all* and
+    the outline is the only thing saying it is in the selection. A Visual table is
+    mostly words in rows, so it is **text in a range** now — painted cell by cell from
+    `--selection`, the same token prose uses.
+
+    So the test asserts the two marks **differ in kind**, rather than listing which
+    blocks carry which. A list would pass for a change that merely stopped marking
+    tables, and for one that started marking everything the other way round; the claim
+    is that a block the browser can express is not dressed like a block it cannot.
+
+    The suppression rule is asserted to exist only for marked blocks (§3.6): it erases
+    the browser's highlight inside a marked block, where the outline *is* the selection.
+    A table that carried the class would have its new cell paint erased, and the change
+    would silently do nothing.
     """
     window._web.page().runJavaScript(
         "window.ediSetContent(%s); true" % json.dumps(SELECTION_SPLIT_DOC))
@@ -4882,15 +4892,27 @@ def test_selection_is_the_browsers_where_the_browser_can_do_it(window):
     out = _wait(
         window,
         """(() => {
-          const marked = [...document.querySelectorAll('#editor-container .edi-block-selected')];
-          const clsOf = (el) => el ? String(el.className).split(' ')[0] : null;
+          const kindOf = (el) => {
+            const cs = getComputedStyle(el);
+            return { cls: String(el.className).split(' ')[0], solid: cs.outlineStyle === 'solid',
+                     dashed: cs.outlineStyle === 'dashed',
+                     width: parseFloat(cs.outlineWidth) || 0 };
+          };
           const para = document.querySelector('#editor-container p');
           const list = document.querySelector('#editor-container li');
+          const table = document.querySelector('#editor-container .ss-plain');
+          const mermaid = document.querySelector('#editor-container .mermaid');
           return {
-            marked: marked.map((el) => clsOf(el)),
+            marked: [...document.querySelectorAll('#editor-container .edi-block-selected')]
+              .map(kindOf),
             paraMarked: para ? para.classList.contains('edi-block-selected') : null,
             listMarked: list ? list.classList.contains('edi-block-selected') : null,
-            // The browser's own highlight must still be live inside ordinary text.
+            tableMarked: table ? table.classList.contains('edi-block-selected') : null,
+            tableOutline: table ? kindOf(table) : null,
+            tableCells: table ? table.querySelectorAll('th, td').length : 0,
+            painted: [...document.querySelectorAll(
+              '#editor-container .ss-plain-table .ss-cell-in-selection')].length,
+            mermaidOutline: mermaid ? kindOf(mermaid) : null,
             paraSelection: (() => {
               if (!para) return null;
               let bg = null;
@@ -4908,25 +4930,32 @@ def test_selection_is_the_browsers_where_the_browser_can_do_it(window):
             })(),
           };
         })()""",
-        lambda d: len(d["marked"]) >= 2, timeout=10)
+        lambda d: d.get("painted", 0) > 0, timeout=10)
 
-    # The atoms: the table and the diagram. Nothing else.
-    assert sorted(out["marked"]) == ["mermaid", "ss-plain"], out["marked"]
-    assert out["paraMarked"] is False, "a paragraph must keep the browser's selection"
-    assert out["listMarked"] is False, "a list item must keep the browser's selection"
+    # The diagram is an object: marked, solid, 2px. The table is not marked at all and
+    # its cells are painted — which is the whole of the difference between the two.
+    assert [entry["cls"] for entry in out["marked"]] == ["mermaid"], out["marked"]
+    assert out["mermaidOutline"]["solid"] and out["mermaidOutline"]["width"] >= 2, out
+    assert out["tableMarked"] is False, (
+        f"a Visual table is text in a range now, so it takes no block mark: {out}")
+    assert out["painted"] == out["tableCells"] and out["tableCells"] > 0, (
+        f"select-all should paint every cell of the table: {out}")
 
-    # ...and the suppression rule exists only for marked blocks, which is what keeps
-    # the browser's highlight alive everywhere else.
+    # ...and the two marks differ in *kind*, which is the claim a list cannot check.
+    tableOutline = out["tableOutline"] or {"solid": False, "width": 0}
+    assert not (tableOutline["solid"] and tableOutline["width"] >= 2), (
+        f"a Visual table must come back with no solid selection outline: {out}")
+    assert not out["mermaidOutline"]["dashed"], out
+
+    assert out["paraMarked"] is False, "a paragraph must keep the selection highlight"
+    assert out["listMarked"] is False, "a list item must keep the selection highlight"
+
+    # ...and the suppression rule is only ever about marked blocks, which is what keeps
+    # the highlight alive everywhere else — including in the table's cells.
     assert out["paraSelection"] is not None, "the ::selection suppression is gone"
     assert "edi-block-selected" in out["paraSelection"]["sel"], out["paraSelection"]
 
 
-# Every `::selection` rule the page ships, asked as a question rather than
-# restated: which of them *applies to a word of prose*, and what does each one
-# paint. Matching the base selector against a real text node is what keeps this
-# honest — a rule that lists a block type it no longer has, or a selector spelled
-# for a DOM that is not in the document, reports nothing instead of reporting a
-# pass.
 PROSE_SELECTION = r"""(() => {
   const para = document.querySelector('#editor-container .ProseMirror p');
   if (!para) return { missing: true };
@@ -4971,6 +5000,8 @@ PROSE_SELECTION = r"""(() => {
     scheme: document.documentElement.dataset.colorScheme || 'light',
   };
 })()"""
+
+
 
 
 def test_prose_selection_is_the_apps_own_colour(window):
@@ -5893,13 +5924,23 @@ def test_a_composer_still_scrolls_into_view_in_a_dimmed_document(window):
         f"the composer hangs below the scroller's own edge: {scrolled}")
 
 
-def test_select_all_marks_every_selected_atom(window):
-    """`Ctrl+A` on `spreadsheets.md` marks every block it covers.
+def test_select_all_marks_every_selected_object(window):
+    """`Ctrl+A` on `spreadsheets.md` marks the blocks that are objects, and paints the
+    rest.
 
-    The report was: press select-all, and not one block looks selected. The cause
-    was not a missing style — `selectionHighlightPlugin` required a `TextSelection`
-    and `Ctrl+A` is an `AllSelection`, so it decorated nothing. Every kind of
-    non-empty selection has `from` and `to`, so the kind was never needed.
+    The report this test was written for is still the point: press select-all and not
+    one block looks selected. The cause was not a missing style —
+    `selectionHighlightPlugin` required a `TextSelection` and `Ctrl+A` is an
+    `AllSelection`, so it decorated nothing. Every kind of non-empty selection has `from`
+    and `to`, so the kind was never needed.
+
+    **Expectation change, and deliberately.** This used to assert **four** solid
+    `--accent` outlines on a document of one formula block and three tables. Only the
+    formula block is an object now: a Visual table is text in a range, and paints its
+    cells from the same `--selection` token as prose. Keeping the assertion at four would
+    mean either that tables are still objects or that something else started being marked
+    — and neither is true, so the test would be asserting a state the app is deliberately
+    not in.
     """
     _spreadsheets(window)
     assert not _dump(window, BLOCK_OUTLINES)["selected"], (
@@ -5915,16 +5956,40 @@ def test_select_all_marks_every_selected_atom(window):
       }
       return { sent: true };
     })()""")
-    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
+    painted = _wait(
+        window,
+        """(() => ({
+          selected: [...document.querySelectorAll('#editor-container .edi-block-selected')]
+            .map((el) => ({ cls: String(el.className).split(' ')[0],
+                             solid: getComputedStyle(el).outlineStyle === 'solid',
+                             width: parseFloat(getComputedStyle(el).outlineWidth) || 0,
+                             colour: getComputedStyle(el).outlineColor })),
+          tables: [...document.querySelectorAll('#editor-container .ss-plain')]
+            .map((el) => ({ outlined: getComputedStyle(el).outlineStyle === 'solid',
+                            cells: el.querySelectorAll('th, td').length })),
+          cells: [...document.querySelectorAll('#editor-container .ss-plain-table')]
+            .map((t) => t.querySelectorAll('.ss-cell-in-selection').length),
+        }))()""",
+        lambda d: all(n > 0 for n in d.get("cells", [0])), timeout=10)
 
-    # Every top-level block in this document: the formula block and three tables.
-    assert len(marked["selected"]) == 4, marked["selected"]
+    # The formula block is the one object here: a CodeMirror-backed code block, which
+    # the browser cannot paint inside either.
+    assert [entry["cls"] for entry in painted["selected"]] == ["runnable-block"], painted
     accent = _accent_rgb(window)
-    for entry in marked["selected"]:
-        assert entry["solid"], f"a selected block needs a SOLID outline: {entry}"
+    for entry in painted["selected"]:
+        assert entry["solid"], f"a selected object needs a SOLID outline: {entry}"
         assert entry["width"] >= 2, f"the selection outline is too thin to see: {entry}"
         assert _outline_colour_rgb(entry["colour"]) == accent, (
             f"the selection outline is not --accent: {entry}")
+
+    # ...and the three tables take none of it, while every one of their cells is painted.
+    assert len(painted["tables"]) == 3, painted
+    for entry in painted["tables"]:
+        assert not entry["outlined"], (
+            f"a Visual table is text in a range and must not wear the object outline: {entry}")
+        assert entry["cells"] > 0, entry
+    assert all(n == t["cells"] for n, t in zip(painted["cells"], painted["tables"])), (
+        f"select-all should paint every cell of every table: {painted}")
 
 
 def test_entering_a_mode_drops_a_document_wide_selection(window):
@@ -5936,13 +6001,16 @@ def test_entering_a_mode_drops_a_document_wide_selection(window):
     selected*, on every block, forever. Taking a mode now collapses the selection,
     which is also what a mode wants: it is a fresh start on one block.
 
-    The half that is easy to miss is that this is why the outline was reported as
-    never appearing while a direct Alt+click showed it perfectly well.
+    **Expectation change, and deliberate.** The set-up used to wait for *four* marked
+    blocks on `spreadsheets.md`. Only one of them is an object now — the formula block —
+    because a Visual table is text in a range and paints its cells instead. The claim
+    this test makes does not need four: it needs one block that is both selected and in a
+    mode, which is exactly what the formula block and the last table give.
     """
     _spreadsheets(window)
     _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
-    everything = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
-    assert all(entry["solid"] for entry in everything["selected"]), everything["selected"]
+    everything = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 1, timeout=10)
+    assert everything["selected"], everything
 
     # Alt+click the last table: visual -> edit (its sheet).
     _dump(window, """(() => {
@@ -5952,9 +6020,6 @@ def test_entering_a_mode_drops_a_document_wide_selection(window):
         { bubbles: true, cancelable: true, button: 0, altKey: true }));
       return { clicked: true };
     })()""")
-    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
-          lambda d: d.get("s") is True, timeout=10)
-
     after = _dump(window, """(() => {
       const el = document.querySelector('#editor-container .spreadsheet');
       const s = getComputedStyle(el).outlineStyle;
@@ -5973,6 +6038,259 @@ def test_entering_a_mode_drops_a_document_wide_selection(window):
     # outline any other non-visual block wears.
     assert after["sheetOutline"] == "dashed", after
     assert after["chip"].startswith("Edit"), after["chip"]
+
+
+CONTINUITY_DOC = """Prose that comes before the table and is long enough to have a
+word in the middle of it.
+
+| Alpha | Bravo | Charlie |
+| --- | --- | --- |
+| one | two | three |
+| four | five | six |
+
+Prose that comes after the table and also has a word worth reading.
+"""
+
+
+def test_a_range_across_a_table_is_one_continuous_highlight(window):
+    """Prose → Visual table → prose reads as one selection, not a hole with a frame.
+
+    **This is the claim §2.2 makes, and it cannot be tested any other way.** A table
+    that is *in* a selection and a different colour from the prose beside it passes every
+    structural check there is — the class is right, the rule is right, the node view is
+    right — and fails this one. So the pixels are the test: a range is set across the
+    whole document, and the most common colour inside the selected prose, inside a table
+    cell and inside the table's own header is compared against the app's token.
+
+    The colour is read from the token rather than written down, because a literal here
+    would turn a palette change into a failing selection test.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(CONTINUITY_DOC))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+
+    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+    _wait(window, """(() => ({
+      painted: document.querySelectorAll('.ss-cell-in-selection').length,
+    }))()""", lambda d: d.get("painted", 0) >= 9, timeout=10)
+
+    boxes = _dump(window, r"""(() => {
+      const word = (needle) => {
+        const el = [...document.querySelectorAll('#editor-container .ProseMirror p')]
+          .find((p) => p.textContent.indexOf(needle) >= 0);
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const at = n.textContent.indexOf(needle);
+          if (at < 0) continue;
+          const range = document.createRange();
+          range.setStart(n, at + 1);
+          range.setEnd(n, at + 1 + Math.max(3, Math.floor(needle.length / 3)));
+          const r = range.getBoundingClientRect();
+          if (r.width < 1) continue;
+          return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)];
+        }
+        return null;
+      };
+      const cellBox = (el) => {
+        const r = el.getBoundingClientRect();
+        return [Math.round(r.left + 4), Math.round(r.top + 4),
+                Math.round(r.right - 4), Math.round(r.bottom - 4)];
+      };
+      return {
+        before: word('comes before'),
+        after: word('comes after'),
+        cell: cellBox(document.querySelector('.ss-plain-table tbody td')),
+        header: cellBox(document.querySelector('.ss-plain-table thead th')),
+        selection: getComputedStyle(document.documentElement)
+          .getPropertyValue('--selection').trim(),
+      };
+    })()""")
+    for key in ("before", "after", "cell", "header"):
+        assert boxes.get(key), boxes
+
+    expected = tuple(int(boxes["selection"].lstrip("#")[i:i + 2], 16)
+                     for i in (0, 2, 4))
+    for key in ("before", "after", "cell", "header"):
+        got = _dominant_pixel(window, boxes[key])
+        assert got == expected, (
+            f"the {key} does not read as the app's selection colour, so the range is "
+            f"not one continuous highlight: {got} != {expected} ({boxes})")
+
+    # ...and it really is the cells doing it, not a fill behind the block.
+    block_bg = _dump(window, """(() => {
+      const el = document.querySelector('#editor-container .ss-plain');
+      return { bg: getComputedStyle(el).backgroundColor,
+               marked: el.classList.contains('edi-block-selected') };
+    })()""")
+    assert not block_bg["marked"], block_bg
+
+
+def test_a_table_in_a_range_is_painted_whole(window):
+    """A table bracketed by a range is one highlight — and the finer claim is measured,
+    not assumed.
+
+    §2.2 promises a reader can *stop halfway down a table and select its first rows*.
+    Neither half of the app can deliver it, and both are pinned here so the promise is
+    not quietly re-asserted later:
+
+    - **The model cannot hold it.** A table node has no content — the whole grid lives
+      in `attrs.value` — so a `TextSelection` covers the whole block or none of it.
+    - **The browser will not extend a range into it.** A range from the prose above the
+      table into its second row leaves `getSelection().toString()` holding the prose and
+      nothing from the table, because everything inside is `contenteditable=false`. A
+      range from prose to prose *across* the table does span it — which is why this gate
+      brackets rather than enters.
+
+    So the answer is one highlight for the whole table, and what this is really about is
+    the thing §6 asks for: **the range reads as continuous**, in the app's own selection
+    colour, instead of as a hole with a frame round it. If someone later gives the table
+    real content and gets per-row selection, this test is what has to change — which is
+    exactly why it is written down.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(CONTINUITY_DOC))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+
+    prose = _dump(window, r"""(() => {
+      const ps = [...document.querySelectorAll('#editor-container > .ProseMirror p')]
+        .filter((p) => !p.closest('.ss-plain'));
+      const first = ps[0], last = ps[ps.length - 1];
+      const range = document.createRange();
+      range.setStart(first.firstChild, 0);
+      range.setEnd(last.firstChild, last.firstChild.length);
+      const sel = getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      return { text: String(sel).slice(0, 200) };
+    })()""")
+    # A prose-to-prose bracket spans the table in the DOM range — the case §3.1
+    # measured, and the only one it measured.
+    assert "comes before" in prose["text"], prose
+    assert "comes after" in prose["text"], prose
+
+    painted = _wait(window, """(() => ({
+      cells: document.querySelectorAll('.ss-plain-table th, .ss-plain-table td').length,
+      painted: document.querySelectorAll('.ss-cell-in-selection').length,
+      marked: document.querySelectorAll('#editor-container .edi-block-selected').length,
+    }))()""", lambda d: d.get("painted", 0) > 0, timeout=10)
+    assert painted["painted"] == painted["cells"], (
+        f"a table in a range is painted whole, or not at all: {painted}")
+    assert painted["marked"] == 0, (
+        f"and it carries no block mark of its own any more: {painted}")
+
+
+def test_copying_across_a_table_is_unaffected(window):
+    """The table is still one unit to the gesture and to the clipboard.
+
+    §3.5, and the guard against this change having moved anything it was not supposed
+    to. `Ctrl+Shift+Down` walks a table as **one rung** — it did before and it does now
+    — and `clipboardText`'s markdown rendering is untouched. A Visual table is now text
+    *to look at* inside a range, which says nothing about what it *is*: still an atom,
+    still bracketed by a `TextSelection`, still rendered as markdown on the way out.
+    """
+    from PySide6.QtGui import QGuiApplication
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(SELECTION_SPLIT_DOC))
+    _wait(window, "(() => ({ m: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("m") is True, timeout=25)
+    QGuiApplication.clipboard().clear()
+
+    # The gesture, from the paragraph above the table.
+    _dump(window, """(() => {
+      const ps = [...document.querySelectorAll('#editor-container > .ProseMirror p')];
+      const first = ps[0];
+      first.focus();
+      const range = document.createRange();
+      range.selectNodeContents(first);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+      return { d: 1 };
+    })()""")
+    _ctrl_key(window, "c")
+    text = _clipboard_text()
+    assert "ordinary prose" in text, f"the copy missed the prose: {text[:80]!r}"
+
+    # ...and the whole document, whose markdown must still render the table as pipes.
+    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+    _wait(window, """(() => ({
+      painted: document.querySelectorAll('.ss-cell-in-selection').length,
+    }))()""", lambda d: d.get("painted", 0) > 0, timeout=10)
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "c")
+    everything = _clipboard_text()
+    assert "---" in everything, (
+        f"the table no longer renders as markdown on the way out: {everything[:160]!r}")
+
+
+def test_select_all_in_a_sheet_does_nothing_and_in_a_reveal_it_means_the_reveal(window):
+    """`Ctrl+A` belongs to the editor the reader is in, and never crosses a live grid.
+
+    The residual this closed had two faces. Inside a sheet, `Ctrl+A` used to select **the
+    whole document** — the grid has no binding for it, so the key fell through to the
+    window handler, which read the outer editor, whose selection the sheet had collapsed.
+    That is §1.3's two-selections state reached by keyboard, and inertness does not touch
+    it because nothing about it is a pointer.
+
+    Inside an open encrypted block it used to select the document *around* the block
+    rather than the block the reader was standing in, which is the focus-resolution rule
+    the clipboard got in Phase 2 and select-all did not.
+
+    A grid's own selection is a cell selection with no "select all" behind it, so doing
+    nothing is the honest answer there — and it is the half that must not regress,
+    because "route the command to the focused editor" naively resolves to the editor
+    *containing* the grid and would then `focus()` the caret straight out of it.
+    """
+    _open_a_working_state(window)
+    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+    time.sleep(0.4)
+    sheet = _dump(window, r"""(() => {
+      const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      return {
+        stillSheet: !!document.querySelector('#editor-container .spreadsheet'),
+        gridFocused: !!grid && document.activeElement === grid,
+        marked: document.querySelectorAll('#editor-container .edi-block-selected').length,
+      };
+    })()""")
+    assert sheet["stillSheet"], sheet
+    assert sheet["gridFocused"], (
+        f"select-all pulled the caret out of the sheet it was pressed in: {sheet}")
+    assert sheet["marked"] == 0, (
+        f"the document around a live sheet was selected: {sheet}")
+
+    # Now the same key inside an open block, where it should mean the block.
+    _alt_click_a_cell(window, "#editor-container .spreadsheet .ss-grid td")
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("p") is True, timeout=15)
+    _encrypt_and_reveal(window, "A secret paragraph inside the block.\n", "secret paragraph")
+    _reveal_selection(window, "secret paragraph")
+    # The document around the block already carries a selection — the gesture that
+    # opened the block left one — so the claim is that **the key does not touch it**,
+    # not that it is empty. Comparing before and after says exactly that, and is
+    # unmoved by whatever state the reveal gesture happened to leave behind.
+    def outer_marks():
+        return _dump(window, r"""(() => ({
+          marked: [...document.querySelectorAll('#editor-container .edi-block-selected')]
+            .map((el) => String(el.className).split(' ')[0]),
+          editorMarked: [...document.querySelectorAll(
+            '.encrypted-block-reveal .edi-block-selected')],
+        }))()""")
+
+    before_outer = outer_marks()
+    _ctrl_key_on(window, ".encrypted-block-reveal .ProseMirror", "a")
+    time.sleep(0.4)
+    reveal = _dump(window, r"""(() => ({
+      native: String(getSelection()).slice(0, 120),
+      inside: document.activeElement
+        ? !!document.activeElement.closest('.encrypted-block-reveal') : false,
+    }))()""")
+    assert "secret paragraph" in reveal["native"], (
+        f"select-all inside the reveal should select the reveal: {reveal}")
+    assert reveal["inside"], f"the caret should have stayed inside the reveal: {reveal}"
+
+    after_outer = outer_marks()
+    assert after_outer == before_outer, (
+        "select-all inside the reveal reached out and changed the document around it: "
+        f"{before_outer} -> {after_outer}")
 
 
 def test_a_non_visual_mode_is_a_dashed_outline_whatever_the_mode(window):
@@ -6360,6 +6678,14 @@ def test_a_drag_across_an_open_block_copies_the_placeholder_not_the_secret(windo
     # A document selection that brackets the open block, exactly as a drag across
     # one makes. `selectAll` is the honest way to get one — it goes through the
     # editor's own state, where a hand-made DOM range gets reconciled away.
+    #
+    # The outer editor is focused first because **`selectAll` means "select all in the
+    # editor I am in"**, which is the focus-resolution rule the clipboard commands got
+    # in Phase 2 and select-all did not: opening a block leaves focus inside it, so
+    # without this the command would select the block and not the document — correct,
+    # and not what this test is about.
+    _dump(window, "(() => { document.querySelector('#editor-container > .ProseMirror').focus();"
+                  " return { d: 1 }; })()")
     _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
     _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 1, timeout=10)
     before = _dominant_pixel(window, box["box"])
@@ -6416,8 +6742,11 @@ def test_ctrl_c_copies_the_document_as_rich_text(window):
     QGuiApplication.clipboard().clear()
 
     _ctrl_key(window, "a")
-    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
-    assert len(marked["selected"]) == 4, marked["selected"]
+    # One marked block, not four: on this document the formula block is the only
+    # object — the three tables are text in a range now and paint their cells. The
+    # wait is here to know a selection exists at all, not to count marks.
+    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 1, timeout=10)
+    assert len(marked["selected"]) == 1, marked["selected"]
 
     _ctrl_key(window, "c")
     text = _clipboard_text()
@@ -6509,8 +6838,11 @@ def test_select_all_then_copy_reaches_the_clipboard(window):
     # and a synthetic keydown cannot become one — which is also why `QTest` keys
     # cannot test a shortcut here.
     key("a")
-    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 4, timeout=10)
-    assert len(marked["selected"]) == 4, marked["selected"]
+    # One marked block, not four: on this document the formula block is the only
+    # object — the three tables are text in a range now and paint their cells. The
+    # wait is here to know a selection exists at all, not to count marks.
+    marked = _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 1, timeout=10)
+    assert len(marked["selected"]) == 1, marked["selected"]
 
     written = _dump(window, """(() => {
       const el = document.querySelector('#editor-container .ProseMirror');

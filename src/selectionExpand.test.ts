@@ -263,10 +263,18 @@ describe('cross-block keyboard selection', () => {
     expect(gesture(view, 'ArrowDown')).toBe(true)
     expect(view.state.selection).toBeInstanceOf(TextSelection)
     expect(view.state.selection.to).toBe(posOf(view, (n) => n === 'code_block'))
-    expect(view.dom.querySelectorAll('.edi-block-selected').length).toBe(1)
+    // The range has reached the code fence's **start** — `posOf` is where the block
+    // begins, so nothing is inside it yet and nothing is marked.
+    expect(view.dom.querySelectorAll('.edi-block-selected').length).toBe(0)
     expect(gesture(view, 'ArrowDown')).toBe(true)
     expect(view.state.selection.to).toBe(view.state.doc.content.size)
-    expect(view.dom.querySelectorAll('.edi-block-selected').length).toBe(2)
+    // One press on, the fence is inside the range and the table is too, and only the
+    // fence wears the mark. The table did when it was marked as an object, and it does
+    // not now, because a Visual table is **text in a range** — it paints its own cells
+    // from `--selection` instead (a real-engine gate, since jsdom fires no
+    // `selectionchange` for `TablePlainView` to hear). The ladder above is untouched:
+    // the table is still one rung, and `isSelectionAtom` still counts it.
+    expect(view.dom.querySelectorAll('.edi-block-selected').length).toBe(1)
     destroy()
   })
 

@@ -29,7 +29,7 @@ import { Decoration, DecorationSet } from 'prosemirror-view'
 import type { EditorView } from 'prosemirror-view'
 import type { Node as ProseNode, Slice } from 'prosemirror-model'
 import { CODE_LANGUAGE_ALIASES, shebangLanguage } from './codeLanguages'
-import { modeFor } from './block-modes'
+import { blockFormMode, modeFor } from './block-modes'
 
 type Dir = 1 | -1
 
@@ -74,9 +74,52 @@ export function isCodeEditorBlock(state: EditorState, node: ProseNode, pos: numb
   return !!(interpreter && interpreter in CODE_LANGUAGE_ALIASES)
 }
 
-/** A block the gesture selects whole: an atom, or a CodeMirror code block. */
+/** A block the gesture selects whole: an atom, or a CodeMirror code block.
+ *
+ * **This is the gesture's unit, not the reader's.** §3.5 keeps `Ctrl+Shift+Up/Down`
+ * walking a table as one rung and calls that correct as it stands — a table is still an
+ * atom bracketed by a `TextSelection`, and `clipboardText`'s markdown rendering is
+ * unchanged. What changed is what a table *looks like* inside a range, which is
+ * `isSelectedAsObject`'s question and not this one's. The two used to be one function
+ * because "the browser cannot paint a selection here" and "the gesture steps over it"
+ * happened to be true of the same blocks; one of them stopped being true when a Visual
+ * table was given a painter of its own. */
 export function isSelectionAtom(state: EditorState, node: ProseNode, pos: number): boolean {
   return node.isBlock && (node.isAtom || isCodeEditorBlock(state, node, pos))
+}
+
+/**
+ * Is this block one the reader selects **whole**, and which therefore needs a mark of
+ * its own because the browser will not paint anything inside it?
+ *
+ * **The question is what the reader can point at, never what ProseMirror stores.** A
+ * table has no `contentDOM` — its whole grid lives in `attrs.value` — so ProseMirror
+ * calls it an atom, and every selection rule keyed on `node.isAtom` swept it in with
+ * the things that genuinely have no content. It does not belong there: a table is
+ * mostly words laid out in rows, and a reader dragging across one expects to stop
+ * halfway down it.
+ *
+ * So a table in its **Visual** rendering is text here, and is painted by
+ * `TablePlainView` the way prose is — cell backgrounds, from `--selection`. Two
+ * consequences worth stating, because they are what the split is for:
+ *
+ * - un-marking the table does **not** leave a hole. Chromium will not paint a selection
+ *   inside a `contenteditable=false` host (measured: the DOM selection spans the table
+ *   and the cell stays `#ffffff`), which is why the cells are painted by hand at all.
+ * - the `.edi-block-selected::selection` suppression does not reach it either, because
+ *   the table no longer carries the class. That rule erases the browser's highlight
+ *   inside a marked block, where the block's own outline *is* the selection; painting
+ *   prose and erasing it in the same rule would be a no-op with extra steps.
+ *
+ * A table held as a **sheet** stays an object: it is in the page's one working state,
+ * the record already marks it, and the grid is a live surface rather than text.
+ */
+export function isSelectedAsObject(state: EditorState, node: ProseNode, pos: number): boolean {
+  if (!isSelectionAtom(state, node, pos)) return false
+  if (node.type.name !== 'table') return true
+  // A table in its default rendering holds no record at all, which is what makes any
+  // number of tables possible in one document; only the sheet is a mode.
+  return blockFormMode(state, pos) !== undefined
 }
 
 /** A text block the gesture can place a selection endpoint inside. */
@@ -329,32 +372,25 @@ export const selectionExpandPlugin = new Plugin<ExpandState>({
 })
 
 /**
- * Mark the **atomic** blocks a selection covers, so a table or a diagram bracketed
- * by a selection looks selected instead of skipped.
+ * Mark the blocks a selection covers **as objects** — the ones the browser cannot
+ * paint anything inside.
  *
- * **Atoms only, and that is the whole design.** A block the reader thinks of as a
- * unit of *text* is better served by the browser's own selection highlight: it is
- * what a browser does, it follows the text exactly, and it costs nothing. An atom —
- * a table, a diagram, a code block — has no selectable text inside it, so a range
- * across one shows *nothing at all*, and the reader cannot tell whether it is in
- * the selection or whether the selection stopped there. So the rule is split by what
- * the browser can already express: text keeps the browser's, and only what the
- * browser cannot show is marked here.
- *
- * Marking *every* top-level block was tried, to make the two look the same. It made
- * them worse: the outline went on ordinary paragraphs, which read as decorative
- * borders around running text rather than as a selection, and because
+ * **Text keeps the browser's, and only what the browser cannot show is marked here.**
+ * A Visual table used to be marked for the same reason a diagram is, and is not any
+ * more: it is mostly words in rows, and it now paints its own cells from the same
+ * `--selection` token as prose, so a range across one reads as one continuous
+ * highlight. Marking everything was tried, to make the two look the same, and it made
+ * them worse: the outline went on ordinary paragraphs, which read as decorative borders
+ * around running text rather than as a selection, and because
  * `.edi-block-selected::selection` suppresses the native highlight inside a marked
- * block (§ styles), marking everything erased the browser's selection across the
- * whole document at once — the state where everything is selected and nothing can
- * be seen to be. Two marks for one idea, both of them wrong.
+ * block, marking everything erased the browser's selection across the whole document at
+ * once — everything selected and nothing visible as selected. Two marks for one idea,
+ * both of them wrong.
  *
- * **The selection's kind is not consulted**, which is the one thing that was fixed
- * here and kept. This used to require a `TextSelection`, so `Ctrl+A` — which
- * ProseMirror makes an `AllSelection` — marked *nothing*: an atom in a select-all
- * was invisible, the same bug from the other direction. Every kind of non-empty
- * selection has `from` and `to`, and the question is only "is this atom inside
- * them".
+ * **The selection's kind is not consulted**, which is the one thing that was fixed here
+ * and kept: `Ctrl+A` is an `AllSelection`, and requiring a `TextSelection` marked
+ * *nothing*, so an atom in a select-all was invisible. Every kind of non-empty
+ * selection has `from` and `to`, and the question is only "is this object inside them".
  *
  * A whole-block `NodeSelection` is styled separately, via the
  * `.ProseMirror-selectednode` class ProseMirror puts on the node itself.
@@ -367,7 +403,7 @@ export const selectionHighlightPlugin = new Plugin({
       if (sel.empty) return null
       const decos: Decoration[] = []
       state.doc.descendants((node, pos) => {
-        if (isSelectionAtom(state, node, pos) && pos >= sel.from && pos + node.nodeSize <= sel.to) {
+        if (isSelectedAsObject(state, node, pos) && pos >= sel.from && pos + node.nodeSize <= sel.to) {
           decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'edi-block-selected' }))
         }
         return true
