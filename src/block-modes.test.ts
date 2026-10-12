@@ -22,6 +22,7 @@ import {
   blockFormMode,
   blockModeFor,
   blockModePlugin,
+  chainOf,
   currentBlockMode,
   enterBlockMode,
   enterSourceMode,
@@ -31,6 +32,7 @@ import {
   leaveBlockMode,
   litBlockPositions,
   modeFor,
+  rivalChains,
   setBlockForm,
   toggleBlockMode,
   toggleBlockModeFromGesture,
@@ -787,8 +789,8 @@ describe('one non-visual block in the whole page', () => {
   // spans editors: an unlocked encrypted block is a *whole nested* editor with its
   // own record, so "at most one" is a statement about the page. That needs
   // something the plugin state cannot hold — a pointer to the editor that has the
-  // slot — so it is the one thing here that lives outside plugin state, and these
-  // are the tests that say what it may and may not do.
+  // **focus path** — so it is the one thing here that lives outside plugin state,
+  // and these are the tests that say what it may and may not do.
   /**
    * Two editors that keep the page's one slot, built the way the app builds them.
    *
@@ -798,12 +800,15 @@ describe('one non-visual block in the whole page', () => {
    * function here is therefore part of being a second editor, not a workaround:
    * it is the one requirement, and it is stated in one place.
    */
-  function editor(md: string): EditorView {
+  function editor(md: string, above?: () => { view: EditorView; pos: number; type: string }): EditorView {
     const view = createEditor(md)
     const dispatch = view.dispatch.bind(view)
     view.dispatch = (tr: Parameters<typeof dispatch>[0]) => {
       dispatch(tr)
-      keepOneNonVisualBlock(view)
+      // One call, as `createBlockEditor` makes it. Wrapping it a second time to add
+      // the parent link would first publish this editor as a *root*, which is a rival
+      // of the very parent it is nested in — and would release it.
+      keepOneNonVisualBlock(view, above?.())
     }
     return view
   }
@@ -873,6 +878,47 @@ describe('one non-visual block in the whole page', () => {
     expect(blockFormMode(view.state, table)).toBeUndefined()
     expect(modeFor(view.state, board)?.interaction).toBe('editing')
     view.destroy()
+  })
+
+  it('treats a nested editor as a rung of its parent\'s path, not as a rival', () => {
+    // The case the path exists for. An outer block open, and a working state *inside*
+    // it: the two are one focus, so the inner one must not release the outer — which
+    // is not a detail, because releasing the outer record **is** locking the block.
+    //
+    // The parent link is the only thing a nested editor knows that the outer one does
+    // not, which is why it is passed in rather than looked up: two editors, the inner
+    // one naming the block it lives in.
+    // The outer block is a **diagram**, because the outer state in the product is an
+    // unlocked encrypted block or an edited diagram — both `interaction: 'toggle'` —
+    // and a table cannot take one (`setBlockModeAt` refuses it, which is the point).
+    const outer = editor('| A |\n| --- |\n| 1 |\n\n```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const block = boardOf(outer)
+    enterDiagramEditMode(outer, block)
+    expect(modeFor(outer.state, block)?.interaction).toBe('editing')
+
+    const inner = editor('| X |\n| --- |\n| 9 |',
+      () => ({ view: outer, pos: block, type: 'mermaid_block' }))
+
+    enterSpreadsheetMode(inner, tableOf(inner))
+
+    // Two rungs, one path.
+    expect(chainOf(inner)).toHaveLength(2)
+    expect(chainOf(outer)).toHaveLength(1)
+    expect(rivalChains(inner)).toHaveLength(0)
+    // ...and the outer block is still holding its state, untouched.
+    expect(modeFor(outer.state, block)?.interaction).toBe('editing')
+
+    // A *third* editor is still a rival, even though its document has the same shape,
+    // and taking its state releases the chain it competed with.
+    const third = editor('| X |\n| --- |\n| 9 |')
+    enterSpreadsheetMode(third, tableOf(third))
+    expect(modeFor(inner.state, tableOf(inner))).toBeNull()
+    expect(modeFor(outer.state, block)).toBeNull()
+    expect(rivalChains(third)).toHaveLength(0)
+
+    third.destroy()
+    inner.destroy()
+    outer.destroy()
   })
 })
 

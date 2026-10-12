@@ -5189,6 +5189,341 @@ def test_a_working_state_dims_and_inerts_the_rest_of_the_document(window):
     assert float(contrast["dimOut"]) == float(out["dimOut"]), (contrast, out)
 
 
+# ── An unlocked block is a working state ──────────────────────────────────────
+# Everything below is about one reclassification: a reveal used to be a per-block,
+# non-exclusive closure living in a node view, and is now the page's one focus path —
+# the same slot a diagram's edit mode and a table's sheet occupy. The gates below are
+# what that earns, and the three edges it creates.
+THREE_PARAGRAPHS = "Opening the door.\n\nThe window.\n\nThe end.\n"
+
+BLOCK_PASSWORD = "clipboard-gate-password"
+
+
+def _encrypt_block_with(window, needle, password=BLOCK_PASSWORD, nth=None):
+    """Encrypt the block whose text contains `needle`, through the app's own menu.
+
+    The menu, not a caret: `encryptBlockCommand` takes the block the selection is in,
+    and a synthetic click does not move a ProseMirror selection in this harness. The
+    context menu resolves its target through `blockPosForElement`, the app's one
+    DOM→position authority, so right-clicking is both deterministic and the gesture a
+    reader uses. See `_encrypt_and_reveal` for the rest of the path.
+    """
+    # Right-click and take the item **in one task**. The menu is a popover that a
+    # press outside dismisses, so reading it from a second round trip can find it
+    # already gone — which is not a claim about anything. The items it saw come back
+    # in the result so a failure says what was on offer.
+    offered = _dump(window, """(() => {
+      const editor = %s;
+      // By its own words, or by position when the rendered text is not the markdown
+      // being looked for — a table's `textContent` is its cells, not its pipes.
+      const block = %s === null
+        ? [...editor.children].find((el) => el.textContent.indexOf(%s) >= 0)
+        : editor.children[%s];
+      if (!block) return { missing: true };
+      const rect = block.getBoundingClientRect();
+      const x = Math.round(rect.left + 40), y = Math.round(rect.top + rect.height / 2);
+      const at = document.elementFromPoint(x, y) || block;
+      for (const type of ['mousedown', 'contextmenu', 'mouseup']) {
+        at.dispatchEvent(new MouseEvent(type,
+          { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: x, clientY: y }));
+      }
+      const items = [...document.querySelectorAll('.edi-context-menu button')]
+        .map((b) => b.textContent.trim());
+      const item = [...document.querySelectorAll('.edi-context-menu button')]
+        .find((b) => b.textContent.indexOf('Encrypt block') >= 0);
+      if (!item) return { items };
+      item.click();
+      return { items };
+    })()""" % (OUTER_EDITOR,
+                "null" if nth is None else str(nth),
+                json.dumps(needle),
+                "null" if nth is None else str(nth)))
+    assert not offered.get("missing"), (
+        "no such block to encrypt: %r" % (offered,))
+    assert any("Encrypt block" in t for t in offered.get("items", [])), (
+        "the block's context menu offered no way to encrypt it: %r" % (offered,))
+    # The label dialog first, then the password asked twice. Left at their defaults.
+    _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
+          lambda d: (d.get("t") or "").startswith("Encrypt"), timeout=10)
+    _dump(window, """(() => {
+      [...document.querySelectorAll('.edi-dialog-actions button')]
+        .find((b) => b.textContent.trim() === 'Encrypt').click();
+      return { d: 1 };
+    })()""")
+    _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
+          lambda d: (d.get("t") or "") == "Set password", timeout=10)
+    _dump(window, """(() => {
+      for (const input of document.querySelectorAll('.edi-dialog-input')) {
+        input.value = %s;
+      }
+      [...document.querySelectorAll('.edi-dialog-actions button')]
+        .find((b) => b.textContent.trim() === 'Encrypt').click();
+      return { d: 1 };
+    })()""" % json.dumps(password))
+    _wait(window,
+          """(() => ({ r: !!document.querySelector('#editor-container .encrypted-block-reveal') }))()""",
+          lambda d: d.get("r") is True, timeout=20)
+
+
+def test_opening_a_block_takes_the_pages_one_working_state(window):
+    """Unlocking dims the document at once, and marks the block like any other.
+
+    Three claims in one test because they are one gesture:
+
+    - **The rest of the document is already dimmed and inert**, with no click into the
+      reveal at all. The plaintext is on screen and the reader's attention is on this
+      block, so the treatment is unlock-keyed rather than focus-keyed: waiting for a
+      focus would leave the window between "decrypted" and "notice" as exactly the
+      window in which the plaintext is readable and the document looks normal.
+    - **The block wears the shared dashed outline** and the chip names the state, and
+      its cluster offers **Lock** rather than Edit. The old 3px accent bar was standing
+      in for "open", which the two-mark vocabulary had no slot for; adding the block
+      to `INTERACTIVE_BLOCKS` gives it the same mark as a source form, an edited
+      diagram and a sheet, so there is one outline to read rather than two.
+    - The **other** paragraph, which holds nothing, is dimmed — which is what makes the
+      dashed one the only outline on the page and therefore readable at a glance.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(THREE_PARAGRAPHS))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    _encrypt_block_with(window, "Opening the door.")
+
+    out = _wait(window, r"""(() => ({
+      dimmed: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+      lit: [...document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-lit')]
+        .map((el) => {
+          const cs = getComputedStyle(el);
+          return { dashed: cs.outlineStyle === 'dashed', width: parseFloat(cs.outlineWidth) || 0,
+                   open: !!el.querySelector('.encrypted-block-reveal'),
+                   buttons: [...el.querySelectorAll('.block-control')].map((b) => b.textContent.trim()) };
+        }),
+      // The bar that used to stand in for "open" is gone.
+      bar: (() => {
+        const r = document.querySelector('.encrypted-block-reveal');
+        if (!r) return null;
+        const cs = getComputedStyle(r);
+        return { width: cs.borderLeftWidth, colour: cs.borderLeftColor };
+      })(),
+      chip: (document.querySelector('#status-mode') || {}).textContent || '',
+    }))()""", lambda d: d.get("lit"), timeout=10)
+
+    assert out["dimmed"] == 2, (
+        f"the other two blocks should be dimmed, with no click into the reveal: {out}")
+    assert len(out["lit"]) == 1, out
+    assert out["lit"][0]["open"], out
+    assert out["lit"][0]["dashed"] and out["lit"][0]["width"] >= 2, (
+        f"an open block should wear the shared dashed mode outline: {out}")
+    assert "Lock" in " ".join(out["lit"][0]["buttons"]), (
+        f"the cluster should offer a way out of the working state: {out}")
+    accent = _accent_rgb(window)
+    assert out["bar"] is not None and float(out["bar"]["width"].replace("px", "")) < 3, (
+        f"the accent bar is standing in for a mark that now exists: {out}")
+    assert _outline_colour_rgb(out["bar"]["colour"]) != accent, (
+        f"the left bar is still painted in --accent: {out}")
+    assert "Edit" in out["chip"], (
+        f"the chip names the mode and this block is in one: {out}")
+
+
+def test_a_second_block_cannot_be_opened_while_one_is_open(window):
+    """One at a time — and in the product the half that enforces it is **inertness**.
+
+    The rule is two blocks' — one holds the page's working state, and unlocking a
+    second locks the first. Only one of those is reachable any more, and it is worth
+    saying which and why: an open block **dims and inertises every other block**, so
+    the second block's cluster is behind `pointer-events: none` and a reader cannot
+    click it at all. Exclusivity is therefore enforced twice over — by inertness at the
+    document level, and by the focus path for the one case inertness cannot reach, a
+    working state *inside* the open block (the next test).
+
+    Asserted as the behaviour that actually is, rather than as a gesture that would
+    need a hole in the dimming to perform: the second block is **there**, it is
+    **inert**, and Alt+clicking away from the open one both closes it and puts the
+    document back within reach. A version of this that drove a second unlock directly
+    would pass for an implementation with no exclusivity at all.
+
+    What is genuinely given up is comparing two secrets side by side. That was a real
+    use, and it is refused on purpose, for a reason that has nothing to do with
+    selection: several decrypted secrets on one screen is a shoulder-surfing surface.
+    A refusal with that reason is better than a capability nobody thought to close.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(THREE_PARAGRAPHS))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    _encrypt_block_with(window, "Opening the door.")
+
+    out = _wait(window, r"""(() => {
+      const editor = document.querySelector('#editor-container > .ProseMirror');
+      const idle = [...editor.children].filter(
+        (el) => el.classList.contains('edi-block-mode-dimmed'));
+      const first = idle[0];
+      const rect = first.getBoundingClientRect();
+      const x = Math.round(rect.left + 40), y = Math.round(rect.top + rect.height / 2);
+      const at = document.elementFromPoint(x, y);
+      return {
+        idle: idle.length,
+        hitsBlock: !!(at && first.contains(at)),
+        hit: at ? (at.className || at.tagName) : null,
+        pointerEvents: getComputedStyle(first).pointerEvents,
+      };
+    })()""", lambda d: d.get("idle"), timeout=10)
+
+    assert out["idle"] == 2, out
+    assert out["pointerEvents"] == "none", out
+    assert not out["hitsBlock"], (
+        "a dimmed block must not be reachable, so a second block cannot be opened "
+        f"from here: {out}")
+
+    # ...and the way out is the gesture that was always there.
+    _dump(window, """(() => {
+      const scroller = document.querySelector('#editor-container');
+      const s = scroller.getBoundingClientRect();
+      const x = Math.round(s.left + s.width / 2);
+      const y = Math.round(s.bottom - 8);
+      (document.elementFromPoint(x, y) || scroller).dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true, clientX: x, clientY: y }));
+      return { d: 1 };
+    })()""")
+    left = _wait(window, r"""(() => ({
+      open: document.querySelectorAll('.encrypted-block-reveal').length,
+      dimmed: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+      lit: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-lit').length,
+    }))()""", lambda d: d.get("open") == 0, timeout=15)
+    assert left["dimmed"] == 0, f"closing the block left the document dimmed: {left}"
+
+
+def test_closing_a_block_commits_what_was_typed_into_it(window):
+    """Type into an open block, close it, unlock it again: the text is still there.
+
+    This is the 600 ms debounce, and it is the edge that "one working state at a time"
+    creates. Edits in a reveal persist on a timer (`schedulePersist`), and **closing is
+    what flushes it** — so a close that skipped the flush would leave the block looking
+    perfectly locked and quietly drop the last half-second of typing.
+
+    The close is made the way a reader can make it. §2.4's own wording is "opening a
+    second block locks the first", and since inertness makes every other block
+    unreachable while one is open, that gesture does not exist any more; **the commit
+    rule is the same on every route out**, which is what this exercises, and what a
+    future automatic lock would have to honour.
+
+    Read back by **unlocking again with its password**, because the only thing that can
+    tell "the edit survived" from "the state object still looks right" is the text.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(THREE_PARAGRAPHS))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    _encrypt_block_with(window, "Opening the door.")
+
+    _dump(window, """(() => {
+      const el = document.querySelector('.encrypted-block-reveal p');
+      el.textContent = 'Typed into the first secret.';
+      el.closest('.ProseMirror').dispatchEvent(new Event('input', { bubbles: true }));
+      return { d: 1 };
+    })()""")
+
+    # Close it without giving the debounce time to fire on its own, which is the whole
+    # point: a plain wait here would make the test pass for a close that does nothing.
+    _dump(window, """(() => {
+      const btn = document.querySelector('.encrypted-block .block-control-interaction');
+      btn.click();
+      return { d: 1 };
+    })()""")
+    closed = _wait(window, """(() => ({
+      open: document.querySelectorAll('.encrypted-block-reveal').length,
+    }))()""", lambda d: d.get("open") == 0, timeout=15)
+    assert closed["open"] == 0, closed
+
+    # Unlock again through the real dialog and read what came back.
+    _dump(window, """(() => {
+      document.querySelector('.encrypted-block .encrypted-block-toggle').click();
+      return { d: 1 };
+    })()""")
+    _wait(window, """(() => ({
+      dialog: (document.querySelector('.edi-dialog-title') || {}).textContent || '',
+    }))()""", lambda d: d.get("dialog", "").startswith("Show encrypted block"), timeout=10)
+    _dump(window, """(() => {
+      document.querySelector('.edi-dialog-input').value = %s;
+      [...document.querySelectorAll('.edi-dialog-actions button')]
+        .find((b) => b.textContent.trim() === 'Unlock').click();
+      return { d: 1 };
+    })()""" % json.dumps(BLOCK_PASSWORD))
+    back = _wait(window, r"""(() => ({
+      open: document.querySelectorAll('.encrypted-block-reveal').length,
+      text: [...document.querySelectorAll('.encrypted-block-reveal p')]
+        .map((p) => p.textContent).join(' | ').slice(0, 80),
+    }))()""", lambda d: d.get("open") == 1, timeout=20)
+    assert "Typed into the first secret." in back["text"], (
+        f"the edit did not survive being locked: {back}")
+
+
+def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
+    """The chain's own gate: a working state two levels deep does not lock its parent.
+
+    This is the case §2.4a exists for, and the case the old one-slot arbitration got
+    wrong by construction: opening a sheet inside an open block would have released the
+    **outer** editor's record, and releasing that record *is* locking the block — so the
+    common case of a sheet inside a reveal would close the thing it lives in.
+
+    Four things hold at once, and it is the set that is the claim:
+
+    - the **sheet** is lit and holds the dashed outline;
+    - the **encrypted block holding it** is lit too, and stays **open**;
+    - the reveal's **other** content is dimmed;
+    - the **outer** document is dimmed.
+
+    The second is the one a per-editor implementation gets wrong by dimming one step
+    too close while leaving the prose two steps further away bright.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps("Opening the door.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nThe end.\n"))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    # Encrypt the **table**, so the reveal is a document with a table in it and the
+    # sheet below is a working state genuinely two levels deep.
+    _encrypt_block_with(window, "", nth=1)
+
+    # A table in the *reveal's* editor, made a sheet by the same gesture as anywhere else.
+    inner = _wait(window, """(() => ({
+      table: !!document.querySelector('.encrypted-block-reveal .ss-plain'),
+      outer: document.querySelectorAll('#editor-container > .ProseMirror > .ss-plain').length,
+    }))()""", lambda d: d.get("table") is True, timeout=10)
+    assert inner["outer"] == 0, (
+        f"the table should be inside the reveal, not in the document: {inner}")
+    _alt_click_a_cell(window, ".encrypted-block-reveal .ss-plain-table td")
+
+    out = _wait(window, r"""(() => {
+      const editor = document.querySelector('#editor-container > .ProseMirror');
+      const block = document.querySelector('#editor-container .encrypted-block');
+      const innerLit = [...document.querySelectorAll(
+        '.encrypted-block-reveal > .ProseMirror > .edi-block-mode-lit')].length;
+      const innerDimmed = [...document.querySelectorAll(
+        '.encrypted-block-reveal > .ProseMirror > .edi-block-mode-dimmed')].length;
+      return {
+        open: !!document.querySelector('.encrypted-block-reveal'),
+        sheet: !!document.querySelector('.encrypted-block-reveal .spreadsheet'),
+        blockLit: block.classList.contains('edi-block-mode-lit'),
+        blockDimmed: block.classList.contains('edi-block-mode-dimmed'),
+        outerDimmed: [...editor.children].filter(
+          (el) => el.classList.contains('edi-block-mode-dimmed')).length,
+        innerLit, innerDimmed,
+        dashed: getComputedStyle(block).outlineStyle === 'dashed',
+      };
+    })()""", lambda d: d.get("sheet") is True, timeout=15)
+
+    assert out["open"], f"the block was closed out from under its own sheet: {out}"
+    assert out["blockLit"] and not out["blockDimmed"], (
+        f"the block holding the sheet has to stay lit with it: {out}")
+    assert out["dashed"], f"and it keeps the mode mark: {out}"
+    assert out["outerDimmed"] == 2, f"the outer document is what recedes: {out}"
+    assert out["innerLit"] == 1, out
+
+
 def test_a_source_block_is_not_a_working_state(window):
     """Opening a block's Source dims nothing.
 
@@ -5850,7 +6185,7 @@ def _dominant_pixel(window, box, settle=0.4):
 # *inside* the encrypted block.
 OUTER_EDITOR = "document.querySelector('#editor-container > .ProseMirror')"
 
-BLOCK_PASSWORD = "clipboard-gate-password"
+
 
 
 def _dialog_button(window, label):
@@ -5866,68 +6201,17 @@ def _dialog_button(window, label):
 
 
 def _encrypt_and_reveal(window, markdown, needle):
-    """Encrypt the block containing `needle` through the app's own menu, and open it.
+    """Encrypt the block containing `needle` and leave it open, then say so.
 
-    **The menu, not a caret.** `encryptBlockCommand` takes the block the selection
-    is in, and a synthetic click does not move a ProseMirror selection in this
-    harness — a hand-made DOM range is overwritten by the editor's own
-    `selectionchange` read, and a dispatched `mousedown` leaves the caret exactly
-    where the previous document left it, so the command encrypted whichever block
-    happened to be first. The context menu resolves its block through
-    `blockPosForElement`, the app's one DOM→position authority, so right-clicking
-    the block is both deterministic and the gesture a reader uses.
-
-    "Lock immediately" is left unchecked, which is the default and the path a
-    reader takes, so the fresh block arrives already decrypted — no second prompt.
+    "Lock immediately" is left unchecked, which is the default and the path a reader
+    takes, so the fresh block arrives already decrypted and no second prompt appears.
+    All the machinery — the menu route, the dialogs, why not a caret — lives in
+    `_encrypt_block_with`; this is that plus the document and the check below.
     """
     _dump(window, """(() => { window.ediSetContent(%s); return { d: 1 }; })()""" % json.dumps(markdown))
     _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
           lambda d: d.get("p") is True, timeout=25)
-    _dump(window, """(() => {
-      const editor = %s;
-      const block = [...editor.children].find((el) => el.textContent.indexOf(%s) >= 0);
-      if (!block) return { d: 0 };
-      const rect = block.getBoundingClientRect();
-      const x = Math.round(rect.left + 40), y = Math.round(rect.top + rect.height / 2);
-      const at = document.elementFromPoint(x, y) || block;
-      for (const type of ['mousedown', 'contextmenu', 'mouseup']) {
-        at.dispatchEvent(new MouseEvent(type,
-          { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: x, clientY: y }));
-      }
-      return { d: 1 };
-    })()""" % (OUTER_EDITOR, json.dumps(needle)))
-    _wait(window, """(() => ({
-      items: [...document.querySelectorAll('.edi-context-menu button, .edi-context-menu [role="menuitem"]')]
-        .map((b) => b.textContent.trim()),
-    }))()""",
-          lambda d: any("Encrypt block" in t for t in d.get("items", [])), timeout=10)
-    _dump(window, """(() => {
-      const item = [...document.querySelectorAll('.edi-context-menu button, .edi-context-menu [role="menuitem"]')]
-        .find((b) => b.textContent.indexOf('Encrypt block') >= 0);
-      item.click();
-      return { d: 1 };
-    })()""")
-    # Dialog 1: the optional label + "Lock immediately". Left as it comes.
-    _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
-          lambda d: (d.get("t") or "").startswith("Encrypt"), timeout=10)
-    _dump(window, """(() => {
-      [...document.querySelectorAll('.edi-dialog-actions button')]
-        .find((b) => b.textContent.trim() === 'Encrypt').click();
-      return { d: 1 };
-    })()""")
-    # Dialog 2: the new password, asked twice.
-    _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
-          lambda d: (d.get("t") or "") == "Set password", timeout=10)
-    _dump(window, """(() => {
-      const inputs = document.querySelectorAll('.edi-dialog-input');
-      for (const input of inputs) input.value = %s;
-      [...document.querySelectorAll('.edi-dialog-actions button')]
-        .find((b) => b.textContent.trim() === 'Encrypt').click();
-      return { d: 1 };
-    })()""" % json.dumps(BLOCK_PASSWORD))
-    _wait(window,
-          """(() => ({ r: !!document.querySelector('#editor-container .encrypted-block-reveal') }))()""",
-          lambda d: d.get("r") is True, timeout=20)
+    _encrypt_block_with(window, needle)
     # The contract: the block that was asked for is the one now open. Without this
     # the helper would happily return after encrypting some other block, and every
     # gate below would be testing a different document than it reads like.
@@ -5945,31 +6229,48 @@ def _encrypt_and_reveal(window, markdown, needle):
 
 
 def _reveal_selection(window, needle):
-    """Select `needle` inside the open reveal, and focus the reveal's editor."""
+    """Select the open reveal's own text and put the caret in the reveal.
+
+    **A DOM range, and then a settle.** ProseMirror reads the DOM selection
+    *asynchronously* — on `selectionchange`, after the fact — so a range that exists
+    in the browser is not yet a selection in the editor that will act on it, and the
+    copy command reads the editor. Asking for it by keyboard instead looks tidier and
+    does not work here at all: a synthetic `Ctrl+A` on a reveal is never handled by
+    that editor, so it silently leaves the selection empty. Measured both ways in the
+    real engine; the range is the one that produces the selection the copy reads.
+
+    The extra settle is not politeness. Without a cycle for the renderer to deliver
+    `selectionchange`, the copy runs against an empty selection and the clipboard
+    comes back empty — which is exactly the "does nothing at all" bug this gate
+    exists for, reached from the wrong side.
+    """
     out = _wait(window, """(() => {
       const reveal = document.querySelector('#editor-container .encrypted-block-reveal');
       if (!reveal) return { missing: true };
-      const el = document.querySelector('#editor-container .encrypted-block-reveal p');
-      if (!el) return { missing: true };
+      const p = reveal.querySelector('p');
+      if (!p) return { missing: true };
       const range = document.createRange();
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-      let found = null;
-      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-        const at = String(n.textContent).indexOf(%s);
-        if (at >= 0) { found = { node: n, at }; break; }
-      }
-      if (!found) return { missing: true, text: el.textContent };
-      range.setStart(found.node, found.at);
-      range.setEnd(found.node, found.at + %s.length);
+      range.selectNodeContents(p);
       const sel = getSelection();
       sel.removeAllRanges(); sel.addRange(range);
-      // Focus goes to the reveal's own editor, which is what a click in it does.
       const pm = reveal.querySelector('.ProseMirror');
       pm.focus();
       return { selected: String(sel), inner: reveal.contains(pm) };
-    })()""" % (json.dumps(needle), json.dumps(needle)),
-                 lambda d: d.get("selected") is not None, timeout=10)
+    })()""", lambda d: d.get("selected") is not None, timeout=10)
     assert not out.get("missing"), out
+    assert needle in out["selected"], out
+    end = time.monotonic() + 0.5
+    while time.monotonic() < end:
+        time.sleep(0.02)
+        _pump_until(lambda: True, timeout=0.05)
+    focus = _dump(window, """(() => ({
+      active: document.activeElement ? String(document.activeElement.className) : null,
+      inReveal: !!(document.activeElement && document.activeElement.closest('.encrypted-block-reveal')),
+      native: String(getSelection()).slice(0, 60),
+    }))()""")
+    assert focus["inReveal"], focus
+    assert needle in focus["native"], (
+        f"the reveal's editor threw the selection away again: {focus}")
     return out
 
 
@@ -6000,16 +6301,14 @@ def test_a_revealed_block_answers_its_own_copy_key(window):
     _encrypt_and_reveal(window, "The passphrase is hunter-two, kept on the tab.\n", "hunter-two")
 
     sel = _reveal_selection(window, "hunter-two")
-    assert "hunter-two" in sel["selected"], sel
-    assert sel["inner"], sel
-    focus = _dump(window, """(() => ({
-      active: document.activeElement ? String(document.activeElement.className) : null,
-      inReveal: !!document.activeElement.closest('.encrypted-block-reveal'),
-    }))()""")
-    assert focus["inReveal"], focus
 
     QGuiApplication.clipboard().clear()
-    _ctrl_key(window, "c")
+    # **From the reveal's own editor, not the outer one.** The key is pressed on
+    # whatever has focus; `_ctrl_key` dispatches on the outer `.ProseMirror`, whose
+    # ProseMirror handler then reads the *reveal's* DOM selection as if it were its
+    # own — adopting a NodeSelection on the encrypted block — and the copy that comes
+    # back is that block's placeholder. No reader can make that gesture.
+    _ctrl_key_on(window, ".encrypted-block-reveal .ProseMirror", "c")
     text = _clipboard_text()
     assert "hunter-two" in text, (
         f"Ctrl+C inside a reveal copied the wrong thing, or nothing: {text[:80]!r}")

@@ -63,7 +63,7 @@ describe('encrypted_block', () => {
     editor.destroy()
   })
 
-  it('registers the reveal editor for the toolbar and releases it on outside focus / destroy', async () => {
+  it('answers for the reveal that holds focus, and only for that one', async () => {
     const editor = await editorWithEncrypted('hello')
     document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
     await tick()
@@ -72,7 +72,24 @@ describe('encrypted_block', () => {
     expect(reveal!.dom.classList.contains('encrypted-block-reveal-editor')).toBe(true)
     expect(document.activeElement).toBe(reveal!.dom)
 
+    // **Expectation change, and the reason is the mechanism.** This used to be
+    // `expect(...).toBeNull()` after a `focusin` on the document's own DOM. It could
+    // be that way because the answer came from a *remembered* editor and any stray
+    // `focusin` anywhere demoted it — and that is exactly the bug: a dialog closing, a
+    // node view rebuilding or a grid taking the caret back and giving it back all
+    // silently moved every later command out of the block the reader was standing in.
+    // The rule this exists for is "a nested editor owns its own selection and its own
+    // keyboard, **by virtue of holding focus**", so the answer is read from where the
+    // caret is, and an event that does not move focus cannot change it.
     editor.getView().dom.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    expect(getActiveEncryptedBlockView()).toBe(reveal)
+
+    // ...and focus genuinely leaving is what releases it. Blur first, so this is the
+    // real gesture rather than the remembered editor being told to forget: with the
+    // caret still in the reveal the answer *should* stay the reveal, and a test that
+    // asserted otherwise would be asking the function to lie about where the caret is.
+    reveal!.dom.blur()
+    document.body.focus()
     expect(getActiveEncryptedBlockView()).toBeNull()
     editor.destroy()
   })

@@ -3102,7 +3102,12 @@ body {
   margin-top: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  /* **The 3px accent bar is gone.** It was standing in for "open", which the
+   * two-mark vocabulary had no slot for — and "open" is now a *working state*, so
+   * the block wears the shared dashed `--accent` outline with it, from the same rule
+   * as a source form, an edited diagram and a sheet. This is no longer a judgement
+   * about how loud a quiet disclosure frame should be: a disclosure is not what this
+   * is. It is editing, and the frame keeps only the part that frames. */
   background: var(--editor-bg);
   font-size: 14px;
   white-space: normal;

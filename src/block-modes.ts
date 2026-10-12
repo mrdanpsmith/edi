@@ -168,15 +168,20 @@ export function isWorkingMode(mode: BlockMode | null | undefined): boolean {
 }
 
 /**
- * The blocks that stay **lit** while this editor's record names a working state —
- * everything else in the document is dimmed and inert.
+ * The blocks of *this* document that stay lit while its own record names a working
+ * state — everything else in it is dimmed and inert.
  *
- * One position today, and the set exists so it does not have to stay one. The
- * second level the model needs — a sheet inside an unlocked encrypted block, where
- * the reveal's own paragraph has to stay lit with it and the *outer* document is
- * the thing that recedes — is a path from the focused block up to the root rather
- * than a single position, and a walk is what a set is for. Until an editor can
- * hold a focused block that is not its own, the chain has one rung and this is it.
+ * **A state-only question, and deliberately so: the chain is not consulted here.**
+ * Each editor's own record already answers for its own document at every level. The
+ * outer document's record says the encrypted block is working, so that block is lit
+ * and the prose around it is not. The reveal's record says the sheet is working, so
+ * the sheet is lit and the reveal's other content is not. Both answers are right at
+ * once, which is what makes the second level work without a single cross-editor
+ * lookup — and it is the reason the focus path can stay out of plugin state
+ * entirely, where it would have made every editor repaint on a change that was not
+ * its own.
+ *
+ * One position today, and it is a set so it need not stay one.
  */
 export function litBlockPositions(state: EditorState): Set<number> {
   const mode = currentBlockMode(state)
@@ -201,7 +206,7 @@ export interface BlockModeDescriptor {
 }
 
 /** The node types whose rendered form carries an interaction state of its own. */
-const INTERACTIVE_BLOCKS = new Set(['mermaid_block'])
+const INTERACTIVE_BLOCKS = new Set(['mermaid_block', 'encrypted_block'])
 
 /**
  * A block that *is* its source: `source_block` has no `markdown` attr and no
@@ -549,55 +554,206 @@ export function blockFormMode(state: EditorState, pos: number | undefined): stri
 }
 
 /**
- * The one editor holding the one non-visual block in the whole page.
+ * The **focus path**: the block the reader is working in, and every block that
+ * contains it, up to the root.
  *
- * The record is per-`EditorState`, and an unlocked encrypted block is a *whole
- * nested editor* with its own state (`encryptedblock.ts`), so "at most one block
- * in a non-visual state" is a statement about the page and not about a document.
- * Unlocking a block is deliberately not one of the states that counts — it is a
- * reveal, per-block and non-exclusive, and it lives in a closure — but a sheet
- * inside the unlocked block is a table like any other and does count.
+ * One path and not one block, and the reason is §2.4's exclusivity meeting §2.6's
+ * sub-document. A table held as a sheet *inside* an unlocked encrypted block is a
+ * working state in the reveal's editor, while the reveal itself is a working state
+ * in the outer one — two rungs, one of them in a different document. The old one-slot
+ * `holder` could not say that: it named the *deepest* editor, so releasing the outer
+ * editor's record from inside the inner one would **lock the block the sheet lives
+ * in**. That was unreachable while a reveal held no record; it is exactly what a
+ * reveal holding one makes reachable.
  *
- * So the exclusivity needs one thing the plugin cannot hold: a pointer to the
- * editor that has it. Everything else stays in plugin state, and this is only
- * ever *read* to find out whether somebody else has it. It is released the moment
- * that editor drops its record, and a destroyed editor leaves a stale reference
- * that `releaseOtherEditors` skips, so the worst case is one wasted comparison.
+ * **The chain lives here, not in the record, and that placement is the decision.**
+ * The record names one block in one document; a path through several documents is not
+ * that. Putting a chain in per-editor plugin state would have every editor claiming a
+ * focus that is not its own and repainting on a change it did not cause — the exact
+ * coupling `blockModePlugin` was written to avoid.
+ *
+ * **Dimming does not need any of this.** Each editor's own record already answers
+ * for its own document at every level: the outer record says the encrypted block is
+ * working, so that block is lit and the prose around it is not; the reveal's record
+ * says the sheet is working, so the sheet is lit and the reveal's other content is
+ * not. The chain exists for **exclusivity**, which is the one question two editors
+ * have to agree about — and that is why it holds views and the record does not.
+ *
+ * The surface is four functions:
+ *
+ * - `keepOneNonVisualBlock(view, above)` — publish this editor's rung and release
+ *   any rival chain. Called from the one `dispatchTransaction` every editor shares.
+ * - `extendFocusPath` / `dropFocusPath` — the two halves of publishing and forgetting.
+ * - `rivalChains(view)` — who competes, which is everything that is not this chain.
  */
-let holder: EditorView | null = null
+interface FocusRung {
+  view: EditorView
+  pos: number
+  type: string
+}
+
+/** Every editor's chain, root first. */
+const focusChains = new Map<EditorView, FocusRung[]>()
 
 /**
- * Keep the page to **one** block in a non-visual state, from an editor's
- * `dispatchTransaction`.
+ * Drop the chains of editors that no longer exist.
+ *
+ * `view.isDestroyed` is ProseMirror's own answer, which is the question — not
+ * `dom.isConnected`, which a destroyed view can still answer yes to, because destroying
+ * a view does not detach its DOM. A stale entry is not a wasted comparison: a dead
+ * editor left in the map is a *rival* of everything, so the next working state anywhere
+ * on the page tries to release it, and whether that works depends on a DOM that no
+ * longer belongs to anything.
+ *
+ * Pruned on every publish, so it cannot leak: the chain map is written on every
+ * transaction and this is the only way it grows.
+ */
+function pruneChains(): void {
+  for (const [view] of focusChains) {
+    if (view.isDestroyed) focusChains.delete(view)
+  }
+}
+
+/**
+ * Publish this editor's chain: its own focused block, and the block above it when
+ * this editor is nested.
+ *
+ * `above` is what a nested editor knows and its parent does not — the reveal's node
+ * view has its own `getPos()` in the outer document — and it is what makes this
+ * editor a *rung* of the page's focus path rather than the root of a rival one.
+ * Publishing it is what stops a sheet opened inside an open encrypted block from
+ * releasing that block's record, which would lock the very thing the sheet lives in.
+ *
+ * Idempotent by design: this is called from `dispatchTransaction`, so every keystroke
+ * re-publishes the same chain.
+ */
+export function extendFocusPath(
+  view: EditorView,
+  above?: { view: EditorView; pos: number; type: string },
+): void {
+  pruneChains()
+  const mode = currentBlockMode(view.state)
+  if (mode === null) {
+    focusChains.delete(view)
+    return
+  }
+  const own: FocusRung = { view, pos: mode.pos, type: mode.type }
+  focusChains.set(view, above === undefined
+    ? [own]
+    : [{ view: above.view, pos: above.pos, type: above.type }, own])
+}
+
+/** Forget `view`'s chain: it has dropped its record. */
+export function dropFocusPath(view: EditorView): void {
+  focusChains.delete(view)
+}
+
+/** Forget everything this module knows about a view that has gone away. */
+export function forgetView(view: EditorView): void {
+  focusChains.delete(view)
+}
+
+/**
+ * `view`'s chain, root first.
+ *
+ * **Falls back to the record it is holding right now**, which is not a nicety. The
+ * first transaction that takes a mode asks for its rivals *before* it has published
+ * its own chain — `keepOneNonVisualBlock` releases, then publishes — and with an empty
+ * chain every comparison reads as "same path", so the very editor that just took the
+ * page's working state would find no rival to release.
+ */
+export function chainOf(view: EditorView): readonly FocusRung[] {
+  const published = focusChains.get(view)
+  if (published !== undefined) return published
+  const mode = currentBlockMode(view.state)
+  return mode === null ? [] : [{ view, pos: mode.pos, type: mode.type }]
+}
+
+/**
+ * Do two chains describe one path, rather than two?
+ *
+ * Compared **as rungs, not as editors**, and that is the whole of what stops a
+ * nested editor looking like a rival of the document it lives in. A reveal's chain
+ * is `[the encrypted block, in the outer document] ++ [the sheet, in the reveal]`,
+ * and the outer document's is `[the same encrypted block]`; the two agree on their
+ * first rung, so they are one path with a descendant, and the second is free to work
+ * without disturbing the first. Comparing by editor reported the reveal as a rival
+ * of its own parent, and **every transaction in the outer document closed the block
+ * out from under it** — which is precisely the case the chain exists to survive.
+ */
+function samePath(a: readonly FocusRung[], b: readonly FocusRung[]): boolean {
+  const shared = Math.min(a.length, b.length)
+  for (let i = 0; i < shared; i++) {
+    if (a[i]!.view !== b[i]!.view || a[i]!.pos !== b[i]!.pos) return false
+  }
+  return true
+}
+
+/**
+ * Every chain on the page that is not `view`'s own, **deepest rung first**.
+ *
+ * Deepest first because a chain is a path *out*: a sheet inside a block has to be
+ * put back before the block holding it is locked, or the block is torn out from
+ * under a grid that is still live.
+ *
+ * Every rung is released, not only the one in the editor that published it: putting
+ * the outer block back is the outer document's job and putting the inner sheet back
+ * is the reveal's, and the close that actually matters — destroying a reveal's
+ * nested editor — belongs to the node view that owns that editor and to nobody else.
+ */
+export function rivalChains(view: EditorView): FocusRung[][] {
+  pruneChains()
+  const mine = chainOf(view)
+  const out: FocusRung[][] = []
+  for (const [other, chain] of focusChains) {
+    if (other === view || chain.length === 0) continue
+    if (samePath(mine, chain)) continue
+    out.push([...chain].reverse())
+  }
+  return out
+}
+
+/**
+ * Keep the page to **one focus path**, from an editor's `dispatchTransaction`.
  *
  * This is the whole cross-editor mechanism, and it is one function called after
  * every transaction rather than a list of the routes that can take a mode: the
  * Alt+click gesture, the cluster's buttons, the keymap, the context menu and a
  * node view's own `enterDiagramEditMode` are five today and a sixth is a bug.
  *
+ * **A descendant extends the chain; only a rival competes.** `releaseOtherEditors`
+ * releases editors whose chain is not this one's, so taking a sheet *inside* an open
+ * encrypted block keeps the block open — which is the whole reason the record is a
+ * path rather than a slot, and the case the old one-`holder` version got wrong by
+ * construction: it would have released the outer editor, whose record *is* the open
+ * block, and locked the very thing the sheet was opened in.
+ *
  * **An editor that does not call this opts out of the rule**, silently — nothing
- * about it is invalid, it simply never claims the slot and so can never be
- * released from it. That is a real caveat and the reason it is stated here rather
+ * about it is invalid, it simply never publishes a rung and so can never be
+ * released from one. That is a real caveat and the reason it is stated here rather
  * than left to be discovered: every editor in the app comes from
  * `createBlockEditor`, which calls it, so there is exactly one place to remember.
+ *
+ * `above` is published by the same call and is the one thing a nested editor knows
+ * that this one does not: the block it lives in.
  */
-export function keepOneNonVisualBlock(view: EditorView): void {
+export function keepOneNonVisualBlock(
+  view: EditorView,
+  above?: { view: EditorView; pos: number; type: string },
+): void {
+  // **Publish, then release** — and the order is the whole of the nested case. Until
+  // this editor has published its chain, all it has is its own rung, which shares no
+  // root with the parent it lives in and therefore looks like a *rival* of it: a
+  // sheet opened inside an open encrypted block would release that block, and
+  // releasing its record is locking it. Asking "who competes with me" is only a
+  // meaningful question once "me" is the path I am actually in.
+  extendFocusPath(view, above)
   releaseOtherEditors(view)
-  claimFor(view, currentBlockMode(view.state))
-}
-
-/** Remember `view` as the page's holder, if it is not already, or forget it. */
-function claimFor(view: EditorView, mode: BlockMode | null): void {
-  if (mode === null) {
-    if (holder === view) holder = null
-    return
-  }
-  if (holder !== view) holder = view
 }
 
 /**
- * Release the page's holder when it is some *other* editor, so the caller's next
- * transaction can take the record without two blocks being in a mode at once.
+ * Release every chain that is not `view`'s own, so the caller's next transaction
+ * can take the page's one working state without two blocks being in one at once.
  *
  * Called from the one `dispatchTransaction` every editor shares (`editor.ts`),
  * after the transaction has been applied, rather than from each route that takes
@@ -617,12 +773,15 @@ function claimFor(view: EditorView, mode: BlockMode | null): void {
  * counts, and the earlier one is committed and put back.
  */
 export function releaseOtherEditors(view: EditorView): void {
-  const other = holder
-  if (other === null || other === view) return
-  // An editor that has gone away (a closed tab, a re-locked encrypted block)
-  // cannot be dispatched to, and holding a dead reference must not stop the page.
-  if (other.dom.isConnected) leaveBlockMode(other, currentBlockMode(other.state)?.pos ?? -1)
-  if (holder === other) holder = null
+  for (const chain of rivalChains(view)) {
+    for (const rung of chain) {
+      // A rung whose editor has gone away (a closed tab, a document swap, a re-locked
+      // block) cannot be dispatched to, and holding a dead reference must not stop the
+      // page.
+      if (rung.view.isDestroyed) continue
+      leaveBlockMode(rung.view, rung.pos)
+    }
+  }
 }
 
 

@@ -14,6 +14,7 @@ import {
   blockModePlugin,
   commitSourceMode,
   currentBlockMode,
+  forgetView,
   keepOneNonVisualBlock,
   enterSourceMode,
   exitBlockMode,
@@ -184,6 +185,18 @@ export interface BlockEditorOptions {
   resolveImageSrc?: ResolveImage
   /** Render as a read-only view (selection/copy allowed, typing disabled). */
   readonly?: boolean
+  /**
+   * The block in the document **above** this one that contains it, when this
+   * editor is nested.
+   *
+   * It is the one fact a nested editor has and its parent does not — the reveal's
+   * node view already knows its own `getPos()` in the outer document — and it is
+   * what makes this editor a *rung* of the page's focus path rather than a rival
+   * chain of its own. Publishing it is what stops a sheet opened inside an open
+   * encrypted block from releasing that block's record, which would lock the very
+   * thing the sheet was opened in.
+   */
+  focusParent?: () => { view: EditorView; pos: number; type: string } | undefined
 }
 
 /** One link in the document, as the range of linked text it covers. */
@@ -340,10 +353,12 @@ export function createBlockEditor(
     if (held !== before) {
       options.onModeChange?.(held)
     }
-    // The one non-visual block in the *page*, not in this document: an unlocked
+    // The one focus path in the *page*, not in this document: an unlocked
     // encrypted block is a whole nested editor with its own record, so a sheet
-    // inside one and a diagram out here would otherwise both be in a mode.
-    keepOneNonVisualBlock(cur)
+    // inside one and a diagram out here would otherwise both be in a mode. The
+    // parent link turns this editor into a rung of that path rather than a rival
+    // of it.
+    keepOneNonVisualBlock(cur, options.focusParent?.())
   }
   const view = new EditorView(parent, {
     state: createState(initialMarkdown),
@@ -420,6 +435,11 @@ export function createBlockEditor(
     destroy() {
       view.dom.removeEventListener('click', onNodeViewLinkClick)
       parent.removeEventListener('mousedown', onScrollerMouseDown)
+      // **Before the view goes.** The page's focus path holds a reference to this
+      // editor, and a destroyed one cannot be dispatched to — so forgetting it here
+      // is what stops a closed tab or a re-locked block from wedging the next
+      // working state that comes along.
+      forgetView(view)
       view.destroy()
     },
   }
