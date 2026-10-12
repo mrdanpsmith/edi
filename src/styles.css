@@ -24,6 +24,17 @@
   --block-hover: #eef4fd;
   --selection: #b6d7ff;
   --selection-strong: #9ecbff;
+  /* "Found" and "selected" are different claims, so they are different tokens.
+   * Derived rather than spelled, so a palette change moves the find chips with
+   * the selection they used to borrow — and `--selection` stops meaning one
+   * thing for the find chips, the grid's cell range and the autocomplete row
+   * at once. See "The vocabulary" below. */
+  --find: var(--selection);
+  /* The *active* match is the one the reader is on, which is the same claim
+   * `--accent` makes everywhere else in the app (a mode outline, the chip), so it
+   * stays the accent. Deliberately **not** a stronger `--selection`: that would
+   * make the active match read as a second selection rather than as the focus. */
+  --find-active: var(--accent);
 
   --md-heading: #1f2328;
   --md-link: #0969da;
@@ -61,6 +72,7 @@
   --block-hover: #131b2a;
   --selection: #264f78;
   --selection-strong: #1e4d7a;
+  /* Derived from the two above, so the dark scheme needs no second spelling. */
 
   --md-heading: #e6edf3;
   --md-link: #4493f8;
@@ -929,6 +941,39 @@ body {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+/* ── The vocabulary: one token per meaning ───────────────────────────────────
+ * Four meanings appear in this stylesheet and they used to share one paint
+ * between them. `--selection` ("a range over content") was worn by the find
+ * chips, the grid's own cell range *and* the autocomplete's selected row, while
+ * **prose selection — the one thing every reader calls selected — had no token
+ * at all** and fell through to Chromium's own `#3367d1`. So the four things
+ * wearing `--selection` were four different ideas and the obvious one had none.
+ *
+ * | meaning | token | where |
+ * |---|---|---|
+ * | **selected** — a range | `--selection` | prose `::selection`, Visual table cells, the grid's own cell range |
+ * | **found** — a search match | `--find`, `--find-active` | `.edi-search-match` |
+ * | **under the pointer** | `--block-hover` | the hover band |
+ * | **working state** | dashed `--accent` outline, `--dim-out` for the rest | see the sheet/diagram rules |
+ *
+ * Four meanings, four tokens, and prose finally has one. The grid's cells keep
+ * `--selection` on purpose: a cell range *is* a selected range, and sharing the
+ * token is what makes it one.
+ *
+ * **`::selection` is deliberately the least specific rule in this sheet.** Two
+ * rules here erase the native highlight on purpose — the block chrome above
+ * (`user-select: none` partners, which is not content) and a marked atom, where
+ * the block's own outline *is* the selection — and both are more specific than
+ * this one, so they still win. Painting prose is the fix; painting over a block
+ * whose outline already answers is the bug the atom rule exists to avoid.
+ *
+ * CodeMirror is likewise untouched: its own theme styles `.cm-content
+ * ::selection` at two classes, so a source buffer keeps its editor's highlight
+ * rather than borrowing the document's. */
+.ProseMirror ::selection {
+  background-color: var(--selection);
+}
+
 /* ── Headings ── */
 
 .ProseMirror h1,
@@ -994,14 +1039,18 @@ body {
 }
 
 /* Search matches: inline decorations wrap the matched text in a span, with the
- * active match drawn more strongly than the rest. */
+ * active match drawn more strongly than the rest. **Found, not selected** — a
+ * match is a place the search passed through and the reader may never take, so
+ * it wears `--find`/`--find-active` rather than `--selection`. Same classes in a
+ * table's cells (`highlightTableCell`), which is why the tokens rather than the
+ * rules carry the meaning. */
 .ProseMirror .edi-search-match {
-  background: var(--selection);
+  background: var(--find);
   border-radius: 2px;
 }
 
 .ProseMirror .edi-search-match-current {
-  background: var(--accent);
+  background: var(--find-active);
   color: var(--accent-contrast);
   border-radius: 2px;
 }

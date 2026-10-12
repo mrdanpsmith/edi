@@ -4900,6 +4900,104 @@ def test_selection_is_the_browsers_where_the_browser_can_do_it(window):
     assert "edi-block-selected" in out["paraSelection"]["sel"], out["paraSelection"]
 
 
+# Every `::selection` rule the page ships, asked as a question rather than
+# restated: which of them *applies to a word of prose*, and what does each one
+# paint. Matching the base selector against a real text node is what keeps this
+# honest — a rule that lists a block type it no longer has, or a selector spelled
+# for a DOM that is not in the document, reports nothing instead of reporting a
+# pass.
+PROSE_SELECTION = r"""(() => {
+  const para = document.querySelector('#editor-container .ProseMirror p');
+  if (!para) return { missing: true };
+  const probe = document.createRange();
+  probe.selectNodeContents(para);
+  const node = probe.startContainer.childNodes[0];
+  // `matches()` is an Element method, and the subject here is the *word*, so the
+  // question is asked of the element the word sits in — which is exactly what a
+  // `::selection` rule's compound selector means.
+  const el = node && node.nodeType === 3 ? node.parentElement : node;
+  const hits = [];
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (const r of rules) {
+      const sel = r.selectorText;
+      if (!sel || !r.style || sel.indexOf('::selection') < 0) continue;
+      for (const part of sel.split(',')) {
+        // A descendant combinator before the pseudo-element is what makes a rule
+        // about the editor's own prose rather than about one block; put it back,
+        // because `matches()` will not follow a selector that ends in one.
+        const raw = part.replace(/::selection/g, '');
+        const base = /\s$/.test(raw) ? raw.trim() + ' *' : raw.trim();
+        if (!base || base === '*') continue;
+        let applies = false;
+        try { applies = !!el && el.matches(base); } catch (e) { applies = false; }
+        if (!applies) continue;
+        hits.push({
+          base,
+          color: r.style.backgroundColor || null,
+          textColor: r.style.color || null,
+        });
+        break;
+      }
+    }
+  }
+  return {
+    hits,
+    selection: getComputedStyle(document.documentElement)
+      .getPropertyValue('--selection').trim(),
+    find: getComputedStyle(document.documentElement)
+      .getPropertyValue('--find').trim(),
+    scheme: document.documentElement.dataset.colorScheme || 'light',
+  };
+})()"""
+
+
+def test_prose_selection_is_the_apps_own_colour(window):
+    """Prose selection resolves to `--selection`, in both schemes.
+
+    This is the cheapest thing in the selection work and the one with the
+    longest reach: **the one thing every reader calls selected was the one thing
+    with no token.** Nothing set a `::selection` background for editor prose, so
+    it was Chromium's own `#3367d1`, while `--selection` was worn by the find
+    chips, the grid's own cell range and the autocomplete's selected row — four
+    unrelated things in one paint, and the obvious one absent from all of it.
+
+    **The token is asserted, not a literal.** A palette change must move prose
+    selection with everything else rather than fail this test, which is why the
+    rule is compared against the resolved `--selection` and why the token's own
+    value is checked to *differ* between the two schemes: one rule following
+    `--selection` passes both, and a hard-coded colour fails the second scheme
+    without the literal ever being written down here.
+    """
+    _dump(window, """(() => {
+      window.ediSetContent("A paragraph of ordinary prose, long enough that a word "
+                           + "of it can be selected.\\n");
+      return { d: 1 };
+    })()""")
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container .ProseMirror p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+
+    seen = {}
+    for dark in (False, True):
+        _set_scheme(window, dark)
+        out = _wait(window, PROSE_SELECTION, lambda d: d.get("hits"), timeout=10)
+        assert not out.get("missing"), out
+        painted = [h for h in out["hits"] if h["color"]]
+        assert painted, (
+            f"no ::selection rule paints prose in the {out['scheme']} scheme: {out['hits']}")
+        assert any(h["color"] == "var(--selection)" for h in painted), (
+            f"prose selection is not painted from the --selection token: {painted}")
+        # `--find` is *derived* from `--selection`, so a find chip and a prose
+        # selection are the same paint today — which is the collision this phase
+        # is about, and the reason the two are named rules rather than one.
+        assert out["selection"], "the --selection token is gone"
+        assert out["find"] == out["selection"], (out["find"], out["selection"])
+        seen[out["scheme"]] = out["selection"]
+
+    assert seen["light"] != seen["dark"], (
+        f"--selection does not vary by scheme, so one rule cannot follow it: {seen}")
+
+
 def test_select_all_marks_every_selected_atom(window):
     """`Ctrl+A` on `spreadsheets.md` marks every block it covers.
 
