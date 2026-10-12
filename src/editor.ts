@@ -194,6 +194,19 @@ export interface LinkRange {
   text: string
 }
 
+/**
+ * The Markdown a view's own selection stands for.
+ *
+ * A function of the **view** rather than of the editor that created it, because a
+ * revealed encrypted block is a second `EditorView` built by this same factory and
+ * `Ctrl+Shift+C` pressed inside one has to render *that* selection, not the outer
+ * document's (which is empty, and so would copy nothing at all). Every other
+ * document command resolves its editor the same way — see `focusedEditor`.
+ */
+export function selectionMarkdownFor(view: EditorView): string {
+  return sliceMarkdown(view.state.selection.content().content, view.state.schema, formulaEnvFor(view.state))
+}
+
 export function createBlockEditor(
   parent: HTMLElement,
   initialMarkdown: string,
@@ -365,7 +378,7 @@ export function createBlockEditor(
       return proseToMarkdown(view.state.doc, formulaEnvFor(view.state))
     },
     getSelectionMarkdown() {
-      return sliceMarkdown(view.state.selection.content().content, view.state.schema, formulaEnvFor(view.state))
+      return selectionMarkdownFor(view)
     },
     setMarkdown(markdown: string) {
       // A swapped-in document is a fresh editing context: build a brand-new

@@ -71,7 +71,7 @@ import { encryptFieldVerified } from './crypto'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import { buildWelcomeMarkdown } from './welcomeDoc'
-import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange } from './editor'
+import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange, selectionMarkdownFor } from './editor'
 import { setEncryptedBlockImageResolver, primeEncryptedBlockShow, getActiveEncryptedBlockView } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, spreadsheetMenuEntries } from './node/table'
@@ -668,6 +668,23 @@ function reportError(message: string, error: unknown): void {
  * masked field's revealed input, a spreadsheet cell editor, the raw-markdown editor
  * in a block's Source form — and a document-level Copy in the middle of one would
  * either copy the wrong thing or nothing.
+ *
+ * **A revealed encrypted block is deliberately *not* on this list**, even though it
+ * is a whole second editor holding a selection of its own, and its comment is the
+ * failure this function exists to prevent. Standing down here is the obvious
+ * reading of "let the innermost editor keep the key" and it is wrong: the reveal's
+ * DOM selection spans a block boundary happily — a drag from the outer prose into
+ * the reveal puts the plaintext in `getSelection().toString()` while nothing on
+ * screen paints it — so a native copy that runs from here can put a decrypted
+ * secret on the clipboard with nothing to say so. The block is an *object* and the
+ * clipboard has to agree with the paint.
+ *
+ * So the key is not declined, it is **routed**: `focusedEditor()` resolves the
+ * editor the caret is really in and the command acts on that editor's own
+ * selection, which is inside the block by construction. That is the rule this
+ * function's docstring used to imply and now states — every document command
+ * resolves to the editor that has focus, and the *hosts that are not documents*
+ * are the ones it stays out of the way of.
  */
 function focusIsForeign(): boolean {
   const active = document.activeElement
@@ -675,6 +692,32 @@ function focusIsForeign(): boolean {
     active instanceof HTMLElement &&
     !!active.closest('.edi-dialog-overlay, .cm-editor, input, textarea')
   )
+}
+
+/**
+ * The editor a document command belongs to: **the one that has the caret.**
+ *
+ * A revealed encrypted block is a whole second `EditorView` — the document's own
+ * `createBlockEditor`, with the whole plugin stack — nested inside this one. The
+ * document commands were bound to *one* editor (`blockEditor?.getView()`), and
+ * nothing in that path could ask which editor has focus, so a command run from
+ * inside a reveal acted on a document the reader is not in: `Ctrl+C` read the
+ * outer (always empty) selection and did nothing at all, and `Ctrl+X` would
+ * additionally have yanked the caret out of the block the reader was standing in.
+ *
+ * **The toolbar already did this** — `getActiveEncryptedBlockView() ?? getView()` —
+ * and it is why find and the clipboard were the inconsistencies rather than the
+ * other way round. This function is that composition, named, so there is one
+ * answer to "which editor is this command about" instead of three call sites
+ * spelling it.
+ *
+ * It is read at the moment the command runs, not cached: focus is a per-interaction
+ * fact, so where the reader is working has to be asked fresh. (What should *recede*
+ * is the other question, and it is a per-page fact answered from the record — see
+ * the working-state dimming.)
+ */
+function focusedEditor(): ProseEditorView | null {
+  return getActiveEncryptedBlockView() ?? blockEditor?.getView() ?? null
 }
 
 function registerShortcuts(): void {
@@ -790,6 +833,9 @@ function toggleHoverBand(): void {
 
 function openSearch(replace = false): void {
   if (getState().sessions.length === 0) return
+  // Resolve **now**, while the caret still says which document the reader is in:
+  // opening the bar takes the focus away from it, and the panel holds it from then
+  // on. See `SearchPanel.open`.
   searchPanel?.open({ replace })
 }
 
@@ -814,8 +860,19 @@ function editRedoNoScroll(): void {
   }
 }
 
+/**
+ * Cut / Copy / Paste, and the two Markdown-flavoured neighbours, all resolve the
+ * same way: **the editor that has the caret** (`focusedEditor`).
+ *
+ * Every one of these opens with `if (!view || view.state.selection.empty) return`,
+ * so an empty selection turns the document commands into a no-op and whatever
+ * genuinely owns the selection — a spreadsheet grid, a nested reveal — gets the
+ * key. That is why `Ctrl+C` after clicking a cell copies TSV of the cells with
+ * nothing here knowing anything about sheets: the sheet collapsed the document
+ * selection on entry and has not let it grow back.
+ */
 function editCut(): void {
-  const view = blockEditor?.getView()
+  const view = focusedEditor()
   if (!view || view.state.selection.empty) return
   view.focus()
   const { dom, text } = view.serializeForClipboard(view.state.selection.content())
@@ -824,7 +881,7 @@ function editCut(): void {
 }
 
 function editCopy(): void {
-  const view = blockEditor?.getView()
+  const view = focusedEditor()
   if (!view || view.state.selection.empty) return
   view.focus()
   const { dom, text } = view.serializeForClipboard(view.state.selection.content())
@@ -832,15 +889,14 @@ function editCopy(): void {
 }
 
 function copyAsMarkdown(): void {
-  const editor = blockEditor
-  const view = editor?.getView()
-  if (!editor || !view || view.state.selection.empty) return
+  const view = focusedEditor()
+  if (!view || view.state.selection.empty) return
   view.focus()
-  void copyText(editor.getSelectionMarkdown())
+  void copyText(selectionMarkdownFor(view))
 }
 
 async function editPaste(): Promise<void> {
-  const view = blockEditor?.getView()
+  const view = focusedEditor()
   if (!view) return
   let html: string | null = null
   let text: string | null = null
@@ -877,7 +933,7 @@ async function editPaste(): Promise<void> {
 }
 
 async function pasteAsMarkdownCommand(): Promise<void> {
-  const view = blockEditor?.getView()
+  const view = focusedEditor()
   if (!view) return
   view.focus()
   const text = await readText()
@@ -906,7 +962,7 @@ function editSelectAll(): void {
 }
 
 function hasEditorSelection(): boolean {
-  const selection = blockEditor?.getView().state.selection
+  const selection = focusedEditor()?.state.selection
   return !!selection && !selection.empty
 }
 
@@ -1326,14 +1382,14 @@ function init(): void {
     onModeChange: renderModeChip,
     resolveImageSrc: resolveImageFileUrl,
   })
-  toolbar = new Toolbar(toolbarEl, { getView: () => getActiveEncryptedBlockView() ?? blockEditor!.getView() }, [
+  toolbar = new Toolbar(toolbarEl, { getView: () => focusedEditor() ?? blockEditor!.getView() }, [
     { label: 'New', title: 'New (Ctrl+N)', markup: NEW_ICON, action: openNewTab },
     { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => void openFile() },
     { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => void saveFile() },
     { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => void saveFileAs() },
   ])
   homeScreen = buildHomeScreen()
-  searchPanel = new SearchPanel({ getView: () => blockEditor?.getView() ?? null })
+  searchPanel = new SearchPanel({ getView: () => focusedEditor() })
   registerShortcuts()
   // On `window`, not `#editor-container`: the start screen has no editor and
   // must zoom too, and a wheel that reached neither would fall through to

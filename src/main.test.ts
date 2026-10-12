@@ -113,6 +113,12 @@ vi.mock('./editor', async (importOriginal) => ({
   // Only the editor itself is stubbed; `linkRangeAt` is a pure function over a
   // document, and the context menu calls it for real.
   linkRangeAt: (await importOriginal<typeof import('./editor')>()).linkRangeAt,
+  // `selectionMarkdownFor` is the view-level form of `getSelectionMarkdown`, and
+  // `Ctrl+Shift+C` calls *that* rather than the editor's — it has to render the
+  // selection of whichever editor has focus, which is not necessarily the one
+  // this module created. Stubbed to the same seam so the tests keep asking "what
+  // string reached the clipboard", not how it was rendered.
+  selectionMarkdownFor: vi.fn(() => mainState.selectionMarkdown),
   createBlockEditor: vi.fn((
     _parent: HTMLElement,
     markdown: string,

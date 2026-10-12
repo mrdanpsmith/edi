@@ -20,9 +20,22 @@ export interface SearchPanelOptions {
  * match counter, prev/next, case/whole-word/regex toggles, and (optionally) a
  * replace row with Replace / Replace All. The panel never steals editor focus
  * while open; Esc returns focus to the document.
+ *
+ * **The document it searches is pinned while the bar is open, and that is the
+ * whole reason this class holds one.** The panel takes the focus away from the
+ * editor the moment it opens — that is its job — so a `getView()` asked per
+ * keystroke answers "wherever focus is *now*", which after the first keypress is
+ * the find input and, through the reveal-focus signal, one document further out
+ * again. `open()` resolves once, before it focuses anything, and every later read
+ * — re-running the query, the counter, `Esc` handing focus back — is that same
+ * pinned view. A search is a question about *one* document, asked from outside it.
+ *
+ * `refresh()` re-pins, because its caller is the tab/document switch: the view it
+ * was pinned to belongs to a document that is no longer on screen.
  */
 export class SearchPanel {
   private readonly getView: () => EditorView | null
+  private pinned: EditorView | null = null
 
   private bar: HTMLElement | null = null
   private findInput: HTMLInputElement | null = null
@@ -46,9 +59,18 @@ export class SearchPanel {
     return this.bar !== null && !this.bar.hidden
   }
 
+  /** The document this bar is searching: the one pinned at open, else resolved now. */
+  private view(): EditorView | null {
+    return this.pinned ?? this.getView()
+  }
+
   open(options: { replace?: boolean } = {}): void {
+    // Resolved fresh, and **before** `ensureDom`/`focus`: this is the one moment
+    // the caret still says which document the reader is in, and the bar takes the
+    // focus away from it a few lines below.
     const view = this.getView()
     if (!view) return
+    this.pinned = view
     this.ensureDom()
     this.bar!.hidden = false
     this.setReplaceVisible(Boolean(options.replace))
@@ -67,7 +89,8 @@ export class SearchPanel {
     this.query = ''
     this.findInput!.value = ''
     this.replaceInput!.value = ''
-    const view = this.getView()
+    const view = this.view()
+    this.pinned = null
     if (view) {
       updateSearchQuery(view, '')
       this.updateCounter()
@@ -78,7 +101,10 @@ export class SearchPanel {
   /** Re-run the stored query against the active view (tab/doc switch, edits). */
   refresh(): void {
     if (!this.isOpen()) return
-    const view = this.getView()
+    // Re-pin: a tab or document swap replaced the document this bar was asking
+    // about, and the old view is no longer on the page.
+    this.pinned = this.getView()
+    const view = this.view()
     if (!view) return
     if (this.query === '') return
     const search = getSearchState(view)
@@ -128,12 +154,12 @@ export class SearchPanel {
     this.countEl.setAttribute('aria-live', 'polite')
 
     const prev = this.button('↑', 'Previous match (Shift+Enter)', () => {
-      const view = this.getView()
+      const view = this.view()
       if (view && searchNext(view, -1)) this.updateCounter()
     })
     prev.dataset.action = 'prev'
     const next = this.button('↓', 'Next match (Enter)', () => {
-      const view = this.getView()
+      const view = this.view()
       if (view && searchNext(view, 1)) this.updateCounter()
     })
     next.dataset.action = 'next'
@@ -142,7 +168,7 @@ export class SearchPanel {
     this.toggleEls.regex = this.toggle('regex', '.*', 'Regular expression')
 
     const replaceToggle = this.button('…', 'Replace', () => {
-      const view = this.getView()
+      const view = this.view()
       const show = this.replaceRow!.hidden
       this.setReplaceVisible(show)
       if (show) {
@@ -197,7 +223,7 @@ export class SearchPanel {
     allBtn.textContent = 'Replace all'
     allBtn.dataset.action = 'replace-all'
     allBtn.addEventListener('click', () => {
-      const view = this.getView()
+      const view = this.view()
       if (!view) return
       replaceAllSearch(view, this.replaceInput!.value)
       this.updateCounter()
@@ -264,7 +290,7 @@ export class SearchPanel {
    * after an edit pass `jump: false` so existing cursor/selection survives.
    */
   private applyQuery(options: { jump: boolean }): void {
-    const view = this.getView()
+    const view = this.view()
     if (!view) return
     updateSearchQuery(view, this.query, this.flags)
     if (options.jump) selectSearchMatch(view, 0)
@@ -274,7 +300,7 @@ export class SearchPanel {
 
   private updateCounter(): void {
     if (!this.countEl) return
-    const view = this.getView()
+    const view = this.view()
     if (!view) {
       this.countEl.textContent = '0 / 0'
       return
@@ -287,7 +313,7 @@ export class SearchPanel {
   private handleFindKey(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       event.preventDefault()
-      const view = this.getView()
+      const view = this.view()
       if (view && searchNext(view, event.shiftKey ? -1 : 1)) this.updateCounter()
     } else if (event.key === 'Escape') {
       event.preventDefault()
@@ -296,7 +322,7 @@ export class SearchPanel {
   }
 
   private replaceOne(): void {
-    const view = this.getView()
+    const view = this.view()
     if (!view) return
     if (replaceSearchCurrent(view, this.replaceInput!.value)) this.updateCounter()
   }

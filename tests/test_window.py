@@ -5218,6 +5218,305 @@ def _clipboard_text():
     return QGuiApplication.clipboard().text()
 
 
+def _dominant_pixel(window, box, settle=0.4):
+    """The most common colour in a viewport box, read out of a real grab.
+
+    The settle matters: a screenshot of a just-mutated DOM is a stale frame, so
+    every pixel claim in this file waits first (see `_band_frame_pixels`, which
+    does the same for named sample points). "Most common" rather than a single
+    pixel because a box straddles the gap between two lines of text and the reader
+    is being asked whether the *fill* changed, not whether an antialiased glyph
+    did.
+    """
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QApplication
+
+    end = time.monotonic() + settle
+    while time.monotonic() < end:
+        QApplication.processEvents()
+        time.sleep(0.02)
+    image = window._web.grab().toImage()
+    counts = {}
+    for y in range(int(box[1]), int(box[3])):
+        for x in range(int(box[0]), int(box[2])):
+            c = image.pixelColor(x, y)
+            counts[(c.red(), c.green(), c.blue())] = counts.get(
+                (c.red(), c.green(), c.blue()), 0) + 1
+    return max(counts.items(), key=lambda kv: kv[1])[0] if counts else None
+
+
+# ── A revealed encrypted block, reached the way a reader reaches one ─────────
+# An unlocked block is a *whole second editor* nested in the document, and the
+# selection work is mostly about what happens when the reader is standing in one.
+# Nothing in this harness used to be able to get there — a block needs a password,
+# and a test cannot supply one — so the hover-band test built the reveal's DOM by
+# hand outside the editor instead.
+#
+# That is no longer needed. The page is a **secure context under `file://`**
+# (verified: `isSecureContext` is true and `crypto.subtle.digest` resolves), so
+# `encryptFieldVerified` runs for real, and the whole Encrypt → set password →
+# unlock path is driven through its own dialogs. Nothing here is a test-only hook
+# in the app: the block is encrypted, unlocked and typed into exactly as a
+# reader's would be, which is the only way the gates below can be trusted.
+# The outer editor, as opposed to the nested one a reveal brings with it. Every
+# query that means "the document" rather than "a block inside it" has to be scoped
+# this way: a revealed block is a second full ProseMirror under the same
+# `#editor-container`, and an unscoped `.ProseMirror` descendant selector matches
+# both — which is how "the second top-level block" silently became a paragraph
+# *inside* the encrypted block.
+OUTER_EDITOR = "document.querySelector('#editor-container > .ProseMirror')"
+
+BLOCK_PASSWORD = "clipboard-gate-password"
+
+
+def _dialog_button(window, label):
+    return _wait(
+        window,
+        """(() => {
+          const btn = [...document.querySelectorAll('.edi-dialog-actions button')]
+            .find((b) => b.textContent.trim() === %s);
+          return { found: !!btn };
+        })()""" % json.dumps(label),
+        lambda d: d.get("found") is True,
+        timeout=10)
+
+
+def _encrypt_and_reveal(window, markdown, needle):
+    """Encrypt the block containing `needle` through the app's own menu, and open it.
+
+    **The menu, not a caret.** `encryptBlockCommand` takes the block the selection
+    is in, and a synthetic click does not move a ProseMirror selection in this
+    harness — a hand-made DOM range is overwritten by the editor's own
+    `selectionchange` read, and a dispatched `mousedown` leaves the caret exactly
+    where the previous document left it, so the command encrypted whichever block
+    happened to be first. The context menu resolves its block through
+    `blockPosForElement`, the app's one DOM→position authority, so right-clicking
+    the block is both deterministic and the gesture a reader uses.
+
+    "Lock immediately" is left unchecked, which is the default and the path a
+    reader takes, so the fresh block arrives already decrypted — no second prompt.
+    """
+    _dump(window, """(() => { window.ediSetContent(%s); return { d: 1 }; })()""" % json.dumps(markdown))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    _dump(window, """(() => {
+      const editor = %s;
+      const block = [...editor.children].find((el) => el.textContent.indexOf(%s) >= 0);
+      if (!block) return { d: 0 };
+      const rect = block.getBoundingClientRect();
+      const x = Math.round(rect.left + 40), y = Math.round(rect.top + rect.height / 2);
+      const at = document.elementFromPoint(x, y) || block;
+      for (const type of ['mousedown', 'contextmenu', 'mouseup']) {
+        at.dispatchEvent(new MouseEvent(type,
+          { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: x, clientY: y }));
+      }
+      return { d: 1 };
+    })()""" % (OUTER_EDITOR, json.dumps(needle)))
+    _wait(window, """(() => ({
+      items: [...document.querySelectorAll('.edi-context-menu button, .edi-context-menu [role="menuitem"]')]
+        .map((b) => b.textContent.trim()),
+    }))()""",
+          lambda d: any("Encrypt block" in t for t in d.get("items", [])), timeout=10)
+    _dump(window, """(() => {
+      const item = [...document.querySelectorAll('.edi-context-menu button, .edi-context-menu [role="menuitem"]')]
+        .find((b) => b.textContent.indexOf('Encrypt block') >= 0);
+      item.click();
+      return { d: 1 };
+    })()""")
+    # Dialog 1: the optional label + "Lock immediately". Left as it comes.
+    _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
+          lambda d: (d.get("t") or "").startswith("Encrypt"), timeout=10)
+    _dump(window, """(() => {
+      [...document.querySelectorAll('.edi-dialog-actions button')]
+        .find((b) => b.textContent.trim() === 'Encrypt').click();
+      return { d: 1 };
+    })()""")
+    # Dialog 2: the new password, asked twice.
+    _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
+          lambda d: (d.get("t") or "") == "Set password", timeout=10)
+    _dump(window, """(() => {
+      const inputs = document.querySelectorAll('.edi-dialog-input');
+      for (const input of inputs) input.value = %s;
+      [...document.querySelectorAll('.edi-dialog-actions button')]
+        .find((b) => b.textContent.trim() === 'Encrypt').click();
+      return { d: 1 };
+    })()""" % json.dumps(BLOCK_PASSWORD))
+    _wait(window,
+          """(() => ({ r: !!document.querySelector('#editor-container .encrypted-block-reveal') }))()""",
+          lambda d: d.get("r") is True, timeout=20)
+    # The contract: the block that was asked for is the one now open. Without this
+    # the helper would happily return after encrypting some other block, and every
+    # gate below would be testing a different document than it reads like.
+    opened = _wait(
+        window,
+        """(() => ({
+          text: (document.querySelector('.encrypted-block-reveal') || { textContent: '' }).textContent,
+          blocks: [...document.querySelector('#editor-container > .ProseMirror').children]
+            .map((el) => el.className),
+        }))()""",
+        lambda d: needle in d.get("text", ""),
+        timeout=10,
+    )
+    assert sum(1 for c in opened["blocks"] if "encrypted-block" in c) == 1, opened
+
+
+def _reveal_selection(window, needle):
+    """Select `needle` inside the open reveal, and focus the reveal's editor."""
+    out = _wait(window, """(() => {
+      const reveal = document.querySelector('#editor-container .encrypted-block-reveal');
+      if (!reveal) return { missing: true };
+      const el = document.querySelector('#editor-container .encrypted-block-reveal p');
+      if (!el) return { missing: true };
+      const range = document.createRange();
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let found = null;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const at = String(n.textContent).indexOf(%s);
+        if (at >= 0) { found = { node: n, at }; break; }
+      }
+      if (!found) return { missing: true, text: el.textContent };
+      range.setStart(found.node, found.at);
+      range.setEnd(found.node, found.at + %s.length);
+      const sel = getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      // Focus goes to the reveal's own editor, which is what a click in it does.
+      const pm = reveal.querySelector('.ProseMirror');
+      pm.focus();
+      return { selected: String(sel), inner: reveal.contains(pm) };
+    })()""" % (json.dumps(needle), json.dumps(needle)),
+                 lambda d: d.get("selected") is not None, timeout=10)
+    assert not out.get("missing"), out
+    return out
+
+
+def test_a_revealed_block_answers_its_own_copy_key(window):
+    """`Ctrl+C` inside an unlocked block copies *that block's* text.
+
+    This is the user-visible payoff of the whole nested-editor question, and the
+    behaviour it replaces is that **the three clipboard keys do nothing at all**
+    inside a reveal. Not "copy the wrong thing" — nothing: the reveal is a bare
+    `.ProseMirror` inside `.encrypted-block-reveal`, which matched none of the four
+    selectors `focusIsForeign` claimed, so the window handler was reached, was not
+    seen as foreign, `preventDefault()`ed the key (suppressing the nested editor's
+    own copy too) and then called `editCopy` against the **outer** view, whose
+    selection is empty because the caret went into the reveal.
+
+    **Asserted by behaviour, not by reading `focusIsForeign`.** The point of the
+    change is that a nested editor answers its own keys, and the way to know that
+    is what landed on the clipboard.
+
+    The other half is that the key is *routed* rather than declined. Letting the
+    browser's own copy run is the obvious cheap fix and it leaks: the DOM selection
+    spans a block boundary, so a drag from the outer prose into the reveal puts the
+    plaintext in `getSelection().toString()` while nothing paints it. The rule is
+    resolve the editor from focus and act on *that* editor's selection, which is
+    inside the block by construction.
+    """
+    from PySide6.QtGui import QGuiApplication
+    _encrypt_and_reveal(window, "The passphrase is hunter-two, kept on the tab.\n", "hunter-two")
+
+    sel = _reveal_selection(window, "hunter-two")
+    assert "hunter-two" in sel["selected"], sel
+    assert sel["inner"], sel
+    focus = _dump(window, """(() => ({
+      active: document.activeElement ? String(document.activeElement.className) : null,
+      inReveal: !!document.activeElement.closest('.encrypted-block-reveal'),
+    }))()""")
+    assert focus["inReveal"], focus
+
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "c")
+    text = _clipboard_text()
+    assert "hunter-two" in text, (
+        f"Ctrl+C inside a reveal copied the wrong thing, or nothing: {text[:80]!r}")
+
+
+def test_a_drag_across_an_open_block_copies_the_placeholder_not_the_secret(window):
+    """A range bracketing an *open* block paints nothing inside it and copies the
+    placeholder.
+
+    Paint and copy have to agree that the block is an object, and this is the half
+    a paint test cannot see. Measured in the real engine, and reproduced here: the
+    DOM selection from prose to prose **across** an open block contains the secret
+    (`getSelection().toString()` returns it) while **not one pixel inside the block
+    changes** — Chromium paints per editing host and this selection's anchor is in
+    the outer one. A drag therefore looks like it selected prose, with the secret
+    silently inside the range.
+
+    So the moment any path trusted the *native* selection, `Ctrl+C` would put a
+    decrypted secret on the clipboard with nothing on screen to say so. What stands
+    in the way is that the key is **routed** to the editor that has focus rather
+    than declined and left to the browser — so the copy reads the editor's own
+    selection, which excludes the block, and renders it as the placeholder.
+
+    Note the shape of the leak, because it is the measured one and not the obvious
+    one: a selection anchored *inside* the reveal and extended out is refused by
+    Chromium outright (the native text stops at the block's boundary). It is the
+    bracket — prose to prose — that walks the block's DOM on the way past.
+    """
+    from PySide6.QtGui import QGuiApplication
+    _encrypt_and_reveal(
+        window,
+        "Before the secret.\n\nThe passphrase is hunter-two, kept on the tab.\n\nAfter the secret.\n",
+        "hunter-two",
+    )
+
+    # The box inside the reveal to watch: the revealed paragraph's own text rect,
+    # read before any selection exists so the "before" sample is of an untouched
+    # page rather than of a stale frame.
+    box = _dump(window, """(() => {
+      const p = document.querySelector('.encrypted-block-reveal p');
+      if (!p) return { missing: true };
+      const r = p.getBoundingClientRect();
+      return { box: [Math.round(r.left), Math.round(r.top),
+                     Math.round(r.right), Math.round(r.bottom)], text: p.textContent };
+    })()""")
+    assert not box.get("missing"), box
+    assert "hunter-two" in box["text"], box
+
+    # A document selection that brackets the open block, exactly as a drag across
+    # one makes. `selectAll` is the honest way to get one — it goes through the
+    # editor's own state, where a hand-made DOM range gets reconciled away.
+    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+    _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 1, timeout=10)
+    before = _dominant_pixel(window, box["box"])
+
+    # Stretch the DOM selection from the first outer paragraph to the last, which
+    # is what a drag ending in prose past the block produces, and which makes
+    # Chromium walk the block's DOM on the way.
+    native = _dump(window, """(() => {
+      const editor = %s;
+      const own = [...editor.querySelectorAll('p')]
+        .filter((p) => !p.closest('.encrypted-block-reveal'));
+      if (own.length < 2) return { missing: true, own: own.length };
+      const sel = getSelection();
+      sel.setBaseAndExtent(own[0].firstChild, 0,
+                           own[own.length - 1].firstChild,
+                           own[own.length - 1].firstChild.length);
+      return { text: String(sel).slice(0, 240) };
+    })()""" % OUTER_EDITOR)
+    assert "hunter-two" in native.get("text", ""), (
+        "the DOM selection no longer spans the block, so this gate is not testing "
+        f"the leak it exists for: {native}")
+
+    # **And nothing painted inside it.** The secret is in the range and the screen
+    # does not show it, which is the whole reason the copy has to be the editor's
+    # and not the browser's.
+    after = _dominant_pixel(window, box["box"])
+    assert after == before, (
+        "a range bracketing an open block painted inside it, so the block is not "
+        f"reading as an object: {before} -> {after}")
+
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "c")
+    text = _clipboard_text()
+    assert "hunter-two" not in text, (
+        "the plaintext of an open block reached the clipboard from outside it: "
+        f"{text[:160]!r}")
+    assert "[encrypted block]" in text, (
+        f"the copy should say the block is an object: {text[:160]!r}")
+
+
 def test_ctrl_c_copies_the_document_as_rich_text(window):
     """`Ctrl+A` then `Ctrl+C` puts the whole document on the clipboard, as HTML+text.
 
