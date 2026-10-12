@@ -126,7 +126,7 @@ class EncryptedBlockNodeView implements NodeView {
     this.getPos = getPos
     this.dom = document.createElement('div')
     this.dom.className = 'encrypted-block'
-    encryptedBlockViews.set(view, this)
+    encryptedBlockViews.add(this)
     this.render()
   }
 
@@ -186,7 +186,7 @@ class EncryptedBlockNodeView implements NodeView {
    * it rather than being the exception to it.
    */
   private releaseWorkingState(): void {
-    if (encryptedBlockViews.get(this.view) === this) encryptedBlockViews.delete(this.view)
+    encryptedBlockViews.delete(this)
     if (this.persistTimer !== null) {
       clearTimeout(this.persistTimer)
       this.persistTimer = null
@@ -318,7 +318,7 @@ class EncryptedBlockNodeView implements NodeView {
     // do: it releases the *record*, and the plaintext is in a nested editor only this
     // node view knows how to tear down.
     await Promise.all(
-      [...encryptedBlockViews.values()]
+      [...encryptedBlockViews]
         .filter((other) => other !== this && other.isOpen)
         .map((other) => other.closeReveal()),
     )
@@ -383,19 +383,40 @@ class EncryptedBlockNodeView implements NodeView {
     this.persistTimer = setTimeout(() => { void this.persist() }, 600)
   }
 
+  /**
+   * Encrypt the reveal's plaintext back into its block.
+   *
+   * **Two guards, and the second one is the load-bearing one.** Encrypting is
+   * asynchronous (`crypto.subtle`), so everything between the `await` and the dispatch
+   * can have happened: the node view can be destroyed, and then `this.view.state` is
+   * whatever document the view is showing *now*. Without the guard that is not a lost
+   * edit — `setNodeMarkup` at a position belonging to the document that used to be
+   * here would replace an unrelated node in the document that is here now. A tab swap
+   * is exactly that shape, and it is silent either way.
+   *
+   * So the write is conditional on this block still being the block at that position:
+   * a destroyed view, a moved position, a different node type, or a node that is no
+   * longer the one we read are all "somebody else's document", and the honest answer
+   * is to drop the write. The pending plaintext is not lost by dropping it on the
+   * destroy route — {@link flushOpenReveals} runs *before* the swap, which is the
+   * route that exists to get here first.
+   */
   private async persist(): Promise<void> {
     if (this.revealPassword === null || !this.revealInner) return
     const markdown = this.revealInner.getMarkdown()
     if (markdown === this.lastRevealedMd) return
     const a = getAttrs(this.node)
+    const from = this.node
     try {
       const envelope = await encryptFieldVerified(markdown, this.revealPassword)
+      if (this.view.isDestroyed) return
       const pos = this.getPos()
-      if (pos !== undefined) {
-        const tr = this.view.state.tr.setNodeMarkup(pos, undefined, { type: a.type, label: a.label, content: envelope })
-        this.view.dispatch(tr)
-        this.lastRevealedMd = markdown
-      }
+      if (pos === undefined) return
+      const node = this.view.state.doc.nodeAt(pos)
+      if (node === null || node.type.name !== 'encrypted_block' || node !== from) return
+      const tr = this.view.state.tr.setNodeMarkup(pos, undefined, { type: a.type, label: a.label, content: envelope })
+      this.view.dispatch(tr)
+      this.lastRevealedMd = markdown
     } catch (e) {
       console.error('PERSIST FAILED', e)
     }
@@ -466,10 +487,66 @@ class EncryptedBlockNodeView implements NodeView {
   get isOpen(): boolean {
     return this.revealHost !== null
   }
+
+  /** The editor this block lives in, for the module-level lookups above. */
+  get editorView(): EditorView {
+    return this.view
+  }
+
+  /** Where this block is in its editor's document, or `undefined` if it is not there. */
+  position(): number | undefined {
+    return this.getPos()
+  }
+
+  /**
+   * Is there plaintext in the reveal that the document has not been told about?
+   *
+   * **A synchronous question on purpose.** {@link flushOpenReveals} asks it before
+   * deciding whether to be asynchronous at all, so it has to be answerable without
+   * awaiting: `getMarkdown` is a synchronous serialisation of a document that is still
+   * here, and the comparison against the last committed text is the whole of what
+   * "pending" means.
+   */
+  hasPendingCommit(): boolean {
+    if (this.revealPassword === null || !this.revealInner) return false
+    return this.revealInner.getMarkdown() !== this.lastRevealedMd
+  }
+
+  /**
+   * Stop owing the document anything, without writing it.
+   *
+   * The timer is cancelled so it cannot fire later and dispatch into whatever is on
+   * screen by then, and `lastRevealedMd` is brought up to date for the same reason:
+   * the text is being discarded *with* the document, so there is no pending commit
+   * left to account for. `persist`'s own guard would refuse a late write anyway, but
+   * "would be refused" is not the same as "was never attempted".
+   */
+  discardPending(): void {
+    if (this.persistTimer !== null) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
+    if (this.revealInner) this.lastRevealedMd = this.revealInner.getMarkdown()
+  }
+
+  /**
+   * Write back whatever is pending, now, rather than when the debounce would fire.
+   *
+   * The timer is cancelled rather than left to race: a second `persist` for the same
+   * text is harmless, but a *late* one arriving after a flush would dispatch into a
+   * state that has already moved on — which is the thing `persist`'s guard refuses.
+   */
+  flush(): Promise<void> {
+    if (this.persistTimer !== null) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
+    return this.persist()
+  }
 }
 
 /**
- * Every encrypted block's node view, by the editor it belongs to.
+ * Every encrypted block's node view, in every editor.
  *
  * **This registry is what makes "one at a time" possible at all.** The mode record
  * can only be written by whichever editor owns it, and a reveal's plaintext lives
@@ -478,8 +555,92 @@ class EncryptedBlockNodeView implements NodeView {
  * a record is not the same as tearing a reveal down. Nothing else in the app knows
  * how to close one. So the node view that owns the editor is the one that closes it,
  * and it has to be findable from the block opening.
+ *
+ * **A set of the node views, not a map keyed by editor**, because a document may hold
+ * several blocks and a map keyed by the editor kept only the last one constructed. The
+ * block that was then unreachable by position could not be closed, flushed, or driven
+ * from its own cluster button — and "one block at a time" is the rule the registry is
+ * here to enforce, so the one case it could not name was the case it exists for. Reads
+ * go through {@link encryptedBlockViewFor}, which resolves by position.
  */
-const encryptedBlockViews = new Map<EditorView, EncryptedBlockNodeView>()
+const encryptedBlockViews = new Set<EncryptedBlockNodeView>()
+
+/**
+ * The node view for the encrypted block at `pos`, in `view`.
+ *
+ * **By position, not by "the editor's only one"**, because the editor may hold many.
+ * With no position to go on (a caller that only has an editor — the flush) the first
+ * one it finds is the honest answer, and every open reveal still gets flushed because
+ * the flush walks the whole set rather than asking this.
+ */
+function encryptedBlockViewFor(view: EditorView, pos?: number): EncryptedBlockNodeView | undefined {
+  for (const nodeView of encryptedBlockViews) {
+    if (nodeView.editorView !== view) continue
+    if (pos === undefined || nodeView.position() === pos) return nodeView
+  }
+  return undefined
+}
+
+/**
+ * Commit whatever an open reveal in `view` has typed but not yet written back.
+ *
+ * **This is the flush a reveal owes on the one route that cannot wait for it.** Every
+ * other route out of a working state is synchronous enough to commit inside: the
+ * **Lock** button and another block taking the focus path both go through
+ * `closeReveal`, which awaits `persist` before it tears anything down. The route this
+ * exists for is **the editor's state being replaced under it** — a tab swap, via
+ * `BlockEditor.setMarkdown` / `applyState` — which destroys the node view, and with it
+ * the nested editor holding the plaintext, *inside* a synchronous `view.updateState`.
+ *
+ * That timing is the whole of the problem, and it is not a matter of tidying: `persist`
+ * awaits `crypto.subtle`, so its `setNodeMarkup` runs on a later microtask, by which
+ * time the state it was about to write into is gone. It does not merely fail to save —
+ * `this.view.state.tr` is the *incoming* document, and a stale position in it is a node
+ * in someone else's file. So the flush has to happen **before** the swap, which means
+ * the swap has to be awaited, which is why `setMarkdown`/`applyState` return a promise.
+ *
+ * Nothing else needs this: a document edit keeps the same state and the ordinary
+ * 600 ms debounce catches up on its own.
+ *
+ * **It answers `undefined` when there is nothing to write, and that is the load-bearing
+ * half of its signature.** Not returning a promise is what lets every caller stay
+ * synchronous in the ordinary case — no reveal open, or one open with nothing typed
+ * since it last wrote back — rather than pushing one microtask between a tab switch and
+ * the state it reads. `Tabs` depends on it, and so does every reader of the document
+ * that assumes a swap has happened by the time the function returns. An async API that
+ * is awaited everywhere and meaningful in one place is a different API; this one is
+ * awaited in exactly the one place it can be.
+ */
+export function flushOpenReveals(view: EditorView): void | Promise<void> {
+  const open = [...encryptedBlockViews].filter((n) => n.editorView === view && n.hasPendingCommit())
+  if (open.length === 0) return
+  return Promise.all(open.map((n) => n.flush())).then(() => undefined)
+}
+
+/**
+ * Give up on whatever an open reveal in `view` has not written back, so that
+ * {@link flushOpenReveals} has nothing left to do.
+ *
+ * **Only for a document being replaced from outside, never for a tab being left.**
+ * The two are different acts and only one of them has something to come back to:
+ *
+ * - *Switching tabs* keeps the outgoing document — it is stored, and the reader is
+ *   coming back to it — so a half-second of typing has to be written into it first, or
+ *   the tab returns to text that was never saved. That is {@link flushOpenReveals}.
+ * - *Replacing the document* — reopening a file, the shell loading a document over the
+ *   tab, a harness setting content — throws the outgoing document away whole. There is
+ *   no tab to return to and nothing to return to it with; committing would be writing
+ *   into a document that is being discarded, and *waiting* for it would make an
+ *   operation that is otherwise instantaneous take as long as a crypto round trip.
+ *
+ * So the second one cancels, and says so in one line at the call site rather than
+ * making every reader of `setState` know which kind of swap they are performing.
+ */
+export function discardOpenReveals(view: EditorView): void {
+  for (const nodeView of encryptedBlockViews) {
+    if (nodeView.editorView === view) nodeView.discardPending()
+  }
+}
 
 /**
  * An unlocked block is a **working state**, like a diagram being edited and like a
@@ -504,9 +665,9 @@ const encryptedBlockViews = new Map<EditorView, EncryptedBlockNodeView>()
  * refusal with that reason is better than a capability nobody thought to close.
  */
 BLOCK_MODE_HANDLERS['encrypted_block'] = {
-  enter: (view) => { void encryptedBlockViews.get(view)?.enter() },
-  exit: (view) => encryptedBlockViews.get(view)?.exit(),
-  toggle: (view) => encryptedBlockViews.get(view)?.toggle(),
+  enter: (view, pos) => { void encryptedBlockViewFor(view, pos)?.enter() },
+  exit: (view, pos) => encryptedBlockViewFor(view, pos)?.exit(),
+  toggle: (view, pos) => encryptedBlockViewFor(view, pos)?.toggle(),
 }
 
 export const encryptedBlockNodeViewPlugin = new Plugin({

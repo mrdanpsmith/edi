@@ -109,8 +109,8 @@ const tabs = new Tabs(tabbar, {
     blockEditor?.commitSource()
     return blockEditor?.getMarkdown() ?? ''
   },
-  setMarkdown(value: string): void {
-    blockEditor?.setMarkdown(value)
+  setMarkdown(value: string): void | Promise<void> {
+    return blockEditor?.setMarkdown(value)
   },
   createState(markdown: string): unknown {
     return blockEditor?.createState(markdown)
@@ -121,8 +121,16 @@ const tabs = new Tabs(tabbar, {
     blockEditor?.commitSource()
     return blockEditor?.getState()
   },
-  setState(state: unknown): void {
-    blockEditor?.applyState(state as import('prosemirror-state').EditorState)
+  setState(state: unknown): void | Promise<void> {
+    return blockEditor?.applyState(state as import('prosemirror-state').EditorState)
+  },
+  // Read at the snapshot boundary, not at the swap: see `TabContent.flush`.
+  flush(): void | Promise<void> {
+    return blockEditor?.flushReveals()
+  },
+  // A document replaced from outside is not a tab being left: see `discardPending`.
+  discardPending(): void {
+    blockEditor?.discardPending()
   },
   getScroll(): number {
     return editorContainer.scrollTop

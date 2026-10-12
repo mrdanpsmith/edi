@@ -144,6 +144,11 @@ vi.mock('./editor', async (importOriginal) => ({
       applyState: (state: { _md: string }) => { mainState.markdown = state._md },
       resolveImages: vi.fn(),
       focus: vi.fn(),
+      // The two pending-commit hooks `Tabs` asks for at a snapshot boundary and
+      // before replacing a document. Synchronous here, exactly as the real editor is
+      // whenever no reveal has un-persisted typing — which is every test in this file.
+      flushReveals: () => undefined,
+      discardPending: vi.fn(),
       destroy: vi.fn(),
     }
   }),

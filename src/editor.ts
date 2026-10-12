@@ -27,7 +27,11 @@ import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import { formulaDefsPlugin, formulaEnvFor } from './formulaDefs'
 import { maskedFieldNodeViewPlugin } from './node/masked'
-import { encryptedBlockNodeViewPlugin } from './node/encryptedblock'
+import {
+  discardOpenReveals,
+  encryptedBlockNodeViewPlugin,
+  flushOpenReveals,
+} from './node/encryptedblock'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
@@ -156,16 +160,42 @@ export interface BlockEditor {
   getMarkdown(): string
   /** Markdown source of the current selection ("Copy as Markdown"). */
   getSelectionMarkdown(): string
-  setMarkdown(markdown: string): void
+  /**
+   * Swap in a different document.
+   *
+   * **Returns a promise because the swap has to wait for something.** An open
+   * encrypted block holds its plaintext in a nested editor that `updateState` is about
+   * to destroy, and encrypting it back is `crypto.subtle`'s asynchronous work — so a
+   * swap that did not wait would either drop the last half-second of typing or, worse,
+   * dispatch the write at a stale position into the document arriving. See
+   * `flushOpenReveals`, which is what this awaits and why it is not optional.
+   */
+  setMarkdown(markdown: string): void | Promise<void>
   insertMarkdown(markdown: string): void
   commitSource(): boolean
   // Per-tab editor state: each document owns its own ProseMirror EditorState
   // (doc, undo/redo history, selection). Tabs swap whole states into the view.
   createState(markdown: string): EditorState
   getState(): EditorState
-  applyState(state: EditorState): void
+  /** Swaps another tab's whole state in. Asynchronous, for {@link setMarkdown}'s reason. */
+  applyState(state: EditorState): void | Promise<void>
   resolveImages(): void
   focus(): void
+  /**
+   * Write back whatever is pending in this editor and not yet in the document.
+   *
+   * Exposed for the one caller that has to: `Tabs` takes a tab's copy of the document
+   * by reading the live state, so anything not written yet has to be written before
+   * that read or the tab stores a document that has since been rewritten under it.
+   */
+  flushReveals(): void | Promise<void>
+  /**
+   * Forget this editor's pending commits rather than writing them.
+   *
+   * For the one caller that is replacing the document from outside — see
+   * `discardOpenReveals`, which is where the reasoning lives.
+   */
+  discardPending(): void
   destroy(): void
 }
 
@@ -367,6 +397,33 @@ export function createBlockEditor(
   })
   viewRef.current = view
 
+  /**
+   * Replace the document, once whatever is pending has been written back.
+   *
+   * **The swap waits, and it is the wait that keeps the write from going astray.** An
+   * open encrypted block's plaintext is in a nested editor that `updateState` is about
+   * to destroy, and encrypting it is `crypto.subtle`'s asynchronous work — so a write
+   * that had not finished by this line lands on a document that is no longer on
+   * screen, at a position belonging to the one that was. `persist`'s guard refuses such
+   * a write; this is what stops it being refused, which is the difference between a
+   * saved edit and a dropped one.
+   *
+   * Every route that swaps today also flushes at `Tabs`' snapshot boundary first, so
+   * this is the **backstop rather than the mechanism** — and it is here for the route
+   * that will be added next without knowing any of this. Being a backstop is also why
+   * it must be **synchronous unless there is something to write**: when there is not,
+   * nothing is waited on and every caller keeps the timing it already had, which is
+   * what lets the rest of the app read a document on the line after swapping it.
+   */
+  const swapOut = (replace: () => void): void | Promise<void> => {
+    const pending = flushOpenReveals(view)
+    if (pending === undefined) {
+      replace()
+      return undefined
+    }
+    return pending.then(replace)
+  }
+
   // Links inside spreadsheet/plain table node views are raw `<a>` elements in
   // the cell HTML, not ProseMirror marks, so the click plugin above never sees
   // them. Delegate at the editor root and route them through the same opener,
@@ -399,7 +456,13 @@ export function createBlockEditor(
       // A swapped-in document is a fresh editing context: build a brand-new
       // EditorState so the tab owns its own doc, selection, and undo history,
       // and any source-mode block from the previous document is dropped.
-      view.updateState(createState(markdown))
+      //
+      // **The flush comes first, and it is not optional.** `updateState` destroys the
+      // node views of the document it is leaving, synchronously, and an open encrypted
+      // block's plaintext lives in one of them. Writing it back is asynchronous, so
+      // anything not written before this line is written into a document that is no
+      // longer on screen.
+      return swapOut(() => view.updateState(createState(markdown)))
     },
     createState,
     getState() {
@@ -408,11 +471,13 @@ export function createBlockEditor(
     applyState(state: EditorState) {
       // A tab swap brings its own record with it, which is a mode change the
       // chip has to hear about like any other.
-      const before = view.state
-      view.updateState(state)
-      if (currentBlockMode(state) !== currentBlockMode(before)) {
-        options.onModeChange?.(currentBlockMode(state))
-      }
+      return swapOut(() => {
+        const before = view.state
+        view.updateState(state)
+        if (currentBlockMode(state) !== currentBlockMode(before)) {
+          options.onModeChange?.(currentBlockMode(state))
+        }
+      })
     },
     insertMarkdown(markdown: string) {
       view.dispatch(view.state.tr.insertText(markdown))
@@ -432,7 +497,18 @@ export function createBlockEditor(
     focus() {
       view.focus()
     },
+    flushReveals() {
+      return flushOpenReveals(view)
+    },
+    discardPending() {
+      discardOpenReveals(view)
+    },
     destroy() {
+      // Best-effort, and deliberately not awaited: the view is going away, so there is
+      // no document left to write into. `persist`'s own guard is what makes this safe —
+      // it refuses a dispatch into a view that has been destroyed rather than reaching
+      // the caller's next document at a stale position.
+      void flushOpenReveals(view)
       view.dom.removeEventListener('click', onNodeViewLinkClick)
       parent.removeEventListener('mousedown', onScrollerMouseDown)
       // **Before the view goes.** The page's focus path holds a reference to this

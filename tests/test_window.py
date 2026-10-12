@@ -5555,6 +5555,147 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
     assert out["innerLit"] == 1, out
 
 
+def test_switching_tabs_commits_what_was_typed_into_an_open_block(window):
+    """Type into an unlocked block, walk to another tab and back, unlock: it is there.
+
+    **The third route out of a working state, and the one that needed new machinery.**
+    A reveal has three: the **Lock** button, another block taking the page's one focus
+    path, and **the editor's document being replaced under it**. The first two go
+    through `closeReveal`, which awaits the persist before it tears anything down, and
+    both are covered by the gate above. The third had no way to: `view.updateState`
+    destroys the node views of the document it is leaving *synchronously*, and writing
+    the plaintext back is `crypto.subtle`'s asynchronous work — so the write always
+    landed after the document it belonged to had gone.
+
+    That was not merely a lost edit. `persist` built its transaction from
+    `this.view.state`, which by then was the *incoming* document, and the position was
+    one belonging to the outgoing one — so a tab switch could replace an unrelated node
+    in the tab being switched **to**. `persist` now refuses a write whose block is not
+    still the block at that position, and `BlockEditor.setMarkdown`/`applyState` wait
+    for the flush so the ordinary case never reaches the guard at all.
+
+    Driven by the gestures, because the distinction is the whole of it: **clicking
+    another tab commits** (that document is stored and the reader is coming back to
+    it), while **replacing a document from outside discards** (nothing to come back
+    to). Two tests, because one of them passing says nothing about the other.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(THREE_PARAGRAPHS))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    _dump(window, "(() => { window.ediMenuCommand('new'); return { d: 1 }; })()")
+    _wait(window, "(() => ({ n: document.querySelectorAll('#tabbar .tab').length }))()",
+          lambda d: d.get("n", 0) >= 2, timeout=15)
+    # The blank tab `new` made is now the active one, so the document the block lives
+    # in is loaded into *it* — and there is nothing pending to discard on the way,
+    # which is why this is a load into an empty tab rather than over a live one.
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(THREE_PARAGRAPHS))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+
+    _encrypt_block_with(window, "Opening the door.")
+    _dump(window, """(() => {
+      const el = document.querySelector('.encrypted-block-reveal p');
+      el.textContent = 'Typed into the first secret.';
+      el.closest('.ProseMirror').dispatchEvent(new Event('input', { bubbles: true }));
+      return { d: 1 };
+    })()""")
+
+    # Straight to another tab, without giving the 600 ms debounce time to fire on its
+    # own — which is the whole point, since a plain wait would make a switch that
+    # commits nothing look like one that does.
+    switched = _wait(window, """(() => {
+      const tabs = [...document.querySelectorAll('#tabbar .tab')];
+      const other = tabs.find((t) => !t.classList.contains('active'));
+      if (!other) return { missing: true, n: tabs.length };
+      other.click();
+      return { n: tabs.length };
+    })()""", lambda d: d.get("missing") is not True, timeout=10)
+    _wait(window, """(() => ({
+      opens: document.querySelectorAll('.encrypted-block-reveal').length,
+      tabs: [...document.querySelectorAll('#tabbar .tab')]
+        .map((t) => t.classList.contains('active')),
+    }))()""", lambda d: d.get("opens") == 0 and d.get("tabs", []).count(False) == 1,
+          timeout=15)
+
+    # Back. The block is locked again, because the other tab is a working state now —
+    # and unlocking it is the only thing that can tell "the edit survived" from
+    # "the state object still looks right".
+    back = _dump(window, """(() => {
+      const other = [...document.querySelectorAll('#tabbar .tab')]
+        .find((t) => !t.classList.contains('active'));
+      other.click();
+      return { d: 1 };
+    })()""")
+    assert back is not None
+    _dump(window, """(() => {
+      document.querySelector('.encrypted-block .encrypted-block-toggle').click();
+      return { d: 1 };
+    })()""")
+    _wait(window, """(() => ({
+      dialog: (document.querySelector('.edi-dialog-title') || {}).textContent || '',
+    }))()""", lambda d: d.get("dialog", "").startswith("Show encrypted block"), timeout=10)
+    _dump(window, """(() => {
+      document.querySelector('.edi-dialog-input').value = %s;
+      [...document.querySelectorAll('.edi-dialog-actions button')]
+        .find((b) => b.textContent.trim() === 'Unlock').click();
+      return { d: 1 };
+    })()""" % json.dumps(BLOCK_PASSWORD))
+    got = _wait(window, """(() => ({
+      text: [...document.querySelectorAll('.encrypted-block-reveal p')]
+        .map((p) => p.textContent),
+    }))()""", lambda d: d.get("text"), timeout=15)
+    assert any("Typed into the first secret" in t for t in got["text"]), (
+        f"a tab switch dropped the last half-second of typing in the block: {got}")
+
+
+def test_replacing_a_document_discards_its_pending_typing(window):
+    """Loading a document over a tab throws away what that tab had not saved.
+
+    The half of the pair above that is the opposite decision, and it is here because
+    "make tab switches commit" is easy to over-apply. A tab being **left** has
+    somewhere to be left *for* — it is stored, and the reader is coming back — so a
+    half-second of typing has to be written into it first. A document being
+    **replaced** (the file on disk reopening over the tab, the shell loading a document
+    into it) has nowhere to go: the old document is being discarded whole, so
+    committing into it would be writing to something about to be thrown away, and
+    *waiting* for that write would make an operation that is otherwise instantaneous
+    take as long as a crypto round trip.
+
+    So this route **cancels** the pending commit instead of making it, which is also
+    what keeps the replacement synchronous — a property the whole test harness relies
+    on, since a `_dump` that loads a document is followed immediately by one that
+    reads it back. That timing is asserted here rather than assumed: the probe runs in
+    the same turn as the load.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(THREE_PARAGRAPHS))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container p') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    _encrypt_block_with(window, "Opening the door.")
+    _dump(window, """(() => {
+      const el = document.querySelector('.encrypted-block-reveal p');
+      el.textContent = 'Never written back.';
+      el.closest('.ProseMirror').dispatchEvent(new Event('input', { bubbles: true }));
+      return { d: 1 };
+    })()""")
+
+    replaced = _dump(window, """(() => {
+      window.ediSetContent('A different document entirely.\\n');
+      // Same turn as the load, on purpose: if the replacement waited on a crypto
+      // round trip, the document read back here would still be the old one.
+      return {
+        text: document.querySelector('#editor-container').textContent,
+        locked: document.querySelectorAll('.encrypted-block-reveal').length,
+      };
+    })()""")
+    assert "different document" in replaced["text"], (
+        "loading a document did not land synchronously, so anything reading the "
+        f"document on the next line of its own script sees the previous one: {replaced}")
+    assert replaced["locked"] == 0, replaced
+
+
 def test_a_source_block_is_not_a_working_state(window):
     """Opening a block's Source dims nothing.
 

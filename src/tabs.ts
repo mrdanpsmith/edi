@@ -16,13 +16,29 @@ export interface TabCallbacks {
 
 export interface TabContent {
   getMarkdown(): string
-  setMarkdown(value: string): void
+  setMarkdown(value: string): void | Promise<void>
   // Optional per-tab editor-state API. When all three are present Tabs stores
   // each session's whole editor state (own doc, own undo/redo history, own
   // selection) and swaps states instead of text, so tabs are fully isolated.
   createState?(markdown: string): unknown
   getState?(): unknown
-  setState?(state: unknown): void
+  setState?(state: unknown): void | Promise<void>
+  /**
+   * Commit anything that is not in the document yet but would be lost by leaving it —
+   * today, an open encrypted block's half-second of un-persisted typing.
+   *
+   * Awaited **at the snapshot boundary** rather than only at the swap, and that is the
+   * part worth stating: a snapshot is taken by reading the live state, so a flush that
+   * ran later would store the pre-flush document and the tab would come back to text
+   * the reader had already watched vanish once. Whatever else is pending has to be
+   * written before the copy is taken, not merely before the view moves on.
+   */
+  flush?(): void | Promise<void>
+  /**
+   * Forget pending commits instead of writing them, because the document they belong
+   * to is being replaced rather than left. See `discardOpenReveals`.
+   */
+  discardPending?(): void
   getScroll?(): number
   setScroll?(value: number): void
 }
@@ -36,6 +52,22 @@ export class Tabs {
   // that does not own them — a desynced view would poison that tab's snapshot
   // with another tab's content.
   private appliedSession = ''
+  // Every operation that reads or replaces the shared editor's contents runs here,
+  // one at a time. Two reasons, and the second is the one that arrived with it:
+  //
+  //  - **Re-entrancy.** Each of these is a read followed by a write (snapshot the
+  //    outgoing tab, then swap the incoming one in). Making any step awaitable opens
+  //    a window in which a second tab switch can interleave between the two halves.
+  //  - **The editor can now take a moment to answer.** `setState` has to flush an open
+  //    encrypted block before it replaces the state, and encrypting is asynchronous.
+  //
+  // So the queue is not a nicety bolted onto a sync design — it is what makes the two
+  // halves of "leave this document, arrive at that one" a single indivisible step
+  // again. `appliedSession` was the same instinct in miniature: the view must not be
+  // snapshotted under the wrong tab, and a promise is just another way to get it wrong.
+  private queue: Promise<unknown> = Promise.resolve()
+  /** Non-null exactly while a swap that had to wait is still going. */
+  private running: Promise<void> | null = null
   private readonly scroll: HTMLDivElement
   private readonly leftButton: HTMLButtonElement
   private readonly rightButton: HTMLButtonElement
@@ -85,103 +117,190 @@ export class Tabs {
     return getActive()?.id ?? ''
   }
 
+  /**
+   * Run one editor-touching operation, after every one already queued.
+   *
+   * **Runs it now when nothing is queued, and only chains when something is.** That is
+   * not an optimisation, it is what keeps the timing every caller already has: an
+   * editor swap only takes a microtask when something has to be encrypted first (see
+   * `TabContent.flush`), and in every other case — which is every case for every
+   * reader who has not typed into an open encrypted block in the last 600 ms — the
+   * operation is finished before `enqueue` returns, exactly as it was before the
+   * editor could be made to wait for anything. Code that swaps a document and reads it
+   * back on the next line is the ordinary shape here, and a queue that always deferred
+   * would silently break all of it.
+   *
+   * So the operations below are written as `void | Promise<void>` all the way down and
+   * **never as `async`**. An `async` function is asynchronous *even when everything
+   * inside it is synchronous*, and that alone was enough to make every tab operation
+   * take a microtask — which is how this first attempt broke twenty unit tests that
+   * assert on the session list on the line after a switch. `TabContent`'s three
+   * operations return `void` precisely so this distinction can be made at all.
+   */
+  private enqueue(work: () => void | Promise<void>): Promise<void> {
+    if (this.running === null) {
+      let result: void | Promise<void>
+      try {
+        result = work()
+      } catch (error) {
+        // A failed swap must not wedge every tab switch after it, and there is nothing
+        // useful a caller could do with it: these are state replacements.
+        console.error('tab swap failed', error)
+        return Promise.resolve()
+      }
+      if (result === undefined) return Promise.resolve()
+      this.running = result.then(() => { this.running = null }, () => { this.running = null })
+      return this.running
+    }
+    const run = this.queue.then(work)
+    this.queue = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  /**
+   * Finish now if `step` had nothing to wait for, and after it if it did.
+   *
+   * The whole of "sometimes asynchronous", in one line, and the reason each operation
+   * below reads as one expression rather than as two halves of a branch.
+   */
+  private static after(step: void | Promise<void>, finish: () => void): void | Promise<void> {
+    if (step === undefined) {
+      finish()
+      return undefined
+    }
+    return step.then(finish)
+  }
+
   snapshotActive(): void {
+    void this.enqueue(() => this.snapshotActiveNow())
+  }
+
+  private snapshotActiveNow(): void | Promise<void> {
     const active = getActive()
-    if (!active) return
+    if (!active) return undefined
     if (this.appliedSession !== active.id) {
       // The view is not known to hold this session's document (e.g. a stray
       // transaction desynced it). Do not overwrite the session's last known
       // snapshot with foreign content.
-      return
+      return undefined
     }
-    if (this.supportsStates()) {
-      this.states.set(active.id, this.content.getState!())
-    } else {
-      this.snapshots.set(active.id, this.content.getMarkdown())
-    }
-    this.scrolls.set(active.id, this.content.getScroll?.() ?? 0)
+    // Before the read, not after: see `TabContent.flush`.
+    return Tabs.after(this.content.flush?.(), () => {
+      if (this.supportsStates()) {
+        this.states.set(active.id, this.content.getState!())
+      } else {
+        this.snapshots.set(active.id, this.content.getMarkdown())
+      }
+      this.scrolls.set(active.id, this.content.getScroll?.() ?? 0)
+    })
   }
 
   setActiveContent(markdown: string, scrollTop = 0): void {
-    const active = getActive()
-    if (!active) return
-    if (this.supportsStates()) {
-      const state = this.content.createState!(markdown)
-      this.states.set(active.id, state)
-      this.content.setState!(state)
-    } else {
-      this.content.setMarkdown(markdown)
-      this.snapshots.set(active.id, markdown)
-    }
-    this.content.setScroll?.(scrollTop)
-    this.appliedSession = active.id
+    void this.enqueue(() => {
+      const active = getActive()
+      if (!active) return undefined
+      // The document is being replaced, not left, so there is nothing to commit into.
+      this.content.discardPending?.()
+      const settle = (): void => {
+        this.content.setScroll?.(scrollTop)
+        this.appliedSession = active.id
+      }
+      if (this.supportsStates()) {
+        const state = this.content.createState!(markdown)
+        this.states.set(active.id, state)
+        return Tabs.after(this.content.setState!(state), settle)
+      }
+      return Tabs.after(this.content.setMarkdown(markdown), () => {
+        this.snapshots.set(active.id, markdown)
+        settle()
+      })
+    })
   }
 
   addSession(content = '', path: string | null = null): void {
-    this.snapshotActive()
-    const id = createSession()
-    // A brand-new tab starts scrolled to the top.
-    this.scrolls.set(id, 0)
-    if (this.supportsStates()) {
-      this.states.set(id, this.content.createState!(content))
-    } else {
-      this.snapshots.set(id, content)
-    }
-    // Associate the new session with its path BEFORE rendering its content so
-    // any relative image references resolve against the document's directory.
-    if (path !== null) {
-      setActivePath(path)
-    }
-    if (this.supportsStates()) {
-      this.content.setState!(this.states.get(id))
-    } else {
-      this.content.setMarkdown(content)
-    }
-    this.content.setScroll?.(0)
-    this.appliedSession = id
-    this.render()
-    this.notifyActive()
+    void this.enqueue(() => {
+      const snapshotted = this.snapshotActiveNow()
+      const open = (): void | Promise<void> => {
+        const id = createSession()
+        // A brand-new tab starts scrolled to the top.
+        this.scrolls.set(id, 0)
+        if (this.supportsStates()) {
+          this.states.set(id, this.content.createState!(content))
+        } else {
+          this.snapshots.set(id, content)
+        }
+        // Associate the new session with its path BEFORE rendering its content so
+        // any relative image references resolve against the document's directory.
+        if (path !== null) {
+          setActivePath(path)
+        }
+        const settle = (): void => {
+          this.content.setScroll?.(0)
+          this.appliedSession = id
+          this.render()
+          this.notifyActive()
+        }
+        if (this.supportsStates()) {
+          return Tabs.after(this.content.setState!(this.states.get(id)), settle)
+        }
+        return Tabs.after(this.content.setMarkdown(content), settle)
+      }
+      return Tabs.after(snapshotted, open)
+    })
   }
 
   activate(id: string): void {
-    if (id === this.activeId) return
-    this.snapshotActive()
-    if (!activateSession(id)) return
-    this.restoreActive()
-    this.notifyActive()
+    void this.enqueue(() => {
+      // Re-checked inside the queue, not before it: the tab the reader clicked may no
+      // longer be the one this switch was for, because another switch is ahead of us.
+      if (id === this.activeId) return undefined
+      const snapshotted = this.snapshotActiveNow()
+      return Tabs.after(snapshotted, () => {
+        if (!activateSession(id)) return undefined
+        return Tabs.after(this.restoreActive(), () => this.notifyActive())
+      })
+    })
   }
 
   close(id: string): void {
-    this.snapshotActive()
-    const nextActive = closeSession(id)
-    this.snapshots.delete(id)
-    this.states.delete(id)
-    if (nextActive === null) {
-      // No sessions left: stay on the home screen (data-view switches to
-      // "home"), do not invent an empty tab.
-      this.render()
-      return
-    }
-    this.restoreActive()
-    this.render()
-    this.notifyActive()
+    void this.enqueue(() => {
+      const snapshotted = this.snapshotActiveNow()
+      return Tabs.after(snapshotted, () => {
+        const nextActive = closeSession(id)
+        this.snapshots.delete(id)
+        this.states.delete(id)
+        if (nextActive === null) {
+          // No sessions left: stay on the home screen (data-view switches to
+          // "home"), do not invent an empty tab.
+          this.render()
+          return undefined
+        }
+        return Tabs.after(this.restoreActive(), () => {
+          this.render()
+          this.notifyActive()
+        })
+      })
+    })
   }
 
   getMarkdownSnapshot(id: string): string | undefined {
     return this.snapshots.get(id)
   }
 
-  private restoreActive(): void {
+  private restoreActive(): void | Promise<void> {
     const active = getActive()
-    if (!active) return
-    if (this.supportsStates()) {
-      this.content.setState!(this.states.get(active.id))
-    } else {
-      const markdown = this.snapshots.get(active.id) ?? ''
-      this.content.setMarkdown(markdown)
+    if (!active) return undefined
+    // The scroll is part of `settle` rather than a line of its own, so it belongs to
+    // the document that has **arrived** — with an `await` above it, it would be applied
+    // to the document still on its way out, which is the bug the queue was added for.
+    const settle = (): void => {
+      this.content.setScroll?.(this.scrolls.get(active.id) ?? 0)
+      this.appliedSession = active.id
     }
-    this.content.setScroll?.(this.scrolls.get(active.id) ?? 0)
-    this.appliedSession = active.id
+    if (this.supportsStates()) {
+      return Tabs.after(this.content.setState!(this.states.get(active.id)), settle)
+    }
+    return Tabs.after(this.content.setMarkdown(this.snapshots.get(active.id) ?? ''), settle)
   }
 
   private supportsStates(): boolean {
