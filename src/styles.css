@@ -24,6 +24,13 @@
   --block-hover: #eef4fd;
   --selection: #b6d7ff;
   --selection-strong: #9ecbff;
+  /* How far back a block recedes while a working state is live. **A weight, not a
+   * colour**, so it is one number for both schemes: dimming says *this is not where
+   * you are*, and that claim is about emphasis rather than hue — a literal pair
+   * would change hue between the schemes and say something different in each. The
+   * value is a starting point; what is not negotiable is the property behind it,
+   * that the dimmed prose is still legible against `--editor-bg`. */
+  --dim-out: 0.55;
   /* "Found" and "selected" are different claims, so they are different tokens.
    * Derived rather than spelled, so a palette change moves the find chips with
    * the selection they used to borrow — and `--selection` stops meaning one
@@ -671,6 +678,15 @@ body {
  * rather than moving on. A block in its source form needs no exclusion of its own
  * — `block-source-mode` is not in the list.
  *
+ * **`:not(.edi-block-mode-dimmed)` is the same argument one level out.** A dimmed
+ * block is one the reader is demonstrably not in — it holds no mode and the pointer
+ * cannot reach it — so a band there would advertise an affordance that does not
+ * exist, which is the failure `:not(.edi-block-mode)` already guards against for a
+ * block mid-mode. The exclusion is the *chain's complement* rather than a block-type
+ * list, so a lit rung of the chain keeps its band — it is actionable, an open
+ * encrypted block offers Lock and Alt+click exits it — and a block that merely
+ * happens to be nearby does not.
+ *
  * **`z-index: -1` is what a native form control has to be lifted over**, and that
  * is a cost of the band rather than an incident: a form control is painted below
  * a negative-z-index sibling unless it carries a positive `z-index` of its own
@@ -721,7 +737,7 @@ body {
    answer is already answered: there is one encrypted block, it is the thing under
    the pointer, and its content is on screen. An encrypted block holds exactly one
    block by design, so the inner one can never be the answer to anything. */
-.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
+.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):not(.edi-block-mode-dimmed):not(.encrypted-block-reveal-editor *):hover::before {
   /* **`var()`'s fallback is the band's default: drawn.** One declaration of
      `--hover-band-content` in the whole sheet, below, is what turns it off —
      which is the whole of the View → Hover Band option (`src/hoverBand.ts`,
@@ -972,6 +988,45 @@ body {
  * rather than borrowing the document's. */
 .ProseMirror ::selection {
   background-color: var(--selection);
+}
+
+/* ── A working state: everything else recedes ─────────────────────────────────
+ * A block in a working state — a live sheet, a diagram being edited — takes the
+ * rest of the document out of play, and this is the one channel that can say so.
+ * The two outlines answer *which block*; neither says anything about the rest of
+ * the page, which is why a reader with a sheet open could still click the
+ * paragraph above it, start a second selection there, and see neither fact.
+ *
+ * Two claims, one class, and they are not the same claim: **dimmed** is *presence*
+ * (the document has receded) and **inert** is *possibility* (nothing there receives
+ * the pointer, so a second selection cannot come into being at all). Inertness is
+ * the load-bearing half — it is what makes that state *impossible rather than
+ * merely undrawn*, which is why nothing here has to go round clearing selections
+ * afterwards.
+ *
+ * **`opacity`, never `filter`.** `opacity < 1` creates a stacking context but
+ * leaves `position: absolute` descendants positioned against the same ancestor;
+ * `filter: opacity()` additionally becomes their **containing block**. Every
+ * mermaid overlay — the `⋯`, its menu, the inline composer field — is absolutely
+ * positioned against the preview and placed by one settle loop in `mermaid-edit.ts`,
+ * so a `filter` would silently re-anchor all of them. It is also the trap the hover
+ * band walked into from the other end: a dimmed block must not isolate in its own
+ * right, or the band of the block behind it would be trapped in its own painting
+ * order. `opacity` does not.
+ *
+ * `--dim-out` is a **weight, not a colour**, so it is one number for both schemes:
+ * dimming says *this is not where you are*, and that claim is about emphasis rather
+ * than hue. A weight that reads as emphatic in one scheme reads emphatic in the
+ * other; a literal pair would change hue between them and say something different
+ * in each. The value is the editor's to argue about, the *property* is not — the
+ * dimmed prose must still be legible against `--editor-bg`, and the gate tests that
+ * rather than the number.
+ */
+.ProseMirror .edi-block-mode-dimmed {
+  opacity: var(--dim-out);
+  /* **On the block, never on the scroller** — scrolling is the container's job, and
+   * a composer hanging below a short board has to stay reachable. */
+  pointer-events: none;
 }
 
 /* ── Headings ── */

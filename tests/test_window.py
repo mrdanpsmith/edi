@@ -3622,6 +3622,20 @@ def test_alt_click_on_a_code_blocks_text_toggles_its_modes(window):
     assert back["editor"], "the block did not come back to its rendered form"
 
 
+# The band's own selector, named **once**. Five probes below have to *find* the
+# rule in the loaded sheet to measure it, rewrite it, or force it on, and each used
+# to spell the whole selector out — so one legitimate change to the rule (it gained
+# an exclusion when a working state started dimming the document) read as "the rule
+# is not in the sheet" in five places at once, which is the failure mode
+# `BAND_MATCHES_PROBE` already warns about for anchors: the reader is sent looking
+# in the wrong place. One definition, so a change is one edit.
+BAND_SELECTOR = (
+    ".ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,"
+    " .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)"
+    ":not(.edi-block-mode-dimmed):not(.encrypted-block-reveal-editor *):hover::before"
+)
+BAND_SELECTOR_JS = json.dumps(BAND_SELECTOR)
+
 # The hover affordance that answers "which block would Alt+click alter?", added
 # because the gesture is one click over every top-level block and the page had no
 # way to say which one the pointer was over.
@@ -3635,9 +3649,7 @@ def test_alt_click_on_a_code_blocks_text_toggles_its_modes(window):
 HOVER_BAND_RULE = """(() => {
   const HIT = ['.block-visual-mode', '.mermaid', '.runnable-block',
                '.spreadsheet', '.ss-plain', '.encrypted-block'];
-  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
-    + ':not(.encrypted-block-reveal-editor *):hover::before';
+  const SEL = %s;
   let rule = null;
   for (const sheet of document.styleSheets) {
     let rules;
@@ -3655,12 +3667,16 @@ HOVER_BAND_RULE = """(() => {
     inset: style.inset || [style.top, style.right, style.bottom, style.left].join(' '),
     blocks: HIT.filter((c) => SEL.includes(c)),
     notMode: SEL.includes(':not(.edi-block-mode)'),
+    // A dimmed block is one the reader is not in — no mode, and no pointer either —
+    // so the band stands down there for exactly the reason it stands down on a
+    // block mid-mode. This is the chain's complement, not a block-type list.
+    notDimmed: SEL.includes(':not(.edi-block-mode-dimmed)'),
     // A revealed encrypted block is a second editor inside the encrypted block
     // that already has a band, and its one block can never be what Alt+click would
     // alter. So the band has to be able to say "not in there".
     notReveal: SEL.includes(':not(.encrypted-block-reveal-editor *)'),
   };
-})()"""
+})()""" % BAND_SELECTOR_JS
 
 
 HOVER_BAND_HIT = (
@@ -3759,9 +3775,7 @@ graph TD
 # owns, and the one that answers the question: the band is drawn by
 # `content: var(--hover-band-content, '')`, so "off" has to arrive as `none`.
 BAND_OPTION_PROBE = """(() => {
-  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
-    + ':not(.encrypted-block-reveal-editor *):hover::before';
+  const SEL = %s;
   let rule = null;
   for (const sheet of document.styleSheets) {
     let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
@@ -3791,7 +3805,7 @@ BAND_OPTION_PROBE = """(() => {
   block.classList.remove('edi-band-probe');
   style.remove();
   return out;
-})()"""
+})()""" % BAND_SELECTOR_JS
 
 
 def test_the_hover_band_is_a_view_option_that_actually_turns_the_band_off(window):
@@ -3950,9 +3964,7 @@ def test_an_unknown_preference_is_not_written(window):
 # does it clear the block on every type — and it is an instrument, not the claim:
 # the `:hover` match itself is still CSS that only a real pointer exercises.
 BAND_GEOMETRY_PROBE = """(() => {
-  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
-    + ':not(.encrypted-block-reveal-editor *):hover::before';
+  const SEL = %s;
   let rule = null;
   for (const sheet of document.styleSheets) {
     let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
@@ -3994,7 +4006,7 @@ BAND_GEOMETRY_PROBE = """(() => {
     pmLeft: Math.round(pmBox.left), pmRight: Math.round(pmBox.right),
     rows,
   };
-})()"""
+})()""" % BAND_SELECTOR_JS
 
 
 def test_the_hover_band_reaches_the_page_edges(window):
@@ -4065,9 +4077,7 @@ graph TD
 # content is a row of bare controls, so hovering one drew the band over every
 # checkbox in it and they came and went with the pointer.
 BAND_OVER_CONTROL_ON = """(() => {
-  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
-    + ':not(.encrypted-block-reveal-editor *):hover::before';
+  const SEL = %s;
   const always = SEL.replace(':hover', ':not(.edi-never-hover)');
   let forced = 0;
   for (const sheet of document.styleSheets) {
@@ -4099,7 +4109,7 @@ BAND_OVER_CONTROL_ON = """(() => {
     // is the whole run above the checkbox rather than the checkbox alone.
     bandZ: getComputedStyle(cb.closest('.block-visual-mode'), '::before').zIndex,
   };
-})()"""
+})()""" % BAND_SELECTOR_JS
 
 BAND_OVER_CONTROL_OFF = """(() => {
   const saved = window.__ediBandProbe;
@@ -4184,9 +4194,7 @@ def test_the_hover_band_does_not_hide_a_tasks_checkbox(window):
 # hovering one painted `--block-hover` over its 1px border and over the 12px of
 # padding around the editor. The chrome did not get covered — it was the band.
 BAND_OVER_FRAME_ON = """(() => {
-  const SEL = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
-    + ' .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)'
-    + ':not(.encrypted-block-reveal-editor *):hover::before';
+  const SEL = %s;
   const always = SEL.replace(':hover', ':not(.edi-never-hover)');
   let forced = 0;
   for (const sheet of document.styleSheets) {
@@ -4200,7 +4208,7 @@ BAND_OVER_FRAME_ON = """(() => {
     }
   }
   return { forced };
-})()"""
+})()""" % BAND_SELECTOR_JS
 
 BAND_FRAME_POINTS = """(() => {
   const block = document.querySelector('.runnable-block');
@@ -4310,6 +4318,11 @@ BAND_MATCHES_PROBE = """(() => {
     '  </div>',
     '  <div class="runnable-block has-code-lang">code</div>',
     '  <div class="runnable-block has-code-lang edi-block-mode">code in a mode</div>',
+    // A working state live somewhere else in the document. The band stands down on
+    // a dimmed block for the reason it stands down on a block mid-mode: the block
+    // holds no mode and the pointer cannot reach it, so a band there would advertise
+    // an affordance that does not exist.
+    '  <div class="runnable-block has-code-lang edi-block-mode-dimmed">dimmed</div>',
     '</div>',
   ].join('\\n');
   document.body.appendChild(root);
@@ -4331,8 +4344,14 @@ BAND_MATCHES_PROBE = """(() => {
   root.querySelectorAll('.block-visual-mode, .runnable-block').forEach((el) => {
     const where = el.closest('.encrypted-block-reveal-editor') ? 'inside reveal'
       : el.closest('.encrypted-block') ? 'encrypted block' : 'document';
-    const mode = el.classList.contains('edi-block-mode') ? ', in a mode' : '';
-    out[where + mode] = el.matches(probe);
+    // **Every distinguishing class has to be its own key.** An earlier version
+    // suffixed only on `edi-block-mode`, so a `edi-block-mode-dimmed` element
+    // reported itself as a plain `document` block and overwrote it — the dimmed
+    // fixture turned the ordinary block's `True` into its own `False`, which read
+    // as "the band stopped working" rather than as two elements sharing a key.
+    const state = el.classList.contains('edi-block-mode') ? ', in a mode'
+      : el.classList.contains('edi-block-mode-dimmed') ? ', dimmed' : '';
+    out[where + state] = el.matches(probe);
   });
   root.remove();
   return { selector: found, probe, out };
@@ -4367,6 +4386,8 @@ def test_the_hover_band_stays_out_of_a_revealed_encrypted_block(window):
         "a revealed encrypted block's one block must not be banded: %r" % out)
     assert out.get("document, in a mode") is False, (
         "a block already in a mode keeps the accent rule instead: %r" % out)
+    assert out.get("document, dimmed") is False, (
+        "a dimmed block must stand down too — it holds no mode and no pointer: %r" % out)
 
 
 def test_the_hover_band_does_not_paint_over_a_code_blocks_own_frame(window):
@@ -4998,6 +5019,545 @@ def test_prose_selection_is_the_apps_own_colour(window):
         f"--selection does not vary by scheme, so one rule cannot follow it: {seen}")
 
 
+# ── A working state ───────────────────────────────────────────────────────────
+# What the page looks like while a block is *producing* something: one block lit,
+# everything else dimmed and unreachable. Read out of the computed styles rather
+# than the classes, because the classes are the intent and the styles are the
+# claim — and the two halves of the claim are different properties of two
+# different elements, so they are read separately.
+WORKING_STATE = r"""(() => {
+  const editor = document.querySelector('#editor-container > .ProseMirror');
+  if (!editor) return { missing: true };
+  const scroller = document.querySelector('#editor-container');
+  const describe = (el) => el === null ? null : (() => {
+    const cs = getComputedStyle(el);
+    return {
+      cls: String(el.className).slice(0, 60),
+      opacity: cs.opacity,
+      pointerEvents: cs.pointerEvents,
+      isolating: cs.isolation !== 'auto' || cs.transform !== 'none'
+        || cs.filter !== 'none' || cs.contain !== 'none' || cs.willChange !== 'auto',
+      // A `filter` becomes the containing block for `position: absolute`
+      // descendants, which is how a dim would silently re-anchor every mermaid
+      // overlay. `opacity` below 1 does not.
+      filtered: cs.filter !== 'none',
+    };
+  })();
+  return {
+    lit: describe(document.querySelector('.edi-block-mode-lit')),
+    dimmed: [...editor.querySelectorAll(':scope > .edi-block-mode-dimmed')].map(describe),
+    scroller: describe(scroller),
+    dimOut: getComputedStyle(document.documentElement).getPropertyValue('--dim-out').trim(),
+    editorBg: getComputedStyle(document.documentElement).getPropertyValue('--editor-bg').trim(),
+  };
+})()"""
+
+# A sheet and a diagram, side by side: the working-state predicate is read off the
+# record, so both kinds of producing state dim and neither a source form nor an
+# ordinary paragraph does.
+WORKING_STATE_DOC = """Prose before the board.
+
+```mermaid
+graph TD
+  A[Alpha] --> B[Beta]
+```
+
+| A | B |
+| --- | --- |
+| 1 | 2 |
+
+Prose after the table.
+"""
+
+
+def _alt_click_a_cell(window, selector):
+    _dump(window, """(() => {
+      const cell = document.querySelector(%s);
+      cell.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { d: 1 };
+    })()""" % json.dumps(selector))
+
+
+def _open_a_working_state(window):
+    """Open the first table in `WORKING_STATE_DOC` as a sheet, through Alt+click."""
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(WORKING_STATE_DOC))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+    _alt_click_a_cell(window, "#editor-container .ss-plain-table td")
+    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
+          lambda d: d.get("s") is True, timeout=15)
+    return _wait(window, WORKING_STATE, lambda d: d.get("dimmed"), timeout=10)
+
+
+
+# Is the dimmed prose still readable? Measured through the actual paint rather than
+# off the palette: the paragraph's own colour, composited over `--editor-bg` by the
+# block's computed opacity, against WCAG's 4.5:1 for body text. That is the property
+# `--dim-out` has to satisfy in *either* scheme, and it is why the number can be
+# argued about without this gate having to be rewritten.
+#
+# Colours are read off a scratch element's computed style rather than off the custom
+# property: `--editor-bg` is `#fff`, and a hex triple has no digits for a naive parse
+# to find — which is the kind of thing that reads as "the probe is broken" rather
+# than as the value it was asked for.
+DIMMED_LEGIBILITY = r"""(() => {
+  const p = document.querySelector(
+    '#editor-container > .ProseMirror > .edi-block-mode-dimmed p');
+  const lit = document.querySelector('#editor-container > .ProseMirror > .edi-block-mode-lit');
+  if (!p || !lit) return { missing: true };
+  const scratch = document.createElement('span');
+  scratch.style.backgroundColor = '';
+  document.body.appendChild(scratch);
+  const read = (token) => {
+    scratch.style.backgroundColor =
+      getComputedStyle(document.documentElement).getPropertyValue(token);
+    return getComputedStyle(scratch).backgroundColor;
+  };
+  const lum = (rgb) => {
+    const v = rgb.map((c) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  };
+  const parse = (value) => (value.match(/[0-9.]+/g) || []).slice(0, 3).map(Number);
+  const bg = parse(read('--editor-bg'));
+  const fg = parse(getComputedStyle(p).color);
+  const alpha = parseFloat(getComputedStyle(p).opacity);
+  const composited = fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha)));
+  const a = lum(composited), b = lum(bg);
+  return {
+    composited, bg, fg, alpha,
+    ratio: Number(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2)),
+    dimOut: getComputedStyle(document.documentElement).getPropertyValue('--dim-out').trim(),
+  };
+})()"""
+
+def test_a_working_state_dims_and_inerts_the_rest_of_the_document(window):
+    """With a sheet live, every other block is dimmed and unreachable — and the
+    surrounding prose is still legible.
+
+    This is the gate that catches §2.3 being implemented too broadly *or* not
+    broadly enough, and both halves are properties rather than literals:
+    `--dim-out` is one number for both schemes because dimming says *this is not
+    where you are*, which is about emphasis rather than hue, so the question the
+    gate asks is whether the dimmed text still clears a legible contrast against
+    `--editor-bg` — not whether it came out at 0.55.
+
+    **The scroller is asserted separately and must not dim.** Scrolling is the
+    container's job: a composer hanging below a short board has to stay reachable,
+    and inertness belongs on blocks, never on the thing you scroll.
+    """
+    out = _open_a_working_state(window)
+
+    assert out["lit"] is not None and out["lit"]["opacity"] == "1", (
+        f"the block the reader is working in is dimmed too: {out}")
+    # The other three: the paragraph, the board, and the paragraph after it. The
+    # fourth block *is* the one holding the record.
+    assert len(out["dimmed"]) == 3, (
+        "every other top-level block should be dimmed — the paragraph before the "
+        f"board, the board, and the paragraph after the table: {out}")
+
+    for entry in out["dimmed"]:
+        assert 0 < float(entry["opacity"]) < 1, (
+            f"a dimmed block is not dimmed: {entry}")
+        assert entry["pointerEvents"] == "none", (
+            f"a dimmed block still takes the pointer, so a second selection can be "
+            f"made in it: {entry}")
+        # The band is `z-index: -1` and escapes into `.ProseMirror`'s stacking
+        # context; a dimmed block that isolated would trap it. `opacity` is the one
+        # stacking context it *may* create, and it does not move absolutely
+        # positioned descendants — `filter` would.
+        assert not entry["filtered"], (
+            f"dimming with filter would re-anchor every absolutely positioned "
+            f"overlay in the block: {entry}")
+    assert out["scroller"]["pointerEvents"] != "none", (
+        f"inertness leaked onto the scroll container: {out['scroller']}")
+    assert out["scroller"]["opacity"] == "1", (
+        f"the scroll container must not dim: {out['scroller']}")
+
+    # ...and the property behind the number. WCAG's 4.5:1 for body text, measured
+    # through the actual paint: the dimmed paragraph's own colour, composited over
+    # the editor background by `--dim-out`.
+    contrast = _dump(window, DIMMED_LEGIBILITY)
+    assert not contrast.get("missing"), contrast
+    assert contrast["ratio"] >= 4.5, (
+        "the dimmed prose stops being legible, which is the failure --dim-out exists "
+        f"to avoid: {contrast}")
+    assert float(contrast["dimOut"]) == float(out["dimOut"]), (contrast, out)
+
+
+def test_a_source_block_is_not_a_working_state(window):
+    """Opening a block's Source dims nothing.
+
+    This is the half of §2.4 that is easy to get wrong in the direction of
+    tidiness. §7.2's sentence — *anything not being viewed as its document* — covers
+    source, being edited **and** a sheet, and it is the right sentence for the
+    dashed outline because all three should be marked. It is the wrong sentence for
+    the dimming, and copying it here would mean that Alt+clicking a paragraph into
+    its markdown dimmed the whole document around a block whose buffer is the
+    reader's only other text.
+
+    So the outline and the dimming are generated from two different predicates, and
+    this is the test that says so.
+    """
+    _open_a_working_state(window)
+    # Out of the sheet, and into a paragraph's Source instead. **Not** undo: a form
+    # is plugin state rather than a document edit — that is the whole of what the
+    # record bought — so there is nothing in the history to take it back with.
+    _alt_click_a_cell(window, "#editor-container .spreadsheet .ss-grid td")
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("p") is True, timeout=15)
+    _dump(window, """(() => {
+      const para = document.querySelector('#editor-container > .ProseMirror > .block-visual-mode p');
+      const r = para.getBoundingClientRect();
+      const x = Math.round(r.left + 12), y = Math.round(r.top + r.height / 2);
+      const at = document.elementFromPoint(x, y) || para;
+      at.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+      return { d: 1 };
+    })()""")
+    source = _wait(window, """(() => ({
+      src: !!document.querySelector('#editor-container .block-source-mode'),
+      dimmed: document.querySelectorAll('#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+    }))()""", lambda d: d.get("src") is True, timeout=10)
+    assert source["src"], source
+    assert source["dimmed"] == 0, (
+        "a source form is a *reading* state — it dims nothing: %r" % source)
+
+
+def test_a_dimmed_document_cannot_take_a_second_selection(window):
+    """A press in the dimmed region does not create a selection, and does not
+    damage the grid that *is* holding one.
+
+    These are the two halves of inertness, and the second is the one that catches
+    §2.3 being implemented too broadly. Dimming is per-block and the rule is one
+    class, so the tempting mistake is to put `pointer-events: none` on the editor or
+    the scroller — which would also take the pointer out of the *focused* block's
+    grid, and a reader who had a cell selected would find the selection gone and the
+    grid deaf. The grid's `anchor`/`active`/`extra` and its `.ss-range` /
+    `.ss-selected` / `.ss-active` classes are the reader's work, and inertness must
+    not reach them.
+    """
+    _open_a_working_state(window)
+
+    # Click a cell first, so the grid has a real selection to lose.
+    _dump(window, """(() => {
+      const cell = document.querySelector('#editor-container .spreadsheet .ss-grid td:nth-child(2)');
+      const r = cell.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+      const at = document.elementFromPoint(x, y) || cell;
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(type,
+          { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+      }
+      return { d: 1 };
+    })()""")
+    grid = _wait(window, """(() => {
+      const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      if (!grid) return { missing: true };
+      return {
+        focused: document.activeElement === grid,
+        range: grid.querySelectorAll('td.ss-range').length,
+        selected: grid.querySelectorAll('td.ss-selected').length,
+        active: grid.querySelectorAll('td.ss-active').length,
+        text: [...grid.querySelectorAll('td.ss-range')].map((t) => t.textContent),
+      };
+    })()""", lambda d: d.get("range", 0) > 0, timeout=10)
+    assert grid["focused"] and grid["active"], grid
+    assert grid["range"] > 0, grid
+
+    # A real press on a paragraph above the sheet and on the one below it. The
+    # element under the point is deliberately *not* consulted: the question is what
+    # the browser's own hit test reaches when a pointer is put there. The two
+    # paragraphs are picked out by their own wrapper — a dimmed *board* also has
+    # `<p>` elements inside it, and pressing one of those would be a different test.
+    def _dimmed_paragraph(index):
+        return _dump(window, """(() => {
+          const els = [...document.querySelectorAll(
+            '#editor-container > .ProseMirror > .edi-block-mode-dimmed.block-visual-mode')]
+            .map((el) => el.querySelector('p')).filter(Boolean);
+          const el = els[%d];
+          if (!el) return { missing: true, count: els.length };
+          const r = el.getBoundingClientRect();
+          const x = Math.round(r.left + 12), y = Math.round(r.top + r.height / 2);
+          const at = document.elementFromPoint(x, y) || el;
+          for (const type of ['mousedown', 'mouseup', 'click']) {
+            at.dispatchEvent(new MouseEvent(type,
+              { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+          }
+          return { at: at.className || at.tagName, x, y, count: els.length };
+        })()""" % index)
+
+    assert _dimmed_paragraph(0).get("count") == 2, (
+        "expected a paragraph on each side of the sheet: %r" % _dimmed_paragraph(0))
+    for index in (0, 1):
+        pressed = _dimmed_paragraph(index)
+        assert not pressed.get("missing"), pressed
+
+    after = _dump(window, """(() => {
+      const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      const ed = window.ediSelectionState ? window.ediSelectionState() : null;
+      return {
+        focused: document.activeElement === grid,
+        range: grid.querySelectorAll('td.ss-range').length,
+        selected: grid.querySelectorAll('td.ss-selected').length,
+        active: grid.querySelectorAll('td.ss-active').length,
+        native: String(getSelection()).slice(0, 60),
+        ed,
+      };
+    })()""")
+    assert after["focused"], f"the grid lost the caret to a dimmed block: {after}"
+    assert after["range"] == grid["range"], f"the grid's selection moved: {after}"
+    assert after["selected"] == grid["selected"], f"the grid's selection moved: {after}"
+    assert after["active"] == grid["active"], f"the grid's active cell moved: {after}"
+
+
+def test_ctrl_c_copies_the_cells_when_a_sheet_is_live_and_the_document_when_it_is_not(window):
+    """`Ctrl+C` follows the selection, and the selection is the grid's.
+
+    The user-visible payoff of §2.3, and it comes from **the collapse on entry**
+    rather than from any change to `editCopy`: taking a sheet's form collapses the
+    document selection (`setBlockModeAt`), so `editCopy`'s own
+    `if (view.state.selection.empty) return` turns every document command into a
+    no-op and the grid's handlers get the key. That is why the copy is TSV of the
+    selected cells rather than three paragraphs of the document around the table —
+    and the second half is what says the collapse is not permanent.
+    """
+    from PySide6.QtGui import QGuiApplication
+    _open_a_working_state(window)
+
+    _dump(window, """(() => {
+      const cell = document.querySelector('#editor-container .spreadsheet .ss-grid td:nth-child(2)');
+      const r = cell.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+      const at = document.elementFromPoint(x, y) || cell;
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(type,
+          { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+      }
+      return { d: 1 };
+    })()""")
+    _wait(window, """(() => ({
+      n: document.querySelectorAll('#editor-container .spreadsheet .ss-grid td.ss-range').length,
+    }))()""", lambda d: d.get("n", 0) > 0, timeout=10)
+    # Grow it to more than one cell, because the claim is about *TSV*: a one-cell
+    # range copies one cell and proves nothing about the tab-separated form.
+    _dump(window, """(() => {
+      const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      grid.focus();
+      for (const key of ['ArrowRight', 'ArrowDown']) {
+        grid.dispatchEvent(new KeyboardEvent('keydown',
+          { key, shiftKey: true, bubbles: true, cancelable: true }));
+      }
+      return { d: 1 };
+    })()""")
+    _wait(window, """(() => ({
+      n: document.querySelectorAll('#editor-container .spreadsheet .ss-grid td.ss-range').length,
+    }))()""", lambda d: d.get("n", 0) >= 4, timeout=10)
+
+    QGuiApplication.clipboard().clear()
+    _ctrl_key_on(window, "#editor-container .spreadsheet .ss-grid", "c")
+    cells = _clipboard_text()
+    assert cells.strip(), "Ctrl+C with a sheet live put nothing on the clipboard"
+    assert "\t" in cells, f"the copy is not TSV of cells: {cells[:80]!r}"
+    assert "Prose before the board" not in cells, (
+        f"Ctrl+C copied the document instead of the cells: {cells[:120]!r}")
+
+    # Leave the sheet, and the document is copyable again.
+    _alt_click_a_cell(window, "#editor-container .spreadsheet .ss-grid td")
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("p") is True, timeout=15)
+    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+    _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 1, timeout=10)
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "c")
+    doc = _clipboard_text()
+    assert "Prose before the board" in doc, (
+        f"the document is not copyable again after leaving the sheet: {doc[:120]!r}")
+
+
+def test_escape_leaves_a_sheet_and_escape_in_a_cell_does_not(window):
+    """Escape is a ladder in a sheet: reject the cell, then leave.
+
+    Two presses, for a reason. A cell being edited holds the value in an input that
+    is not in the document yet, so Escape there has to *reject* it — and it must do
+    so on the first press, because a ladder that swallowed the first Escape to leave
+    the sheet would have discarded what was typed with no way back. The field owns
+    the key first (`onEditKeydown` → `cancelCellEdit`), so the reader is still in the
+    sheet afterwards and the second press means *done*.
+
+    Which is what the last rung now is. It used to call `view.focus()` and keep the
+    sheet, which left the caret in a document the reader had been told was *inert*:
+    nothing outside the sheet could be clicked, so Escape looked broken rather than
+    finished.
+    """
+    _open_a_working_state(window)
+
+    _dump(window, """(() => {
+      const cell = document.querySelector('#editor-container .spreadsheet .ss-grid td:nth-child(2)');
+      const r = cell.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+      const at = document.elementFromPoint(x, y) || cell;
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(type,
+          { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+      }
+      const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      grid.focus();
+      grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
+      return { d: 1 };
+    })()""")
+    editing = _wait(window, """(() => ({
+      input: !!document.querySelector('#editor-container .spreadsheet .ss-edit-input'),
+      sheet: !!document.querySelector('#editor-container .spreadsheet'),
+    }))()""", lambda d: d.get("input") is True, timeout=10)
+    assert editing["input"], editing
+
+    # Type something, then Escape: the value is discarded and the sheet is still open.
+    _dump(window, """(() => {
+      const input = document.querySelector('#editor-container .spreadsheet .ss-edit-input');
+      input.value = 'DISCARDS ME';
+      input.dispatchEvent(new KeyboardEvent('keydown',
+        { key: 'Escape', bubbles: true, cancelable: true }));
+      return { d: 1 };
+    })()""")
+    rejected = _wait(window, """(() => ({
+      input: !!document.querySelector('#editor-container .spreadsheet .ss-edit-input'),
+      sheet: !!document.querySelector('#editor-container .spreadsheet'),
+      leaked: (document.querySelector('#editor-container .spreadsheet') || { textContent: '' })
+        .textContent.indexOf('DISCARDS ME') >= 0,
+    }))()""", lambda d: d.get("input") is False, timeout=10)
+    assert rejected["sheet"], (
+        "the first Escape left the sheet, so the second would mean something else "
+        f"entirely: {rejected}")
+    assert not rejected["leaked"], f"the rejected value reached the grid: {rejected}"
+
+    # Escape again, with nothing pending: out of the sheet, the same way Alt+click does.
+    _dump(window, """(() => {
+      const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      grid.focus();
+      grid.dispatchEvent(new KeyboardEvent('keydown',
+        { key: 'Escape', bubbles: true, cancelable: true }));
+      return { d: 1 };
+    })()""")
+    left = _wait(window, """(() => ({
+      plain: !!document.querySelector('#editor-container .ss-plain'),
+      sheet: !!document.querySelector('#editor-container .spreadsheet'),
+      dimmed: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+      active: document.activeElement
+        ? String(document.activeElement.className).slice(0, 40) : null,
+    }))()""", lambda d: d.get("plain") is True, timeout=10)
+    assert left["sheet"] is False, left
+    assert left["dimmed"] == 0, f"leaving the sheet left the document dimmed: {left}"
+
+
+def test_alt_click_outside_still_leaves_a_working_state(window):
+    """Inertness must not swallow the gesture that gets you out of it.
+
+    Worth stating because it is not obvious. The Alt+click listener sits on the
+    editor's **scroll container**, and with the dimmed blocks at `pointer-events:
+    none` a click in the dimmed region now hit-tests *past* them and lands on that
+    container — which is exactly where a click that names no block already lands, and
+    exactly what the gesture is for. So the gesture keeps working, and so does the
+    rule that a press on the container's own margin finishes the session.
+
+    The inert rule is worthless if it quietly swallows the way out, which is the one
+    way it could: a press that reached the *dimmed block* instead of the container
+    would do nothing at all and the reader would be stuck with a sheet open.
+    """
+    _open_a_working_state(window)
+    # The scroller's own margin, below the sheet: the shape a lone board leaves.
+    clicked = _dump(window, """(() => {
+      const scroller = document.querySelector('#editor-container');
+      const sheet = document.querySelector('#editor-container .spreadsheet');
+      const box = sheet.getBoundingClientRect();
+      const s = scroller.getBoundingClientRect();
+      const x = Math.round(s.left + s.width / 2);
+      const y = Math.round(Math.min(box.bottom + 24, s.bottom - 8));
+      const at = document.elementFromPoint(x, y);
+      at.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true,
+          clientX: x, clientY: y }));
+      return { at: at ? (at.className || at.tagName) : null, inSheet: !!(at && at.closest('.spreadsheet')) };
+    })()""")
+    assert not clicked["inSheet"], (
+        "the press landed inside the sheet, so this is not the gesture it claims "
+        f"to test: {clicked}")
+    left = _wait(window, """(() => ({
+      plain: !!document.querySelector('#editor-container .ss-plain'),
+      sheet: !!document.querySelector('#editor-container .spreadsheet'),
+      dimmed: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+    }))()""", lambda d: d.get("sheet") is False, timeout=10)
+    assert left["plain"], left
+    assert left["dimmed"] == 0, left
+
+
+def test_a_composer_still_scrolls_into_view_in_a_dimmed_document(window):
+    """Dimming takes the pointer away; it must not take scrolling away.
+
+    A card composer is an absolutely positioned field, so it contributes nothing to
+    the block's height and `openInlineInput` grows the block's `padding-bottom` for
+    exactly this reason — a field hanging below a short board has to be
+    *scrollable-to*. Inertness is `pointer-events: none` on **blocks**, never on the
+    scroller, so the question is whether it leaked one level up.
+
+    A board being edited is itself a working state, which makes this the only place
+    the two can be checked together: the document *is* dimmed, and the composer
+    being scrolled to is on the lit block.
+    """
+    doc = ("Prose above the board.\n\n```mermaid\n" + KANBAN_BARE.strip()
+           + "\n```\n\nProse below the board, far enough down that the document has to "
+             "scroll to reach the composer's own block.\n")
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(doc))
+    _wait(window, "(() => ({ m: !!document.querySelector('#editor-container .mermaid') }))()",
+          lambda d: d.get("m") is True, timeout=25)
+    _enter_edit_mode(window)
+    _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 5, timeout=15)
+
+    dimmed = _wait(window, WORKING_STATE, lambda d: d.get("dimmed"), timeout=10)
+    assert dimmed["dimmed"], (
+        "editing a board is a working state, so there is nothing dimmed here and "
+        f"this test is not testing what it claims: {dimmed}")
+
+    scroller = _dump(window, """(() => {
+      const el = document.querySelector('#editor-container');
+      const cs = getComputedStyle(el);
+      return {
+        pointerEvents: cs.pointerEvents,
+        opacity: cs.opacity,
+        overflowY: cs.overflowY,
+        scrollTop: el.scrollTop,
+      };
+    })()""")
+    assert scroller["pointerEvents"] != "none", scroller
+    assert scroller["opacity"] == "1", scroller
+    assert scroller["overflowY"] in ("auto", "scroll"), scroller
+
+    # And the gesture that needs the scroller still works: open a composer in the
+    # board's last column, which is the one far enough down to be off the fold.
+    _click_kanban_slot(window, 0)
+    _type(window, "a card title long enough that the composer grows past the band it was opened in")
+    grown = _wait(window, COMPOSER_FIT, lambda d: d["box"] is not None, timeout=10)
+    scrolled = _dump(window, """(() => {
+      const box = document.querySelector('.mermaid-edit-field');
+      const el = document.querySelector('#editor-container');
+      if (!box) return { missing: true };
+      const r = box.getBoundingClientRect();
+      const s = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, scrollerTop: s.top, scrollerBottom: s.bottom,
+               scrollTop: el.scrollTop };
+    })()""")
+    assert not scrolled.get("missing"), scrolled
+    assert scrolled["bottom"] <= scrolled["scrollerBottom"] + 1, (
+        f"the composer hangs below the scroller's own edge: {scrolled}")
+
+
 def test_select_all_marks_every_selected_atom(window):
     """`Ctrl+A` on `spreadsheets.md` marks every block it covers.
 
@@ -5210,6 +5770,30 @@ def _ctrl_key(window, k, **mods):
       }
       return { sent: true };
     })()""" % (repr(k).replace("'", '"'), k.upper(), ord(k.upper()), mods))
+
+
+def _ctrl_key_on(window, selector, k):
+    """`Ctrl+<k>` from wherever the key really comes from, not always the editor.
+
+    `_ctrl_key` dispatches on the outer `.ProseMirror`, which is right for a
+    document command and **wrong for a spreadsheet grid**: the grid is a node view
+    inside that editor, it claims the key at its own element on the way up to
+    `window`, and a key aimed at the editor never reaches it. What the app does when
+    a cell is selected is press the key *on the grid*, let the grid answer, and let
+    the window handler find nothing left to do — so that is what a test has to ask
+    for, or it is testing a route no reader takes.
+    """
+    return _dump(window, """(() => {
+      const el = document.querySelector(%s);
+      if (!el) return { missing: true };
+      for (const type of ['keydown', 'keyup']) {
+        el.dispatchEvent(new KeyboardEvent(type, {
+          key: %s, code: 'Key%s', keyCode: %d,
+          ctrlKey: true, metaKey: true, bubbles: true, cancelable: true,
+        }));
+      }
+      return { sent: true };
+    })()""" % (json.dumps(selector), json.dumps(k), k.upper(), ord(k.upper())))
 
 
 def _clipboard_text():

@@ -12,6 +12,8 @@ import { enterDiagramEditMode, mermaidNodeViewPlugin } from './node/mermaid'
 import { enterSpreadsheetMode, tableNodeViewPlugin } from './node/table'
 import {
   BLOCK_CONTROLS_CLASS,
+  BLOCK_DIMMED_CLASS,
+  BLOCK_LIT_CLASS,
   BLOCK_MODE_CLASS,
   BLOCK_MODE_EDITING_CLASS,
   BLOCK_MODE_KEY,
@@ -24,8 +26,10 @@ import {
   enterBlockMode,
   enterSourceMode,
   exitBlockMode,
+  isWorkingMode,
   keepOneNonVisualBlock,
   leaveBlockMode,
+  litBlockPositions,
   modeFor,
   setBlockForm,
   toggleBlockMode,
@@ -869,6 +873,69 @@ describe('one non-visual block in the whole page', () => {
     expect(blockFormMode(view.state, table)).toBeUndefined()
     expect(modeFor(view.state, board)?.interaction).toBe('editing')
     view.destroy()
+  })
+})
+
+describe('a working state is what the document recedes for', () => {
+  const litClasses = (view: EditorView): { lit: number; dimmed: number } => ({
+    lit: view.dom.querySelectorAll(`.${BLOCK_LIT_CLASS}`).length,
+    dimmed: view.dom.querySelectorAll(`.${BLOCK_DIMMED_CLASS}`).length,
+  })
+
+  it('dims every block but the one a sheet is open on', () => {
+    const view = createEditor('Before.\n\n| A |\n| --- |\n| 1 |\n\nAfter.')
+    const positions = allBlockPositions(view)
+    expect(positions.length).toBe(3)
+
+    expect(litClasses(view)).toEqual({ lit: 0, dimmed: 0 })
+    expect(litBlockPositions(view.state).size).toBe(0)
+
+    toggleBlockModeFromGesture(view, positions[1])
+    expect(blockFormMode(view.state, positions[1])).toBe('sheet')
+
+    // Every block is *described*, not just the dimmed ones: a document whose only
+    // non-default block is nested would otherwise produce no top-level decoration
+    // at all and ProseMirror would never be asked about the change.
+    expect(litClasses(view)).toEqual({ lit: 1, dimmed: 2 })
+    expect([...litBlockPositions(view.state)]).toEqual([positions[1]])
+    view.destroy()
+  })
+
+  it('dims for a diagram being edited, the other producing state', () => {
+    const view = createEditor('Before.\n\n```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter.')
+    const positions = allBlockPositions(view)
+    enterDiagramEditMode(view, positions[1])
+    expect(modeFor(view.state, positions[1])?.interaction).toBe('editing')
+    expect(litClasses(view)).toEqual({ lit: 1, dimmed: 2 })
+    view.destroy()
+  })
+
+  it('dims nothing for a source form, which is a reading state', () => {
+    // The load-bearing exclusion. §7.2's sentence — "anything not being viewed as
+    // its document" — covers source, editing and a sheet, and it is right for the
+    // dashed outline. Reusing it here would mean opening a paragraph's markdown
+    // dimmed the whole document around it.
+    const view = createEditor('Before.\n\nAfter.')
+    const positions = allBlockPositions(view)
+    enterSourceMode(view, positions[1])
+    expect(modeFor(view.state, positions[1])?.representation).toBe('source')
+    expect(isWorkingMode(modeFor(view.state, positions[1]))).toBe(false)
+    expect(litBlockPositions(view.state).size).toBe(0)
+    expect(litClasses(view)).toEqual({ lit: 0, dimmed: 0 })
+    view.destroy()
+  })
+
+  it('reads the predicate off the record, not off a list of block types', () => {
+    expect(isWorkingMode(null)).toBe(false)
+    expect(isWorkingMode(undefined)).toBe(false)
+    expect(isWorkingMode({ pos: 0, type: 'p', representation: 'visual', interaction: 'viewing' }))
+      .toBe(false)
+    expect(isWorkingMode({ pos: 0, type: 'p', representation: 'source', interaction: 'viewing' }))
+      .toBe(false)
+    expect(isWorkingMode({ pos: 0, type: 'table', representation: 'visual', interaction: 'viewing', form: 'sheet' }))
+      .toBe(true)
+    expect(isWorkingMode({ pos: 0, type: 'mermaid_block', representation: 'visual', interaction: 'editing' }))
+      .toBe(true)
   })
 })
 

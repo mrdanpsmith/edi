@@ -20,6 +20,7 @@ import {
   attachBlockControls,
   blockFormMode,
   blockModeFor,
+  leaveBlockMode,
   setBlockForm,
   setBlockModeAt,
 } from '../block-modes'
@@ -1827,6 +1828,18 @@ class TableNodeView implements NodeView, InlineCellHost {
       return
     }
 
+    // **Escape is a ladder here, and this is its last rung.** Everything above it
+    // is a *field* claiming the key first — `onEditKeydown` rejects the value being
+    // typed in a cell without committing it, the fx bar reverts its own input, the
+    // autocomplete closes — so a reader in the middle of an edit presses Escape
+    // once to abandon that edit and is still in the sheet, which is what makes a
+    // second press meaning "done" rather than "you just lost what I typed".
+    //
+    // Which is what this rung is for. It used to call `view.focus()` and keep the
+    // sheet, which put the caret in a document the reader had been told was
+    // *inert* — nothing outside the sheet could be clicked — and so looked broken
+    // rather than finished. Releasing the form is the same route Alt+click takes,
+    // so there is exactly one way out of a sheet and both gestures behave alike.
     if (key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
@@ -1834,7 +1847,9 @@ class TableNodeView implements NodeView, InlineCellHost {
         this.cancelCut()
         return
       }
-      this.view.focus()
+      const at = this.getPos()
+      if (at === undefined) return
+      leaveBlockMode(this.view, at)
       return
     }
     if (key === 'Enter' || key === 'F2') {

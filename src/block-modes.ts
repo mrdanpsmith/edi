@@ -122,6 +122,71 @@ export const BLOCK_MODE_EDITING_CLASS = `${BLOCK_MODE_CLASS}-editing`
 export const BLOCK_MODE_FORM_CLASS = `${BLOCK_MODE_CLASS}-form`
 
 /**
+ * The class every block **not** in the focus path wears while the page is in a
+ * working state.
+ *
+ * **Dimmed and inert are two different claims and one class carries both.**
+ * Dimmed is *presence* — the reader can see that the rest of the document has
+ * receded, which is the one thing the block-level outlines cannot say: they answer
+ * *which block*, and nothing in that vocabulary answers *what am I not working in*.
+ * Inert is *possibility* — a click or drag in the dimmed region cannot create a
+ * second selection, because nothing there receives the pointer. Inertness is what
+ * makes "the document has a selection while a sheet is live" **impossible rather
+ * than merely undrawn**, so nothing has to go round clearing selections afterwards.
+ */
+export const BLOCK_DIMMED_CLASS = `${BLOCK_MODE_CLASS}-dimmed`
+
+/**
+ * The other side of the same line, and the reason the dimmed set is a
+ * *description* rather than a mark. See `dimmedDecorations`: a document whose only
+ * non-default block is nested would otherwise see no change at the top level.
+ */
+export const BLOCK_LIT_CLASS = `${BLOCK_MODE_CLASS}-lit`
+
+/**
+ * Is `mode` a **working state** — the one the rest of the document recedes for?
+ *
+ * **The interaction axis plus a non-default form, and neither is `source`.** A
+ * source form is a *reading* state: the reader is looking at the block's own
+ * document. A sheet and a diagram's edit mode are *producing* states with a
+ * selection surface of their own, and producing is what makes everything else in
+ * the page irrelevant.
+ *
+ * This is deliberately **not** §7.2's sentence — *"anything not being viewed as
+ * its document"* — which is right for the dashed outline because all three of its
+ * states are non-default and all three should be marked. It is the wrong sentence
+ * here, and that is the whole reason the outline and the dimming cannot be
+ * generated from one predicate: under it, opening a paragraph's Source would dim
+ * the whole document, for a block whose buffer is the reader's only other text.
+ *
+ * Read off the record rather than off a list of node types, so a block type that
+ * declares an interaction state or a form gets dimming without being named here.
+ */
+export function isWorkingMode(mode: BlockMode | null | undefined): boolean {
+  return mode !== null && mode !== undefined &&
+    (mode.interaction === 'editing' || mode.form !== undefined)
+}
+
+/**
+ * The blocks that stay **lit** while this editor's record names a working state —
+ * everything else in the document is dimmed and inert.
+ *
+ * One position today, and the set exists so it does not have to stay one. The
+ * second level the model needs — a sheet inside an unlocked encrypted block, where
+ * the reveal's own paragraph has to stay lit with it and the *outer* document is
+ * the thing that recedes — is a path from the focused block up to the root rather
+ * than a single position, and a walk is what a set is for. Until an editor can
+ * hold a focused block that is not its own, the chain has one rung and this is it.
+ */
+export function litBlockPositions(state: EditorState): Set<number> {
+  const mode = currentBlockMode(state)
+  if (mode === null || !isWorkingMode(mode)) return EMPTY_LIT
+  return new Set([mode.pos])
+}
+
+const EMPTY_LIT: Set<number> = new Set()
+
+/**
  * What a block type supports. This is the declaration a block makes about
  * itself, and the control cluster (§6), the context menu and the Escape ladder
  * are all generated from it rather than from the block's wrapper class names.
@@ -214,20 +279,40 @@ function supportsMode(node: ProseNode, mode: BlockMode): boolean {
   return true
 }
 
-function blockModeDecorations(state: EditorState): DecorationSet {
+/**
+ * Every top-level block **carries a decoration describing whether it is lit** while
+ * a working state is live — which is what makes the block-level two-state question
+ * reach a node view at all, exactly as `BLOCK_MODE_CLASS` does for a mode. A
+ * decoration that only marked the *dimmed* blocks could not carry it, because a
+ * document whose only non-default block is **nested** (a table inside a list) would
+ * see no change at the top level at all: `ViewDesc.matchesNode` compares a node's
+ * decorations *by value*, and "no decoration here" is byte-identical between "no
+ * mode anywhere" and "there is a sheet three levels down". So every block is
+ * decorated and the class says which side of the line it is on.
+ */
+function dimmedDecorations(state: EditorState): Decoration[] {
+  const lit = litBlockPositions(state)
+  if (lit.size === 0) return []
+  const decos: Decoration[] = []
+  state.doc.forEach((node, offset) => {
+    const classes = lit.has(offset) ? BLOCK_LIT_CLASS : BLOCK_DIMMED_CLASS
+    decos.push(Decoration.node(offset, offset + node.nodeSize, { class: classes }))
+  })
+  return decos
+}
+
+function blockModeDecorations(state: EditorState): Decoration[] {
   const mode = currentBlockMode(state)
-  if (mode === null) return DecorationSet.empty
+  if (mode === null) return []
   const node = state.doc.nodeAt(mode.pos)
-  if (node === null || !supportsMode(node, mode)) return DecorationSet.empty
+  if (node === null || !supportsMode(node, mode)) return []
   const classes = [
     BLOCK_MODE_CLASS,
     mode.representation === 'source' ? BLOCK_MODE_SOURCE_CLASS : BLOCK_MODE_VISUAL_CLASS,
   ]
   if (mode.interaction === 'editing') classes.push(BLOCK_MODE_EDITING_CLASS)
   if (mode.form !== undefined) classes.push(BLOCK_MODE_FORM_CLASS)
-  return DecorationSet.create(state.doc, [
-    Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: classes.join(' ') }),
-  ])
+  return [Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: classes.join(' ') })]
 }
 
 /**
@@ -275,7 +360,10 @@ export const BLOCK_MODE_HANDLERS: Record<string, BlockModeHandlers> = {}
 export const blockModePlugin = new Plugin<BlockMode | null>({
   key: BLOCK_MODE_KEY,
   props: {
-    decorations: blockModeDecorations,
+    decorations: (state: EditorState): DecorationSet => {
+      const decos = blockModeDecorations(state).concat(dimmedDecorations(state))
+      return decos.length ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
+    },
   },
   view(view: EditorView) {
     const onClick = (event: MouseEvent): void => {
