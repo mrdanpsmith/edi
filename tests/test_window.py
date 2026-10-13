@@ -5518,12 +5518,18 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
     Four things hold at once, and it is the set that is the claim:
 
     - the **sheet** is lit and holds the dashed outline;
-    - the **encrypted block holding it** is lit too, and stays **open**;
+    - the **encrypted block holding it** is lit too, and stays **open** — and wears **no
+      border of its own**, because the reader is not in there;
     - the reveal's **other** content is dimmed;
     - the **outer** document is dimmed.
 
     The second is the one a per-editor implementation gets wrong by dimming one step
-    too close while leaving the prose two steps further away bright.
+    too close while leaving the prose two steps further away bright, and the *third* half
+    of it is the one that says it in the only way a reader can: **exactly one edit border
+    on the page**, and it is round the block being worked in. Two nested working states
+    used to show two, which is the one thing a mark that claims "you are working here" is
+    not allowed to do. It is counted from the computed outline rather than from the class
+    list, because the claim is about what is drawn.
     """
     _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
           % json.dumps("Opening the door.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nThe end.\n"))
@@ -5554,19 +5560,40 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
         sheet: !!document.querySelector('.encrypted-block-reveal .spreadsheet'),
         blockLit: block.classList.contains('edi-block-mode-lit'),
         blockDimmed: block.classList.contains('edi-block-mode-dimmed'),
+        blockMarked: block.classList.contains('edi-block-mode'),
         outerDimmed: [...editor.children].filter(
           (el) => el.classList.contains('edi-block-mode-dimmed')).length,
         innerLit, innerDimmed,
-        dashed: getComputedStyle(block).outlineStyle === 'dashed',
+        // **Every edit border on the page, and whose it is.** Read from the computed
+        // outline, because "one border" is a claim about what is drawn and the class list
+        // is only the route to it.
+        marks: [...document.querySelectorAll(
+          '.edi-block-mode-editing, .edi-block-mode-form')].map((el) => {
+          const style = getComputedStyle(el);
+          return {
+            sheet: !!el.closest('.encrypted-block-reveal'),
+            style: style.outlineStyle,
+            width: parseFloat(style.outlineWidth) || 0,
+          };
+        }),
+        blockOutline: getComputedStyle(block).outlineStyle,
       };
     })()""", lambda d: d.get("sheet") is True, timeout=15)
 
     assert out["open"], f"the block was closed out from under its own sheet: {out}"
     assert out["blockLit"] and not out["blockDimmed"], (
         f"the block holding the sheet has to stay lit with it: {out}")
-    assert out["dashed"], f"and it keeps the mode mark: {out}"
+    assert out["blockMarked"], (
+        f"the block holding the sheet is still a block in a mode: {out}")
     assert out["outerDimmed"] == 2, f"the outer document is what recedes: {out}"
     assert out["innerLit"] == 1, out
+
+    drawn = [m for m in out["marks"] if m["style"] == "dashed" and m["width"] >= 2]
+    assert len(drawn) == 1 and drawn[0]["sheet"], (
+        "a working state inside a working state must draw exactly one edit border, round "
+        f"the block being worked in — not one round each: {out}")
+    assert out["blockOutline"] != "dashed", (
+        f"the block holding the sheet is not where the reader is: {out}")
 
 
 def test_switching_tabs_commits_what_was_typed_into_an_open_block(window):

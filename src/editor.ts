@@ -11,6 +11,7 @@ import { blockStartKeymap, blockStartRules } from './blockstart'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown, sliceMarkdown } from './markdown'
 import {
+  blockModeFocusPlugin,
   blockModePlugin,
   commitSourceMode,
   currentBlockMode,
@@ -341,6 +342,7 @@ export function createBlockEditor(
     urlPastePlugin,
     misleadingLinkPlugin,
     blockModePlugin,
+    blockModeFocusPlugin,
     formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,

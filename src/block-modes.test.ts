@@ -17,11 +17,13 @@ import {
   BLOCK_LIT_CLASS,
   BLOCK_MODE_CLASS,
   BLOCK_MODE_EDITING_CLASS,
+  BLOCK_MODE_FORM_CLASS,
   BLOCK_MODE_KEY,
   BLOCK_MODE_SOURCE_CLASS,
   BLOCK_MODE_VISUAL_CLASS,
   blockFormMode,
   blockModeFor,
+  blockModeFocusPlugin,
   blockModePlugin,
   blockPosForElement,
   chainOf,
@@ -29,6 +31,8 @@ import {
   enterBlockMode,
   enterSourceMode,
   exitBlockMode,
+  forgetView,
+  focusIsDeeper,
   isWorkingMode,
   interactionLabels,
   keepOneNonVisualBlock,
@@ -67,6 +71,7 @@ function createEditor(initialMarkdown: string, extraPlugins: Plugin[] = []): Edi
       doc,
       plugins: [
         blockModePlugin,
+        blockModeFocusPlugin,
         codeBlockNodeViewPlugin,
         nodeViewPlugin,
         mermaidNodeViewPlugin,
@@ -962,6 +967,65 @@ describe('one non-visual block in the whole page', () => {
 
     third.destroy()
     inner.destroy()
+    outer.destroy()
+  })
+
+  it('gives the outline to the block being worked in, and only to it', () => {
+    // **Two nested working states showed two edit borders**, and the mark that says
+    // "you are working here" is a claim about *one* place — two of them mean nothing.
+    // So the block the reader is inside keeps the outline, and the block containing it
+    // keeps everything else about the record: the class (so the hover band still stands
+    // down and the cluster still offers Lock), and how it is being viewed.
+    const outer = editor('| A |\n| --- |\n| 1 |\n\n```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const block = boardOf(outer)
+    enterDiagramEditMode(outer, block)
+    expect(outer.dom.querySelector(`.${BLOCK_MODE_EDITING_CLASS}`)).not.toBeNull()
+
+    const inner = editor('| X |\n| --- |\n| 9 |',
+      () => ({ view: outer, pos: block, type: 'mermaid_block' }))
+    enterSpreadsheetMode(inner, tableOf(inner))
+
+    // **The sheet is where the reader is**, so the sheet wears the outline...
+    expect(inner.dom.querySelector(`.${BLOCK_MODE_FORM_CLASS}`)).not.toBeNull()
+    // ...and the block holding it does not, while still being a block in a mode.
+    expect(focusIsDeeper(outer.state)).toBe(true)
+    expect(outer.dom.querySelector(`.${BLOCK_MODE_CLASS}`)).not.toBeNull()
+    expect(outer.dom.querySelector(`.${BLOCK_MODE_VISUAL_CLASS}`)).not.toBeNull()
+    expect(outer.dom.querySelector(`.${BLOCK_MODE_EDITING_CLASS}`)).toBeNull()
+
+    // **One block, one border** — counted across both editors, because "one" is a claim
+    // about the page and neither editor can answer it alone.
+    const dashed = (view: EditorView): number =>
+      view.dom.querySelectorAll(`.${BLOCK_MODE_EDITING_CLASS}, .${BLOCK_MODE_FORM_CLASS}`)
+        .length
+    expect(dashed(inner) + dashed(outer)).toBe(1)
+
+    // Leaving the sheet gives the border back to the block above it.
+    leaveBlockMode(inner, tableOf(inner))
+    expect(focusIsDeeper(outer.state)).toBe(false)
+    expect(outer.dom.querySelector(`.${BLOCK_MODE_EDITING_CLASS}`)).not.toBeNull()
+
+    inner.destroy()
+    outer.destroy()
+  })
+
+  it('gives it back when the editor that held it is destroyed', () => {
+    // A reveal's editor goes away when the block is re-locked or the document is
+    // replaced, and the outer record outlives that transaction — so without this the
+    // block would keep *no* border with nothing inside it to justify one.
+    const outer = editor('| A |\n| --- |\n| 1 |\n\n```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const block = boardOf(outer)
+    enterDiagramEditMode(outer, block)
+    const inner = editor('| X |\n| --- |\n| 9 |',
+      () => ({ view: outer, pos: block, type: 'mermaid_block' }))
+    enterSpreadsheetMode(inner, tableOf(inner))
+    expect(focusIsDeeper(outer.state)).toBe(true)
+
+    forgetView(inner)
+    inner.destroy()
+    expect(focusIsDeeper(outer.state)).toBe(false)
+    expect(outer.dom.querySelector(`.${BLOCK_MODE_EDITING_CLASS}`)).not.toBeNull()
+
     outer.destroy()
   })
 })

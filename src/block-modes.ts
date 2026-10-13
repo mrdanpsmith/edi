@@ -306,6 +306,55 @@ function dimmedDecorations(state: EditorState): Decoration[] {
   return decos
 }
 
+/**
+ * **The outline belongs to the deepest rung of the focus path, and only to it.**
+ *
+ * A working state inside a working state — a sheet opened inside an unlocked encrypted
+ * block — has two blocks with a record, one in each editor, and both were given the
+ * shared dashed `--accent` outline. So the reader was shown *two* "you are working here"
+ * marks at once, which is the one thing a mark of that kind must never say: it is a claim
+ * about the one place the reader is, and two of them make it mean nothing.
+ *
+ * The ancestor therefore keeps the **record** and loses only the **outline**, and which
+ * half is which is the whole of the change:
+ *
+ * - it keeps `BLOCK_MODE_CLASS`, so the hover band still stands down (a block being
+ *   worked in is not something to hover) and the cluster's button still reads the record
+ *   and still offers `Lock`;
+ * - it keeps its representation class, because *how the block is being viewed* is a fact
+ *   about the block and still true;
+ * - it loses `-editing` / `-form`, which are the classes the outline rule selects.
+ *
+ * **A block's source form has no inside to hold a working state**, so a block with a
+ * focused descendant is always being *viewed* — which is why dropping the two interaction
+ * classes is exactly "no outline", with no new class and no change to the stylesheet.
+ */
+export const DEEPER_FOCUS_KEY = new PluginKey<boolean>('EDI_BLOCK_MODE_DEEPER_FOCUS')
+
+/**
+ * Whether a **descendant** of the block this editor's record names holds the focus.
+ *
+ * A second plugin, and not a field on the record, because this is not a mode: the record
+ * says how a block is being viewed, and this says where the reader's attention *is*, which
+ * is a property of the page's focus path and can change without the block's own mode
+ * changing at all (a sheet opened inside an already open block).
+ */
+export const blockModeFocusPlugin = new Plugin<boolean>({
+  key: DEEPER_FOCUS_KEY,
+  state: {
+    init: () => false,
+    apply(tr, prev) {
+      const meta = tr.getMeta(DEEPER_FOCUS_KEY)
+      return typeof meta === 'boolean' ? meta : prev
+    },
+  },
+})
+
+/** Is the focus deeper than the block this editor's record names? */
+export function focusIsDeeper(state: EditorState): boolean {
+  return DEEPER_FOCUS_KEY.getState(state) === true
+}
+
 function blockModeDecorations(state: EditorState): Decoration[] {
   const mode = currentBlockMode(state)
   if (mode === null) return []
@@ -315,8 +364,12 @@ function blockModeDecorations(state: EditorState): Decoration[] {
     BLOCK_MODE_CLASS,
     mode.representation === 'source' ? BLOCK_MODE_SOURCE_CLASS : BLOCK_MODE_VISUAL_CLASS,
   ]
-  if (mode.interaction === 'editing') classes.push(BLOCK_MODE_EDITING_CLASS)
-  if (mode.form !== undefined) classes.push(BLOCK_MODE_FORM_CLASS)
+  // **One outline for the page's one working state**, however many editors hold a record
+  // for it — see this function's own docstring for which half of the record survives.
+  if (!focusIsDeeper(state)) {
+    if (mode.interaction === 'editing') classes.push(BLOCK_MODE_EDITING_CLASS)
+    if (mode.form !== undefined) classes.push(BLOCK_MODE_FORM_CLASS)
+  }
   return [Decoration.node(mode.pos, mode.pos + node.nodeSize, { class: classes.join(' ') })]
 }
 
@@ -705,7 +758,13 @@ export function dropFocusPath(view: EditorView): void {
 
 /** Forget everything this module knows about a view that has gone away. */
 export function forgetView(view: EditorView): void {
+  const chain = focusChains.get(view)
   focusChains.delete(view)
+  // **A destroyed editor cannot be the deepest rung any more**, so the block it lived in
+  // is the deepest again — and if that block's record outlives the editor, it would keep
+  // no outline with nothing inside it to justify one. The published chain is the only
+  // thing that remembers what was above it, so it is read before it is dropped.
+  if (chain !== undefined && chain.length > 1) markFocusDeeper(chain[0], false)
 }
 
 /**
@@ -804,6 +863,27 @@ export function keepOneNonVisualBlock(
   // meaningful question once "me" is the path I am actually in.
   extendFocusPath(view, above)
   releaseOtherEditors(view)
+  // **Then tell the block above where the reader is**, which is this call's one other job
+  // and the reason it is here rather than inside `extendFocusPath`: the flag is about the
+  // *block above*, so it has to be written on that editor, and it has to be written after
+  // this editor's own record has settled — the dispatch that took it has already run by
+  // the time this is called.
+  markFocusDeeper(above, currentBlockMode(view.state) !== null)
+}
+
+/**
+ * Write (or clear) "the focus is deeper than the block above", on the editor that owns it.
+ *
+ * **Only when it changes**, and that is not an optimisation: the write is a transaction on
+ * another editor, whose own `dispatchTransaction` calls this function again with *its*
+ * parent link, so a write on every keystroke would be a write on every keystroke for ever.
+ * Idempotent, it converges — the inner editor says it, the outer notices it is already
+ * said, and the chain stops.
+ */
+function markFocusDeeper(above: { view: EditorView; pos: number } | undefined, deeper: boolean): void {
+  if (above === undefined || above.view.isDestroyed) return
+  if (focusIsDeeper(above.view.state) === deeper) return
+  above.view.dispatch(above.view.state.tr.setMeta(DEEPER_FOCUS_KEY, deeper))
 }
 
 /**
