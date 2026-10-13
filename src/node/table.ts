@@ -1,4 +1,4 @@
-import { NodeSelection, Plugin, TextSelection, type EditorState } from 'prosemirror-state'
+import { NodeSelection, Plugin, Selection, TextSelection, type EditorState } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, listMaskedTokens, DELIMITER_CELL, type TableAlign } from '../spreadsheet-util'
@@ -20,6 +20,7 @@ import {
 } from '../tableTextSelection'
 import { blockNodeView, showsSource } from '../blockview'
 import {
+  BLOCK_CONTROLS_CLASS,
   BLOCK_MODE_HANDLERS,
   attachBlockControls,
   blockFormMode,
@@ -2911,6 +2912,15 @@ function bindMaskedPillsIn(
 const CELL_SELECTED_CLASS = 'ss-cell-in-selection'
 
 /**
+ * How far the pointer may travel between press and release and still be a **click**.
+ *
+ * The same value as the kanban drag's `DRAG_THRESHOLD`, for the same reason: below it the
+ * gesture is a click, and above it the reader is dragging something — which for a Visual
+ * table means the browser is making a text selection, and answering that would fight it.
+ */
+const CLICK_SLOP = 4
+
+/**
  * Every open plain-table view, told when the page's selection moved.
  *
  * `selectionchange` on the document, because **this painter reads the browser's range
@@ -2976,6 +2986,8 @@ class TablePlainView implements NodeView {
   private unsubscribeFormulaEnv: (() => void) | null = null
   private unsubscribeSearchChanges: (() => void) | null = null
   private unsubscribeSelection: (() => void) | null = null
+  /** Where a press landed, so the release can tell a click from a drag. */
+  private pressAt: { x: number; y: number } | null = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -2997,6 +3009,53 @@ class TablePlainView implements NodeView {
     this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.renderBody())
     this.unsubscribeSearchChanges = subscribeSearchChanges(view, () => this.onSearchChange())
     this.unsubscribeSelection = onNativeSelectionChange(() => this.paintSelection())
+    this.dom.addEventListener('mousedown', this.onPressStart)
+    this.dom.addEventListener('mouseup', this.onPressEnd)
+  }
+
+  /**
+   * **A press that selected nothing drops the app's selection**, which is the only gesture
+   * this surface can answer with "nothing" and the last way out of a selection once
+   * `Ctrl+A` has painted every cell in the document.
+   *
+   * Why it has to be here at all: this view's own selection is the **browser's** (§3.1), and
+   * a range inside `contenteditable=false` cells is the browser's to make — but the *fill*
+   * over every cell is the app's, and it is driven by ProseMirror's selection, which a
+   * press in a cell cannot change (see `stopEvent`). So without this, select-all in a
+   * document with tables and the cells stayed lit with no way to clear them: Escape does
+   * nothing, an arrow key clears it but leaves the reader somewhere else, and clicking
+   * anywhere outside the table cleared it only because that press *reached* ProseMirror.
+   *
+   * **A click, not a press**: the movement check is what keeps a drag out of it, because a
+   * drag is a text selection the reader is making and not a click they want answered.
+   * **Not a modifier**: `Shift`/`Ctrl`/`Alt` on a press is a selection the reader is
+   * *extending*, and clearing it there would fight them.
+   */
+  private onPressStart = (event: MouseEvent): void => {
+    this.pressAt = { x: event.clientX, y: event.clientY }
+  }
+
+  private onPressEnd = (event: MouseEvent): void => {
+    const press = this.pressAt
+    this.pressAt = null
+    if (press === null || event.button !== 0) return
+    if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return
+    if (Math.abs(event.clientX - press.x) > CLICK_SLOP) return
+    if (Math.abs(event.clientY - press.y) > CLICK_SLOP) return
+
+    const pos = this.getPos()
+    if (pos === undefined) return
+    const { state } = this.view
+    if (state.selection.empty) return
+    // **Which side, because a `table` is an atom with no content**: the caret cannot go
+    // inside it, so it goes to the nearer edge of the block — above the press it lands
+    // before the table, below it after. That is where a press on the white space beside
+    // the table already put the caret, so a click in a cell and a click beside it agree.
+    const box = this.dom.getBoundingClientRect()
+    const bias = event.clientY < box.top + box.height / 2 ? -1 : 1
+    const $inside = state.doc.resolve(pos + 1)
+    this.view.dispatch(state.tr.setSelection(Selection.near($inside, bias)))
+    this.paintSelection()
   }
 
   private renderBody(): void {
@@ -3178,8 +3237,31 @@ class TablePlainView implements NodeView {
     return true
   }
 
-  stopEvent(): boolean {
-    return true
+  /**
+   * **Claim the cells and the block's own controls. Nothing else.**
+   *
+   * This view used to claim *every* event in the block, and it was the reason a Visual table
+   * could not be undone from inside: a `Ctrl+A` paints every cell in the document from
+   * ProseMirror's selection, and a press anywhere in this block never reached ProseMirror,
+   * so nothing could change that selection and the cells stayed lit — measured: 150 cells,
+   * unclickable away, with `Escape` doing nothing.
+   *
+   * So it now claims only what it actually uses:
+   *
+   * - **the cells**, because a range inside them is the *browser's* (§3.1) and a press that
+   *   ProseMirror answered would fight the selection the reader is making with a mouse drag;
+   * - **the control cluster**, whose buttons are the app's own controls.
+   *
+   * Everything else — the table's own margin, its background, the strip beside it — reaches
+   * ProseMirror, which is what makes a click there behave like a click anywhere else. This
+   * is the shape the other node views already have, and `mermaid.ts` says it outright: *"the
+   * rest of the diagram keeps its normal behaviour — clicking it still selects the block."*
+   */
+  stopEvent(event: Event): boolean {
+    const target = event.target
+    if (!(target instanceof Element)) return false
+    if (target.closest('.ss-plain-table :is(th, td)') !== null) return true
+    return target.closest(`.${BLOCK_CONTROLS_CLASS}`) !== null
   }
 
   ignoreMutation(): boolean {
@@ -3187,6 +3269,8 @@ class TablePlainView implements NodeView {
   }
 
   destroy(): void {
+    this.dom.removeEventListener('mousedown', this.onPressStart)
+    this.dom.removeEventListener('mouseup', this.onPressEnd)
     this.unsubscribeFormulaEnv?.()
     this.unsubscribeFormulaEnv = null
     this.unsubscribeSearchChanges?.()

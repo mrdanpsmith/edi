@@ -4677,7 +4677,7 @@ def test_the_task_list_button_touches_only_the_block_under_the_caret(window):
         // **Counts, not the text**: the duplication put the whole document's text in
         // here, and a failure message that prints it prints a diagram's stylesheet with
         // it. What matters is whether the document's own words are there once or twice.
-        firstPara: (ed.textContent.match(/Intro prose\./g) || []).length,
+        firstPara: (ed.textContent.match(/Intro prose[.]/g) || []).length,
         labels: (ed.textContent.match(/Alpha/g) || []).length,
       };
     })()""", lambda d: d.get("tasks", 0) > 0, timeout=10)
@@ -5842,6 +5842,31 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
 # A document with one of every kind of draggable block in it, so the gate below can ask
 # each question about the same page: prose text (a word, a whole paragraph, a range across
 # two), and an object the reader picks up whole (a diagram, a table).
+# Three tables and a formula block: the shape of the document the deselect report was made
+# against (`spreadsheets.md`). **Inline rather than read from that file**, because a test that
+# depends on a file nobody keeps is a test that quietly stops running — and the shape is all
+# that matters here: three tables, no textblock anywhere, which is what makes the document
+# the hard case.
+TABLE_ONLY_DOC = """```edi-formula
+GREET(name) = CONCAT("Hello, ", name, "!")
+```
+
+| # | Provider | Username |
+| --- | --- | --- |
+| 1 | Hulu | one |
+| 2 | Netflix | two |
+
+| Name | Order | Amount |
+| --- | --- | --- |
+| Dan | 1 | 25.25 |
+| Renee | 2 | 25.32 |
+| John | 3 | 50 |
+
+| Height | Width | Depth |
+| --- | --- | --- |
+| 97.6 | 63.7 | 5.1 |
+"""
+
 DRAG_GATE_DOC = """Ordinary prose, with a word worth dragging.
 
 A second paragraph, so a range can cross a block boundary.
@@ -6055,12 +6080,14 @@ def test_dragging_a_whole_block_starts_no_drag(window):
     diagram = _dump(window, _DRAG_START % json.dumps("#editor-container .mermaid"))
     assert diagram["refused"] is True and diagram["types"] == [], (
         f"everything selected is blocks, and none of it drags: {diagram}")
-    # **The table, read the other way round.** Its plain view claims its pointer events —
-    # the selection inside it is the browser's, painted per cell — so this `dragstart`
-    # reaches no handler at all and nothing is refused. The claim that matters is the same
-    # one, and it is about the transfer: **empty**, so there is no payload to drop anywhere.
-    # Asserting `refused` here would be asserting a mechanism this block does not use.
+    # **The table.** A `dragstart` dispatched on the block element is a press on the table's
+    # *own* surface rather than inside a cell, and the plain view claims only the cells now
+    # (the deselect fix), so this one reaches the drag gate and is refused outright. The
+    # claim is the same either way — **the transfer is empty**, so there is no payload for any
+    # drop anywhere — and `refused` is now the stronger reading of it.
     table = _dump(window, _DRAG_START % json.dumps("#editor-container .ss-plain"))
+    assert table["refused"] is True, (
+        f"a press on the table's own surface is refused like any other: {table}")
     assert table["types"] == [] and table["html"] == "" and table["text"] == "", (
         f"and a drag from the table carries nothing either: {table}")
 
@@ -7956,3 +7983,170 @@ def test_dbg_ctrl_c_claim(window):
     time.sleep(0.6)
     print("  clipboard:", len(QGuiApplication.clipboard().text()), "chars")
     assert True
+
+def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
+    """After `Ctrl+A`, a click that selected nothing drops the paint over every other table.
+
+    The report: *once you select all there's no way to unselect*, in a document of nothing
+    but tables. `Ctrl+A` paints every cell of every table in the document, and this view's
+    `stopEvent` used to return `true` for **every** event in the block — so no press inside a
+    table could reach ProseMirror, the selection could not change, and nothing cleared the
+    fill. Measured before the fix: 27 cells lit, and `Escape`, a click in a cell, a click on
+    the table's own margin and a click elsewhere in the document all left them lit.
+
+    **The fix has two halves and each is measured here separately**, because they are two
+    different routes to the same place:
+
+    - **a press on the table's own margin reaches ProseMirror**, which it could not before —
+      so clicking a table *selects the table*, the answer a diagram has always given here;
+    - **a press in a cell that selected nothing drops the app's own selection** (§3.1's wall
+      again: a range inside `contenteditable=false` is the browser's, but the fill over every
+      cell is ours and only ProseMirror's selection drives it).
+
+    A click then leaves **the one block it landed on** painted, because a selection covering
+    a whole block is what a selected block looks like (§7.2) — so the claim is "the paint over
+    every *other* table is gone", not "nothing is painted".
+
+    **One thing this deliberately does not assert**, and it is the harness's limit rather
+    than the app's: that a click in prose clears the cells outright. A synthetic `mousedown`
+    cannot move the browser's caret (measured: after the click the native selection was still
+    the same 65-character range), so the browser's signal in `TablePlainView.paintSelection`
+    cannot be made to go quiet from here — only a real press does that, and a key/mouse event
+    sent to the Qt window does not reach the page. Asserting it would be asserting something
+    this suite cannot see.
+    """
+    def _cells():
+        return _dump(window, """(() => ({
+          cells: document.querySelectorAll('.ss-cell-in-selection').length,
+          boxes: document.querySelectorAll('.ss-plain-selection-rect').length,
+          selectedNodes: [...document.querySelectorAll('.ProseMirror-selectednode')]
+            .map((el) => String(el.className).split(' ')[0]),
+        }))()""")
+
+    def _cells_in_the_selected_block():
+        return _dump(window, """(() => {
+          const sel = document.querySelector('.ProseMirror-selectednode');
+          return { n: sel ? sel.querySelectorAll('th, td').length : 0 };
+        })()""")["n"]
+
+    def _select_all():
+        _dump(window, "(() => { document.querySelector('#editor-container .ProseMirror').focus();"
+                      " return { d: 1 }; })()")
+        _dump(window, """(() => {
+          for (const type of ['keydown', 'keyup']) {
+            document.dispatchEvent(new KeyboardEvent(type, {
+              key: 'a', code: 'KeyA', keyCode: 65, which: 65,
+              ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+          }
+          return { d: 1 };
+        })()""")
+        time.sleep(0.35)
+
+    def _press(where, index=0, dx=0):
+        return _dump(window, """(() => {
+          const block = document.querySelectorAll('#editor-container .ss-plain')[%d];
+          const table = block.querySelector('.ss-plain-table');
+          const box = table.getBoundingClientRect();
+          let x, y, target;
+          if (%s === 'margin') {
+            // **Beside the grid and inside the block.** The block is the full content width
+            // and the grid hugs its left, so this strip is `.ss-plain-scroll` — the press
+            // the old blanket `stopEvent` claimed, and the one this fix gives back.
+            x = Math.round(box.right + 8);
+            y = Math.round(box.top + box.height / 2);
+            target = document.elementFromPoint(x, y);
+          } else {
+            const cell = table.querySelectorAll('tbody td')[3];
+            const c = cell.getBoundingClientRect();
+            x = Math.round(c.left + c.width / 2);
+            y = Math.round(c.top + c.height / 2);
+            target = document.elementFromPoint(x, y);
+          }
+          if (!target) return { missing: true };
+          // **The press is at `x` and only the release moves**, or a "drag" is two clicks
+          // at the same point and the movement guard has nothing to see.
+          target.dispatchEvent(new MouseEvent('mousedown',
+            { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+          for (const type of ['mouseup', 'click']) {
+            target.dispatchEvent(new MouseEvent(type,
+              { bubbles: true, cancelable: true, button: 0, clientX: x + %d, clientY: y }));
+          }
+          return { at: String(target.className || target.tagName) };
+        })()""" % (index, json.dumps(where), dx))
+
+    # **Half one: a press on the table's own margin reaches ProseMirror**, which it could not
+    # before — the view claimed every event, so clicking a table could never select it and no
+    # press inside the block could reach the editor at all. Measured on a document with a
+    # *narrow* table, so the point `right + 8` is inside the table's block and not in a cell.
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps("Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n"
+                       "\nProse below.\n"))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+    margin = _press('margin')
+    assert not margin.get("missing"), margin
+    assert margin["at"] == "ss-plain-scroll", (
+        f"this press has to land on the table's block to test anything: {margin}")
+    time.sleep(0.4)
+    picked = _cells()
+    assert picked["selectedNodes"] == ["ss-plain"], (
+        f"a click on a table's own margin selects the table, as it always did for a diagram: "
+        f"{picked}")
+
+    # **Half two, in the reported document — nothing but tables.** A click that selected
+    # nothing drops the paint over every *other* table; it leaves the table it landed on
+    # painted, because a selection covering a whole block is what a selected block looks like
+    # (§7.2), and that is the same answer a diagram gives.
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(TABLE_ONLY_DOC))
+    _wait(window, "(() => ({ t: document.querySelectorAll('#editor-container .ss-plain').length }))()",
+          lambda d: d.get("t", 0) >= 3, timeout=25)
+    _select_all()
+    every = _cells()
+    assert every["cells"] == 27, f"three tables, every cell painted: {every}"
+    assert every["selectedNodes"] == [], f"and no block is an object yet: {every}"
+
+    # **Half two: a click in a cell drops the paint over every *other* table.** It leaves the
+    # table the click landed on painted, because a selection covering a whole block is what a
+    # selected block looks like (§7.2).
+    _select_all()
+    assert _cells()["cells"] == 27, "select-all again, from a clean slate"
+    in_cell = _press('cell', index=1)
+    assert not in_cell.get("missing"), in_cell
+    time.sleep(0.4)
+    rest = _cells()
+    assert rest["cells"] < every["cells"], (
+        f"a click that selected nothing drops the document-wide paint: {rest}")
+    assert rest["cells"] == _cells_in_the_selected_block(), (
+        f"and only the table the click landed on is still painted: {rest}")
+
+    # **A drag in a cell is not answered**: the browser is making a text selection, and a
+    # press that moved is not a click.
+    _select_all()
+    dragged = _press('cell', index=1, dx=40)
+    assert not dragged.get("missing"), dragged
+    time.sleep(0.4)
+    untouched = _cells()
+    assert untouched["cells"] == 27 and untouched["selectedNodes"] == [], (
+        f"a drag is a text selection, not a click to answer: {untouched}")
+
+    # **A press with a modifier is not answered either**: `Ctrl`+click extends a selection,
+    # and clearing it there would fight the reader.
+    _select_all()
+    modified = _dump(window, """(() => {
+      const table = document.querySelectorAll('#editor-container .ss-plain')[1];
+      const cell = table.querySelectorAll('tbody td')[3];
+      const c = cell.getBoundingClientRect();
+      const x = Math.round(c.left + c.width / 2), y = Math.round(c.top + c.height / 2);
+      const at = document.elementFromPoint(x, y);
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0,
+          clientX: x, clientY: y, ctrlKey: true, metaKey: true }));
+      }
+      return { at: String(at.className || at.tagName) };
+    })()""")
+    assert not modified.get("missing"), modified
+    time.sleep(0.4)
+    held = _cells()
+    assert held["cells"] == 27, (
+        f"Ctrl+click is extending a selection, not dropping one: {held}")

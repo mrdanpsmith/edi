@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Plugin } from 'prosemirror-state'
-import { NodeSelection } from 'prosemirror-state'
+import { AllSelection, NodeSelection } from 'prosemirror-state'
 import { history } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
@@ -1014,6 +1014,109 @@ describe('TableNodeView grid', () => {
     exitBtn?.click()
     expect(tableFormOf(view.state, 0)).toBe('text')
     expect(view.dom.querySelector('.ss-plain')).toBeTruthy()
+    view.destroy()
+  })
+
+  it('claims the cells and its own controls, and nothing else', () => {
+    // **The `stopEvent` contract, which is the whole of why a Visual table could not be
+    // undone from inside.** It used to return `true` for every event in the block, so no
+    // press inside a table ever reached ProseMirror: a `Ctrl+A` painted every cell in the
+    // document from ProseMirror's selection, and nothing could change that selection
+    // (measured: 27 cells lit, and no press anywhere cleared them).
+    //
+    // This is the shape the other node views already have, and `mermaid.ts` states it
+    // outright: *"the rest of the diagram keeps its normal behaviour — clicking it still
+    // selects the block."*
+    const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    // The node view from the plugin's own factory: `EditorView.nodeViews` is not part of this
+    // ProseMirror's public surface, and a document has no layout here for a hit test to use
+    // (`stopEvent` is the DOM→ProseMirror gate and reads only the event).
+    // The plugin's factory takes three arguments; the cast is because `nodeViews` is typed
+    // as the whole `NodeViews` union, whose other members take more.
+    const factory = tableNodeViewPlugin.props.nodeViews?.table as unknown as
+      | ((node: import('prosemirror-model').Node, view: EditorView,
+          getPos: () => number | undefined) => unknown)
+      | undefined
+    if (factory === undefined) throw new Error('no table node view factory')
+    const nodeView = factory(
+      view.state.doc.firstChild!, view, () => 0,
+    ) as { stopEvent(event: Event): boolean }
+    const block = view.dom.querySelector<HTMLElement>('.ss-plain')!
+
+    /** What the view would claim for a press whose target is `target`. */
+    const claim = (target: Element | null): boolean => {
+      // An undispatched event's own `target` is null, so the null case needs no target.
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      if (target !== null) Object.defineProperty(event, 'target', { value: target })
+      return nodeView.stopEvent(event)
+    }
+
+    // **Claimed:** the cells — a range inside `contenteditable=false` is the browser's, and
+    // a press ProseMirror answered would fight the selection a drag is making — and the
+    // block's own controls, whose buttons are the app's.
+    expect(claim(block.querySelector('th'))).toBe(true)
+    expect(claim(block.querySelector('td'))).toBe(true)
+    expect(claim(block.querySelector('.block-controls'))).toBe(true)
+    expect(claim(block.querySelector('.block-controls button'))).toBe(true)
+
+    // **Not claimed:** the block itself, its scroll strip and the grid element — so a press
+    // there reaches ProseMirror and behaves like a press anywhere else in the editor.
+    expect(claim(block)).toBe(false)
+    expect(claim(block.querySelector('.ss-plain-scroll'))).toBe(false)
+    expect(claim(block.querySelector('.ss-plain-table'))).toBe(false)
+
+    // **Not claimed:** a target that is not an element, and anything outside the block.
+    expect(claim(null)).toBe(false)
+    expect(claim(view.dom)).toBe(false)
+    view.destroy()
+  })
+
+  it('drops its own selection on a click that selected nothing, and not on a drag', () => {
+    // The fill over every cell is driven by **ProseMirror's** selection even though a range
+    // inside a cell is the browser's (§3.1), so a click in a cell has to answer for the
+    // app's half — and it is the only listener there, which is what this view's `stopEvent`
+    // above leaves in place.
+    const view = createPlainTable('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const td = view.dom.querySelector<HTMLElement>('.ss-plain td')!
+    const select_all = (): void => {
+      view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc)))
+      expect(view.state.selection).toBeInstanceOf(AllSelection)
+    }
+    const press = (init: MouseEventInit): void => {
+      td.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, ...init }))
+      td.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, ...init }))
+    }
+
+    // **A click**: the document-wide selection is gone. What is left is the table selected as
+    // an object — a `table` is an atom with no content, and this document has no textblock at
+    // all, so a caret beside it is not a position that exists (§3.1's wall, from the other
+    // side). Either answer is "the document is no longer selected".
+    select_all()
+    press({ clientX: 10, clientY: 10 })
+    expect(view.state.selection).not.toBeInstanceOf(AllSelection)
+
+    // **A drag** is not answered: the press at one point, the release 40px away, which is
+    // the browser making a text selection rather than a click wanting something done.
+    select_all()
+    td.dispatchEvent(new MouseEvent('mousedown',
+      { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    td.dispatchEvent(new MouseEvent('mouseup',
+      { bubbles: true, button: 0, clientX: 50, clientY: 10 }))
+    expect(view.state.selection).toBeInstanceOf(AllSelection)
+
+    // **Ctrl+click** extends a selection, so it is not answered either.
+    press({ clientX: 10, clientY: 10, ctrlKey: true })
+    expect(view.state.selection).toBeInstanceOf(AllSelection)
+
+    // **Shift+click** likewise.
+    press({ clientX: 10, clientY: 10, shiftKey: true })
+    expect(view.state.selection).toBeInstanceOf(AllSelection)
+
+    // And with nothing selected there is nothing to drop, which is the ordinary case.
+    press({ clientX: 10, clientY: 10 })
+    const before = view.state.selection.from
+    press({ clientX: 10, clientY: 10 })
+    expect(view.state.selection.from).toBe(before)
     view.destroy()
   })
 
