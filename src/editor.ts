@@ -23,6 +23,7 @@ import {
   setBlockMode,
 } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
+import { blockDragPlugin } from './blockDrag'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
@@ -343,6 +344,7 @@ export function createBlockEditor(
     misleadingLinkPlugin,
     blockModePlugin,
     blockModeFocusPlugin,
+    blockDragPlugin,
     formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,

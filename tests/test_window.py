@@ -5596,6 +5596,284 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
         f"the block holding the sheet is not where the reader is: {out}")
 
 
+# A document with one of every kind of draggable block in it, so the gate below can ask
+# each question about the same page: prose text (a word, a whole paragraph, a range across
+# two), and an object the reader picks up whole (a diagram, a table).
+DRAG_GATE_DOC = """Ordinary prose, with a word worth dragging.
+
+A second paragraph, so a range can cross a block boundary.
+
+| A | B |
+| --- | --- |
+| 1 | 2 |
+
+```mermaid
+graph TD
+  A[Alpha]
+```
+"""
+
+# Start a drag from `selector`, the way Chromium starts one: a real `DataTransfer` on a real
+# `DragEvent`, thrown at the element the pointer is on, with the pointer's own coordinates
+# so ProseMirror can find the position under it. What comes back is whether the drag was
+# refused (`defaultPrevented`) and **what, if anything, the app put in the transfer** — the
+# second is the load-bearing reading, because a drag that is cancelled and a drag that
+# happens to be ignored look identical from the page while only one of them is stoppable.
+_DRAG_START = r"""(() => {
+  const el = document.querySelector(%s);
+  if (!el) return { missing: true };
+  const box = el.getBoundingClientRect();
+  const transfer = new DataTransfer();
+  const event = new DragEvent('dragstart', {
+    bubbles: true, cancelable: true, dataTransfer: transfer,
+    clientX: box.left + box.width / 2,
+    clientY: box.top + Math.min(box.height / 2, 12),
+  });
+  el.dispatchEvent(event);
+  return {
+    refused: event.defaultPrevented,
+    types: Array.from(transfer.types),
+    html: transfer.getData('text/html'),
+    text: transfer.getData('text/plain'),
+  };
+})()"""
+
+# Click a block, the way a reader clicks one: press and release on it, at a point inside
+# its own box. For an atom this is what makes the editor hold the block as a node rather
+# than put a caret in it.
+_CLICK_BLOCK = r"""(() => {
+  const el = document.querySelector(%s);
+  if (!el) return { missing: true };
+  const box = el.getBoundingClientRect();
+  const options = { bubbles: true, cancelable: true, button: 0,
+                    clientX: box.left + Math.min(box.width / 2, 40),
+                    clientY: box.top + Math.min(box.height / 2, 12) };
+  el.dispatchEvent(new MouseEvent('mousedown', options));
+  el.dispatchEvent(new MouseEvent('mouseup', options));
+  return { clicked: true };
+})()"""
+
+# Select characters of `selector`'s text, the way the range in `_reveal_selection` does: a
+# DOM range, then a settle, because ProseMirror reads the browser's selection
+# asynchronously and a range that exists is not yet a selection the editor will act on.
+# Offsets are into the paragraph's first text node, which is what a plain prose paragraph
+# has; `whole=True` takes the lot, which is the whole-block case the gate below is about.
+_SELECT_TEXT = r"""(() => {
+  const el = document.querySelector(%s);
+  if (!el) return { missing: true };
+  const node = el.firstChild;
+  if (!node || node.nodeType !== 3) return { noText: true };
+  const range = document.createRange();
+  // Clamped in the page rather than in Python: an offset past the end of the text node is
+  // an `IndexSizeError` in a `Range`, not a short range.
+  const last = node.textContent.length;
+  range.setStart(node, Math.min(%d, last));
+  range.setEnd(node, Math.min(%d, last));
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const editor = document.querySelector(%s);
+  if (editor) editor.focus();
+  return { selected: String(sel), length: node.textContent.length };
+})()"""
+
+# The prose blocks of `DRAG_GATE_DOC`, and the editor they live in — a block with a mode
+# is a node view, so a paragraph is `div.block-visual-mode > p` rather than the `p` a reader
+# would guess from the source.
+DRAG_PARAGRAPH = "#editor-container > .ProseMirror > .block-visual-mode > p"
+DRAG_EDITOR = "#editor-container > .ProseMirror"
+
+
+def _select_text(window, selector, start, end=None, editor=DRAG_EDITOR):
+    """Put a real text selection over `selector`, and let the editor see it."""
+    stop = end if end is not None else 10 ** 6
+    out = _dump(window, _SELECT_TEXT
+                % (json.dumps(selector), start, stop, json.dumps(editor)))
+    assert not out.get("missing") and not out.get("noText"), out
+    end_at = time.monotonic() + 0.5
+    while time.monotonic() < end_at:
+        time.sleep(0.02)
+        _pump_until(lambda: True, timeout=0.05)
+    return out
+
+
+def _select_across_two_paragraphs(window):
+    """Select from the first paragraph's first character to the second's last."""
+    out = _dump(window, r"""(() => {
+      const [a, b] = document.querySelectorAll(
+        '#editor-container > .ProseMirror > .block-visual-mode > p');
+      if (!a || !b) return { missing: true };
+      const range = document.createRange();
+      range.setStart(a.firstChild, 0);
+      range.setEnd(b.firstChild, b.firstChild.textContent.length);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.querySelector('#editor-container > .ProseMirror').focus();
+      return { selected: String(sel) };
+    })()""")
+    assert not out.get("missing"), out
+    end_at = time.monotonic() + 0.5
+    while time.monotonic() < end_at:
+        time.sleep(0.02)
+        _pump_until(lambda: True, timeout=0.05)
+    return out
+
+
+def test_dragging_a_whole_block_starts_no_drag(window):
+    """Whole-block drag and drop is withdrawn: nothing about a block can be picked up.
+
+    **It was never Chromium's.** Chromium supplies the drag mechanism and nothing else;
+    what a block dragged is ProseMirror's `dragstart`, which serialises the selection into
+    the transfer, and its `drop`, which puts it back — and this app never wrote either. The
+    report that came out of it: a block dragged into an open reveal became a **second
+    encrypted block inside the first** (`view.dragging` is null in the other editor, so the
+    drop re-parses the payload and inserts a copy, ciphertext and all). That copy is not
+    reachable now, because a drag that never starts has no drop.
+
+    So the claim under test is the only one that can be made about a gesture the engine
+    will not let us synthesise end to end: **the drag itself never begins, and the transfer
+    is empty** — there is nothing for any other editor, or any other application, to take.
+    Read from the transfer rather than from a class list, because "nothing was put in it"
+    is the load-bearing half.
+
+    **And the gate discriminates**, which is the other half of the claim: a word inside a
+    paragraph still drags, with its text in the transfer. A gate that refused every drag
+    would pass every refusal below and be worth nothing.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(DRAG_GATE_DOC))
+    _wait(window, "(() => ({ m: !!document.querySelector('#editor-container .mermaid svg') }))()",
+          lambda d: d.get("m") is True, timeout=25)
+
+    # **A word inside a paragraph** — the browser's own gesture, and the one case kept.
+    word = _select_text(window, DRAG_PARAGRAPH, 0, 8)
+    assert word["selected"] == "Ordinary", word
+    allowed = _dump(window, _DRAG_START % json.dumps(DRAG_PARAGRAPH))
+    assert not allowed.get("missing"), allowed
+    assert allowed["refused"] is False, (
+        f"dragging text inside a block is the browser's own gesture: {allowed}")
+    assert "Ordinary" in allowed["text"], (
+        f"and it carries the text it was started on: {allowed}")
+
+    # **The whole paragraph**, selected as text rather than as a node — the case a rule
+    # that only looked at the selection *type* would wave through.
+    whole = _select_text(window, DRAG_PARAGRAPH, 0)
+    assert whole["selected"].startswith("Ordinary prose"), whole
+    refused = _dump(window, _DRAG_START % json.dumps(DRAG_PARAGRAPH))
+    assert refused["refused"] is True, (
+        f"a whole paragraph is a block, and blocks do not drag: {refused}")
+    assert refused["types"] == [] and refused["html"] == "", (
+        f"and nothing was put in the transfer for any drop to use: {refused}")
+
+    # **A range across two paragraphs**: refused for the same reason, one step earlier.
+    across = _select_across_two_paragraphs(window)
+    assert "Ordinary" in across["selected"] and "second paragraph" in across["selected"], (
+        f"the range really does reach into the next paragraph: {across}")
+    dragged = _dump(window, _DRAG_START % json.dumps(DRAG_PARAGRAPH))
+    assert dragged["refused"] is True and dragged["types"] == [], (
+        f"a selection that carries block boundaries is not text inside a block: {dragged}")
+
+    # **A block picked up as an object.** A diagram is an atom, and a click is what makes
+    # ProseMirror hold one as a node — so this is a selection a reader can really be in.
+    clicked = _dump(window, _CLICK_BLOCK % json.dumps("#editor-container .mermaid"))
+    assert not clicked.get("missing"), clicked
+    held = _wait(window, """(() => {
+      const node = document.querySelector('#editor-container .ProseMirror-selectednode');
+      return { held: node ? node.className.split(' ')[0] : null };
+    })()""", lambda d: d.get("held") is not None, timeout=10)
+    assert held["held"] == "mermaid", f"the diagram is the block held as an object: {held}"
+    drag = _dump(window, _DRAG_START % json.dumps("#editor-container .mermaid"))
+    assert not drag.get("missing"), drag
+    assert drag["refused"] is True and drag["types"] == [] and drag["html"] == "", (
+        f"a diagram is a block, and it does not drag: {drag}")
+
+    # **Everything selected** — `Ctrl+A`, which is an `AllSelection`: every block in the
+    # document, and so two blocks a reader would be dragging at once. Started from each of
+    # the objects in turn, because the gate answers about the selection and not about the
+    # element the pointer is on.
+    _dump(window, "(() => { document.querySelector(%s).focus(); return { focused: true }; })()"
+          % json.dumps(DRAG_EDITOR))
+    _dump(window, """(() => {
+      for (const type of ['keydown', 'keyup']) {
+        document.dispatchEvent(new KeyboardEvent(type, {
+          key: 'a', code: 'KeyA', keyCode: 65, which: 65,
+          ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+      }
+      return { sent: true };
+    })()""")
+    everything = _wait(window, """(() => ({
+      cells: document.querySelectorAll('#editor-container .ss-cell-in-selection').length,
+      blocks: document.querySelectorAll('#editor-container .edi-block-selected').length,
+      nodes: document.querySelectorAll('#editor-container .ProseMirror-selectednode').length,
+    }))()""", lambda d: d.get("cells", 0) > 0, timeout=10)
+    assert everything["cells"] > 0 and everything["blocks"] > 0, (
+        f"select-all really did take the table's text and the blocks around it: {everything}")
+    diagram = _dump(window, _DRAG_START % json.dumps("#editor-container .mermaid"))
+    assert diagram["refused"] is True and diagram["types"] == [], (
+        f"everything selected is blocks, and none of it drags: {diagram}")
+    # **The table, read the other way round.** Its plain view claims its pointer events —
+    # the selection inside it is the browser's, painted per cell — so this `dragstart`
+    # reaches no handler at all and nothing is refused. The claim that matters is the same
+    # one, and it is about the transfer: **empty**, so there is no payload to drop anywhere.
+    # Asserting `refused` here would be asserting a mechanism this block does not use.
+    table = _dump(window, _DRAG_START % json.dumps("#editor-container .ss-plain"))
+    assert table["types"] == [] and table["html"] == "" and table["text"] == "", (
+        f"and a drag from the table carries nothing either: {table}")
+
+    # **Nothing moved.** A withdrawn gesture that still moved the document would have been
+    # worth knowing about before this gate was written.
+    end_state = _dump(window, """(() => {
+      const editor = document.querySelector(%s);
+      return {
+        blocks: [...editor.children].map((el) => el.className.split(' ')[0]),
+        text: editor.textContent.slice(0, 60),
+      };
+    })()""" % json.dumps(DRAG_EDITOR))
+    assert end_state["blocks"] == ["block-visual-mode", "block-visual-mode", "ss-plain",
+                                   "mermaid"], end_state
+    assert end_state["text"].startswith("Ordinary prose"), end_state
+
+
+def test_dragging_an_encrypted_block_copies_nothing_into_a_reveal(window):
+    """The reported case, as far as it can be driven: the payload does not exist.
+
+    An encrypted block dragged from the document into an open reveal became a copy of
+    itself, ciphertext and all, nested in the plaintext it was dropped into. A real
+    cross-editor drag cannot be synthesised here, so the claim is the one that makes the
+    copy unreachable: **the drag that would carry the block never begins and the transfer
+    is empty**, in the document *and* from inside the open reveal, so there is nothing a
+    drop in either editor could insert.
+    """
+    _encrypt_and_reveal(window, "A secret worth keeping.\n\nNot this one.\n",
+                        "A secret worth keeping.")
+
+    outside = _dump(window, _DRAG_START % json.dumps("#editor-container .encrypted-block"))
+    assert not outside.get("missing"), outside
+    assert outside["refused"] is True and outside["types"] == [] and outside["html"] == "", (
+        f"the sealed block itself does not drag, so it cannot be copied into a reveal: {outside}")
+
+    _reveal_selection(window, "A secret worth keeping.")
+    inside = _select_text(window, "#editor-container .encrypted-block-reveal p", 0, 8,
+                          editor="#editor-container .encrypted-block-reveal .ProseMirror")
+    assert inside["selected"] == "A secret", inside
+    text_drag = _dump(window, _DRAG_START
+                      % json.dumps("#editor-container .encrypted-block-reveal p"))
+    assert not text_drag.get("missing"), text_drag
+    assert text_drag["refused"] is False and "A secret" in text_drag["text"], (
+        f"and the text inside a reveal still drags as text, like anywhere else: {text_drag}")
+
+    sealed = _wait(window, """(() => ({
+      sealed: document.querySelectorAll('#editor-container .encrypted-block').length,
+      nested: document.querySelectorAll(
+        '#editor-container .encrypted-block .encrypted-block').length,
+      open: document.querySelectorAll('#editor-container .encrypted-block-reveal').length,
+      text: document.querySelector('#editor-container .encrypted-block-reveal').textContent,
+    }))()""", lambda d: d.get("nested") == 0, timeout=10)
+    assert sealed["sealed"] == 1, f"the sealed block is still itself: {sealed}"
+    assert sealed["open"] == 1, f"and the reveal it was opened into is still open: {sealed}"
+
+
 def test_switching_tabs_commits_what_was_typed_into_an_open_block(window):
     """Type into an unlocked block, walk to another tab and back, unlock: it is there.
 
@@ -7405,3 +7683,4 @@ def test_dbg_ctrl_c_claim(window):
     time.sleep(0.6)
     print("  clipboard:", len(QGuiApplication.clipboard().text()), "chars")
     assert True
+
