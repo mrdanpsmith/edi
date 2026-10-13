@@ -3078,24 +3078,19 @@ def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
     assert back["labels"][-1] == "Source", back
 
 
-def test_alt_click_below_a_lone_board_does_nothing(window):
-    """A press that names no block does nothing — including below a lone board.
+def test_alt_click_below_a_lone_board_closes_it(window):
+    """A press that names no block closes whatever is open — including below a lone board.
 
-    This used to be the *way out* of a working state: the editor's box is only as tall as
-    its content, so a document of one board leaves the space below it on the *scroller*,
-    and the gesture answered a click there by finishing whatever was open. That was one
-    press that ended a block's state with no block named, and it was the reason the
-    listener's host was the scroller rather than the editor's own box.
+    This press **was** the way out of a working state, then it was withdrawn as too eager — one
+    press ending a block's state with no block named — and it is now back with a rule that makes
+    it predictable: **`Alt`+click means the mode and nothing else.** On a block it toggles that
+    block's mode; anywhere else it closes. A press that names no block can only mean *close*, so
+    there is nothing for it to mean accidentally, and it is the one way out that needs no aiming
+    at the block you are already in.
 
-    **Now the press does nothing, and the host is no longer what decides anything**: a
-    listener on `view.dom` would answer this click identically, because the editor's box
-    is refused as a target by `blockPosForElement` and the gesture acts on the block it
-    names and nothing else. The listener stays on the scroller for the other reason it
-    was put there — a click in a dialog on top of the editor must not reach through it.
-
-    What replaces the old route is every way out that was designed, and the two this test
-    drives are the ones that need no aiming: **the block's own gesture** and **the board's
-    own Done button**.
+    The editor's box is only as tall as its content, so a document of one board leaves the space
+    below it on the **scroller** — which is why the listener is bound there and why this press is
+    the one that exercises it.
     """
     _set_scheme(window, False)
     _render(window, KANBAN_LONE)
@@ -3105,32 +3100,23 @@ def test_alt_click_below_a_lone_board_does_nothing(window):
     spot = _altclick_below_document(window)
     assert not spot["inEditor"], f"the Alt+click landed inside the editor: {spot}"
 
-    # **Nothing moved**, and the edit session is exactly where it was — including the
-    # drawn places to add, which are edit mode's and go only when it ends.
-    time.sleep(0.3)
-    still = _dump(window, EDIT_STATE)
-    assert still["editing"], f"a press naming no block ended the edit session: {still}"
-    assert still["marked"], still
+    # **It closed the session**, and it took the edit layer's own chrome with it — the drawn
+    # places to add are edit mode's, so a close that left them behind would be half a close.
+    closed = _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)
+    assert closed["marked"] == 0, closed
     slots = _dump(window, KANBAN_SLOTS)
-    assert slots["cards"] and slots["column"] is not None, (
-        f"and it took the edit layer's own chrome with it: {slots}")
+    assert not slots["cards"] and slots["column"] is None, (
+        f"and the edit layer's chrome went with it: {slots}")
 
-    # **The board's own gesture** ends it, on the board.
-    _click_done(window)
-    assert _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)["marked"] == 0
-
-    # **And it is repeatable**: reopened, a press naming no block again does nothing,
-    # and the gesture again ends it. The first half is what changed; the second is what
-    # a reader is left with.
+    # **And it is repeatable**, and the board's own gesture still opens it: the gesture is a
+    # toggle on a block and a close everywhere else — one meaning, two cases.
     _enter_edit_mode(window)
     assert _dump(window, EDIT_STATE)["editing"], "the board did not reopen"
     _altclick_below_document(window)
-    time.sleep(0.3)
-    assert _dump(window, EDIT_STATE)["editing"], (
-        "a press naming no block ended it the second time as well")
+    assert _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)["editing"] is False
+    _enter_edit_mode(window)
     _click_done(window)
     assert _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)["marked"] == 0
-
 
 def test_every_quoted_kanban_delimiter_renders_and_reads_back(window):
     """Every character `KANBAN_QUOTE_CHARS` (src/mermaid-edit.ts) quotes renders
@@ -5308,6 +5294,7 @@ WORKING_STATE = r"""(() => {
       cls: String(el.className).slice(0, 60),
       opacity: cs.opacity,
       pointerEvents: cs.pointerEvents,
+      cursor: cs.cursor,
       isolating: cs.isolation !== 'auto' || cs.transform !== 'none'
         || cs.filter !== 'none' || cs.contain !== 'none' || cs.willChange !== 'auto',
       // A `filter` becomes the containing block for `position: absolute`
@@ -5344,10 +5331,19 @@ Prose after the table.
 
 
 def _alt_click_a_cell(window, selector):
+    """Alt+click a cell **at its own centre**, which the press classifier needs.
+
+    A `MouseEvent` built without coordinates is at (0, 0), and the press's *geometry* is how
+    `pressTarget` decides whether it lands in a block that is dimmed — so a coordinate-less
+    synthetic click reads as the top-left corner of the window, which in a document with a working
+    state is a dimmed paragraph. Every real press has coordinates; this one had to be given them.
+    """
     _dump(window, """(() => {
       const cell = document.querySelector(%s);
+      const r = cell.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
       cell.dispatchEvent(new MouseEvent('click',
-        { bubbles: true, cancelable: true, button: 0, altKey: true }));
+        { bubbles: true, cancelable: true, button: 0, altKey: true, clientX: x, clientY: y }));
       return { d: 1 };
     })()""" % json.dumps(selector))
 
@@ -5436,9 +5432,16 @@ def test_a_working_state_dims_and_inerts_the_rest_of_the_document(window):
     for entry in out["dimmed"]:
         assert 0 < float(entry["opacity"]) < 1, (
             f"a dimmed block is not dimmed: {entry}")
-        assert entry["pointerEvents"] == "none", (
-            f"a dimmed block still takes the pointer, so a second selection can be "
-            f"made in it: {entry}")
+        # **The dimmed block takes its own press**, which is the change: `pointer-events: none`
+        # took the press away from the block and handed it to the editor behind, which then
+        # mapped the press's *coordinates* into that same block — so a reader could put a caret
+        # in a paragraph beside a live sheet and type in it. Refusing the press is
+        # `src/press.ts`'s job and it needs the press to arrive, and a dimmed region that
+        # swallowed nothing would be invisible as a choice.
+        assert entry["pointerEvents"] != "none", (
+            f"a dimmed block must still receive its own press: {entry}")
+        assert entry["cursor"] == "default", (
+            f"and say with a cursor that a click there does nothing: {entry}")
         # The band is `z-index: -1` and escapes into `.ProseMirror`'s stacking
         # context; a dimmed block that isolated would trap it. `opacity` is the one
         # stacking context it *may* create, and it does not move absolutely
@@ -5620,16 +5623,16 @@ def test_a_second_block_cannot_be_opened_while_one_is_open(window):
     The rule is two blocks' — one holds the page's working state, and unlocking a
     second locks the first. Only one of those is reachable any more, and it is worth
     saying which and why: an open block **dims and inertises every other block**, so
-    the second block's cluster is behind `pointer-events: none` and a reader cannot
-    click it at all. Exclusivity is therefore enforced twice over — by inertness at the
-    document level, and by the focus path for the one case inertness cannot reach, a
-    working state *inside* the open block (the next test).
+    the second block's controls are **refused** — the dimmed region still takes its own
+    press (so it can show a cursor saying a click there does nothing) and `src/press.ts`
+    refuses it. Exclusivity is therefore enforced twice over — by the press classifier at
+    the document level, and by the focus path for the one case that cannot reach, a working
+    state *inside* the open block (the next test).
 
-    Asserted as the behaviour that actually is, rather than as a gesture that would
-    need a hole in the dimming to perform: the second block is **there**, it is
-    **inert**, and the open block's own **Lock** puts the document back within reach.
-    A version of this that drove a second unlock directly would pass for an
-    implementation with no exclusivity at all.
+    Asserted as the behaviour that actually is, and through the real gesture: the second
+    block is **there**, a press on it is **refused**, and the open block's own **Lock** puts
+    the document back within reach. A version of this that drove a second unlock directly
+    would pass for an implementation with no exclusivity at all.
 
     What is genuinely given up is comparing two secrets side by side. That was a real
     use, and it is refused on purpose, for a reason that has nothing to do with
@@ -5655,14 +5658,57 @@ def test_a_second_block_cannot_be_opened_while_one_is_open(window):
         hitsBlock: !!(at && first.contains(at)),
         hit: at ? (at.className || at.tagName) : null,
         pointerEvents: getComputedStyle(first).pointerEvents,
+        cursor: getComputedStyle(first).cursor,
       };
     })()""", lambda d: d.get("idle"), timeout=10)
 
     assert out["idle"] == 2, out
-    assert out["pointerEvents"] == "none", out
-    assert not out["hitsBlock"], (
-        "a dimmed block must not be reachable, so a second block cannot be opened "
-        f"from here: {out}")
+    # **The dimmed block takes its own press** — it has to, or a cursor cannot say anything
+    # about it — and `src/press.ts` refuses that press. So the exclusivity claim is the
+    # refusal, and here it is through the gesture a reader would actually make.
+    assert out["pointerEvents"] != "none", out
+    assert out["cursor"] == "default", (
+        f"a dimmed region says with a cursor that a click there does nothing: {out}")
+
+    refused = _dump(window, """(() => {
+      const editor = document.querySelector('#editor-container > .ProseMirror');
+      const idle = [...editor.children].filter(
+        (el) => el.classList.contains('edi-block-mode-dimmed'))[0];
+      const before = document.querySelectorAll('.encrypted-block-reveal').length;
+      const litBefore = document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-lit').length;
+      // **The press that would *open* something**: a click on the dimmed block's own `Source`
+      // control. It must do nothing. (`Alt`+click there is deliberately *not* in this claim —
+      // it is the close gesture, and closes.)
+      const btn = idle.querySelector('.block-control-representation');
+      const r = idle.getBoundingClientRect();
+      const x = Math.round(r.left + 40), y = Math.round(r.top + r.height / 2);
+      if (btn) {
+        const br = btn.getBoundingClientRect();
+        const at = document.elementFromPoint(Math.round(br.left + br.width / 2),
+          Math.round(br.top + br.height / 2)) || btn;
+        for (const t of ['mousedown', 'mouseup', 'click']) {
+          at.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, button: 0,
+            clientX: Math.round(br.left + br.width / 2),
+            clientY: Math.round(br.top + br.height / 2) }));
+        }
+      }
+      return {
+        control: btn ? btn.textContent.trim() : null,
+        revealsBefore: before,
+        revealsAfter: document.querySelectorAll('.encrypted-block-reveal').length,
+        litBefore: litBefore,
+        litAfter: document.querySelectorAll(
+          '#editor-container > .ProseMirror > .edi-block-mode-lit').length,
+        inSource: idle.classList.contains('edi-block-mode-source'),
+      };
+    })()""")
+    assert refused["revealsAfter"] == refused["revealsBefore"], (
+        f"a second block cannot be opened while one is open: {refused}")
+    assert refused["litAfter"] == refused["litBefore"], (
+        f"and a press on a dimmed block does not move the one working state: {refused}")
+    assert refused["inSource"] is False, (
+        f"nor open the block it was aimed at: {refused}")
 
     # ...and the way out is the block's own **Lock**, which is the one control an
     # open block keeps on its own cluster. **Not** a press on the page: that used
@@ -6551,26 +6597,30 @@ def test_escape_leaves_a_sheet_and_escape_in_a_cell_does_not(window):
     assert left["dimmed"] == 0, f"leaving the sheet left the document dimmed: {left}"
 
 
-def test_a_press_over_a_dimmed_block_names_no_block_at_all(window):
-    """A press in the dimmed region reads as a press on the page, not on a block.
+def test_a_press_in_the_dimmed_region_does_nothing_to_any_block(window):
+    """A press in the dimmed region reaches no block's mode, and moves no block's state.
 
-    §2.3's inertness is `pointer-events: none` on each dimmed block, so a press over
-    one hit-tests **past** it — and past a dimmed paragraph is not the scroll
-    container §3.2 assumed but **`.ProseMirror` itself**, which is the editor's own
-    box rather than any block in it. `blockPosForElement` read that as
-    `posAtDOM(view.dom, 0)` = `posAtStart` = **0**, so it named the document's
-    *first* block, wherever the pointer was.
+    §2.3's inertness used to be `pointer-events: none` on each dimmed block, so a press over one
+    hit-tested **past** it — and past a dimmed paragraph is **`.ProseMirror` itself**, the editor's
+    own box rather than any block in it. `blockPosForElement` read that as
+    `posAtDOM(view.dom, 0)` = `posAtStart` = **0**, so it named the document's *first* block,
+    wherever the pointer was.
 
-    Two consequences, both real, and the second one is why this is not cosmetic:
-    an Alt+click anywhere in the dimmed region opened **an unrelated block** in
-    Source — taking the one record off the live working state, so a live sheet
-    closed and the document stopped being dimmed by a press on a block that is
-    supposed to receive nothing — and a right-click offered that same block a full
-    block menu (`Source`, `Encrypt block…`).
+    **It is no longer `pointer-events: none`**, which is the point: that property took the press
+    away from the block and handed it to the editor behind, which then mapped the press's
+    *coordinates* into that same block — which is how a reader could put a caret in a paragraph
+    beside a live sheet and type in it. The dimmed region now **takes its own press** (so it can
+    show a cursor saying a click there does nothing) and `src/press.ts` refuses it.
 
-    So the claim here is *the block under the pointer*, and the gesture over the
-    paragraph **below** the sheet is the one that decides it: a resolver that
-    answered "the first block" would open the paragraph above.
+    So the press **names the block it is over** now, and the claims are what the classifier owes
+    because of that:
+
+    - a **plain press** in the dimmed region opens nothing and selects nothing — it is the
+      *editor's* inert region, and it stays one;
+    - an **`Alt`+click** there is the **close** gesture, so it ends the live sheet rather than
+      opening an unrelated block in Source — which is the old bug's other half, and the fix was
+      never to forbid the gesture but to give it one meaning;
+    - a **right-click** there offers no block menu, which is the same resolver's other reader.
     """
     _open_a_working_state(window)
 
@@ -6593,6 +6643,7 @@ def test_a_press_over_a_dimmed_block_names_no_block_at_all(window):
           return {
             target: String(at.className || at.tagName),
             pressed: el.textContent.slice(0, 40),
+            cursor: getComputedStyle(el).cursor,
           };
         })()""" % (index, json.dumps(kind), json.dumps(bool(alt))))
 
@@ -6604,34 +6655,35 @@ def test_a_press_over_a_dimmed_block_names_no_block_at_all(window):
             source: ed.querySelectorAll(':scope > .block-source-mode').length,
             cm: !!document.querySelector('#editor-container > .ProseMirror > .cm-editor'),
             dimmed: ed.querySelectorAll(':scope > .edi-block-mode-dimmed').length,
+            selected: ed.querySelectorAll(':scope > .ProseMirror-selectednode').length,
             firstBlock: String(ed.querySelector(':scope > *').className).slice(0, 40),
           };
         })()""")
 
-    # First: the press has to land where the bug lives — inside the editor's own
-    # box, on a dimmed block, not in the scroller's margin where the old reasoning
-    # happened to be right.
+    # First: the press has to land where the bug lives — **on the dimmed block itself**, which is
+    # what it now receives. A press that hit-tested past it to the editor's own box was the old
+    # mechanism, and asserting it would pin the bug back in place.
     below = _press_in_the_dimmed_region(1, 'click')
-    assert below.get("target") == "ProseMirror", (
-        "this test is not pressing what it claims: the dimmed paragraph did not "
-        f"hit-test to the editor's own box: {below}")
     assert below["pressed"].startswith("Prose after"), below
+    assert below["target"].startswith("P"), (
+        f"this test is not pressing what it claims: the dimmed paragraph must receive its own"
+        f" press: {below}")
+    assert below["cursor"] == "default", (
+        f"and say with a cursor that a click there does nothing: {below}")
 
     after = _state()
     assert after["source"] == 0 and after["cm"] is False, (
         "a plain press in the dimmed region opened a block's Source form: %r" % (after,))
     assert after["sheet"] and after["dimmed"] == 3, (
         f"the press disturbed a live working state: {after}")
+    assert after["selected"] == 0, (
+        f"and selected nothing: {after}")
 
-    # Then the gesture that read it as a block. **It must do nothing** — and the way it
-    # does nothing is the claim: not "it named no block and fell through to finishing
-    # whatever was open" (which is what this used to assert, and which is a working state
-    # closed by a press that was about none of it), but "it named no block, so it was
-    # about none of it". The paragraph above the sheet must not be opened on the way
-    # either — that is the old bug and it is still the first thing to check.
+    # Then the gesture over it, which is the **close**: one meaning for `Alt`+click, and this is
+    # the case where a press names no block. The paragraph above the sheet must not open on the
+    # way — that is the old bug, and it is still the first thing to check.
     alt = _press_in_the_dimmed_region(1, 'click', alt=True)
-    assert alt.get("target") == "ProseMirror", alt
-    time.sleep(0.5)
+    time.sleep(0.6)
     left = _dump(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),
@@ -6640,49 +6692,26 @@ def test_a_press_over_a_dimmed_block_names_no_block_at_all(window):
       dimmed: document.querySelectorAll(
         '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
     }))()""")
-    assert left["sheet"] and not left["plain"], (
-        f"an Alt+click in the dimmed region closed the sheet: {left}")
+    assert not left["sheet"] and left["plain"], (
+        f"an Alt+click in the dimmed region is the close gesture, so it ends the sheet: {left}")
     assert left["source"] == 0, (
-        "Alt+click in the dimmed region opened an unrelated block in Source — the "
-        f"sheet's record went to the first block in the document: {left}")
-    assert left["dimmed"] == 3, (
-        f"and the document is still dimmed around the one thing being worked in: {left}")
+        "and it did not open an unrelated block in Source on the way — the record went to the "
+        f"first block in the document, which was the old bug: {left}")
+    assert left["dimmed"] == 0, (
+        f"and the document is no longer dimmed, because nothing is being worked in: {left}")
 
-    # The other reader of the same resolver, and the reason this lives in the one
-    # authority rather than in either caller: the context menu asked it too, and
-    # built a **block** menu (`Source`, `Encrypt block…`) over a block the pointer
-    # was nowhere near. Pressing `Source` from there did exactly what the Alt+click
-    # did. The document's own commands may still be offered — they act on the
-    # document selection, which the entry collapse already left empty.
-    _open_a_working_state(window)
-    menu = _press_in_the_dimmed_region(1, 'contextmenu')
-    assert menu.get("target") == "ProseMirror", menu
-    offered = _wait(window, """(() => ({
-      items: [...document.querySelectorAll('.edi-context-menu button')]
-        .map((b) => String(b.textContent).trim()),
-    }))()""", lambda d: len(d.get("items", [])) > 0, timeout=5)
-    block_items = {"Source", "Visual", "Edit", "Done", "Unlock", "Lock",
-                   "Encrypt block…", "Run", "Stop", "Copy image", "Save image…"}
-    leaked = sorted(block_items.intersection(offered["items"]))
-    assert not leaked, (
-        "a right-click over a dimmed block offered that block's actions, so the "
-        f"menu can put a dimmed block into Source or encrypt it: {offered}")
+def test_alt_click_outside_a_working_state_closes_it(window):
+    """A press naming no block closes — and it must not take any *other* block's state.
 
+    This went round twice, and the settled rule is the simple one: **`Alt`+click means the mode
+    and nothing else.** On a block it toggles that block's mode; a press that names no block can
+    only mean *close*, so there is nothing for it to mean by accident.
 
-def test_alt_click_outside_a_working_state_does_nothing(window):
-    """A press naming no block does nothing — and it must not take the page's state.
-
-    Worth stating because the opposite used to be a feature. The Alt+click listener sits
-    on the editor's **scroll container**, and the dimmed blocks are `pointer-events: none`,
-    so a press in the dimmed region hit-tests *past* them and lands on that container — so a
-    press under a live sheet was answered by finishing the sheet. One press, no block
-    named, a working state closed by a click that was not about one.
-
-    **Nothing happens now**, and this is the gate for it: the sheet is still a sheet, the
-    document is still dimmed, and the reader's way out is the four that were designed —
-    Escape, the block's own **Done**, Alt+click on the block, or leaving the tab. The two
-    this test drives are the ones that need no aiming, and it drives them *after* the
-    press, so "nothing happened" is not just "it closed again".
+    It was withdrawn once as too eager — a press in the dimmed region hit-tested past the blocks
+    onto the scroll container, and the gesture finished the sheet: one press, no block named, a
+    working state closed by a click that was not about one. The fix for that was never to forbid
+    the gesture, it was to make it mean one thing — and the listener staying on the **scroller**
+    is why the press below a live sheet is the case that exercises it.
     """
     _open_a_working_state(window)
 
@@ -6716,14 +6745,20 @@ def test_alt_click_outside_a_working_state_does_nothing(window):
       lit: document.querySelectorAll(
         '#editor-container > .ProseMirror > .edi-block-mode-lit').length,
     }))()""")
-    assert after["sheet"] and not after["plain"], (
-        f"a press naming no block closed the sheet: {after}")
-    assert after["dimmed"] > 0 and after["lit"] == 1, (
-        f"and the page's one working state is still the one thing lit: {after}")
+    assert not after["sheet"] and after["plain"], (
+        f"a press naming no block is the close gesture, so it closes: {after}")
+    assert after["dimmed"] == 0 and after["lit"] == 0, (
+        f"and leaves nothing lit, because nothing is being worked in: {after}")
 
-    # **The block's own gesture** still gets the reader out, with no aiming at all: a
-    # table's edit step is its form, so Alt+clicking a cell of the sheet is the toggle
-    # back to plain text (§5.2) — the same press `_alt_click_a_cell` is everywhere else.
+    # **And the block's own gesture is still the toggle**, on the block: a table's edit step is
+    # its form, so `Alt`+clicking a cell of the sheet is the toggle back to plain text (§5.2) —
+    # the same press `_alt_click_a_cell` is everywhere else. One meaning, two cases.
+    _alt_click_a_cell(window, "#editor-container .ss-plain-table td")
+    opened = _wait(window, """(() => ({
+      plain: !!document.querySelector('#editor-container .ss-plain'),
+      sheet: !!document.querySelector('#editor-container .spreadsheet'),
+    }))()""", lambda d: d.get("sheet") is True, timeout=10)
+    assert opened["plain"] is False, opened
     _alt_click_a_cell(window, "#editor-container .spreadsheet .ss-grid td")
     left = _wait(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
@@ -8074,10 +8109,16 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
           return { at: String(target.className || target.tagName) };
         })()""" % (index, json.dumps(where), dx))
 
-    # **Half one: a press on the table's own margin reaches ProseMirror**, which it could not
-    # before — the view claimed every event, so clicking a table could never select it and no
-    # press inside the block could reach the editor at all. Measured on a document with a
-    # *narrow* table, so the point `right + 8` is inside the table's block and not in a cell.
+    # **Half one, which has since changed its mind — and the change is the point.** This used
+    # to assert that a press on the table's own margin *selects the table*, "as it always did
+    # for a diagram". A click in the empty strip beside a small grid was reported as painting
+    # "all of the pixels between the left and right margin" with "nowhere to click", and the
+    # empty strip is the space *around* a table rather than its surface: measured, the press
+    # selected the table and the selection painted the whole width of the block while the words
+    # stopped at the grid. It is now answered as the white space it is (`gapParagraph.ts`), and
+    # the gate for that is `test_the_space_beside_a_table_is_white_space_not_part_of_the_table`.
+    # What stays here is the half that is still true: the press no longer reaches ProseMirror as
+    # a *block* press, so it selects nothing.
     _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
           % json.dumps("Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n"
                        "\nProse below.\n"))
@@ -8085,13 +8126,13 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
           lambda d: d.get("t") is True, timeout=25)
     margin = _press('margin')
     assert not margin.get("missing"), margin
-    assert margin["at"] == "ss-plain-scroll", (
-        f"this press has to land on the table's block to test anything: {margin}")
+    assert margin["at"] == "ss-plain-scroll block-margin", (
+        f"this press has to land in the empty strip beside the grid — which carries the margin"
+        f" marker, because it is the one surface of the block that is white space: {margin}")
     time.sleep(0.4)
     picked = _cells()
-    assert picked["selectedNodes"] == ["ss-plain"], (
-        f"a click on a table's own margin selects the table, as it always did for a diagram: "
-        f"{picked}")
+    assert picked["selectedNodes"] == [], (
+        f"and it is not a press on the table, so it selects no block: {picked}")
 
     # **Half two, in the reported document — nothing but tables.** A click that selected
     # nothing drops the paint over every *other* table; it leaves the table it landed on
@@ -8150,3 +8191,736 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
     held = _cells()
     assert held["cells"] == 27, (
         f"Ctrl+click is extending a selection, not dropping one: {held}")
+
+
+def test_a_press_in_a_document_with_nowhere_to_type_creates_nothing(window):
+    """Clicking around a document must not change it — including where there is nowhere to type.
+
+    The report that started this was that a caret is *nearly impossible to place* in a document
+    made only of tables and code blocks, and the fix for it was to **insert a paragraph on a
+    click** in the white space. That fix has been withdrawn: *"clicking around a document
+    shouldn't create blocks."* The argument for it was that Word and Docs do the same; the
+    argument against it is stronger here, because a stray click **edits the reader's file** —
+    it marks the document dirty, and the line it left is a thing the reader has to notice and
+    undo. A rule a reader cannot predict is not worth a feature.
+
+    So the claims here are all refusals, and the last one is the answer to the original report:
+
+    - **a press in the editor's white space creates nothing** — no line, no dirty file;
+    - **a press in the empty space beside a small table creates nothing** either, which is the
+      same rule in the place the two bugs met;
+    - **and the way to write in such a document is the sheet**: one click in the block's own
+      cluster, and it is a surface that takes a caret.
+    """
+    def _load(doc):
+        _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+              % json.dumps(doc))
+        _wait(window, "(() => ({ t: document.querySelectorAll('#editor-container .ss-plain')"
+                      ".length }))()", lambda d: d.get("t", 0) >= 3, timeout=25)
+
+    def _blocks():
+        """The document's top-level blocks, **and not the gap cursor**: `prosemirror-gapcursor`'s
+        fake cursor is a direct child of the editor's DOM, so counting it as a paragraph would
+        be counting the very affordance this rule is about."""
+        return _dump(window, """(() => ({ kinds: [...document.querySelectorAll(
+          '#editor-container > .ProseMirror > *')]
+          .filter((b) => !b.classList.contains('ProseMirror-gapcursor'))
+          .map((b) => b.classList.contains('ss-plain') ? 'table'
+            : b.classList.contains('runnable-block') ? 'code'
+            : b.classList.contains('spreadsheet') ? 'sheet' : 'para'),
+          gapCursors: document.querySelectorAll('#editor-container .ProseMirror-gapcursor').length,
+        }))()""")
+
+    def _gap_cursors():
+        return _blocks()["gapCursors"]
+
+    def _dirty():
+        return _dump(window, "(() => ({ markdown: window.ediGetMarkdown ? "
+                      "window.ediGetMarkdown().length : -1 }))()")
+
+    _load(TABLE_ONLY_DOC)
+    before = _blocks()
+    before_kinds = before["kinds"]
+    assert before_kinds == ["code", "table", "table", "table"], before
+
+    # Three presses, three regions a reader aims at: beside a block, in the gap between two, and
+    # below the last block on the scroller.
+    pressed = _dump(window, """(() => {
+      const blocks = [...document.querySelectorAll('#editor-container > .ProseMirror > *')];
+      const grid = blocks[1].querySelector('.ss-plain-table').getBoundingClientRect();
+      const points = [
+        { name: 'beside', x: Math.round(grid.right + 40), y: Math.round(grid.top + 20) },
+        { name: 'between', x: Math.round(grid.left + 8),
+          y: Math.round((blocks[1].getBoundingClientRect().bottom
+            + blocks[2].getBoundingClientRect().top) / 2) },
+        { name: 'below', x: Math.round(grid.left + 8),
+          y: Math.round(blocks[blocks.length - 1].getBoundingClientRect().bottom + 60) },
+      ];
+      const hit = [];
+      for (const p of points) {
+        const at = document.elementFromPoint(p.x, p.y);
+        if (!at) { hit.push({ name: p.name, missing: true }); continue; }
+        for (const t of ['mousedown', 'mouseup', 'click']) {
+          at.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, button: 0,
+            clientX: p.x, clientY: p.y }));
+        }
+        hit.push({ name: p.name,
+                   at: String(at.className || at.id || at.tagName).split(' ')[0] });
+      }
+      return { hit: hit };
+    })()""")
+    time.sleep(0.6)
+
+    after = _blocks()
+    assert after["kinds"] == before_kinds, (
+        f"**a press creates nothing**, in a document where there is nowhere to type and in the "
+        f"three regions a reader aims at: {before_kinds} -> {after}; {pressed}")
+    assert [h.get("missing") for h in pressed["hit"]] == [None, None, None], (
+        f"and every press actually landed somewhere: {pressed}")
+
+    # **And it gives the affordance the original report asked for, without the edit.** A press
+    # in the white space of a document with no caret-capable textblock draws a **gap cursor** —
+    # the mark at the height of the block, on the side that was pressed — which is what the
+    # report described and what the withdrawn insert was standing in for. The difference is that
+    # the mark is not a block: nothing in the document changed.
+    assert _gap_cursors() >= 1, (
+        f"a press where there is nowhere to type offers the gap cursor, which is the affordance"
+        f" and not an edit: {after}")
+
+    # --- **And the way to write in such a document is the sheet**: one click in the block's own
+    # cluster, and a surface that takes a caret. That is the answer to "nowhere to type", and it
+    # costs the reader one click rather than a document edit.
+    opened = _dump(window, """(() => {
+      const btn = [...document.querySelectorAll('#editor-container .ss-plain .block-controls button')]
+        .find((b) => /sheet|spread|edit/i.test(b.textContent + b.title));
+      if (!btn) return { noButton: true };
+      btn.click();
+      return { label: btn.textContent.trim() };
+    })()""")
+    assert not opened.get("noButton"), opened
+    _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .ss-grid') }))()",
+          lambda d: d.get("s") is True, timeout=15)
+    focus = _dump(window, """(() => ({
+      grid: !!document.querySelector('#editor-container .ss-grid'),
+      /** Inside the grid rather than anywhere else — the sheet *is* the typing surface, which is
+       * the whole answer to "nowhere to type". */
+      focusInsideGrid: !!(document.activeElement &&
+        document.querySelector('#editor-container .ss-grid').contains(document.activeElement)),
+      focus: document.activeElement
+        ? document.activeElement.tagName + '.' +
+          String(document.activeElement.className).split(' ')[0] : null,
+    }))()""")
+    assert focus["grid"] is True, f"the sheet is open: {focus}"
+    assert focus["focusInsideGrid"] is True, (
+        f"and the caret is inside it, which is the point of opening it: {focus}")
+
+def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
+    """A small table in a wide editor: the empty space beside it must read as empty space.
+
+    The report, after the deselect fix: *the selection box is all of the pixels all the way
+    between the left and right margin*, with a 2x2 table and white space around it, and
+    *nowhere to click*. Both halves were one gesture, and both were measured:
+
+    - a click 60px right of a 63px grid **selected the table**, and a selected table was
+      painted by `selectionHighlightPlugin` on the **block** — a 14%-accent fill and a 2px
+      outline running **48→1256**, the full width between the margins, with all four cells lit
+      besides. A tiny table in a wide editor therefore reads as a selected *row*;
+    - and it left **no caret anywhere**, so the space beside the table was nowhere to click.
+
+    **Every block is as wide as the text column** — that is what a block is here — and a table's
+    content is its grid, which is as wide as its columns and no wider. So the claims are:
+
+    - **a selected Visual table is painted on the grid**, the way a diagram's outline already
+      hugs the drawing: the fill and the outline move off the block onto `ss-plain-table`, and
+      the block paints nothing at all;
+    - **a click in the empty strip beside the grid is a click in the white space**, so it gives
+      a caret — the nearest prose where there is prose, and a new line where there is none,
+      which is the `spreadsheets.md` case. It never selects the table, because that empty strip
+      is not the table's surface but the space *around* it.
+
+    A click **on the grid** is still a click on the table and still selects it, which is what
+    "the empty space is not the table" has to leave alone.
+    """
+    def _read():
+        return _dump(window, """(() => {
+          const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect();
+            return [Math.round(r.left), Math.round(r.right)]; };
+          const block = document.querySelector('#editor-container .ss-plain');
+          const grid = block.querySelector('.ss-plain-table');
+          const gridCs = getComputedStyle(grid);
+          const sel = getSelection();
+          const el = sel.anchorNode
+            ? (sel.anchorNode.nodeType === 3 ? sel.anchorNode.parentElement : sel.anchorNode)
+            : null;
+          const blocks = [...document.querySelectorAll('#editor-container > .ProseMirror > *')];
+          const indexOf = (n) => blocks.indexOf(n
+            ? n.closest('#editor-container > .ProseMirror > *') : null);
+          return {
+            gridX: box(grid),
+            gridPaints: getComputedStyle(grid).outlineStyle !== 'none' ||
+              gridCs.backgroundColor !== 'rgba(0, 0, 0, 0)',
+            blockPaints: getComputedStyle(block).backgroundColor !== 'rgba(0, 0, 0, 0)' ||
+              getComputedStyle(block).outlineStyle !== 'none',
+            blockSelected: block.classList.contains('ProseMirror-selectednode'),
+            cellsPainted: document.querySelectorAll('.ss-cell-in-selection').length,
+            kinds: [...document.querySelectorAll('#editor-container > .ProseMirror > *')]
+              .filter((b) => !b.classList.contains('ProseMirror-gapcursor'))
+              .map((b) => b.classList.contains('ss-plain') ? 'table'
+                : b.classList.contains('mermaid') ? 'diagram'
+                : b.classList.contains('runnable-block') ? 'code'
+                : b.querySelector('hr') !== null ? 'rule' : 'para'),
+            /** The gap cursor is a direct child of the editor's DOM, so `blocks` counts it. */
+            gapCursors: document.querySelectorAll('#editor-container .ProseMirror-gapcursor').length,
+            caretInBlock: indexOf(el ? el.closest('p') ?? el : null),
+            caretText: (el ? el.closest('p') : null)?.textContent.slice(0, 14) ?? null,
+            collapsed: sel.isCollapsed,
+          };
+        })()""")
+
+    def _load(doc):
+        _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+              % json.dumps(doc))
+        _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+              lambda d: d.get("t") is True, timeout=25)
+
+    def _click_where(where):
+        """Click the empty space beside the grid, or the grid itself, and say what it hit."""
+        return _dump(window, """(() => {
+          const block = document.querySelector('#editor-container .ss-plain');
+          const g = block.querySelector('.ss-plain-table').getBoundingClientRect();
+          const x = %s, y = Math.round(g.top + g.height / 2);
+          const at = document.elementFromPoint(x, y);
+          if (!at) return { missing: true };
+          for (const t of ['mousedown', 'mouseup', 'click']) {
+            at.dispatchEvent(new MouseEvent(t,
+              { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+          }
+          return { at: String(at.className || at.id || at.tagName).split(' ')[0] };
+        })()""" % where)
+
+    beside = "(() => Math.round(document.querySelector('#editor-container .ss-plain')" \
+             ".querySelector('.ss-plain-table').getBoundingClientRect().right + 60))()"
+    in_grid = "(() => { const c = document.querySelector('#editor-container .ss-plain')" \
+              ".querySelectorAll('tbody td')[1].getBoundingClientRect();" \
+              " return Math.round(c.left + c.width / 2); })()"
+
+    # --- The reported document: a small table with prose around it.
+    _load("Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n")
+    start = _read()
+    assert start["gridX"] == [48, 111], (
+        f"a 2x2 table is a tiny grid in a wide editor, which is the whole of the report:"
+        f" {start}")
+
+    # **A click in the empty strip gives a caret**, and paints nothing at all.
+    hit = _click_where(beside)
+    assert hit.get("missing") is not True and hit["at"] == "ss-plain-scroll", (
+        f"this press has to land in the empty strip beside the grid to test anything: {hit}")
+    time.sleep(0.5)
+    beside_out = _read()
+    assert beside_out["blockSelected"] is False, (
+        f"the space beside a table is not the table: {beside_out}")
+    assert beside_out["cellsPainted"] == 0 and beside_out["blockPaints"] is False, (
+        f"and it paints nothing: {beside_out}")
+    assert beside_out["kinds"] == ["para", "table", "para"], (
+        f"no line was added either — this document has prose to put the caret in: {beside_out}")
+    assert beside_out["collapsed"] is True and beside_out["caretInBlock"] == 2, (
+        f"and the caret is in the prose below, the way a click in the white space answers"
+        f" anywhere else: {beside_out}")
+
+    # **A click in a cell is the browser's** — the cells are claimed, because a range inside
+    # `contenteditable=false` is the browser's selection and the app's painter is per cell
+    # (`tableTextSelection.ts`). So a cell click is not how a table gets selected, and the
+    # claim here is only that it does not drag the block along with it.
+    hit = _click_where(in_grid)
+    assert hit.get("missing") is not True, hit
+    time.sleep(0.5)
+    cell_out = _read()
+    assert cell_out["blockSelected"] is False and cell_out["cellsPainted"] == 0, (
+        f"a click in a cell selects no cells and no block: {cell_out}")
+
+    # **And the paint, which is the other half of the report.** A selected Visual table was
+    # painted by `selectionHighlightPlugin` on the **block**, and the block is as wide as the
+    # text column: measured, a 14%-accent fill and a 2px outline running 48→1256 around a 63px
+    # grid, which reads as a selected row with a table in it.
+    #
+    # **Moving that ring onto the grid does not work either, and both halves are measured** —
+    # which is why the paint is the cells and nothing else:
+    #
+    # - *Outside the grid it is clipped away on three sides.* `.ss-plain-scroll` is
+    #   `overflow-x: auto; overflow-y: hidden` and its box is **exactly** the grid's vertical
+    #   extent (measured: a grid of 48,161→253,221 inside a scroller of 48,161→1256,221), so an
+    #   outline drawn 2px out is cut on the top, bottom and left and **only the right survives** —
+    #   the report's *"only part of the blue selected border, on the right of the table"*, which
+    #   read as a rendering artifact rather than as a selection.
+    # - *Inside the grid it is painted over by the cells.* Every cell is
+    #   `position: relative; isolation: isolate`, so the header row's own backgrounds cover a
+    #   ring drawn inside the table's border: measured at `outline-offset: -2px` against a real
+    #   grab of the page, the bottom and right segments paint on every sample and **the top on
+    #   one of 49**.
+    #
+    # So this asserts what the stylesheet does with the class the app really applies — and that
+    # the class is applied rather than reached by a gesture, because the harness cannot place a
+    # caret to drive the `Ctrl+Shift+Down` that selects a block (a synthetic press does not move
+    # the browser's caret). A click on the empty strip really did put `ProseMirror-selectednode`
+    # on this block before the fix (measured), and ProseMirror puts that class on any selected
+    # atom.
+    _dump(window, """(() => {
+      const block = document.querySelector('#editor-container .ss-plain');
+      block.classList.add('ProseMirror-selectednode');
+      return { d: 1 };
+    })()""")
+    time.sleep(0.2)
+    painted = _read()
+    assert painted["blockSelected"] is True, f"the class is on the block: {painted}"
+    assert painted["blockPaints"] is False, (
+        f"and the empty space beside it is not part of the selection: {painted}")
+    assert painted["gridPaints"] is False, (
+        f"and the grid draws no ring either — a selected Visual table wears its cells:"
+        f" {painted}")
+    _dump(window, """(() => {
+      document.querySelector('#editor-container .ss-plain')
+        .classList.remove('ProseMirror-selectednode');
+      return { d: 1 };
+    })()""")
+
+    # --- And the document with nowhere to type: the empty strip gives a **line**, not a
+    # selection, which is the `spreadsheets.md` case and the whole of the last fix.
+    _load(TABLE_ONLY_DOC)
+    _wait(window, "(() => ({ t: document.querySelectorAll('#editor-container .ss-plain')"
+                  ".length }))()", lambda d: d.get("t", 0) >= 3, timeout=25)
+    hit = _click_where(beside)
+    assert hit.get("missing") is not True, hit
+    time.sleep(0.5)
+    nowhere = _read()
+    assert nowhere["blockSelected"] is False and nowhere["cellsPainted"] == 0, (
+        f"nowhere to type, the empty strip is not a request for a selection: {nowhere}")
+    # **And it is not a request for a block either.** The empty strip beside a table used to make
+    # a paragraph — withdrawn, because *"clicking around a document shouldn't create blocks"* —
+    # so here it does nothing at all, and the affordance is the **gap cursor** the mark plugin
+    # already draws: the caret-height line beside the block, on the side that was pressed.
+    assert nowhere["kinds"] == ["code", "table", "table", "table"], (
+        f"a press in the empty strip creates nothing: {nowhere}")
+    # **And the gap cursor belongs to the other region.** The strip is the block's own margin,
+    # which its node view claims, so ProseMirror never sees that press; the editor's *own* white
+    # space is the region where `prosemirror-gapcursor` draws its mark. Two regions, two answers,
+    # and neither of them an edit.
+    _dump(window, """(() => {
+      const blocks = [...document.querySelectorAll('#editor-container > .ProseMirror > *')];
+      const last = blocks[blocks.length - 1].getBoundingClientRect();
+      const x = Math.round(last.left + 8), y = Math.round(last.bottom + 60);
+      const at = document.elementFromPoint(x, y);
+      if (!at) return { missing: true };
+      for (const t of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, button: 0,
+          clientX: x, clientY: y }));
+      }
+      return { at: String(at.className || at.id || at.tagName).split(' ')[0] };
+    })()""")
+    time.sleep(0.5)
+    space = _read()
+    assert space["gapCursors"] >= 1, (
+        f"the editor's own white space offers the gap cursor — the mark, not the block: {space}")
+    assert space["kinds"] == ["code", "table", "table", "table"], (
+        f"and even that press creates nothing: {space}")
+
+
+# -- the press classifier's table: block types by press regions ----------------------
+#
+# Every bug behind `src/press.ts` was one press reaching six mechanisms that each answered a
+# different question, and each rule was stated against whichever one the author was reading. This
+# is the gate that makes the vocabulary checkable: **every region, for every block type, must
+# classify — and the two refusals that are rules rather than wording are asserted as behaviour.**
+#
+# The document is inline rather than read from a file, for the reason `TABLE_ONLY_DOC` is: a test
+# that depends on a file nobody keeps quietly stops running.
+PRESS_TABLE_DOC = """Prose above.
+
+```mermaid
+graph TD
+  A[Alpha] --> B[Beta]
+```
+
+```python
+print("hello")
+```
+
+| A | B |
+| --- | --- |
+| 1 | 2 |
+
+---
+
+Prose below.
+"""
+
+
+def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window):
+    """Block types by press regions: one classification each, and dimmed really is inert.
+
+    **The table is the point.** A rule about presses that is only ever checked on one block type
+    is a rule about that block type — that is how "a press on a block selects it" (true of a
+    diagram) became "a press on a block selects it" (false of the empty space beside a table),
+    and how "a dimmed block is inert" became a rule when `pointer-events: none` only ever
+    removed the *event target* while ProseMirror's own handler went on mapping the press's
+    *coordinates* to a position inside that block.
+
+    So each row below is a **region**, pressed through the real gesture, and each column is a
+    **block type**. Four regions × five block types, and three refusals that are behaviour rather
+    than wording:
+
+    - **a press in a dimmed block is inert** — no caret, and no text lands there. This is the
+      refusal that had to move: it is made by *stopping ProseMirror's own mousedown*, which a
+      plugin prop can do and nothing after the fact can.
+    - **a press in a block's content is the block's business** — a cell press selects no cells
+      and no block, because a range inside `contenteditable=false` is the browser's (§3.1).
+    - **a press on a control is the button's** — the cluster's own button still does what it
+      says, with the block dimmed or not.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(PRESS_TABLE_DOC))
+    _wait(window, "(() => ({ t: document.querySelectorAll('#editor-container .ss-plain').length }))()",
+          lambda d: d.get("t", 0) >= 1, timeout=25)
+    out = []
+
+    def _read():
+        """What the document is made of, and where the selection is.
+
+        **The anchor is only walked when it is an `Element`**, and that is not defensive
+        padding: with a sheet open the browser's selection anchor is a node inside CodeMirror,
+        which is neither an `Element` nor a text node, and `closest` is not a function on it.
+        """
+        return _dump(window, """(() => {
+          const blocks = [...document.querySelectorAll('#editor-container > .ProseMirror > *')];
+          const kindOf = (b) => b.classList.contains('ss-plain') ? 'table'
+            : b.classList.contains('mermaid') ? 'diagram'
+            : b.classList.contains('runnable-block') ? 'code'
+            : b.classList.contains('spreadsheet') ? 'sheet'
+            : b.querySelector('hr') !== null ? 'rule' : 'para';
+          const sel = getSelection();
+          const node = sel.anchorNode;
+          const el = node instanceof Element ? node
+            : (node && node.nodeType === 3 ? node.parentElement : null);
+          const blockOf = el ? el.closest('#editor-container > .ProseMirror > *') : null;
+          return {
+            kinds: blocks.map(kindOf),
+            texts: blocks.map((b) => b.textContent.slice(0, 20)),
+            lit: blocks.filter((b) => b.classList.contains('edi-block-mode-lit')).length,
+            dimmed: blocks.filter((b) => b.classList.contains('edi-block-mode-dimmed')).length,
+            selectedNodes: document.querySelectorAll('.ProseMirror-selectednode').length,
+            cellsPainted: document.querySelectorAll('.ss-cell-in-selection').length,
+            caretBlock: blockOf === null ? -1 : blocks.indexOf(blockOf),
+            caretText: blockOf === null ? null
+              : (blockOf.querySelector('p') || blockOf).textContent.slice(0, 12),
+            caretKind: blockOf === null ? null : kindOf(blockOf),
+            collapsed: sel.isCollapsed,
+          };
+        })()""")
+
+    def _press(where):
+        """Press one region, in the page, and say which element took it."""
+        return _dump(window, """(() => {
+          const blocks = [...document.querySelectorAll('#editor-container > .ProseMirror > *')];
+          const kindOf = (b) => b.classList.contains('ss-plain') ? 'table'
+            : b.classList.contains('mermaid') ? 'diagram'
+            : b.classList.contains('runnable-block') ? 'code' : 'para';
+          const ed = document.querySelector('#editor-container > .ProseMirror');
+          const where = %s;
+          let x, y, what = null;
+          for (const b of blocks) {
+            const r = b.getBoundingClientRect();
+            if (kindOf(b) === where) {
+              if (b.classList.contains('ss-plain')) {
+                // **The margin: beside the grid, inside the block.**
+                const g = b.querySelector('.ss-plain-table').getBoundingClientRect();
+                x = Math.round(g.right + 40); y = Math.round(g.top + g.height / 2);
+                what = 'margin';
+              } else if (b.classList.contains('mermaid')) {
+                const svg = b.querySelector('svg') || b;
+                const r2 = svg.getBoundingClientRect();
+                x = Math.round(r2.left + r2.width / 2); y = Math.round(r2.top + r2.height / 2);
+                what = 'diagram body';
+              } else {
+                x = Math.round(r.left + r.width / 2); y = Math.round(r.top + r.height / 2);
+                what = 'content';
+              }
+              break;
+            }
+          }
+          if (x === undefined) return { missing: true, where: where };
+          const at = document.elementFromPoint(x, y);
+          if (!at) return { missing: true, where: where, x, y };
+          for (const t of ['mousedown', 'mouseup', 'click']) {
+            at.dispatchEvent(new MouseEvent(t,
+              { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+          }
+          return { at: String(at.className || at.id || at.tagName).split(' ')[0],
+                   x, y, what: what, where: where };
+        })()""" % json.dumps(where))
+
+    # --- **Every region of every block type classifies**, and none of them is a dead press
+    # except the ones the vocabulary says are the block's own business.
+    for where in ['table', 'diagram', 'code', 'para']:
+        before = _read()
+        hit = _press(where)
+        assert not hit.get("missing"), f"nothing to press for a {where}: {hit}"
+        time.sleep(0.4)
+        after = _read()
+        out.append({"press": where, "hit": hit, "after": after})
+        assert after["kinds"] == before["kinds"], (
+            f"a press never changes what the document is made of: {before} -> {after}")
+        if where == 'para':
+            # **The margin/space route**: a document with prose, so this is ProseMirror's answer
+            # and the harness cannot see it move a caret — what it pins is that the press did not
+            # insert a line.
+            assert after["kinds"].count('para') == before["kinds"].count('para'), (
+                f"a press in the white space of a document with prose adds nothing: {after}")
+
+    # --- **The refusal that had to move: a dimmed block takes no caret and no text.**
+    # A document with prose around the table, because there has to be *something dimmed* to
+    # press: the reported case was a table-only document, and a `code_block` is not dimmable
+    # prose — it is a working state candidate of its own.
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps("Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n"))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+    opened = _dump(window, """(() => {
+      const buttons = [...document.querySelectorAll(
+        '#editor-container .ss-plain .block-controls button')];
+      const btn = buttons.find((b) => /sheet|spread|edit/i.test(b.textContent + b.title));
+      if (!btn) return { noButton: buttons.map((b) => b.textContent) };
+      btn.click();
+      return { label: btn.textContent };
+    })()""")
+    assert opened.get("noButton") is None, f"the fixture can open a sheet: {opened}"
+    time.sleep(0.8)
+    sheet = _read()
+    assert sheet["lit"] == 1 and sheet["dimmed"] >= 2, (
+        f"the fixture really is a working state with the rest of the document dimmed: {sheet}")
+
+    # **The press aims at the paragraph *below* the table**, and that detail is the test: a press
+    # that reached ProseMirror would move the selection *there*, and one that did not leaves it
+    # where the document was loaded.
+    before_press = _read()
+    pressed = _dump(window, """(() => {
+      const blocks = [...document.querySelectorAll('#editor-container > .ProseMirror > *')];
+      const p = blocks[blocks.length - 1].querySelector('p');
+      const c = p.getBoundingClientRect();
+      const x = Math.round(c.left + 8), y = Math.round(c.top + c.height / 2);
+      const at = document.elementFromPoint(x, y);
+      if (!at) return { missing: true };
+      for (const t of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(t,
+          { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+      }
+      return { at: String(at.className || at.id || at.tagName).split(' ')[0], x, y };
+    })()""")
+    time.sleep(0.6)
+    inert = _read()
+    assert not pressed.get("missing"), pressed
+    # **The press lands on the dimmed block itself**, which is the change: the region used to be
+    # `pointer-events: none`, so the hit test walked past it to the editor's own box and the press
+    # named *nothing* — which is how "a dimmed block is inert" came to be believed, and how a
+    # reader could end up typing in one. It takes its own press now, so it can show a cursor
+    # saying a click there does nothing, and `src/press.ts` refuses it.
+    assert pressed["at"] == "P", (
+        f"a press over a dimmed block lands on the block, which receives it: {pressed}")
+    assert inert["caretBlock"] == before_press["caretBlock"], (
+        f"and the press changed no selection: {before_press} -> {inert}")
+    assert inert["caretBlock"] != len(inert["kinds"]) - 1, (
+        f"**specifically not into the block that was pressed**: {inert}")
+    assert inert["kinds"] == sheet["kinds"] and inert["texts"] == sheet["texts"], (
+        f"and nothing was typed, inserted or selected: {sheet} -> {inert}")
+    assert inert["selectedNodes"] == 0 and inert["cellsPainted"] == 0, (
+        f"and nothing got painted either: {inert}")
+
+    # **The cursor is the affordance**, and the gate for it is a computed style: `cursor: default`
+    # on the dimmed region, because a click there does nothing and the reader can see that
+    # before making it. (`not-allowed` would claim a prohibition the app does not have — and
+    # `Alt`+click in exactly this region *does* close the working state.)
+    cursor = _dump(window, """(() => {
+      const dimmed = document.querySelector(
+        '#editor-container > .ProseMirror > .edi-block-mode-dimmed');
+      return { cursor: getComputedStyle(dimmed).cursor,
+               pointerEvents: getComputedStyle(dimmed).pointerEvents };
+    })()""")
+    assert cursor["cursor"] == "default", (
+        f"a dimmed region says with a cursor that a click there does nothing: {cursor}")
+    assert cursor["pointerEvents"] != "none", (
+        f"and it receives the press so it can say so: {cursor}")
+
+    # **What this gate cannot say**, and it is the honest limit of the harness rather than of the
+    # rule: a synthetic `mousedown` **cannot move the browser's caret**, so a press here cannot
+    # demonstrate where a *real* press would put one. So the claims are that the refusal happens
+    # and nothing changes; the classification and the refusal's *ordering* — which are what make
+    # the rule true rather than merely observed — are unit-tested instead (`src/press.test.ts`).
+
+    # --- **A press on a block's content is the block's business**: a cell selects no cells and
+    # no block, because the range inside a cell is the browser's.
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps("Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n"))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+    cell = _dump(window, """(() => {
+      const c = document.querySelector('#editor-container .ss-plain tbody td')
+        .getBoundingClientRect();
+      const x = Math.round(c.left + c.width / 2), y = Math.round(c.top + c.height / 2);
+      const at = document.elementFromPoint(x, y);
+      for (const t of ['mousedown', 'mouseup', 'click']) {
+        at.dispatchEvent(new MouseEvent(t,
+          { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+      }
+      return { at: String(at.tagName) };
+    })()""")
+    time.sleep(0.4)
+    in_cell = _read()
+    assert cell["at"] == "TD", cell
+    assert in_cell["selectedNodes"] == 0 and in_cell["cellsPainted"] == 0, (
+        f"a press in a cell selects neither cells nor block: {in_cell}")
+
+    # --- **A press on a control is the button's**, and still is with the rest dimmed: the one
+    # press that must survive inertness, or a live sheet could not be locked.
+    reopened = _dump(window, """(() => {
+      const buttons = [...document.querySelectorAll(
+        '#editor-container .ss-plain .block-controls button')];
+      const btn = buttons.find((b) => /sheet|spread|edit/i.test(b.textContent + b.title));
+      if (!btn) return { noButton: buttons.map((b) => b.textContent) };
+      btn.click();
+      return { label: btn.textContent };
+    })()""")
+    assert reopened.get("noButton") is None, f"the fixture can open a sheet: {reopened}"
+    time.sleep(0.8)
+    assert _read()["lit"] == 1, "the sheet is open again, for the control claim"
+    control = _dump(window, """(() => {
+      const labels = [...document.querySelectorAll(
+        '#editor-container .spreadsheet .block-controls button')].map((b) => b.textContent.trim());
+      // **The sheet's way out is its `Visual` button** — the form control, which is what
+      // `Lock` is to an encrypted block. Anchored, because "block" contains "lock" and a loose
+      // match once opened the *source* form of the table instead.
+      const btn = [...document.querySelectorAll(
+        '#editor-container .spreadsheet .block-controls button')]
+        .find((b) => /^visual$/i.test(b.textContent.trim()));
+      if (!btn) return { noButton: labels };
+      const before = document.querySelectorAll('#editor-container .ss-grid').length;
+      btn.click();
+      return { label: btn.textContent, sheetsBefore: before };
+    })()""")
+    time.sleep(0.8)
+    after_control = _read()
+    assert control.get("noButton") is None, f"the cluster has a way out: {control}"
+    assert after_control["lit"] == 0 and "spreadsheet" not in after_control["kinds"], (
+        f"a press on the cluster's own button still does what the button says — which is the"
+        f" one press that must survive inertness, or a live sheet could not be closed:"
+        f" {control} -> {after_control}")
+
+
+def test_a_selected_visual_table_is_painted_by_its_cells_and_nothing_else(window):
+    """A selected Visual table has no border to get wrong — its cells are the paint.
+
+    The report: *"only part of the blue selected border appears, on the right of the sheet"* and
+    *"it looks like a visual artifact"*, which is what a selection ring looks like when three of
+    its four sides are clipped away. `test_the_space_beside_a_table_is_white_space_not_part_of_the_table`
+    pins *where* the paint may not be drawn (the page-wide band) and why a ring cannot simply be
+    moved onto the grid; this one asks the only question that is left, in pixels: **with the
+    table selected, is there an accent-coloured ring anywhere, and are all of its cells lit?**
+
+    The two answers are different claims and both are needed. A ring would have to be a
+    positioned overlay to survive the cells' own backgrounds, and an overlay round a block is the
+    page-wide band this pair of tests exists to have removed. So the cells carry the paint — every
+    cell, **header row included**, since a header row that stayed grey reads as a table selected
+    only halfway, which is the same complaint pointing the other way.
+
+    A real `Ctrl+A` rather than a hand-applied class, so the cell fill comes from the app's own
+    painter reading a real selection. `Ctrl+A` is dispatched to the page because a key event sent
+    to the Qt window does not reach it (measured), and the document is one table between two
+    paragraphs so the selection covers the table without anything else to explain the pixels.
+    """
+    doc = ("Above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\nBelow.\n")
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(doc))
+    _wait(window, "(() => ({ t: document.querySelectorAll('#editor-container .ss-plain-table th,"
+                  " #editor-container .ss-plain-table td').length }))()",
+          lambda d: d.get("t", 0) >= 6, timeout=25)
+    geom = _dump(window, """(() => {
+      const block = document.querySelector('#editor-container .ss-plain');
+      const grid = block.querySelector('.ss-plain-table');
+      const cs = getComputedStyle(block);
+      const r = grid.getBoundingClientRect();
+      return {
+        rect: [Math.round(r.left), Math.round(r.top), Math.round(r.right),
+               Math.round(r.bottom)],
+        /** The empty strip beside the grid, where the old ring's left and top edges fell. */
+        strip: [Math.round(block.getBoundingClientRect().left) - 6,
+                Math.round(r.top) - 4],
+        blockOutline: cs.outlineStyle, blockFill: cs.backgroundColor,
+        /** `--selection` and `--accent` resolved through a probe element, because the tokens are
+         * written as hex and a computed background comes back as `rgb()` -- comparing the two
+         * spellings is how a paint gate passes or fails for the wrong reason. */
+        selection: (() => { const p = document.createElement('div');
+          p.style.background = 'var(--selection)'; document.body.appendChild(p);
+          const v = getComputedStyle(p).backgroundColor; p.remove(); return v; })(),
+        accent: (() => { const p = document.createElement('div');
+          p.style.background = 'var(--accent)'; document.body.appendChild(p);
+          const v = getComputedStyle(p).backgroundColor; p.remove(); return v; })(),
+      };
+    })()""")
+
+    _dump(window, """(() => {
+      const ed = document.querySelector('#editor-container > .ProseMirror');
+      ed.focus();
+      for (const type of ['keydown', 'keyup']) {
+        ed.dispatchEvent(new KeyboardEvent(type, { key: 'a', code: 'KeyA', keyCode: 65,
+          which: 65, ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+      }
+      return { d: 1 };
+    })()""")
+    lit = _wait(window, """(() => {
+      const cells = [...document.querySelectorAll('#editor-container .ss-plain-table th,'
+        + ' #editor-container .ss-plain-table td')];
+      return {
+        total: cells.length,
+        lit: cells.filter((c) => c.classList.contains('ss-cell-in-selection')).length,
+        /** The **computed** background of each cell, so the claim is about paint and not a
+         * class: a header cell can carry the class and still lose the cascade. */
+        fills: cells.map((c) => getComputedStyle(c).backgroundColor),
+      };
+    })()""", lambda d: d.get("lit", 0) == d.get("total") and d.get("total", 0) >= 6,
+        timeout=10)
+    assert lit["lit"] == lit["total"], f"a selected Visual table lights every cell: {lit}"
+    assert lit["fills"].count(geom["selection"]) == lit["total"], (
+        f"**and every cell shows it** -- a header cell carrying the class while its own"
+        f" background wins the cascade is a table selected only halfway: {lit}")
+
+    # **The ring's premise is applied rather than reached**, and the class is checked on: a whole
+    # block `NodeSelection` puts `ProseMirror-selectednode` on the block (measured off a real one
+    # earlier in this session, and it is the class `Ctrl+A` does *not* produce -- an `AllSelection`
+    # marks nothing, which is why the cells above needed a real gesture and this needs the class).
+    # A synthetic press cannot place a caret, so there is no way to drive `Ctrl+Shift+Down` to a
+    # `NodeSelection` from here. Asserting the class is on is what keeps "no ring" from passing
+    # vacuously: the ring would be one rule away.
+    _dump(window, """(() => {
+      document.querySelector('#editor-container .ss-plain')
+        .classList.add('ProseMirror-selectednode');
+      return { d: 1 };
+    })()""")
+    assert _dump(window, """(() => ({
+      on: !!document.querySelector('#editor-container .ss-plain.ProseMirror-selectednode'),
+    }))()""")["on"] is True
+
+    left, top, right, bottom = geom["rect"]
+    pixels = _band_frame_pixels(window, {
+        # Points a 2px ring at `outline-offset: 2px` would occupy on each of the four sides.
+        "top": (left + 20, top - 3),
+        "bottom": (left + 20, bottom + 3),
+        "left": (left - 3, top + 20),
+        "right": (right + 3, top + 20),
+        # And in the empty strip beside the grid, where the page-wide band's edge used to be.
+        "strip": tuple(geom["strip"]),
+        # A cell's own words, as a control: the fill is there, and it is `--selection`.
+        "cell": (left + 6, top + 14),
+    })
+    assert pixels["cell"] == tuple(int(v) for v in geom["selection"][4:-1].split(",")), (
+        f"the control: a lit cell is painted --selection: {pixels} vs {geom['selection']}")
+    accent_rgb = tuple(int(v) for v in geom["accent"][4:-1].split(","))
+    for side in ("top", "bottom", "left", "right", "strip"):
+        assert pixels[side] != accent_rgb, (
+            f"**no accent ring on the {side}** of a selected Visual table: {pixels}")

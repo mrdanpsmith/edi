@@ -65,3 +65,22 @@ export async function flushFrames(n = 4): Promise<void> {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   }
 }
+
+/**
+ * jsdom has no hit test, so ProseMirror's `posAtCoords` cannot answer.
+ *
+ * **Every press now asks both DOM→position paths** (`src/press.ts`: the region's from the
+ * event's target, and a dimmed block's from the press's *coordinates*), and the second one needs
+ * `document.elementFromPoint`. A null answer is ProseMirror's own clean bail-out — the same
+ * thing the stub below does for its `dragstart` handler — so a test can dispatch a press without
+ * failing over something the environment cannot provide. What a test is really about is then
+ * asserted explicitly, never by leaning on the throw.
+ *
+ * It lived in two test files before this; the environment's gaps belong in one place.
+ */
+if (typeof document !== 'undefined' && typeof document.elementFromPoint !== 'function') {
+  Object.defineProperty(document, 'elementFromPoint', {
+    value: () => null,
+    configurable: true,
+  })
+}

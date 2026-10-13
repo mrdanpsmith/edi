@@ -1017,7 +1017,7 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
-  it('claims the cells and its own controls, and nothing else', () => {
+  it('claims the cells, its own controls and its margin', () => {
     // **The `stopEvent` contract, which is the whole of why a Visual table could not be
     // undone from inside.** It used to return `true` for every event in the block, so no
     // press inside a table ever reached ProseMirror: a `Ctrl+A` painted every cell in the
@@ -1059,10 +1059,17 @@ describe('TableNodeView grid', () => {
     expect(claim(block.querySelector('.block-controls'))).toBe(true)
     expect(claim(block.querySelector('.block-controls button'))).toBe(true)
 
-    // **Not claimed:** the block itself, its scroll strip and the grid element — so a press
-    // there reaches ProseMirror and behaves like a press anywhere else in the editor.
+    // **Claimed: the margin**, the empty strip beside the grid. Claimed rather than released
+    // because releasing it is what the report was about — ProseMirror answered such a press by
+    // *selecting* the table, which painted the whole width of the block around a tiny grid and
+    // left nowhere to click for a caret. `press.ts` answers it as the white space it is.
+    const strip = block.querySelector('.ss-plain-scroll')!
+    expect(strip.classList.contains('block-margin')).toBe(true)
+    expect(claim(strip)).toBe(true)
+
+    // **Not claimed:** the block itself and the grid element — so a press there reaches
+    // ProseMirror and behaves like a press anywhere else in the editor.
     expect(claim(block)).toBe(false)
-    expect(claim(block.querySelector('.ss-plain-scroll'))).toBe(false)
     expect(claim(block.querySelector('.ss-plain-table'))).toBe(false)
 
     // **Not claimed:** a target that is not an element, and anything outside the block.

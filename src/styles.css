@@ -957,6 +957,40 @@ body {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+/* **A selected Visual table wears its cells and nothing else** — no ring, on the block or on
+ * the grid. Two measurements put the ring out of reach, and the second is the better argument:
+ *
+ * 1. **A ring outside the grid is drawn where nothing can show it.** The grid lives in
+ *    `.ss-plain-scroll`, which is `overflow-x: auto; overflow-y: hidden` and whose box is
+ *    *exactly* the grid's own vertical extent (measured: a grid of 48,161→253,221 inside a
+ *    scroller of 48,161→1256,221, `overflow-y: hidden`). A 2px ring at `outline-offset: 2px` is
+ *    painted at 156.7 / 225.4 / 44 / 257.3 on that grid's four sides — **three of which are
+ *    outside the scroller's clip box** (top and bottom above and below it, left 4px left of it),
+ *    and only the right one is inside. That is what the report called *"only part of the blue
+ *    selected border, on the right of the table"*, and what read as a visual artifact.
+ * 2. **A ring inside the grid is painted over by the cells.** Every cell is
+ *    `position: relative; isolation: isolate`, so the header row's own backgrounds cover a ring
+ *    drawn inside the table's border. Measured against a real grab of the page at
+ *    `outline-offset: -2px`: the bottom and right segments paint on every sample, the left on
+ *    half of them and **the top on one of 49**.
+ *
+ * Only a positioned overlay paints over cells, and that is more machinery than the job is worth.
+ * **The cells already say it**: a table selected whole lights every one of them, which is §3.2's
+ * own distinction — a Visual table is *text in a range* and wears `--selection`, while the solid
+ * accent outline says *this block is an object* and belongs to a diagram, a rule or an image.
+ *
+ * The block's own accent outline goes with it. Every block is as wide as the text column — that
+ * is what a block *is* in this editor — so leaving it on painted a page-wide band around a small
+ * table: measured, the fill and the outline ran 48→1256 around a 63px grid, which reads as a
+ * selected row with a table in it and is what the report called "all the pixels between the left
+ * and right margin". The cell fill is the honest paint: a click on a table *does* select the
+ * whole of it, so the whole grid being lit is true — it is only the empty space beside it that
+ * was pretending to be part of the selection. */
+.ss-plain.ProseMirror-selectednode {
+  outline: none;
+  background: none;
+}
+
 /* ── The vocabulary: one token per meaning ───────────────────────────────────
  * Four meanings appear in this stylesheet and they used to share one paint
  * between them. `--selection` ("a range over content") was worn by the find
@@ -1024,9 +1058,21 @@ body {
  */
 .ProseMirror .edi-block-mode-dimmed {
   opacity: var(--dim-out);
-  /* **On the block, never on the scroller** — scrolling is the container's job, and
-   * a composer hanging below a short board has to stay reachable. */
-  pointer-events: none;
+  /* **The dimmed region still takes the press, and says so with a cursor.**
+   *
+   * It used to be `pointer-events: none`, on the reasoning that a dimmed block is inert. It is
+   * not: `pointer-events: none` takes the press away from the block and hands it to the editor
+   * behind, which then maps the press's *coordinates* into that same block — which is how a
+   * reader ended up able to put a caret in a paragraph beside a live sheet and type in it.
+   * Refusing the press is `src/press.ts`'s job, and it needs the press to arrive.
+   *
+   * **`cursor: default`, not `not-allowed`**: the region is not forbidden, it is not where you
+   * are, and a prohibition cursor claims a rule the app does not have — `Alt`+click in exactly
+   * this region *does* do something, and it closes the working state.
+   *
+   * **On the block, never on the scroller** — scrolling is the container's job, and a composer
+   * hanging below a short board has to stay reachable. */
+  cursor: default;
 }
 
 /* ── A Visual table is text in a range ────────────────────────────────────────
@@ -1087,7 +1133,15 @@ body {
   background: var(--selection);
 }
 
-.ss-plain-table :is(th, td).ss-cell-in-selection {
+/* **The header row takes the fill too, and it takes a selector to do it.** A Visual table
+ * selected whole wears *its cells* and nothing else (see the rule above on why there is no ring),
+ * so a header row that stayed grey would read as a table that is only half selected — the same
+ * "half of it is painted" complaint in the opposite direction. `ss-plain .ss-plain-table thead
+ * th` is the one rule that sets a cell background outside this section, and at (0,2,2) it outranks
+ * the (0,2,1) selector here, so the class was on every header cell and none of them showed it.
+ * The second selector matches it and wins. */
+.ss-plain-table :is(th, td).ss-cell-in-selection,
+.ss-plain .ss-plain-table thead th.ss-cell-in-selection {
   background: var(--selection);
 }
 

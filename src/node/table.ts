@@ -20,7 +20,9 @@ import {
 } from '../tableTextSelection'
 import { blockNodeView, showsSource } from '../blockview'
 import {
+  BLOCK_CONTENT_CLASS,
   BLOCK_CONTROLS_CLASS,
+  BLOCK_MARGIN_CLASS,
   BLOCK_MODE_HANDLERS,
   attachBlockControls,
   blockFormMode,
@@ -29,6 +31,7 @@ import {
   setBlockForm,
   setBlockModeAt,
 } from '../block-modes'
+import { onBlockMargin } from '../press'
 import {
   setActiveCellHost,
   type CellLinkContext,
@@ -3063,7 +3066,13 @@ class TablePlainView implements NodeView {
     if (!body) return
 
     const scroll = document.createElement('div')
-    scroll.className = 'ss-plain-scroll'
+    // **The gutter, declared.** This element is as wide as the block and the grid is not, so
+    // the white space beside the grid belongs to it — measured: block 48→1256 against a grid of
+    // 48→253, which is a thousand pixels of it on a wide window. A press there is a request for
+    // a caret beside the table (`BLOCK_GUTTER_CLASS`, read by `src/gapParagraph.ts`), not a
+    // click on the table: leaving it unmarked made that press *select* the block, which paints
+    // the block-wide outline across all of that empty space and gives no caret at all.
+    scroll.className = `ss-plain-scroll ${BLOCK_MARGIN_CLASS}`
     scroll.appendChild(this.buildTable())
 
     body.textContent = ''
@@ -3127,7 +3136,11 @@ class TablePlainView implements NodeView {
 
   private buildTable(): HTMLTableElement {
     const table = document.createElement('table')
-    table.className = 'ss-plain-table'
+    // **Both halves of the gutter, declared.** The strip around this grid is white space; the
+    // grid is its content, and the two markers are what tell `onBlockGutter` which side of that
+    // element a press fell on — the strip *contains* the grid, so "inside the gutter" alone
+    // would answer a click in a cell, which is the browser's text selection.
+    table.className = `ss-plain-table ${BLOCK_CONTENT_CLASS}`
     const cols = Math.max(...this.rows.map((r) => r.length), 0)
     const solution = solve(this.rows, formulaEnvFor(this.view.state))
     const active = searchActiveCell(this.view, this.node, this.getPos)
@@ -3250,17 +3263,26 @@ class TablePlainView implements NodeView {
    *
    * - **the cells**, because a range inside them is the *browser's* (§3.1) and a press that
    *   ProseMirror answered would fight the selection the reader is making with a mouse drag;
-   * - **the control cluster**, whose buttons are the app's own controls.
+   * - **the control cluster**, whose buttons are the app's own controls;
+   * - **the gutter** — the empty strip beside the grid, which is this block's *surface* and not
+   *   its content, and which is answered by `src/gapParagraph.ts` as a press in the white space.
    *
-   * Everything else — the table's own margin, its background, the strip beside it — reaches
-   * ProseMirror, which is what makes a click there behave like a click anywhere else. This
-   * is the shape the other node views already have, and `mermaid.ts` says it outright: *"the
-   * rest of the diagram keeps its normal behaviour — clicking it still selects the block."*
+   * The gutter is claimed rather than released **because releasing it is what the report was
+   * about**: handed to ProseMirror, a click there *selected the table*, and a selected table
+   * paints the whole width of the block — measured, the fill and the outline ran 48→1256 around
+   * a 63px grid, which reads as a selected row with a table in it, and it left no place to click
+   * for a caret. A diagram's surface *should* select the diagram, which is why `mermaid.ts`
+   * releases it (*"clicking it still selects the block"*); **a table's gutter is not its
+   * surface**, it is the space around the table, and that is the distinction being claimed.
    */
   stopEvent(event: Event): boolean {
     const target = event.target
     if (!(target instanceof Element)) return false
     if (target.closest('.ss-plain-table :is(th, td)') !== null) return true
+    // **The margin, not the content inside it**: `onBlockMargin` is the same question
+    // `press.ts` asks, so a press on the grid's own padding — which *is* the table — still
+    // reaches ProseMirror and still selects it, while the strip beside it does not.
+    if (onBlockMargin(target)) return true
     return target.closest(`.${BLOCK_CONTROLS_CLASS}`) !== null
   }
 

@@ -42,7 +42,7 @@ import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
 import {
   blockModeFor,
-  blockPosForElement,
+  litBlockPositions,
   modeFor,
   blockFormMode,
   interactionLabels,
@@ -50,6 +50,7 @@ import {
   toggleBlockMode,
   type BlockMode,
 } from './block-modes'
+import { pressTarget } from './press'
 import { isMisleadingLink } from './linkSecurity'
 import { applyLink, NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
@@ -1061,7 +1062,7 @@ function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
     entries = buildDocumentMenu(target)
   }
   if (target) {
-    const blockEntries = buildBlockMenuItems(target)
+    const blockEntries = buildBlockMenuItems(target, event)
     if (blockEntries.length > 0) {
       if (entries.length > 0) entries.push({ type: 'separator' })
       entries.push(...blockEntries)
@@ -1297,7 +1298,7 @@ function editLink(link: LinkRange): void {
  * list item or a blockquote reaches this too, and works precisely because it no
  * longer needs a handle to identify the block it is in (§6.7).
  */
-function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
+function buildBlockMenuItems(target: Element, event: MouseEvent): ContextMenuEntry[] {
   const view = blockEditor?.getView()
   if (!view) return []
   const entries: ContextMenuEntry[] = []
@@ -1309,8 +1310,13 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
     entries.push({ type: 'item', label, onSelect, ...extra })
   }
 
-  const pos = blockPosForElement(view, target)
-  if (pos < 0) return entries
+  // **The press is classified, not sniffed** (`src/press.ts`), with the event's own coordinates:
+  // a dimmed block takes its presses now that it is no longer `pointer-events: none`, so it
+  // *names* itself — and offering a dimmed block `Source` / `Encrypt block…` is exactly the bug
+  // that `pointer-events: none` was hiding.
+  const press = pressTarget(view, event, litBlockPositions(view.state))
+  if (press.kind !== 'content' && press.kind !== 'margin') return entries
+  const pos = press.pos
   const node = view.state.doc.nodeAt(pos)
   if (node === null) return entries
   // The wrapper is still needed for two things that are about the *rendering*,

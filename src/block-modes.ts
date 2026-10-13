@@ -5,6 +5,21 @@ import { Decoration, DecorationSet } from 'prosemirror-view'
 import type { EditorView } from 'prosemirror-view'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { markdownToProse } from './markdown'
+import { BLOCK_CONTROLS_CLASS, pressTarget } from './press'
+
+/**
+ * The press-facing names are **`src/press.ts`'s**, and they are re-exported here because they
+ * used to live here: they are the three markers a press is classified by and the two DOM→position
+ * helpers, and this module is where the record that dims and lights blocks lives. `press.ts` is
+ * below it in the stack — it knows about DOM events and positions, not about modes — so the
+ * dependency runs one way and every other importer of these names keeps its import.
+ */
+export {
+  BLOCK_CONTENT_CLASS,
+  BLOCK_CONTROLS_CLASS,
+  BLOCK_MARGIN_CLASS,
+  blockPosForElement,
+} from './press'
 
 /**
  * The two axes every block mode is expressed in, and the single record that
@@ -165,44 +180,6 @@ export const BLOCK_LIT_CLASS = `${BLOCK_MODE_CLASS}-lit`
 export function isWorkingMode(mode: BlockMode | null | undefined): boolean {
   return mode !== null && mode !== undefined &&
     (mode.interaction === 'editing' || mode.form !== undefined)
-}
-
-/**
- * The blocks of *this* document that stay lit while its own record names a working
- * state — everything else in it is dimmed and inert.
- *
- * **A state-only question, and deliberately so: the chain is not consulted here.**
- * Each editor's own record already answers for its own document at every level. The
- * outer document's record says the encrypted block is working, so that block is lit
- * and the prose around it is not. The reveal's record says the sheet is working, so
- * the sheet is lit and the reveal's other content is not. Both answers are right at
- * once, which is what makes the second level work without a single cross-editor
- * lookup — and it is the reason the focus path can stay out of plugin state
- * entirely, where it would have made every editor repaint on a change that was not
- * its own.
- *
- * One position today, and it is a set so it need not stay one.
- */
-export function litBlockPositions(state: EditorState): Set<number> {
-  const mode = currentBlockMode(state)
-  if (mode === null || !isWorkingMode(mode)) return EMPTY_LIT
-  return new Set([mode.pos])
-}
-
-const EMPTY_LIT: Set<number> = new Set()
-
-/**
- * What a block type supports. This is the declaration a block makes about
- * itself, and the control cluster (§6), the context menu and the Escape ladder
- * are all generated from it rather than from the block's wrapper class names.
- */
-export interface BlockModeDescriptor {
-  /** Can this block be shown as its raw markdown? True for every top-level block. */
-  representation: boolean
-  /** Does interacting with its rendered form have a state of its own? */
-  interaction: 'none' | 'toggle'
-  /** Rendered forms, for a block that can be drawn more than one way. */
-  forms?: readonly { id: string; label: string; isDefault: boolean }[]
 }
 
 /** The node types whose rendered form carries an interaction state of its own. */
@@ -932,82 +909,6 @@ export function modeFor(state: EditorState, pos: number | undefined): BlockMode 
   return mode !== null && mode.pos === pos ? mode : null
 }
 
-/**
- * The top-level block `target` sits in, as a document position, or -1 when it is
- * not in this editor at all.
- *
- * This is the **one** DOM→position authority (§6.4). It replaced two: a
- * `data-block-pos` snapshot written into every handle when it was built, and a
- * walk that re-derived the position by scanning the document for a wrapper. The
- * snapshot is a number read at build time — stale the moment the document moves
- * under it — so every control now closes over the node view's `getPos()` and
- * asks at press time; this is the same question asked in the other direction,
- * for the two entry points that start from a DOM event (the context menu and the
- * Alt+click gesture) and have no node view to ask.
- *
- * `posAtDOM` is the primitive that answers it, and it needs no layout — which
- * matters, because the alternative (`posAtCoords`) needs a hit test and the real
- * engine is the only place a hit test exists. The containment check is not
- * redundant: an unlocked encrypted block is a *second* editor inside this one,
- * and a position in its document means nothing here.
- */
-export function blockPosForElement(view: EditorView, target: EventTarget | null): number {
-  if (!(target instanceof Element) || !view.dom.contains(target)) return -1
-  // **The editor's own box names no block, and `posAtDOM` cannot say so.** `contains`
-  // accepts it (a node contains itself), so it used to fall through to
-  // `posAtDOM(view.dom, 0)`, and ProseMirror answers that with `posAtStart` — **0**,
-  // which the walk below then reads as *the first block of the document*. So any
-  // press that landed on the editor's own box named an unrelated block, and the
-  // position depended on nothing but where the document starts.
-  //
-  // **Which presses those are: every press over a dimmed block.** Inertness is
-  // `pointer-events: none` on the block (`styles.css`), so the hit test walks past
-  // it to whatever is behind, and behind a dimmed paragraph is the editor's own
-  // box. Measured: a press over the paragraph *below* a live sheet reported
-  // `elementFromPoint` → `.ProseMirror`, and the gesture then opened the paragraph
-  // *above* the sheet in Source — taking the one record off the working state, so
-  // a live sheet closed and the document stopped being dimmed by a press on a
-  // block that is supposed to receive nothing at all. The context menu read the
-  // same 0 and offered `Source` / `Encrypt block…` for it.
-  //
-  // §3.2's own reasoning assumed the hit test lands on the *scroll container*
-  // instead, which is true for the scroller's margin below a short block and
-  // false for every block's own pixels — and the gate that reads it only ever
-  // pressed the margin. So this guard is what makes "a press naming no block"
-  // true of the dimmed region as well, and it is one line here rather than a
-  // `pointer-events` exception at each of the two callers. It is also what makes
-  // the answer to the dimmed-region question *be* nothing: `blockModeGesture` acts
-  // on the block a press names and on nothing else, so `-1` here ends the question
-  // for both of its callers rather than sending either of them looking.
-  if (target === view.dom) return -1
-  let inside: number
-  try {
-    inside = view.posAtDOM(target, 0)
-  } catch {
-    return -1
-  }
-  if (inside < 0) return -1
-  const doc = view.state.doc
-  const blockEndingAt = (at: number): number => {
-    let found = -1
-    doc.forEach((node, offset) => {
-      if (found < 0 && at === offset + node.nodeSize) found = offset
-    })
-    return found
-  }
-  let blockPos = -1
-  doc.forEach((node, offset) => {
-    if (blockPos >= 0) return
-    if (inside >= offset && inside < offset + node.nodeSize) blockPos = offset
-  })
-  // A block's own DOM can report the position at its *end* boundary rather than
-  // inside it, and for an atom — a table, a diagram, a rule — that boundary is
-  // also where the next block starts. Left alone, a click in a table would name
-  // whatever follows it, which is the same class of bug the old
-  // `data-block-pos` snapshot had and this replaced.
-  if (blockPos < 0) blockPos = blockEndingAt(inside)
-  return blockPos
-}
 
 /**
  * A click Chrome already owns: a button, a text field, a link, a diagram's own
@@ -1101,9 +1002,27 @@ function chromeOwnsClick(event: MouseEvent): boolean {
 export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
   if (!event.altKey || event.button !== 0) return false
   if (chromeOwnsClick(event)) return false
-  const pos = blockPosForElement(view, event.target)
-  if (pos < 0) return false
-  return toggleBlockModeFromGesture(view, pos)
+  // **The press is classified, not sniffed** (§`src/press.ts`): the gesture acts on a block and
+  // on nothing else, and `pressTarget` is the one answer to "which block is that?" — including
+  // the `dimmed` case, where the press's *coordinates* land in a block that the press's target
+  // does not name, and the old `blockPosForElement` call would have missed it.
+  const press = pressTarget(view, event, litBlockPositions(view.state))
+  // **Alt+click is one gesture with one meaning: the mode.** On a block, it toggles the mode that
+  // block has. Anywhere else — the dimmed region, the white space — it **closes**, which is the
+  // only thing a press that names no block can sensibly mean, and the only way out of a working
+  // state that does not require aiming at the block you are already in.
+  //
+  // It was a fallback once, removed as "a press aimed at a dimmed block closed a live sheet" —
+  // which was a real complaint, and the fix was never to forbid the gesture but to give it one
+  // meaning: *it closes, and that is what a press that names nothing is for.* Alt+click has no
+  // other meaning in the app, so this is the whole of it.
+  if (press.kind === 'content' || press.kind === 'margin') {
+    return toggleBlockModeFromGesture(view, press.pos)
+  }
+  if (press.kind === 'dimmed' || press.kind === 'space' || press.kind === 'none') {
+    return leaveBlockMode(view)
+  }
+  return false
 }
 
 
@@ -1254,8 +1173,12 @@ export function exitBlockMode(view: EditorView): boolean {
  * being viewed is left alone and reported as such, so the gesture that calls this
  * does not consume a click that was not about anything.
  */
-export function leaveBlockMode(view: EditorView, pos: number): boolean {
-  if (modeFor(view.state, pos) === null) return false
+export function leaveBlockMode(view: EditorView, pos?: number): boolean {
+  // **With no `pos`, it closes whatever the record holds** — which is what `Alt`+click needs,
+  // because a press that names no block has no position to hand and the gesture's whole job is
+  // to close. With one, the early-out keeps a caller that aimed at a block from closing some
+  // *other* block's mode.
+  if (pos !== undefined && modeFor(view.state, pos) === null) return false
   const mode = currentBlockMode(view.state)
   if (mode === null) return false
   if (mode.representation === 'source') return commitSourceMode(view)
@@ -1468,9 +1391,45 @@ export function toggleSourceMode(view: EditorView, pos: number): void {
   enterSourceMode(view, pos)
 }
 
-// ── the control cluster ─────────────────────────────────────────────────────
+/**
+ * The blocks of *this* document that stay lit while its own record names a working
+ * state — everything else in it is dimmed and inert.
+ *
+ * **A state-only question, and deliberately so: the chain is not consulted here.**
+ * Each editor's own record already answers for its own document at every level. The
+ * outer document's record says the encrypted block is working, so that block is lit
+ * and the prose around it is not. The reveal's record says the sheet is working, so
+ * the sheet is lit and the reveal's other content is not. Both answers are right at
+ * once, which is what makes the second level work without a single cross-editor
+ * lookup — and it is the reason the focus path can stay out of plugin state
+ * entirely, where it would have made every editor repaint on a change that was not
+ * its own.
+ *
+ * One position today, and it is a set so it need not stay one.
+ */
+export function litBlockPositions(state: EditorState): Set<number> {
+  const mode = currentBlockMode(state)
+  if (mode === null || !isWorkingMode(mode)) return EMPTY_LIT
+  return new Set([mode.pos])
+}
 
-export const BLOCK_CONTROLS_CLASS = 'block-controls'
+const EMPTY_LIT: Set<number> = new Set()
+
+/**
+ * What a block type supports. This is the declaration a block makes about
+ * itself, and the control cluster (§6), the context menu and the Escape ladder
+ * are all generated from it rather than from the block's wrapper class names.
+ */
+export interface BlockModeDescriptor {
+  /** Can this block be shown as its raw markdown? True for every top-level block. */
+  representation: boolean
+  /** Does interacting with its rendered form have a state of its own? */
+  interaction: 'none' | 'toggle'
+  /** Rendered forms, for a block that can be drawn more than one way. */
+  forms?: readonly { id: string; label: string; isDefault: boolean }[]
+}
+
+// ── the control cluster ─────────────────────────────────────────────────────
 
 /** One button in the cluster, as the record and the node view describe it. */
 interface ControlButton {

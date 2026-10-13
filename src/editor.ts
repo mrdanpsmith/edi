@@ -24,6 +24,8 @@ import {
 } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { blockDragPlugin } from './blockDrag'
+import { pressPlugin } from './press'
+import { litBlockPositions } from './block-modes'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
@@ -345,6 +347,7 @@ export function createBlockEditor(
     blockModePlugin,
     blockModeFocusPlugin,
     blockDragPlugin,
+    pressPlugin((view) => litBlockPositions(view.state)),
     formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,

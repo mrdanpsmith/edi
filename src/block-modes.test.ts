@@ -815,13 +815,17 @@ it('still hands an Alt+click on a real control to that control', () => {
     view.destroy()
   })
 
-  it('does nothing at all for a press that names no block', () => {
-    // The gesture's old fallback finished whatever was open from anywhere on the page.
-    // **One press that ended the state of the block a reader was in** — and a reader
-    // pressing beside a block to *begin* the next one had no way to say which they were
-    // doing. The page under a lone board is not even inside the editor's own box, which is
-    // why this dispatches on the scroller: it is the shape a press over the dimmed region
-    // takes too, since the dimmed blocks are `pointer-events: none`.
+  it('closes the working state on a press that names no block', () => {
+    // **This test used to assert the opposite**, and the change is the point: the gesture's
+    // fallback — "finish whatever was open from anywhere on the page" — was removed because one
+    // press ended the state of a block the reader was in, and a reader pressing beside a block to
+    // *begin* the next one had no way to say which they were doing.
+    //
+    // **The rule now is that `Alt`+click means one thing — the mode** — so a press that names no
+    // block can only mean *close*. That is the only sensible thing for such a press to mean, and
+    // the only way out of a working state that does not require aiming at the block you are
+    // already in. The page under a lone board is not even inside the editor's own box, which is
+    // why this dispatches on the scroller.
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
     enterDiagramEditMode(view, board)
@@ -830,22 +834,28 @@ it('still hands an Alt+click on a real control to that control', () => {
     expect(outside.contains(view.dom)).toBe(true)
     expect(view.dom.contains(outside)).toBe(false)
     const handled = outside.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
+      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0,
+        clientX: 20, clientY: 20 }),
     )
     expect(handled).toBe(true) // not cancelled: the click is the browser's
-    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    expect(modeFor(view.state, board)).toBeNull()
+    view.destroy()
+  })
 
-    // **The ways out that were designed are all still there**, and each says which it is:
-    // Escape is the *source* rung (§5.3) — a raw-markdown buffer whose only copy of what
-    // was typed lives in a CodeMirror instance — so it declines an editing layer, and
-    // saying so is the point.
+  it('still has its designed ways out of a mode, each saying which it is', () => {
+    // **Escape is the *source* rung only** (§5.3): a raw-markdown buffer whose only copy of what
+    // was typed lives in a CodeMirror instance, so declining an editing layer is the point. The
+    // block's own gesture is how an editing layer ends.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+
     expect(exitBlockMode(view)).toBe(false)
     expect(modeFor(view.state, board)?.interaction).toBe('editing')
     enterSourceMode(view, board)
     expect(exitBlockMode(view)).toBe(true)
     expect(modeFor(view.state, board)).toBeNull()
 
-    // And the block's own gesture, on the block itself, is how an editing layer ends.
     enterDiagramEditMode(view, board)
     altClick(view.dom.querySelector<HTMLElement>('.mermaid')!)
     expect(modeFor(view.state, board)).toBeNull()
@@ -1143,9 +1153,10 @@ describe('a working state is what the document recedes for', () => {
     // editor's own box. `posAtDOM(view.dom, 0)` answers `posAtStart`, i.e. **0**,
     // which the walk read as the document's *first* block: so the gesture opened
     // that block in Source instead of naming none, which took the one record off a
-    // live working state. **The guard and the gesture's new rule are one answer between
-    // them**: `-1` here means the press does nothing, rather than falling through to
-    // whatever happened to be open.
+    // live working state. **The guard is what makes a press on a dimmed block mean *close***
+    // rather than mean *the first block in the document*: `-1` is not the first position, and
+    // the gesture's rule for a press that names nothing is to close the working state — which is
+    // only sane because nothing else was named.
     const view = createEditor('Before.\n\n| A |\n| --- |\n| 1 |\n\nAfter.')
     const positions = allBlockPositions(view)
     toggleBlockModeFromGesture(view, positions[1])
@@ -1158,14 +1169,16 @@ describe('a working state is what the document recedes for', () => {
     // box, not "the first thing the walk finds".
     expect(blockPosForElement(view, view.nodeDOM(positions[2]!))).toBe(positions[2])
 
-    // And through the gesture itself: aimed at the editor's box it names no block, so
-    // **the live sheet is exactly where it was**. That is the whole of the case, and it
-    // is why the guard exists — the alternative was a press on a block that is supposed
-    // to receive nothing at all ending a working state.
-    view.dom.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
+    // And through the gesture itself: aimed at the **dimmed block** — which now takes its press,
+    // so it names *itself*, and `pressTarget` is what says the press is inert — the sheet closes.
+    // That is the rule: `Alt`+click closes, and a dimmed block is where a reader aims to close.
+    const dimmed = view.nodeDOM(positions[0]!) as HTMLElement
+    expect(dimmed.classList.contains('edi-block-mode-dimmed')).toBe(true)
+    dimmed.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0,
+        clientX: 4, clientY: 4 }),
     )
-    expect(blockFormMode(view.state, positions[1])).toBe('sheet')
+    expect(blockFormMode(view.state, positions[1])).not.toBe('sheet')
     view.destroy()
   })
 

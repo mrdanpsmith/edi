@@ -26,17 +26,6 @@ graph TD
 
 const views: EditorView[] = []
 
-// ProseMirror's own `dragstart` handler needs a document position under the pointer, and
-// jsdom has no layout to find one with: it asks `elementFromPoint`, then measures the
-// editor's own box, and both come back empty. A null answer is its clean bail-out, so an
-// *allowed* drag can be dispatched here without the test failing over something the app
-// does not control. What is under test is the decision, and the decision is made first.
-if (typeof document.elementFromPoint !== 'function') {
-  Object.defineProperty(document, 'elementFromPoint', {
-    value: () => null,
-    configurable: true,
-  })
-}
 
 function createEditor(md: string = DOC): EditorView {
   const view = new EditorView(document.body, {

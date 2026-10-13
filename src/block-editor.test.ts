@@ -1090,13 +1090,11 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
-  it('does nothing on an Alt+click in the editor space below the document', async () => {
+  it('closes on an Alt+click in the editor space below the document', async () => {
     mockFlowchart()
     // A document of one diagram only, so the editor's own box ends just under
-    // it and everything below is the *scroller's* white space -- the area a
-    // press names no block in, and the shape a press in the dimmed region takes
-    // as well (the dimmed blocks are `pointer-events: none`, so the hit test
-    // walks past them).
+    // it and everything below is the *scroller's* white space — the area where
+    // a press names no block, which is what the gesture now closes.
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
 
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -1107,28 +1105,30 @@ describe('mermaid visual mode rendering', () => {
     expect(space.contains(view.dom)).toBe(true)
 
     altClick(space)
-    // Nothing is in edit mode, so the gesture is not ours to answer.
+    // Nothing is in edit mode, so there is nothing to close: the gesture declines.
     expect(editModeOf(view)).toBe(false)
 
     enterDiagramEditMode(view, firstBlockPos(view))
     expect(editModeOf(view)).toBe(true)
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
 
-    // **A press naming no block does nothing.** It used to finish the edit
-    // session from anywhere on the page, which was one press ending a block's
-    // state with no block named -- and the reason a reader pressing the block
-    // next to it could not also open that one.
+    // **And a press naming no block closes it.** This used to be the *forbidden* behaviour — the
+    // old fallback finished the session from anywhere on the page, which was one press ending a
+    // block's state with no block named. The rule now is that `Alt`+click means one thing, the
+    // mode, so a press that names no block can only mean *close*: it is the only sensible thing
+    // for it to mean, and the only way out that does not require aiming at the block you are
+    // already in.
     altClick(space)
-    expect(editModeOf(view)).toBe(true)
-    expect(await rendered(view, '.mermaid-editables')).toBe(true)
-
-    // **Which is not the same as having no way out**: the block's own gesture,
-    // on the block. Two presses to move between blocks, and one to finish.
-    altClick(view.dom.querySelector<HTMLElement>('.mermaid')!)
     expect(editModeOf(view)).toBe(false)
     expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
 
-    view.destroy()
+    // **And the block's own gesture still toggles it**, so the gesture is a toggle on a block and
+    // a close everywhere else — one meaning, two cases.
+    enterDiagramEditMode(view, firstBlockPos(view))
+    expect(editModeOf(view)).toBe(true)
+    altClick(view.dom.querySelector<HTMLElement>('.mermaid')!)
+    expect(editModeOf(view)).toBe(false)
+    expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
   })
 
   it('ignores a double click outside when no diagram is in edit mode', async () => {
