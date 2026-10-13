@@ -873,6 +873,30 @@ export function modeFor(state: EditorState, pos: number | undefined): BlockMode 
  */
 export function blockPosForElement(view: EditorView, target: EventTarget | null): number {
   if (!(target instanceof Element) || !view.dom.contains(target)) return -1
+  // **The editor's own box names no block, and `posAtDOM` cannot say so.** `contains`
+  // accepts it (a node contains itself), so it used to fall through to
+  // `posAtDOM(view.dom, 0)`, and ProseMirror answers that with `posAtStart` — **0**,
+  // which the walk below then reads as *the first block of the document*. So any
+  // press that landed on the editor's own box named an unrelated block, and the
+  // position depended on nothing but where the document starts.
+  //
+  // **Which presses those are: every press over a dimmed block.** Inertness is
+  // `pointer-events: none` on the block (`styles.css`), so the hit test walks past
+  // it to whatever is behind, and behind a dimmed paragraph is the editor's own
+  // box. Measured: a press over the paragraph *below* a live sheet reported
+  // `elementFromPoint` → `.ProseMirror`, and the gesture then opened the paragraph
+  // *above* the sheet in Source — taking the one record off the working state, so
+  // a live sheet closed and the document stopped being dimmed by a press on a
+  // block that is supposed to receive nothing at all. The context menu read the
+  // same 0 and offered `Source` / `Encrypt block…` for it.
+  //
+  // §3.2's own reasoning assumed the hit test lands on the *scroll container*
+  // instead, which is true for the scroller's margin below a short block and
+  // false for every block's own pixels — and the gate that reads it only ever
+  // pressed the margin. So this guard is what makes "a press naming no block"
+  // true of the dimmed region as well, and it is one line here rather than a
+  // `pointer-events` exception at each of the two callers.
+  if (target === view.dom) return -1
   let inside: number
   try {
     inside = view.posAtDOM(target, 0)

@@ -23,6 +23,7 @@ import {
   blockFormMode,
   blockModeFor,
   blockModePlugin,
+  blockPosForElement,
   chainOf,
   currentBlockMode,
   enterBlockMode,
@@ -1011,6 +1012,35 @@ describe('a working state is what the document recedes for', () => {
     expect(isWorkingMode(modeFor(view.state, positions[1]))).toBe(false)
     expect(litBlockPositions(view.state).size).toBe(0)
     expect(litClasses(view)).toEqual({ lit: 0, dimmed: 0 })
+    view.destroy()
+  })
+
+  it('names no block for a press that hit-tested past the dimmed ones', () => {
+    // Inertness is `pointer-events: none` on each dimmed block, so a press over one
+    // hit-tests to whatever is behind it — and behind a dimmed paragraph is the
+    // editor's own box. `posAtDOM(view.dom, 0)` answers `posAtStart`, i.e. **0**,
+    // which the walk read as the document's *first* block: so the gesture opened
+    // that block in Source instead of naming none, which took the one record off a
+    // live working state. The guard is what makes the fallback reachable again.
+    const view = createEditor('Before.\n\n| A |\n| --- |\n| 1 |\n\nAfter.')
+    const positions = allBlockPositions(view)
+    toggleBlockModeFromGesture(view, positions[1])
+    expect(blockFormMode(view.state, positions[1])).toBe('sheet')
+
+    expect(blockPosForElement(view, view.dom)).toBe(-1)
+    expect(blockPosForElement(view, null)).toBe(-1)
+
+    // A press aimed at a real block still names it — the guard is the editor's own
+    // box, not "the first thing the walk finds".
+    expect(blockPosForElement(view, view.nodeDOM(positions[2]!))).toBe(positions[2])
+
+    // And through the gesture itself: aimed at the editor's box it names no block,
+    // so it falls through to finishing whatever is open — the §3.2 rung — rather
+    // than taking the record to a block the pointer was nowhere near.
+    view.dom.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
+    )
+    expect(currentBlockMode(view.state)).toBeNull()
     view.destroy()
   })
 

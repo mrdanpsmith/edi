@@ -5976,6 +5976,118 @@ def test_escape_leaves_a_sheet_and_escape_in_a_cell_does_not(window):
     assert left["dimmed"] == 0, f"leaving the sheet left the document dimmed: {left}"
 
 
+def test_a_press_over_a_dimmed_block_names_no_block_at_all(window):
+    """A press in the dimmed region reads as a press on the page, not on a block.
+
+    §2.3's inertness is `pointer-events: none` on each dimmed block, so a press over
+    one hit-tests **past** it — and past a dimmed paragraph is not the scroll
+    container §3.2 assumed but **`.ProseMirror` itself**, which is the editor's own
+    box rather than any block in it. `blockPosForElement` read that as
+    `posAtDOM(view.dom, 0)` = `posAtStart` = **0**, so it named the document's
+    *first* block, wherever the pointer was.
+
+    Two consequences, both real, and the second one is why this is not cosmetic:
+    an Alt+click anywhere in the dimmed region opened **an unrelated block** in
+    Source — taking the one record off the live working state, so a live sheet
+    closed and the document stopped being dimmed by a press on a block that is
+    supposed to receive nothing — and a right-click offered that same block a full
+    block menu (`Source`, `Encrypt block…`).
+
+    So the claim here is *the block under the pointer*, and the gesture over the
+    paragraph **below** the sheet is the one that decides it: a resolver that
+    answered "the first block" would open the paragraph above.
+    """
+    _open_a_working_state(window)
+
+    def _press_in_the_dimmed_region(index, kind, alt=False):
+        return _dump(window, """(() => {
+          const ed = document.querySelector('#editor-container > .ProseMirror');
+          // Prose only: a dimmed *board* draws `<p>` labels of its own, and
+          // pressing one of those would be a different test.
+          const paras = [...ed.querySelectorAll(
+            ':scope > .edi-block-mode-dimmed.block-visual-mode')]
+            .map((b) => b.querySelector('p')).filter(Boolean);
+          const el = paras[%d];
+          if (!el) return { missing: true, have: paras.length };
+          const r = el.getBoundingClientRect();
+          const x = Math.round(r.left + 12), y = Math.round(r.top + r.height / 2);
+          const at = document.elementFromPoint(x, y) || el;
+          at.dispatchEvent(new MouseEvent(%s, {
+            bubbles: true, cancelable: true, button: 0, altKey: %s,
+            clientX: x, clientY: y }));
+          return {
+            target: String(at.className || at.tagName),
+            pressed: el.textContent.slice(0, 40),
+          };
+        })()""" % (index, json.dumps(kind), json.dumps(bool(alt))))
+
+    def _state():
+        return _dump(window, """(() => {
+          const ed = document.querySelector('#editor-container > .ProseMirror');
+          return {
+            sheet: !!document.querySelector('#editor-container .spreadsheet'),
+            source: ed.querySelectorAll(':scope > .block-source-mode').length,
+            cm: !!document.querySelector('#editor-container > .ProseMirror > .cm-editor'),
+            dimmed: ed.querySelectorAll(':scope > .edi-block-mode-dimmed').length,
+            firstBlock: String(ed.querySelector(':scope > *').className).slice(0, 40),
+          };
+        })()""")
+
+    # First: the press has to land where the bug lives — inside the editor's own
+    # box, on a dimmed block, not in the scroller's margin where the old reasoning
+    # happened to be right.
+    below = _press_in_the_dimmed_region(1, 'click')
+    assert below.get("target") == "ProseMirror", (
+        "this test is not pressing what it claims: the dimmed paragraph did not "
+        f"hit-test to the editor's own box: {below}")
+    assert below["pressed"].startswith("Prose after"), below
+
+    after = _state()
+    assert after["source"] == 0 and after["cm"] is False, (
+        "a plain press in the dimmed region opened a block's Source form: %r" % (after,))
+    assert after["sheet"] and after["dimmed"] == 3, (
+        f"the press disturbed a live working state: {after}")
+
+    # Then the gesture that read it as a block. §3.2's rung: a press naming no
+    # block *finishes* whatever is open — which is the way out, and is the honest
+    # answer here. It must not name the paragraph above the sheet on the way.
+    alt = _press_in_the_dimmed_region(1, 'click', alt=True)
+    assert alt.get("target") == "ProseMirror", alt
+    left = _wait(window, """(() => ({
+      plain: !!document.querySelector('#editor-container .ss-plain'),
+      sheet: !!document.querySelector('#editor-container .spreadsheet'),
+      source: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .block-source-mode').length,
+      dimmed: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+    }))()""", lambda d: d.get("sheet") is False, timeout=10)
+    assert left["plain"], left
+    assert left["source"] == 0, (
+        "Alt+click in the dimmed region opened an unrelated block in Source — the "
+        f"sheet's record went to the first block in the document: {left}")
+    assert left["dimmed"] == 0, left
+
+    # The other reader of the same resolver, and the reason this lives in the one
+    # authority rather than in either caller: the context menu asked it too, and
+    # built a **block** menu (`Source`, `Encrypt block…`) over a block the pointer
+    # was nowhere near. Pressing `Source` from there did exactly what the Alt+click
+    # did. The document's own commands may still be offered — they act on the
+    # document selection, which the entry collapse already left empty.
+    _open_a_working_state(window)
+    menu = _press_in_the_dimmed_region(1, 'contextmenu')
+    assert menu.get("target") == "ProseMirror", menu
+    offered = _wait(window, """(() => ({
+      items: [...document.querySelectorAll('.edi-context-menu button')]
+        .map((b) => String(b.textContent).trim()),
+    }))()""", lambda d: len(d.get("items", [])) > 0, timeout=5)
+    block_items = {"Source", "Visual", "Edit", "Done", "Unlock", "Lock",
+                   "Encrypt block…", "Run", "Stop", "Copy image", "Save image…"}
+    leaked = sorted(block_items.intersection(offered["items"]))
+    assert not leaked, (
+        "a right-click over a dimmed block offered that block's actions, so the "
+        f"menu can put a dimmed block into Source or encrypt it: {offered}")
+
+
 def test_alt_click_outside_still_leaves_a_working_state(window):
     """Inertness must not swallow the gesture that gets you out of it.
 
