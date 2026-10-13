@@ -312,14 +312,19 @@ function toggleTaskList(view: EditorView): boolean {
   const { selection } = state
   const range = selection.$from.blockRange(selection.$to)
   if (!range) return false
+  // **Only the blocks inside the range**, and it has to be said why, because the
+  // alternative is the bug this line used to be: walking `range.parent` and keeping
+  // everything outside the range put **the whole document** into the new list — a click
+  // on this button with the caret in any block but the first duplicated the entire
+  // document, with no error anywhere. ProseMirror cannot catch it: `NodeType.create`
+  // does not validate content, and `replaceWith` of a whole node takes the
+  // `fitsTrivially` path, where `block+` at the top level accepts anything
+  // block-shaped — so a `bullet_list` holding raw headings and paragraphs landed in the
+  // document silently, and the serializer then emitted the document twice.
   const items: import('prosemirror-model').Node[] = []
-  range.parent.forEach((child, _, i) => {
-    if (i >= range.startIndex && i < range.endIndex) {
-      items.push(liType.create({ checked: false }, child))
-    } else {
-      items.push(child)
-    }
-  })
+  for (let i = range.startIndex; i < range.endIndex; i++) {
+    items.push(liType.create({ checked: false }, range.parent.child(i)))
+  }
   const bullet = bulletType.create(null, items)
   dispatch(state.tr.replaceWith(range.start, range.end, bullet))
   return true

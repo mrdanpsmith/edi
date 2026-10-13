@@ -4599,6 +4599,104 @@ def test_a_plain_tables_cluster_uses_the_modes_own_vocabulary(window):
     assert labels == ["Edit", "Source"], labels
 
 
+def test_the_task_list_button_touches_only_the_block_under_the_caret(window):
+    """One click on **Task list** turns one block into a task item, not the document.
+
+    The report was a screenshot: a click on the toolbar's Task list button produced a
+    **second copy of the whole document** immediately after the caret's block, complete
+    with a second copy of every table and diagram, and no error anywhere.
+
+    The cause was one line: the command's fallback built the new list from
+    `range.parent`'s **entire** content, keeping the blocks outside the range as siblings
+    *inside* the list, and then replaced only `range.start..range.end`. With the caret in
+    any block but the first, "the whole parent" was the whole document.
+
+    **Nothing in ProseMirror would have caught it**, which is why it was silent: a
+    `NodeType.create` does not validate content, and `replaceWith` of a whole node takes
+    the `fitsTrivially` path — where `block+` at the top level accepts anything
+    block-shaped — so a `bullet_list` holding raw headings and paragraphs entered the
+    document as valid content.
+
+    This drives the real button on a document shaped like the one in the report (several
+    blocks, a diagram, a table) with the caret in the **second** block, and asserts the
+    document's block count is unchanged and the caret's block is the only list.
+    """
+    doc = ("Intro prose.\n\nSecond prose, where the caret is.\n\n"
+           "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n"
+           "```mermaid\ngraph TD\n  A[Alpha]\n```\n")
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(doc))
+    _wait(window, "(() => ({ m: !!document.querySelector('#editor-container .mermaid svg') }))()",
+          lambda d: d.get("m") is True, timeout=25)
+
+    def _shape():
+        return _dump(window, """(() => {
+          const ed = document.querySelector('#editor-container > .ProseMirror');
+          return {
+            blocks: [...ed.children].map((el) => String(el.className).split(' ')[0]),
+            items: [...ed.querySelectorAll('ul > li')].map((li) => li.textContent.slice(0, 24)),
+            lis: ed.querySelectorAll('ul > li').length,
+            tasks: [...ed.querySelectorAll('li[data-checked]')].length,
+          };
+        })()""")
+
+    before = _shape()
+    assert before["blocks"] == ["block-visual-mode", "block-visual-mode", "ss-plain",
+                                "mermaid"], before
+
+    # The caret in the **second** block: the first block is the one case where the whole
+    # document and the blocks in range are the same set, which is why every unit test of
+    # this command used a single-block document and passed.
+    _dump(window, """(() => {
+      const p = document.querySelectorAll('#editor-container > .ProseMirror p')[1];
+      const range = document.createRange();
+      range.setStart(p.firstChild, 0); range.collapse(true);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      document.querySelector('#editor-container .ProseMirror').focus();
+      return { caret: String(sel) };
+    })()""")
+    time.sleep(0.4)
+    clicked = _dump(window, """(() => {
+      const btn = document.querySelector('.toolbar-btn[title="Task list"]');
+      if (!btn) return { missing: true };
+      btn.click();
+      return { clicked: true };
+    })()""")
+    assert not clicked.get("missing"), clicked
+
+    after = _wait(window, """(() => {
+      const ed = document.querySelector('#editor-container > .ProseMirror');
+      return {
+        blocks: [...ed.children].map((el) => String(el.className).split(' ')[0]),
+        tasks: ed.querySelectorAll('li[data-checked]').length,
+        items: [...ed.querySelectorAll('li[data-checked]')]
+          .map((li) => li.textContent.slice(0, 30)),
+        // **A block inside the list that is not an item** is the duplication's shape: the
+        // old code kept the blocks outside the range as siblings *in* the list.
+        strays: [...ed.querySelectorAll('ul > *:not(li)')].length,
+        // **Counts, not the text**: the duplication put the whole document's text in
+        // here, and a failure message that prints it prints a diagram's stylesheet with
+        // it. What matters is whether the document's own words are there once or twice.
+        firstPara: (ed.textContent.match(/Intro prose\./g) || []).length,
+        labels: (ed.textContent.match(/Alpha/g) || []).length,
+      };
+    })()""", lambda d: d.get("tasks", 0) > 0, timeout=10)
+
+    assert after["tasks"] == 1, f"one click, one task item: {after}"
+    assert after["strays"] == 0, (
+        f"a list holding anything but items is the duplication: {after}")
+    assert after["items"] == ["Second prose, where the caret "], (
+        f"and the item is the block the caret was in: {after}")
+    assert len(after["blocks"]) == len(before["blocks"]), (
+        f"the document grew by {len(after['blocks']) - len(before['blocks'])} blocks: {after}")
+    assert after["blocks"].count("ss-plain") == 1 and after["blocks"].count("mermaid") == 1, (
+        f"the table and the diagram are still one each: {after}")
+    # **The text is the tell** — the duplication wrote the document out twice.
+    assert after["firstPara"] == 1 and after["labels"] == 1, (
+        f"the document's own words are in it {after['firstPara']} and {after['labels']} "
+        f"times rather than once: {after}")
+
+
 def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
     """A sheet wears the shared outline, never a bar of its own, and the chip says Edit.
 

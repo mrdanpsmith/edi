@@ -376,6 +376,77 @@ describe('Toolbar', () => {
     expect(doc.textContent).toBe('hello world')
   })
 
+  it('turns only the block under the caret into a task item', () => {
+    // **The bug, in one word: `range.parent`.** The fallback used to walk the parent's
+    // *whole* content and keep everything outside the range, so the new list carried the
+    // entire document with it — one click on this button in any block but the first
+    // duplicated the document, silently. Nothing caught it: `NodeType.create` does not
+    // validate content, and `replaceWith` of a whole node takes the `fitsTrivially`
+    // path, where `block+` accepts anything block-shaped, so a `bullet_list` holding raw
+    // headings and paragraphs entered the document without an error.
+    //
+    // Every other task-list test here uses a **one-block** document, which is exactly
+    // why that survived: with one block, "the whole parent" and "the blocks in range"
+    // are the same set.
+    const doc = markdownToProse(
+      'First para.\n\nSecond para.\n\n## A heading\n\nLast para.\n', schema)
+    const second = doc.child(0).nodeSize
+    const view = new EditorView(document.body, {
+      state: EditorState.create({
+        doc,
+        selection: TextSelection.create(doc, second + 1),
+      }),
+    })
+    const ctx: ToolbarContext = { getView: () => view }
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
+
+    expect(btn.run(view)).toBe(true)
+    const after = view.state.doc
+    // Four blocks in, four blocks out, and only the caret's became a list.
+    expect(after.childCount).toBe(4)
+    expect(after.child(0).type.name).toBe('paragraph')
+    expect(after.child(1).type.name).toBe('bullet_list')
+    expect(after.child(1).child(0).attrs.checked).toBe(false)
+    expect(after.child(1).childCount).toBe(1)
+    expect(after.child(2).type.name).toBe('heading')
+    expect(after.child(3).type.name).toBe('paragraph')
+    // **The serialized document is the whole claim**, and the duplication showed up here
+    // before anywhere else: the old fallback's list carried every other block with it, so
+    // the document was written out twice.
+    expect(proseToMarkdown(after)).toBe(proseToMarkdown(doc)
+      .replace('Second para.', '- [ ] Second para.'))
+    view.destroy()
+  })
+
+  it('turns a selected run of blocks into task items, and only those', () => {
+    // The same rule for the other shape a range can have: a selection covering two of
+    // four blocks. Before, this walked the parent too and so duplicated the document.
+    const doc = markdownToProse('One.\n\nTwo.\n\nThree.\n\nFour.\n', schema)
+    const first = doc.child(0).nodeSize
+    const second = first + doc.child(1).nodeSize
+    const view = new EditorView(document.body, {
+      state: EditorState.create({
+        doc,
+        selection: TextSelection.create(doc, 1, second),
+      }),
+    })
+    const ctx: ToolbarContext = { getView: () => view }
+    const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
+
+    expect(btn.run(view)).toBe(true)
+    const after = view.state.doc
+    expect(after.childCount).toBe(3)
+    expect(after.child(0).type.name).toBe('bullet_list')
+    expect(after.child(0).childCount).toBe(2)
+    for (const item of [0, 1]) {
+      expect(after.child(0).child(item).attrs.checked).toBe(false)
+    }
+    expect(after.child(1).textContent).toBe('Three.')
+    expect(after.child(2).textContent).toBe('Four.')
+    expect(after.textContent).toBe(doc.textContent)
+    view.destroy()
+  })
+
   it('toggles off task list when clicking task list again', () => {
     const { view, ctx } = makeFixtureWithCursor(5)
     const btn = getFormattingButtons(ctx).find((b): b is Extract<ToolbarEntry, { title: string }> => 'title' in b && b.title === 'Task list')!
