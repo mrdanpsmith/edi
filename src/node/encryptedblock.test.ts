@@ -33,6 +33,19 @@ async function editorWithEncrypted(innerMarkdown: string) {
 
 const tick = () => new Promise((r) => setTimeout(r, 800))
 
+/**
+ * The cluster's **one** interaction control: the button that opens a reveal and the
+ * button that closes it.
+ *
+ * It used to be `.encrypted-block-toggle` (`Unlock ▸` / `Lock ▾`), which sat beside
+ * the generated `Edit` / `Done` and did the same act under a second name. Every
+ * test below was pressing one of the pair; they all press this one now, which is
+ * also what makes "both buttons do the same thing" a fact about the tests rather
+ * than only about the UI.
+ */
+const interactionButton = (): HTMLButtonElement =>
+  document.querySelector<HTMLButtonElement>('.encrypted-block .block-control-interaction')!
+
 describe('encrypted_block', () => {
   it('shows the block type in the chrome with underscores replaced by spaces', async () => {
     const editor = await (async () => {
@@ -48,11 +61,43 @@ describe('encrypted_block', () => {
     editor.destroy()
   })
 
+  it('carries one control for its edit step, not two that both open the reveal', async () => {
+    // `blockModeFor` declares this block interactive, so the cluster generates
+    // one control for that step from the descriptor — and this block's `toggle` *is*
+    // `toggleShow_`. A second `Unlock ▸` button stood next to it and did the same
+    // act: the same gesture was reachable under two names in one 100px row, and
+    // only one of the two was repainted by the record. The whole row, closed and
+    // open — and `Unlock` / `Lock` rather than a diagram's `Edit` / `Done`, because
+    // this axis declares its own verbs.
+    const editor = await editorWithEncrypted('hello')
+    // The block's *own* row, not a descendant match: an open reveal is a nested
+    // block editor living inside this element, and its blocks have clusters of
+    // their own. `>` is what says "this block's row".
+    const row = (): string[] =>
+      [...document.querySelectorAll('.encrypted-block > .block-controls button')]
+        .map((b) => b.textContent ?? '')
+
+    expect(row()).toEqual(['Unlock', 'Normalize', 'Source'])
+
+    interactionButton().click()
+    await tick()
+    // Open, the same one button reads the other end — and it is the same button,
+    // not a second one that happens to agree.
+    expect(row()).toEqual(['Lock', 'Normalize', 'Source'])
+    expect(document.querySelectorAll('.encrypted-block .block-control-interaction').length).toBe(1)
+
+    interactionButton().click()
+    await tick()
+    expect(document.querySelector('.encrypted-block-reveal')).toBeNull()
+    expect(row()).toEqual(['Unlock', 'Normalize', 'Source'])
+    editor.destroy()
+  })
+
   it('Show decrypts into an inline editable render without touching the document', async () => {
     const editor = await editorWithEncrypted('hello **secret**')
     const view = editor.getView()
     const docBefore = view.state.doc.childCount
-    const viewBtn = document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!
+    const viewBtn = interactionButton()
     viewBtn.click()
     await tick()
     const reveal = document.querySelector('.encrypted-block-reveal')!
@@ -65,7 +110,7 @@ describe('encrypted_block', () => {
 
   it('answers for the reveal that holds focus, and only for that one', async () => {
     const editor = await editorWithEncrypted('hello')
-    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    interactionButton().click()
     await tick()
     const reveal = getActiveEncryptedBlockView()
     expect(reveal).not.toBeNull()
@@ -96,7 +141,7 @@ describe('encrypted_block', () => {
 
   it('commits reveal edits back into the encrypted envelope on change and on lock', async () => {
     const editor = await editorWithEncrypted('hello')
-    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    interactionButton().click()
     await tick()
     const reveal = getActiveEncryptedBlockView()!
     reveal.dispatch(reveal.state.tr.insertText(' world'))
@@ -106,7 +151,7 @@ describe('encrypted_block', () => {
       expect(await decryptField(m![1]!, password)).toContain('world')
     }, { timeout: 10000, interval: 200 })
     reveal.dispatch(reveal.state.tr.insertText(' again'))
-    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    interactionButton().click()
     await vi.waitFor(async () => {
       const inner = await decryptField(
         editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)![1]!,
@@ -124,11 +169,11 @@ describe('encrypted_block', () => {
     const md = '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```\n\nafter'
     const editor = createBlockEditor(host, md, {})
     vi.mocked(promptForPassword).mockResolvedValue('')
-    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    interactionButton().click()
     await tick()
     const reveal = getActiveEncryptedBlockView()!
     reveal.dispatch(reveal.state.tr.insertText(' again'))
-    document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+    interactionButton().click()
     await vi.waitFor(async () => {
       const inner = await decryptField(
         (editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)!)[1]!,
@@ -141,7 +186,7 @@ describe('encrypted_block', () => {
 
   it('gives the password dialog a validator that flags a wrong password', async () => {
     const editor = await editorWithEncrypted('hello **secret**')
-    const viewBtn = document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!
+    const viewBtn = interactionButton()
     viewBtn.click()
     await tick()
     const validate = vi.mocked(promptForPassword).mock.calls[0]![1]!
@@ -167,7 +212,7 @@ describe('encrypted_block', () => {
     const editor = await editorWithEncrypted('hello secret')
     const view = editor.getView()
     vi.mocked(promptForPassword).mockResolvedValue('wrong')
-    const viewBtn = document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!
+    const viewBtn = interactionButton()
     viewBtn.click()
     await tick()
     expect(document.querySelector('.encrypted-block-reveal')).toBeNull()
@@ -180,7 +225,7 @@ it('editing inside Show persists by re-encrypting the block', async () => {
   const editor = await editorWithEncrypted('- [ ] one\n- [x] two')
   const view = editor.getView()
   const before = String(view.state.doc.firstChild?.attrs.content ?? '')
-  const toggleBtn = document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!
+  const toggleBtn = interactionButton()
   toggleBtn.click()
   await tick()
   const input = document.querySelector<HTMLInputElement>('.encrypted-block-reveal input[data-task-check]')!
@@ -196,7 +241,7 @@ it('Show view stays open across the persist cycle', async () => {
   const editor = await editorWithEncrypted('- [ ] one\n- [x] two')
   const view = editor.getView()
   const before = String(view.state.doc.firstChild?.attrs.content ?? '')
-  document.querySelector<HTMLButtonElement>('.encrypted-block-toggle')!.click()
+  interactionButton().click()
   await tick()
   const input = document.querySelector<HTMLInputElement>('.encrypted-block-reveal input[data-task-check]')!
   input.dispatchEvent(new MouseEvent('click', { bubbles: true }))

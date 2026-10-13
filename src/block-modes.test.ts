@@ -5,6 +5,7 @@ import { EditorView } from 'prosemirror-view'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { schema } from './schema'
+import { encryptField } from './crypto'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { encryptedBlockNodeViewPlugin } from './node/encryptedblock'
@@ -28,6 +29,7 @@ import {
   enterSourceMode,
   exitBlockMode,
   isWorkingMode,
+  interactionLabels,
   keepOneNonVisualBlock,
   leaveBlockMode,
   litBlockPositions,
@@ -435,6 +437,47 @@ describe('one cluster per top-level block', () => {
   it('reveals an encrypted block\'s controls, which the old reveal list omitted', () => {
     const view = createEditor('> Just text')
     expect(view.dom.querySelectorAll(`.${BLOCK_CONTROLS_CLASS}`).length).toBe(1)
+    view.destroy()
+  })
+
+  it('gives each interactive block its own verbs, across label and tooltip alike', async () => {
+    // One `interactionButton` is generated for **every** `interaction: 'toggle'`
+    // block, so anything hardcoded in it is true of at most one type. It hardcoded
+    // two things: the label (`Edit`/`Done`) and a tooltip naming *a diagram* — so
+    // an encrypted block was told to "Edit the diagram in place" by a button whose
+    // own label said `Edit`.
+    //
+    // Both are now read from `interactionLabels(type)`, so each type says the same
+    // two words twice and no type says another's. The tooltip is *built* from the
+    // label, which is what makes the agreement structural rather than maintained.
+    const envelope = await encryptField('secret', 'pw')
+    const view = createEditor(
+      '```mermaid\ngraph TD\n  A[Alpha]\n```\n\n'
+      + '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```',
+    )
+    await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
+    const diagram = document.querySelector<HTMLElement>('.mermaid')!
+    const encrypted = document.querySelector<HTMLElement>('.encrypted-block')!
+    const button = (host: HTMLElement): HTMLButtonElement =>
+      host.querySelector<HTMLButtonElement>(':scope > .block-controls > .block-control-interaction')!
+
+    expect([button(diagram).textContent, button(diagram).title])
+      .toEqual(['Edit', 'Edit this block (Alt+click)'])
+    // The same axis, said the way this block's act is said.
+    expect([button(encrypted).textContent, button(encrypted).title])
+      .toEqual(['Unlock', 'Unlock this block (Alt+click)'])
+    for (const title of [button(diagram).title, button(encrypted).title]) {
+      expect(title.toLowerCase()).not.toContain('diagram')
+    }
+
+    // And the other end, which is the word that names *leaving* rather than the
+    // state — so it is a third word, and it is not `engaged`.
+    enterBlockMode(view, allBlockPositions(view)[0]!, { interaction: 'editing' })
+    await vi.waitFor(() => expect(button(diagram).textContent).toBe('Done'))
+    expect(button(diagram).title).toBe('Done this block (Alt+click)')
+    expect(interactionLabels('mermaid_block')).toEqual({ idle: 'Edit', active: 'Done', engaged: 'Edit' })
+    expect(interactionLabels('encrypted_block'))
+      .toEqual({ idle: 'Unlock', active: 'Lock', engaged: 'Unlocked' })
     view.destroy()
   })
 })

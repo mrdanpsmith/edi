@@ -44,6 +44,7 @@ import {
   blockPosForElement,
   modeFor,
   blockFormMode,
+  interactionLabels,
   setBlockForm,
   toggleBlockMode,
   type BlockMode,
@@ -72,7 +73,7 @@ import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import { buildWelcomeMarkdown } from './welcomeDoc'
 import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange, selectionMarkdownFor } from './editor'
-import { setEncryptedBlockImageResolver, primeEncryptedBlockShow, getActiveEncryptedBlockView } from './node/encryptedblock'
+import { setEncryptedBlockImageResolver, unlockEncryptedBlockAt, getActiveEncryptedBlockView } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
 import { insertTable as insertSpreadsheetTable, spreadsheetMenuEntries } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
@@ -210,10 +211,16 @@ function renderModeChip(mode: BlockMode | null): void {
   // which is a different block's mode entirely. The label comes from the
   // descriptor so the chip, the cluster button and the context menu cannot drift
   // into three spellings of the same word.
+  //
+  // **A block's own axis says which state that is.** A diagram's engaged state is
+  // `Edit`, which is why one word served both jobs; an encrypted block's is
+  // `Unlocked`, and the word on its button is `Lock` — so the chip reads the
+  // `engaged` word rather than either control's, and `Edit` here would be the
+  // diagram's vocabulary again.
   const form = mode.form === undefined
     ? undefined
     : blockModeFor(node).forms?.find((entry) => entry.id === mode.form)?.label
-  const name = source ? 'Source' : form ?? 'Edit'
+  const name = source ? 'Source' : form ?? interactionLabels(node.type.name).engaged
   statusMode.textContent = words === ''
     ? name
     : `${name} — “${words}”${source ? ' · Esc for visual' : ''}`
@@ -1320,8 +1327,11 @@ function buildBlockMenuItems(target: Element): ContextMenuEntry[] {
   }
 
   if (descriptor.interaction === 'toggle') {
+    // The axis's own words, from the one declaration the cluster button reads too —
+    // so a block whose edit step is unlocking is not also `Edit` in its menu.
+    const labels = interactionLabels(node.type.name)
     const editing = modeFor(view.state, pos)?.interaction === 'editing'
-    addItem(editing ? 'Done' : 'Edit', () => {
+    addItem(editing ? labels.active : labels.idle, () => {
       toggleBlockMode(view, pos, 'interaction')
     })
   }
@@ -1375,12 +1385,7 @@ async function encryptBlockAt(view: ReturnType<BlockEditor['getView']>, pos: num
   view.focus()
   // Unless "Lock immediately" was chosen, freshly encrypted blocks arrive
   // unlocked (no second lock).
-  if (!lockImmediately) {
-    primeEncryptedBlockShow(password)
-    const nodeDom = view.nodeDOM(pos) ?? view.dom.querySelector('.encrypted-block')
-    const toggle = nodeDom instanceof HTMLElement ? nodeDom.querySelector<HTMLButtonElement>('.encrypted-block-toggle') : null
-    toggle?.click()
-  }
+  if (!lockImmediately) unlockEncryptedBlockAt(view, pos, password)
 }
 
 function init(): void {

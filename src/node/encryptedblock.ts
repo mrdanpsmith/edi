@@ -81,8 +81,30 @@ document.addEventListener('focusin', (event) => {
   clearActiveEncryptedBlockView()
 })
 
-export function primeEncryptedBlockShow(password: string): void {
+/**
+ * The password the *next* unlock will use without asking, set by
+ * {@link unlockEncryptedBlockAt} for a block whose password was just given.
+ */
+function primeEncryptedBlockShow(password: string): void {
   pendingUnlockPassword = password
+}
+
+/**
+ * Open the encrypted block at `pos`, taking `password` for it.
+ *
+ * **This is what "Encrypt block…" calls to leave a fresh block unlocked, and it is
+ * a function rather than the button press it used to be.** That route primed the
+ * password and then found `.encrypted-block-toggle` in the block's DOM and clicked
+ * it — which only worked because the node view had rendered that button
+ * synchronously, and which had a second copy of the interaction to keep in step with
+ * the first. Going through `BLOCK_MODE_HANDLERS` is the same gesture the cluster's
+ * `Edit` makes, so a fresh block and a clicked one are the same code path.
+ */
+export function unlockEncryptedBlockAt(view: EditorView, pos: number, password: string): void {
+  const node = view.state.doc.nodeAt(pos)
+  if (node === null || node.type.name !== 'encrypted_block') return
+  primeEncryptedBlockShow(password)
+  BLOCK_MODE_HANDLERS['encrypted_block'].enter?.(view, pos)
 }
 
 interface EncryptedBlockAttrs {
@@ -115,8 +137,7 @@ class EncryptedBlockNodeView implements NodeView {
   private revealPassword: string | null = null
   private lastRevealedMd: string | null = null
   private persistTimer: ReturnType<typeof setTimeout> | null = null
-  private revealToggle!: HTMLButtonElement
-  /** The cluster's Edit/Lock button, for when it has to be told the reveal closed. */
+  /** The cluster's mode buttons, for when the record moves and they have to be told. */
   private modeControls: BlockControls | null = null
   private wordsEl: HTMLSpanElement | null = null
 
@@ -150,8 +171,8 @@ class EncryptedBlockNodeView implements NodeView {
     if (this.revealHost && this.wordsEl) {
       const a = getAttrs(node)
       this.wordsEl.textContent = encryptedBlockChipText(a)
-      // The cluster's Edit/Lock reads the record on paint, and a persist is a
-      // document change, so it has to be told — or the button keeps saying Edit
+      // The cluster's Unlock/Lock reads the record on paint, and a persist is a
+      // document change, so it has to be told — or the button keeps saying Unlock
       // over a block that has been open the whole time.
       this.modeControls?.refresh()
     }
@@ -220,7 +241,6 @@ class EncryptedBlockNodeView implements NodeView {
     this.revealPassword = null
     this.revealHost?.remove()
     this.revealHost = null
-    this.revealToggle.textContent = 'Unlock ▸'
     this.modeControls?.refresh()
     if (this.wordsEl) {
       const a = getAttrs(this.node)
@@ -248,17 +268,19 @@ class EncryptedBlockNodeView implements NodeView {
     // mention `.encrypted-block`, so the handle this block injected was in the DOM
     // and never visible.
     //
-    // **The cluster's own Edit/Lock button is not built here.** `blockModeFor` now
-    // declares this block interactive, so `attachBlockControls` generates one from
-    // the descriptor like every other block's — and it drives the same
-    // `toggleBlockMode` an Alt+click does. The `Unlock ▸` button below stays for
-    // the one thing the cluster's button cannot do: a reveal that is **not** yet in
-    // a mode has nothing for `toggle` to toggle. Once open, the cluster reads
-    // Edit/Lock and this one agrees with it.
+    // **Unlock is not here.** `blockModeFor` declares this block interactive, so
+    // `attachBlockControls` generates the interaction button from the descriptor
+    // like every other block's — and this block's `toggle` is its `toggleShow_`, so
+    // the cluster's `Edit` already decrypts and reveals, and its `Done` already
+    // locks. A second `Unlock ▸` / `Lock ▾` button beside it was the same act under
+    // two names: one that stayed correct on its own and one that the record
+    // repainted, which is the pair that drifts. (The comment this replaces claimed
+    // the cluster's button could not open a reveal "that is not yet in a mode" —
+    // true of `toggleBlockMode`, which reads the record, and **not** true of
+    // `toggle`, which reads the block's own `revealHost` and so answers both ends.)
     const controls = attachBlockControls(this.node, this.view, this.getPos, [
       this.blockButton('Normalize', 'encrypted-block-unmask', () => { void this.unmask_() },
         'Convert to normal block (decrypted)'),
-      this.revealToggle = this.blockButton('Unlock ▸', 'encrypted-block-toggle', () => { void this.toggleShow_() }),
     ])
     if (controls) {
       this.modeControls = controls
@@ -354,7 +376,7 @@ class EncryptedBlockNodeView implements NodeView {
     // **Opening a block is taking the page's one focus path**, which is why it is
     // done through the record and not left as a per-block closure: everything §7.2
     // generates then comes for free — the dashed outline, the chip that names the
-    // state, the cluster's Lock button, Alt+click, and the Escape rung — and the
+    // state, the cluster's Done button, Alt+click, and the Escape rung — and the
     // document dims and goes inert at once, because the plaintext is on screen and
     // the reader's attention is on this block. It does not wait for a click into the
     // reveal; by then there is nothing left to warn about.
@@ -370,7 +392,6 @@ class EncryptedBlockNodeView implements NodeView {
       setBlockModeAt(this.view.state, tr, pos, { interaction: 'editing' })
       this.view.dispatch(tr)
     }
-    this.revealToggle.textContent = 'Lock ▾'
     this.modeControls?.refresh()
     if (this.wordsEl) {
       const a = getAttrs(this.node)
@@ -472,7 +493,7 @@ class EncryptedBlockNodeView implements NodeView {
     await this.toggleShow_()
   }
 
-  /** The gesture that puts it back — Alt+click, or the cluster's Lock button. */
+  /** The gesture that puts it back — Alt+click, or the cluster's Done button. */
   exit(): void {
     void this.closeReveal()
   }
@@ -668,6 +689,18 @@ BLOCK_MODE_HANDLERS['encrypted_block'] = {
   enter: (view, pos) => { void encryptedBlockViewFor(view, pos)?.enter() },
   exit: (view, pos) => encryptedBlockViewFor(view, pos)?.exit(),
   toggle: (view, pos) => encryptedBlockViewFor(view, pos)?.toggle(),
+  // **The axis has its own verbs, and it is still the same axis.** Revealing a
+  // secret is a working state exactly as editing a diagram is — one at a time, one
+  // gesture, one focus path, dimmed and inert around it — but the act is not the
+  // same act, so the app says `Unlock` / `Lock` here and `Edit` / `Done` on a
+  // diagram. `engaged` is a third word because the chip names the *state*: `Edit`
+  // covers both jobs on a diagram, and `Unlock`/`Unlocked` are what it takes here.
+  //
+  // Declared in the handler, beside the three functions that do the work, because
+  // this is the one object all three surfaces read (`interactionLabels`) — a block
+  // that renames its axis renames it in the cluster, the context menu and the chip
+  // at once, rather than discovering that one of the three still calls it a diagram.
+  labels: { idle: 'Unlock', active: 'Lock', engaged: 'Unlocked' },
 }
 
 export const encryptedBlockNodeViewPlugin = new Plugin({

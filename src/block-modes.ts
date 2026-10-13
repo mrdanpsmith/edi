@@ -335,10 +335,12 @@ function blockModeDecorations(state: EditorState): Decoration[] {
 export interface BlockModeHandlers {
   /** Enter the interaction axis, in that subsystem's own order. */
   enter?: (view: EditorView, pos: number) => void
-  /** Leave it, the same way — the ladder's third step, and `Done`. */
+  /** Leave it, the same way — the ladder's third step, and the active control. */
   exit?: (view: EditorView, pos: number) => void
-  /** Toggle it, from either end — the cluster's Edit/Done button, and the menu. */
+  /** Toggle it, from either end — the cluster's interaction button, and the menu. */
   toggle?: (view: EditorView, pos: number) => void
+  /** What this block calls its interaction axis, where the default verbs do not fit. */
+  labels?: InteractionLabels
   /**
    * Told that the record now names this form, so the owning subsystem can do what
    * only it can.
@@ -361,6 +363,59 @@ export interface BlockModeHandlers {
 }
 
 export const BLOCK_MODE_HANDLERS: Record<string, BlockModeHandlers> = {}
+
+/**
+ * What a block calls its interaction axis — **three words, and they are not
+ * interchangeable**.
+ *
+ * The two *controls* name the step a press takes, because every button in the
+ * cluster names the step it goes to: a diagram resting shows `Edit` and an edited
+ * diagram shows `Done`, so the button always reads as what it will do. The third
+ * word is the engaged **state**'s own name, and it is what the status chip shows —
+ * and for most block types it happens to be the same word as `idle`, because `Edit`
+ * names both the act and the mode and nothing needs more.
+ *
+ * That coincidence is not free, and it is the whole reason this is a declaration
+ * rather than three hardcoded strings. Decrypting a secret and editing a diagram are
+ * **the same axis** — one working state, one gesture, one keyboard — and not the
+ * same act, so this block says `Unlock` / `Lock` where a diagram says `Edit` /
+ * `Done`. A vocabulary with one word per axis cannot say both, and a type forced
+ * through the wrong one is how an encrypted block's tooltip came to talk about
+ * diagrams.
+ */
+export interface InteractionLabels {
+  /** The control while the axis is at rest — `Edit`. */
+  idle: string
+  /** The control while it is engaged — `Done`. */
+  active: string
+  /** The engaged state's own name, which the chip shows — `Edit`, *not* `Done`. */
+  engaged: string
+}
+
+/**
+ * What an interactive block says when it declares no vocabulary of its own: a
+ * diagram's editing layer, and the answer for any type added to
+ * `INTERACTIVE_BLOCKS` without thinking about words.
+ */
+const DEFAULT_INTERACTION_LABELS: InteractionLabels = {
+  idle: 'Edit',
+  active: 'Done',
+  engaged: 'Edit',
+}
+
+/**
+ * The three names of `type`'s interaction axis, and **the one accessor all three
+ * surfaces read** — the cluster's button, the context menu's item and the status
+ * chip.
+ *
+ * Defaulting here rather than at each call site is what makes the promise the chip's
+ * comment already makes for a table's forms ("the chip, the cluster button and the
+ * context menu cannot drift into three spellings of the same word") true of this
+ * axis too. A block type renames its axis in one object and every surface follows.
+ */
+export function interactionLabels(type: string): InteractionLabels {
+  return BLOCK_MODE_HANDLERS[type]?.labels ?? DEFAULT_INTERACTION_LABELS
+}
 
 export const blockModePlugin = new Plugin<BlockMode | null>({
   key: BLOCK_MODE_KEY,
@@ -1377,7 +1432,7 @@ export function attachBlockControls(
   // `source_block`) has already been turned away above, so `source` is null only
   // for a type that can contribute actions and nothing else.
   const rest: ControlButton[] = []
-  if (descriptor.interaction === 'toggle') rest.push(interactionButton(view, getPos))
+  if (descriptor.interaction === 'toggle') rest.push(interactionButton(view, getPos, node.type.name))
   const source = descriptor.representation ? representationButton(view, getPos) : null
   const buttons = source === null ? rest : [...rest, source]
   if (buttons.length === 0 && actions.length === 0) return null
@@ -1447,6 +1502,7 @@ function representationButton(
 function interactionButton(
   view: EditorView,
   getPos: () => number | undefined,
+  type: string,
 ): ControlButton {
   const button = controlButton('block-control-interaction')
   const toggle = (): void => {
@@ -1464,13 +1520,19 @@ function interactionButton(
     paint: () => {
       const at = getPos()
       const editing = at !== undefined && modeFor(view.state, at)?.interaction === 'editing'
-      button.textContent = editing ? 'Done' : 'Edit'
-      // Not "(Esc)" on the Done button: Escape is a cancel and answers only a
+      const labels = interactionLabels(type)
+      button.textContent = editing ? labels.active : labels.idle
+      // **The hover title is built from the same two words the label is**, so it
+      // cannot describe a step this button does not offer. It used to name one block
+      // type — "the diagram" — on the button every `interaction: 'toggle'` block
+      // gets, which is a tooltip describing a block that was not on the screen.
+      //
+      // Not "(Esc)" on the engaged side: Escape is a cancel and answers only a
       // source form (§5.3), so naming it here would offer an exit the key does
       // not provide. Alt+click is what actually toggles this axis.
       button.title = editing
-        ? 'Finish editing the diagram (Alt+click)'
-        : 'Edit the diagram in place (Alt+click)'
+        ? `${labels.active} this block (Alt+click)`
+        : `${labels.idle} this block (Alt+click)`
       button.classList.toggle('block-control-on', editing)
       button.setAttribute('aria-pressed', String(editing))
     },

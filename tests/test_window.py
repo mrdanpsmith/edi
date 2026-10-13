@@ -5307,10 +5307,16 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
       focus would leave the window between "decrypted" and "notice" as exactly the
       window in which the plaintext is readable and the document looks normal.
     - **The block wears the shared dashed outline** and the chip names the state, and
-      its cluster offers **Lock** rather than Edit. The old 3px accent bar was standing
+      its cluster offers **Lock** rather than Unlock. The old 3px accent bar was standing
       in for "open", which the two-mark vocabulary had no slot for; adding the block
       to `INTERACTIVE_BLOCKS` gives it the same mark as a source form, an edited
       diagram and a sheet, so there is one outline to read rather than two.
+      **Lock is the whole of the way out, because the row carries one control for
+      this step and not two** — an `Unlock ▸` / `Lock ▾` button stood beside the
+      generated one doing the same act, and only the generated one is repainted by
+      the record. The words are this block's own too: a diagram's axis is
+      `Edit`/`Done`, and one that read "Edit" here is the diagram's vocabulary
+      again.
     - The **other** paragraph, which holds nothing, is dimmed — which is what makes the
       dashed one the only outline on the page and therefore readable at a glance.
     """
@@ -5329,7 +5335,13 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
           const cs = getComputedStyle(el);
           return { dashed: cs.outlineStyle === 'dashed', width: parseFloat(cs.outlineWidth) || 0,
                    open: !!el.querySelector('.encrypted-block-reveal'),
-                   buttons: [...el.querySelectorAll('.block-control')].map((b) => b.textContent.trim()) };
+                   buttons: [...el.querySelectorAll('.block-control')].map((b) => b.textContent.trim()),
+                   // The block's **own** row, direct child only: an open reveal is a
+                   // nested block editor inside this element and its blocks carry
+                   // clusters of their own, which a descendant query counts.
+                   interaction: [...el.querySelectorAll(
+                     ':scope > .block-controls > .block-control-interaction')]
+                     .map((b) => b.textContent.trim()) };
         }),
       // The bar that used to stand in for "open" is gone.
       bar: (() => {
@@ -5347,15 +5359,17 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
     assert out["lit"][0]["open"], out
     assert out["lit"][0]["dashed"] and out["lit"][0]["width"] >= 2, (
         f"an open block should wear the shared dashed mode outline: {out}")
-    assert "Lock" in " ".join(out["lit"][0]["buttons"]), (
-        f"the cluster should offer a way out of the working state: {out}")
+    assert out["lit"][0]["interaction"] == ["Lock"], (
+        f"the block's own row must carry exactly one control for its edit step, and "
+        f"that one must read Lock while the block is open: {out}")
     accent = _accent_rgb(window)
     assert out["bar"] is not None and float(out["bar"]["width"].replace("px", "")) < 3, (
         f"the accent bar is standing in for a mark that now exists: {out}")
     assert _outline_colour_rgb(out["bar"]["colour"]) != accent, (
         f"the left bar is still painted in --accent: {out}")
-    assert "Edit" in out["chip"], (
-        f"the chip names the mode and this block is in one: {out}")
+    assert out["chip"].startswith("Unlocked"), (
+        f"the chip names the state and this block is in one — in this block's own "
+        f"words, which are not a diagram's: {out}")
 
 
 def test_a_second_block_cannot_be_opened_while_one_is_open(window):
@@ -5472,7 +5486,7 @@ def test_closing_a_block_commits_what_was_typed_into_it(window):
 
     # Unlock again through the real dialog and read what came back.
     _dump(window, """(() => {
-      document.querySelector('.encrypted-block .encrypted-block-toggle').click();
+      document.querySelector('.encrypted-block .block-control-interaction').click();
       return { d: 1 };
     })()""")
     _wait(window, """(() => ({
@@ -5630,7 +5644,7 @@ def test_switching_tabs_commits_what_was_typed_into_an_open_block(window):
     })()""")
     assert back is not None
     _dump(window, """(() => {
-      document.querySelector('.encrypted-block .encrypted-block-toggle').click();
+      document.querySelector('.encrypted-block .block-control-interaction').click();
       return { d: 1 };
     })()""")
     _wait(window, """(() => ({

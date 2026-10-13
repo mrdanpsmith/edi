@@ -7,6 +7,7 @@ import { schema } from './schema'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { EditorState as CMEditorState } from '@codemirror/state'
 import { markdownToProse, proseToMarkdown } from './markdown'
+import { encryptField } from './crypto'
 import { type ContextMenuEntry } from './contextmenu'
 import type { BlockMode } from './block-modes'
 
@@ -345,12 +346,17 @@ async function mainSideNodeViews(): Promise<MainSideNodeViews> {
   // below. A form therefore never reached the DOM. This wants the real node views
   // anyway (see above), and `main` keeps seeing the mock, which is all the mock is
   // for.
-  const [modes, blockview, mermaid, table, execblock] = await Promise.all([
+  const [modes, blockview, mermaid, table, execblock, encryptedblock] = await Promise.all([
     mainSideBlockModes(),
     vi.importActual<typeof import('./blockview')>('./blockview'),
     import('./node/mermaid'),
     vi.importActual<typeof import('./node/table')>('./node/table'),
     vi.importActual<typeof import('./node/execblock')>('./node/execblock'),
+    // `importActual` for the same generation reason as the two above, and because
+    // this is the module that registers `encrypted_block`'s **own vocabulary** into
+    // `BLOCK_MODE_HANDLERS` — so the copy the menu and the chip read from here is
+    // the copy whose words the node view's own cluster is painted with.
+    vi.importActual<typeof import('./node/encryptedblock')>('./node/encryptedblock'),
   ])
   nodeViews = {
     modes,
@@ -371,6 +377,7 @@ async function mainSideNodeViews(): Promise<MainSideNodeViews> {
       }),
       mermaid.mermaidNodeViewPlugin,
       table.tableNodeViewPlugin,
+      encryptedblock.encryptedBlockNodeViewPlugin,
     ],
   }
   return nodeViews
@@ -1834,6 +1841,51 @@ describe('context menu', () => {
 
     item(openMenu(), 'Done').click()
     expect(modes.currentBlockMode(view.state)).toBeNull()
+  })
+
+  it('says one block\'s own words in all three surfaces that name its modes', async () => {
+    // The cluster's button, the context menu and the status chip each spelled the
+    // interaction axis as `Edit` / `Done` / `Edit` in their own code, so a block
+    // whose edit step is *unlocking* was told to `Edit` by all three — while the
+    // cluster's tooltip, which had been written for a diagram, called it a diagram
+    // as well. They now read `interactionLabels(type)`, so the claim is that there is
+    // one declaration behind the three, and that is what this reads.
+    await boot()
+    const envelope = await encryptField('secret', 'pw')
+    const view = await mountDoc(
+      '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```',
+    )
+    const modes = await mainSideBlockModes()
+    const block = view.nodeDOM(0) as HTMLElement
+    const menuLabels = (): string[] => {
+      block.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
+      return Array.from(document.querySelectorAll<HTMLButtonElement>('.edi-menu-item'))
+        .map((button) => button.textContent ?? '')
+    }
+
+    // 1. The cluster.
+    const cluster = block.querySelector<HTMLButtonElement>('.block-control-interaction')!
+    expect(cluster.textContent).toBe('Unlock')
+    // 2. The menu — the same two words, and never the diagram's.
+    expect(menuLabels()).toContain('Unlock')
+    expect(menuLabels()).not.toContain('Edit')
+
+    // 3. The chip and the menu at the **other** end. The record is written straight
+    //    here rather than by unlocking, because opening a reveal is a password round
+    //    trip and what is under test is the word, not the decrypt. Both of these read
+    //    the record, so this is their real path; the cluster does not, because it is
+    //    repainted by the node view's own reveal open/close (`toggleShow_` /
+    //    `closeReveal`), and no production route writes this record without going
+    //    through those — which is why its other end is pinned by the real-engine test
+    //    instead, on the gesture, rather than here.
+    const tr = view.state.tr
+    modes.setBlockModeAt(view.state, tr, 0, { interaction: 'editing' })
+    view.dispatch(tr)
+    mainState.editorOptions?.onModeChange?.(modes.currentBlockMode(view.state))
+    expect(document.querySelector<HTMLElement>('#status-mode')!.textContent)
+      .toBe('Unlocked')
+    expect(menuLabels()).toContain('Lock')
+    expect(menuLabels()).not.toContain('Done')
   })
 
   function sheetInput(value: string, selection?: [number, number]): HTMLInputElement {
