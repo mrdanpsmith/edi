@@ -975,7 +975,10 @@ export function blockPosForElement(view: EditorView, target: EventTarget | null)
   // false for every block's own pixels — and the gate that reads it only ever
   // pressed the margin. So this guard is what makes "a press naming no block"
   // true of the dimmed region as well, and it is one line here rather than a
-  // `pointer-events` exception at each of the two callers.
+  // `pointer-events` exception at each of the two callers. It is also what makes
+  // the answer to the dimmed-region question *be* nothing: `blockModeGesture` acts
+  // on the block a press names and on nothing else, so `-1` here ends the question
+  // for both of its callers rather than sending either of them looking.
   if (target === view.dom) return -1
   let inside: number
   try {
@@ -1072,16 +1075,24 @@ function chromeOwnsClick(event: MouseEvent): boolean {
  * left to be backwards *from*, and Shift is not read here at all — it is an
  * ignored modifier, so Alt+Shift+click is exactly Alt+click.
  *
- * Two cases fall through to `finishWhateverIsOpen`, and both are deliberate:
+ * **The gesture acts on the block it names, and on nothing else.** A press that
+ * names no block does nothing, and neither does one naming a block that has no
+ * modes to toggle (`source_block`, which *is* its source form and so has one state).
  *
- * - **a click that names no block.** That is the gesture turning a mode off
- *   without having to land back on the block that turned it on, which is why the
- *   listener sits on the scroller rather than on `view.dom` — a lone board
- *   leaves the space under itself on the scroller, and a click aimed at the page
- *   there has to be answered by the editor and not by Chrome selecting the
- *   document name in the status bar.
- * - **`source_block`**, which *is* its source form and so has one state and
- *   nothing to toggle to.
+ * That used to be a fallback that finished whatever was open, and it looked like the
+ * cheap way out of a working state: a click anywhere on the page, without having to find
+ * the block that opened it. It was also **one press that ended the state of the block a
+ * reader was in and that a reader could reasonably expect to begin another's** — and the
+ * two together is how a sheet got closed by a press aimed at whatever was behind it.
+ * Presses that name no block are not rare: the dimmed blocks are `pointer-events: none`,
+ * so a press in the dimmed region hit-tests past them to whatever is behind, which is
+ * either the editor's own box (refused by `blockPosForElement`, §"which block is that?")
+ * or a block on the far side — and a press below a lone board lands on the scroller,
+ * which is the same case. **Both do nothing now.** Every way out that was designed is
+ * still there: **Escape** (§5.3's ladder), the block's own **Done** / **Lock** button,
+ * Alt+click *on the block*, and leaving the tab. Moving from one block to another costs
+ * two presses — the first ends the state of the one you were in, the second opens the
+ * other — which is what a deliberate move looks like.
  *
  * The click is never swallowed — a word to select, a caret to place and a cell to
  * mark all still happen, which is the whole reason the mode gestures moved off
@@ -1091,23 +1102,8 @@ export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
   if (!event.altKey || event.button !== 0) return false
   if (chromeOwnsClick(event)) return false
   const pos = blockPosForElement(view, event.target)
-  if (pos >= 0 && toggleBlockModeFromGesture(view, pos)) return true
-  return finishWhateverIsOpen(view)
-}
-
-/**
- * The gesture's fallback for a click that named no block: finish whatever is open.
- *
- * Not `exitBlockMode`, which is the **Escape** rung and would leave a diagram's
- * editing layer or a table's sheet exactly where they were. That is the point of
- * keeping the two apart (§5.3): Escape is a cancel with one meaning, while a
- * click on the page *under* a block is a request to be done with whatever the
- * pointer is near — and the two are different questions, so they are allowed to
- * have different answers.
- */
-function finishWhateverIsOpen(view: EditorView): boolean {
-  const mode = currentBlockMode(view.state)
-  return mode === null ? false : leaveBlockMode(view, mode.pos)
+  if (pos < 0) return false
+  return toggleBlockModeFromGesture(view, pos)
 }
 
 

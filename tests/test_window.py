@@ -3078,16 +3078,24 @@ def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
     assert back["labels"][-1] == "Source", back
 
 
-def test_alt_click_below_a_lone_board_ends_its_edit_session(window):
-    """A double click under a board that is the whole document ends its edit
-    session — the gesture that turns the mode off should not have to land back
-    on the diagram.
+def test_alt_click_below_a_lone_board_does_nothing(window):
+    """A press that names no block does nothing — including below a lone board.
 
-    Real browser only, and the geometry is the whole point: the editor's box is
-    only as tall as its content, so a document of one board leaves the space
-    below it on the *scroller*. A listener on the editor's own box never sees
-    that click (and the browser answers it by selecting the document name in the
-    status bar instead), which is what this test pins down.
+    This used to be the *way out* of a working state: the editor's box is only as tall as
+    its content, so a document of one board leaves the space below it on the *scroller*,
+    and the gesture answered a click there by finishing whatever was open. That was one
+    press that ended a block's state with no block named, and it was the reason the
+    listener's host was the scroller rather than the editor's own box.
+
+    **Now the press does nothing, and the host is no longer what decides anything**: a
+    listener on `view.dom` would answer this click identically, because the editor's box
+    is refused as a target by `blockPosForElement` and the gesture acts on the block it
+    names and nothing else. The listener stays on the scroller for the other reason it
+    was put there — a click in a dialog on top of the editor must not reach through it.
+
+    What replaces the old route is every way out that was designed, and the two this test
+    drives are the ones that need no aiming: **the block's own gesture** and **the board's
+    own Done button**.
     """
     _set_scheme(window, False)
     _render(window, KANBAN_LONE)
@@ -3097,18 +3105,30 @@ def test_alt_click_below_a_lone_board_ends_its_edit_session(window):
     spot = _altclick_below_document(window)
     assert not spot["inEditor"], f"the Alt+click landed inside the editor: {spot}"
 
-    after = _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)
-    assert not after["marked"], after
-    # The drawn places to add are edit mode's, so they go with it: the source is
-    # the document, and it has no slots in it.
-    left = _dump(window, KANBAN_SLOTS)
-    assert left["cards"] == [] and left["column"] is None, "a drawn slot outlived the edit session"
+    # **Nothing moved**, and the edit session is exactly where it was — including the
+    # drawn places to add, which are edit mode's and go only when it ends.
+    time.sleep(0.3)
+    still = _dump(window, EDIT_STATE)
+    assert still["editing"], f"a press naming no block ended the edit session: {still}"
+    assert still["marked"], still
+    slots = _dump(window, KANBAN_SLOTS)
+    assert slots["cards"] and slots["column"] is not None, (
+        f"and it took the edit layer's own chrome with it: {slots}")
 
-    # ...and the gesture is not the editor's own: a second one is harmless, and
-    # the board can be reopened and ended again.
+    # **The board's own gesture** ends it, on the board.
+    _click_done(window)
+    assert _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)["marked"] == 0
+
+    # **And it is repeatable**: reopened, a press naming no block again does nothing,
+    # and the gesture again ends it. The first half is what changed; the second is what
+    # a reader is left with.
     _enter_edit_mode(window)
     assert _dump(window, EDIT_STATE)["editing"], "the board did not reopen"
     _altclick_below_document(window)
+    time.sleep(0.3)
+    assert _dump(window, EDIT_STATE)["editing"], (
+        "a press naming no block ended it the second time as well")
+    _click_done(window)
     assert _wait(window, EDIT_STATE, lambda d: not d["editing"], timeout=10)["marked"] == 0
 
 
@@ -5385,9 +5405,9 @@ def test_a_second_block_cannot_be_opened_while_one_is_open(window):
 
     Asserted as the behaviour that actually is, rather than as a gesture that would
     need a hole in the dimming to perform: the second block is **there**, it is
-    **inert**, and Alt+clicking away from the open one both closes it and puts the
-    document back within reach. A version of this that drove a second unlock directly
-    would pass for an implementation with no exclusivity at all.
+    **inert**, and the open block's own **Lock** puts the document back within reach.
+    A version of this that drove a second unlock directly would pass for an
+    implementation with no exclusivity at all.
 
     What is genuinely given up is comparing two secrets side by side. That was a real
     use, and it is refused on purpose, for a reason that has nothing to do with
@@ -5422,15 +5442,16 @@ def test_a_second_block_cannot_be_opened_while_one_is_open(window):
         "a dimmed block must not be reachable, so a second block cannot be opened "
         f"from here: {out}")
 
-    # ...and the way out is the gesture that was always there.
+    # ...and the way out is the block's own **Lock**, which is the one control an
+    # open block keeps on its own cluster. **Not** a press on the page: that used
+    # to end the session from anywhere, which is one press with no block named,
+    # and it is withdrawn for the reason the gesture's own docstring gives.
     _dump(window, """(() => {
-      const scroller = document.querySelector('#editor-container');
-      const s = scroller.getBoundingClientRect();
-      const x = Math.round(s.left + s.width / 2);
-      const y = Math.round(s.bottom - 8);
-      (document.elementFromPoint(x, y) || scroller).dispatchEvent(new MouseEvent('click',
-        { bubbles: true, cancelable: true, button: 0, altKey: true, clientX: x, clientY: y }));
-      return { d: 1 };
+      const lock = document.querySelector(
+        '.encrypted-block .block-control-interaction');
+      if (!lock) return { missing: true };
+      lock.click();
+      return { label: lock.textContent.trim() };
     })()""")
     left = _wait(window, r"""(() => ({
       open: document.querySelectorAll('.encrypted-block-reveal').length,
@@ -6353,24 +6374,30 @@ def test_a_press_over_a_dimmed_block_names_no_block_at_all(window):
     assert after["sheet"] and after["dimmed"] == 3, (
         f"the press disturbed a live working state: {after}")
 
-    # Then the gesture that read it as a block. §3.2's rung: a press naming no
-    # block *finishes* whatever is open — which is the way out, and is the honest
-    # answer here. It must not name the paragraph above the sheet on the way.
+    # Then the gesture that read it as a block. **It must do nothing** — and the way it
+    # does nothing is the claim: not "it named no block and fell through to finishing
+    # whatever was open" (which is what this used to assert, and which is a working state
+    # closed by a press that was about none of it), but "it named no block, so it was
+    # about none of it". The paragraph above the sheet must not be opened on the way
+    # either — that is the old bug and it is still the first thing to check.
     alt = _press_in_the_dimmed_region(1, 'click', alt=True)
     assert alt.get("target") == "ProseMirror", alt
-    left = _wait(window, """(() => ({
+    time.sleep(0.5)
+    left = _dump(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),
       source: document.querySelectorAll(
         '#editor-container > .ProseMirror > .block-source-mode').length,
       dimmed: document.querySelectorAll(
         '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
-    }))()""", lambda d: d.get("sheet") is False, timeout=10)
-    assert left["plain"], left
+    }))()""")
+    assert left["sheet"] and not left["plain"], (
+        f"an Alt+click in the dimmed region closed the sheet: {left}")
     assert left["source"] == 0, (
         "Alt+click in the dimmed region opened an unrelated block in Source — the "
         f"sheet's record went to the first block in the document: {left}")
-    assert left["dimmed"] == 0, left
+    assert left["dimmed"] == 3, (
+        f"and the document is still dimmed around the one thing being worked in: {left}")
 
     # The other reader of the same resolver, and the reason this lives in the one
     # authority rather than in either caller: the context menu asked it too, and
@@ -6393,21 +6420,23 @@ def test_a_press_over_a_dimmed_block_names_no_block_at_all(window):
         f"menu can put a dimmed block into Source or encrypt it: {offered}")
 
 
-def test_alt_click_outside_still_leaves_a_working_state(window):
-    """Inertness must not swallow the gesture that gets you out of it.
+def test_alt_click_outside_a_working_state_does_nothing(window):
+    """A press naming no block does nothing — and it must not take the page's state.
 
-    Worth stating because it is not obvious. The Alt+click listener sits on the
-    editor's **scroll container**, and with the dimmed blocks at `pointer-events:
-    none` a click in the dimmed region now hit-tests *past* them and lands on that
-    container — which is exactly where a click that names no block already lands, and
-    exactly what the gesture is for. So the gesture keeps working, and so does the
-    rule that a press on the container's own margin finishes the session.
+    Worth stating because the opposite used to be a feature. The Alt+click listener sits
+    on the editor's **scroll container**, and the dimmed blocks are `pointer-events: none`,
+    so a press in the dimmed region hit-tests *past* them and lands on that container — so a
+    press under a live sheet was answered by finishing the sheet. One press, no block
+    named, a working state closed by a click that was not about one.
 
-    The inert rule is worthless if it quietly swallows the way out, which is the one
-    way it could: a press that reached the *dimmed block* instead of the container
-    would do nothing at all and the reader would be stuck with a sheet open.
+    **Nothing happens now**, and this is the gate for it: the sheet is still a sheet, the
+    document is still dimmed, and the reader's way out is the four that were designed —
+    Escape, the block's own **Done**, Alt+click on the block, or leaving the tab. The two
+    this test drives are the ones that need no aiming, and it drives them *after* the
+    press, so "nothing happened" is not just "it closed again".
     """
     _open_a_working_state(window)
+
     # The scroller's own margin, below the sheet: the shape a lone board leaves.
     clicked = _dump(window, """(() => {
       const scroller = document.querySelector('#editor-container');
@@ -6425,6 +6454,28 @@ def test_alt_click_outside_still_leaves_a_working_state(window):
     assert not clicked["inSheet"], (
         "the press landed inside the sheet, so this is not the gesture it claims "
         f"to test: {clicked}")
+
+    # Give it a beat rather than waiting for a condition it must never reach: the claim
+    # is that nothing arrives, and a `_wait` for the sheet closing would pass by timing
+    # out rather than by the app doing the right thing.
+    time.sleep(0.5)
+    after = _dump(window, """(() => ({
+      plain: !!document.querySelector('#editor-container .ss-plain'),
+      sheet: !!document.querySelector('#editor-container .spreadsheet'),
+      dimmed: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+      lit: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .edi-block-mode-lit').length,
+    }))()""")
+    assert after["sheet"] and not after["plain"], (
+        f"a press naming no block closed the sheet: {after}")
+    assert after["dimmed"] > 0 and after["lit"] == 1, (
+        f"and the page's one working state is still the one thing lit: {after}")
+
+    # **The block's own gesture** still gets the reader out, with no aiming at all: a
+    # table's edit step is its form, so Alt+clicking a cell of the sheet is the toggle
+    # back to plain text (§5.2) — the same press `_alt_click_a_cell` is everywhere else.
+    _alt_click_a_cell(window, "#editor-container .spreadsheet .ss-grid td")
     left = _wait(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),

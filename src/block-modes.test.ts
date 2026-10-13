@@ -671,8 +671,9 @@ describe('the Alt+click gesture (§5.2)', () => {
 
   it('has no modes to toggle on a block that is permanently its own source', () => {
     // `source_block` has no markdown syntax — it is built programmatically — and
-    // it *is* its source form, so `toggleBlockModeFromGesture` declines it and the
-    // gesture keeps its older meaning for this one type: finish whatever is open.
+    // it *is* its source form, so `toggleBlockModeFromGesture` declines it, and with
+    // the fallback gone the gesture declines it too: a press on a block with no modes
+    // does nothing to any other block either.
     const view = createEditor('# Hello')
     const only = view.state.schema.nodes.source_block.create({ markdown: 'plain text\n' })
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, only)
@@ -814,10 +815,13 @@ it('still hands an Alt+click on a real control to that control', () => {
     view.destroy()
   })
 
-  it('still finishes whatever is open for a click that names no block at all', () => {
-    // The gesture that turns a mode off need not land back on the block that
-    // turned it on, and the page under a lone board is not even inside the
-    // editor's own box — which is why the listener is on the scroller.
+  it('does nothing at all for a press that names no block', () => {
+    // The gesture's old fallback finished whatever was open from anywhere on the page.
+    // **One press that ended the state of the block a reader was in** — and a reader
+    // pressing beside a block to *begin* the next one had no way to say which they were
+    // doing. The page under a lone board is not even inside the editor's own box, which is
+    // why this dispatches on the scroller: it is the shape a press over the dimmed region
+    // takes too, since the dimmed blocks are `pointer-events: none`.
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
     const [board] = allBlockPositions(view)
     enterDiagramEditMode(view, board)
@@ -825,10 +829,64 @@ it('still hands an Alt+click on a real control to that control', () => {
     const outside = view.dom.parentElement!
     expect(outside.contains(view.dom)).toBe(true)
     expect(view.dom.contains(outside)).toBe(false)
-    outside.dispatchEvent(
+    const handled = outside.dispatchEvent(
       new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
     )
+    expect(handled).toBe(true) // not cancelled: the click is the browser's
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+
+    // **The ways out that were designed are all still there**, and each says which it is:
+    // Escape is the *source* rung (§5.3) — a raw-markdown buffer whose only copy of what
+    // was typed lives in a CodeMirror instance — so it declines an editing layer, and
+    // saying so is the point.
+    expect(exitBlockMode(view)).toBe(false)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    enterSourceMode(view, board)
+    expect(exitBlockMode(view)).toBe(true)
     expect(modeFor(view.state, board)).toBeNull()
+
+    // And the block's own gesture, on the block itself, is how an editing layer ends.
+    enterDiagramEditMode(view, board)
+    altClick(view.dom.querySelector<HTMLElement>('.mermaid')!)
+    expect(modeFor(view.state, board)).toBeNull()
+    view.destroy()
+  })
+
+  it('does nothing for a press on a block with no modes of its own', () => {
+    // `source_block` *is* its source form, so it has one state and nothing to toggle
+    // to — and a press on it used to end whatever other block was open, which is the
+    // same one-press handover in a different costume. Built programmatically, because
+    // it has no markdown syntax.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    const source = view.state.schema.nodes.source_block.create({ markdown: 'plain text\n' })
+    view.dispatch(view.state.tr.insert(view.state.doc.content.size, source))
+    enterDiagramEditMode(view, board)
+
+    const box = view.nodeDOM(view.state.doc.content.size - source.nodeSize)
+    expect(box?.nodeName).not.toBe('UNDEFINED')
+    altClick(box as HTMLElement)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    view.destroy()
+  })
+
+  it('needs two presses to move from one block to another', () => {
+    // **What the withdrawal buys.** The first press ends the state of the block the
+    // reader is in; the second opens the other one. Neither press does both, which is the
+    // whole difference between a handover and a decision.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nPlain prose.')
+    const [board, prose] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+
+    // First press, on the *other* block: it opens, and the board stays as it was.
+    altClick(view.dom.querySelectorAll<HTMLElement>('p')[0]!)
+    expect(modeFor(view.state, prose)?.representation).toBe('source')
+    expect(modeFor(view.state, board)).toBeNull()
+
+    // Second press, back on the board: it opens in its edit layer.
+    altClick(view.dom.querySelector<HTMLElement>('.mermaid')!)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+    expect(modeFor(view.state, prose)).toBeNull()
     view.destroy()
   })
 })
@@ -1085,7 +1143,9 @@ describe('a working state is what the document recedes for', () => {
     // editor's own box. `posAtDOM(view.dom, 0)` answers `posAtStart`, i.e. **0**,
     // which the walk read as the document's *first* block: so the gesture opened
     // that block in Source instead of naming none, which took the one record off a
-    // live working state. The guard is what makes the fallback reachable again.
+    // live working state. **The guard and the gesture's new rule are one answer between
+    // them**: `-1` here means the press does nothing, rather than falling through to
+    // whatever happened to be open.
     const view = createEditor('Before.\n\n| A |\n| --- |\n| 1 |\n\nAfter.')
     const positions = allBlockPositions(view)
     toggleBlockModeFromGesture(view, positions[1])
@@ -1098,13 +1158,14 @@ describe('a working state is what the document recedes for', () => {
     // box, not "the first thing the walk finds".
     expect(blockPosForElement(view, view.nodeDOM(positions[2]!))).toBe(positions[2])
 
-    // And through the gesture itself: aimed at the editor's box it names no block,
-    // so it falls through to finishing whatever is open — the §3.2 rung — rather
-    // than taking the record to a block the pointer was nowhere near.
+    // And through the gesture itself: aimed at the editor's box it names no block, so
+    // **the live sheet is exactly where it was**. That is the whole of the case, and it
+    // is why the guard exists — the alternative was a press on a block that is supposed
+    // to receive nothing at all ending a working state.
     view.dom.dispatchEvent(
       new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0 }),
     )
-    expect(currentBlockMode(view.state)).toBeNull()
+    expect(blockFormMode(view.state, positions[1])).toBe('sheet')
     view.destroy()
   })
 

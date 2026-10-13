@@ -1090,11 +1090,13 @@ describe('mermaid visual mode rendering', () => {
     view.destroy()
   })
 
-  it('leaves edit mode on an Alt+click in the editor space below the document', async () => {
+  it('does nothing on an Alt+click in the editor space below the document', async () => {
     mockFlowchart()
     // A document of one diagram only, so the editor's own box ends just under
-    // it and everything below is the *scroller's* white space -- the area the
-    // gesture lands on when it is aimed at the page under the board.
+    // it and everything below is the *scroller's* white space -- the area a
+    // press names no block in, and the shape a press in the dimmed region takes
+    // as well (the dimmed blocks are `pointer-events: none`, so the hit test
+    // walks past them).
     const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
 
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -1112,9 +1114,17 @@ describe('mermaid visual mode rendering', () => {
     expect(editModeOf(view)).toBe(true)
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
 
-    // The gesture that turns the mode off should not have to land back on the
-    // diagram, and the page below it is not even part of the editor's own box.
+    // **A press naming no block does nothing.** It used to finish the edit
+    // session from anywhere on the page, which was one press ending a block's
+    // state with no block named -- and the reason a reader pressing the block
+    // next to it could not also open that one.
     altClick(space)
+    expect(editModeOf(view)).toBe(true)
+    expect(await rendered(view, '.mermaid-editables')).toBe(true)
+
+    // **Which is not the same as having no way out**: the block's own gesture,
+    // on the block. Two presses to move between blocks, and one to finish.
+    altClick(view.dom.querySelector<HTMLElement>('.mermaid')!)
     expect(editModeOf(view)).toBe(false)
     expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
 
