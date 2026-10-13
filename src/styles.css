@@ -1032,27 +1032,61 @@ body {
 /* ── A Visual table is text in a range ────────────────────────────────────────
  * §2.2's table row: a table in its Visual rendering is mostly words laid out in
  * rows, and a reader dragging across one expects to stop halfway down it. So it wears
- * **the selection highlight, on its cells**, from the same `--selection` token as prose —
- * not the solid accent outline, which says *this block is an object*, and which is what
- * a diagram, a rule, an image and a CodeMirror code block still get.
+ * **the selection highlight**, from the same `--selection` token as prose — not the
+ * solid accent outline, which says *this block is an object*, and which is what a
+ * diagram, a rule, an image and a CodeMirror code block still get.
  *
- * **On the cells rather than the block box**, because a header row and a cell's padding
- * are chrome and not text: the fill goes where the words are, which is exactly where the
- * browser puts it for prose.
+ * **And the selection is the browser's own**, because the model cannot hold one here: a
+ * `table` node is `atom: true` with no content, so "three characters of that cell" is
+ * not a pair of positions that exist (`src/tableTextSelection.ts`). That is what the
+ * first rule is for — it makes the cells selectable text rather than leaving it to
+ * whatever `user-select: auto` resolves to inside a `contenteditable=false` subtree.
  *
- * **The browser cannot do this.** The node view has no `contentDOM`, so Chromium will
- * not paint a selection inside it — measured with the native highlight deliberately
- * suppressed to be sure: prose beside the table painted `#3367d1` and the cell stayed
- * `#ffffff`, while the DOM selection did span the table. Un-marking the table and
- * letting the browser do it would leave a *hole* in the selection, which is worse than
- * the outline it replaces. `TablePlainView` paints it instead, from the document's own
- * selection — see `onSelectionChange`.
+ * **The cluster keeps its own `user-select: none`** because the second selector does not
+ * match it — `.block-controls` is not a `th`/`td` — which is the whole of what keeps the
+ * table's own buttons out of a copy of its text.
  *
- * The sheet is deliberately not painted: it holds the page's one working state, the
- * record already marks it dashed, and its cells carry the grid's own selection
- * (`.ss-range` / `.ss-selected`), which is a *cell* selection rather than a document
- * range passing through.
+ * **The highlight is drawn here, because Chromium draws none of it.** Measured in the real
+ * engine with the app's own fill taken off first, so the two cannot be confused: neither
+ * `::selection` nor a `CSS.highlights` `::highlight()` on the same range leaves anything
+ * but `#ffffff` inside a cell, in every direction. §3.1's wall, and it is not a
+ * bracketing-only wall. So it is drawn per cell, at the words' own geometry:
+ *
+ * | the range | what paints it |
+ * |---|---|
+ * | an end of it inside the cells — a fragment, a few cells, two tables | **the boxes below**, on the words |
+ * | merely bracketing the table (`Ctrl+A`, prose → prose) | **the cell fill**, whole, from `TablePlainView` |
+ *
+ * The cell fill is the bracketing answer and stays it: there the cells are the only thing
+ * that can paint at all, and a hole where the table is would read as "the selection
+ * stopped here". On the **cells**, because a header row and a cell's padding are chrome
+ * and not text.
+ *
+ * **`isolation: isolate` on a cell is load-bearing, not tidiness.** A box has to paint
+ * *over the cell's own background and under its text*, and that ordering is exactly what a
+ * stacking context buys: the cell's background, then its negative-`z-index` children,
+ * then its content. A single layer behind the whole table cannot do it — a header row's
+ * background is opaque and hides everything under it, which is what the first version of
+ * this did, and why its boxes over the header row were invisible while its boxes over the
+ * body were not.
  */
+.ss-plain,
+.ss-plain :is(th, td) {
+  user-select: text;
+}
+
+.ss-plain :is(th, td) {
+  position: relative;
+  isolation: isolate;
+}
+
+.ss-plain-selection-rect {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--selection);
+}
+
 .ss-plain-table :is(th, td).ss-cell-in-selection {
   background: var(--selection);
 }

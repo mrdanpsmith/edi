@@ -38,6 +38,7 @@ import { superscript } from './remark/sup'
 import { taskClickPlugin, toggleTaskItems, blockTypeSelectPlugin } from './toolbar'
 import { markExitPlugin, stopMarking } from './markExit'
 import { selectionExpandKeymap, selectionExpandPlugin, selectionHighlightPlugin, clipboardTextPlugin, isSelectionAtom } from './selectionExpand'
+import { forgetPlainTableSelection } from './tableTextSelection'
 import { emojiPlugin } from './emojiPlugin'
 import { insertPastedText, containsRawUrl } from './paste'
 import { isMisleadingLink } from './linkSecurity'
@@ -377,6 +378,10 @@ export function createBlockEditor(
     const next = cur.state.apply(transaction)
     cur.updateState(next)
     if (transaction.docChanged) {
+      // A Visual table's cells are selected by the browser, because the document cannot
+      // hold that at all, so the app remembers the selection itself
+      // (`tableTextSelection.ts`). Text moving under it is the one thing that ends it.
+      forgetPlainTableSelection()
       options.onChange?.()
     }
     const held = currentBlockMode(next)

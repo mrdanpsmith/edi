@@ -14,6 +14,10 @@ import { emojiTokenAt } from '../emojiToken'
 import { undoNoScroll, redoNoScroll, undoDepth, redoDepth } from 'prosemirror-history'
 import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
 import { copyText, readText } from '../clipboard'
+import {
+  paintPlainTableSelection,
+  selectionEndsIn,
+} from '../tableTextSelection'
 import { blockNodeView, showsSource } from '../blockview'
 import {
   BLOCK_MODE_HANDLERS,
@@ -3012,25 +3016,22 @@ class TablePlainView implements NodeView {
   /**
    * Paint the cells this selection covers.
    *
-   * **All of them, or none — and that is measured, not assumed.** §2.2 promises that a
-   * reader can "stop halfway down a table and select its first rows", and neither half
-   * of the app can deliver it:
+   * **Two painters, and which one is in charge is a measurement** — see
+   * `src/tableTextSelection.ts`, whose header table is the whole of it. Briefly: the
+   * browser paints a selection it can see the ends of (fragment-accurately, in the app's
+   * own `--selection`), paints *nothing* for a range that merely brackets the table, and
+   * paints only the half of a range that crosses into it from prose. So:
    *
-   * - **The model cannot hold it.** A table node has no content at all — the whole grid
-   *   lives in `attrs.value` — so a `TextSelection` covers the entire block or none of
-   *   it, and "rows one and two" is not a pair of positions that exist.
-   * - **The browser will not extend into it.** The range this painter would have to
-   *   read does not exist either: a drag starting in the prose above the table and
-   *   ending inside its second row leaves `getSelection().toString()` holding the prose
-   *   and nothing from the table, because everything inside is
-   *   `contenteditable=false`. §3.1 is that same wall, and it is why the cells are
-   *   painted at all rather than left to the engine.
+   * - **the browser owns it** when both ends of the range are in *this* table, and this
+   *   painter stands down — a cell fill would throw away the only thing that makes a
+   *   table read as text, which is that the highlight follows the words;
+   * - **this painter owns it** otherwise, which is the §3.1 wall: a bracketing range
+   *   (`Ctrl+A`, prose → prose) has nothing else to paint with, and leaving a hole where
+   *   the table is is worse than the outline it replaced.
    *
-   * So the table is one highlight, in the selection's own colour, and what this buys is
-   * the thing §6's pixel gate is about: a range reading across prose → table → prose is
-   * **one continuous highlight** instead of a hole with a frame round it. It is a real
-   * improvement on the outline and it is not the same thing as per-row selection; §2.2's
-   * finer claim is unmet, and nothing here pretends otherwise.
+   * Both signals are read, because they answer different questions and the reader is
+   * looking at the union: the model says whether the block is inside the app's selection,
+   * the DOM says whether the range the reader is dragging runs through this table.
    */
   private paintSelection(): void {
     const pos = this.getPos()
@@ -3051,9 +3052,18 @@ class TablePlainView implements NodeView {
       : null
     const inDom = nativeRange !== null && nativeRange.intersectsNode(this.dom)
     const inside = inModel || inDom
+    // **The one case the cells must not be filled in**: a selection with an end inside
+    // this table, which the overlay has drawn to the words instead. Filling them as well
+    // is what a reader selecting three characters of one cell used to get — the whole
+    // grid lit up for a fragment, which is the "painted block" that made a table worse to
+    // select in than it had any right to be.
     this.cells.forEach((row) => row.forEach((cell) => {
-      cell.classList.toggle(CELL_SELECTED_CLASS, inside)
+      cell.classList.toggle(CELL_SELECTED_CLASS, inside && !selectionEndsIn(this.dom))
     }))
+    // A rebuild means fresh cells, and the overlay is drawn onto them — so a repaint is
+    // also the moment the fragment highlight has to be redrawn, or it goes with the cells
+    // it was drawn onto.
+    paintPlainTableSelection()
   }
 
   private buildTable(): HTMLTableElement {
@@ -3183,6 +3193,8 @@ class TablePlainView implements NodeView {
     this.unsubscribeSearchChanges = null
     this.unsubscribeSelection?.()
     this.unsubscribeSelection = null
+    // The highlight boxes live inside this view's cells, so they go with the view.
+    for (const box of this.dom.querySelectorAll('.ss-plain-selection-rect')) box.remove()
     this.body = null
   }
 }

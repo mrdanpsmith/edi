@@ -37,6 +37,7 @@ import type { EditorView as ProseEditorView } from 'prosemirror-view'
 import { EditorSelection } from '@codemirror/state'
 import { undo as cmUndo, redo as cmRedo } from '@codemirror/commands'
 import { copyText, readText, writeClipboard } from './clipboard'
+import { plainTableSelectionText } from './tableTextSelection'
 import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
 import {
@@ -886,9 +887,32 @@ function editRedoNoScroll(): void {
  * nothing here knowing anything about sheets: the sheet collapsed the document
  * selection on entry and has not let it grow back.
  */
+/**
+ * Cut, copy and paste: the three keys the app owns itself.
+ *
+ * **`editCopy` has one route that does not go through the editor, and it is the one a
+ * Visual table's cells answer.** A `table` node is an atom with no content, so the
+ * document selection cannot hold "three characters of that cell" — but the browser's
+ * range can, and it is what the reader is looking at when they press the key.
+ * `plainTableSelectionText()` asks whether that is the selection in question and returns
+ * the text a normal editor would have put on the clipboard; see
+ * `src/tableTextSelection.ts` for the measurement behind it, which is also why the text
+ * comes from the range rather than from `Selection.toString()`.
+ *
+ * It is deliberately **text, not the table's markdown**: what is selected is what was
+ * drawn, and a fragment of a cell is not a table. `Ctrl+Shift+C` is the key that copies
+ * markdown, and it still copies the editor's own selection.
+ */
 function editCut(): void {
   const view = focusedEditor()
-  if (!view || view.state.selection.empty) return
+  if (!view) return
+  // **A cut of selected table text does nothing, rather than cutting something else.**
+  // The document selection is not what the reader has selected — it cannot be — so the
+  // deletion below would take out whatever was selected *before* the drag, somewhere
+  // else in the document. Refusing is the only answer that cannot delete a selection
+  // nobody made.
+  if (plainTableSelectionText() !== null) return
+  if (view.state.selection.empty) return
   view.focus()
   const { dom, text } = view.serializeForClipboard(view.state.selection.content())
   void writeClipboard({ html: dom.innerHTML, text })
@@ -897,7 +921,13 @@ function editCut(): void {
 
 function editCopy(): void {
   const view = focusedEditor()
-  if (!view || view.state.selection.empty) return
+  if (!view) return
+  const tableText = plainTableSelectionText()
+  if (tableText !== null) {
+    void copyText(tableText)
+    return
+  }
+  if (view.state.selection.empty) return
   view.focus()
   const { dom, text } = view.serializeForClipboard(view.state.selection.content())
   void writeClipboard({ html: dom.innerHTML, text })
@@ -992,7 +1022,17 @@ function editSelectAll(): void {
   })
 }
 
+/**
+ * Is there a selection to copy or cut?
+ *
+ * **Or one the editor cannot see.** A Visual table's cells are selected by the browser,
+ * because the document model cannot hold that at all (`src/tableTextSelection.ts`), so
+ * asking the editor alone leaves Edit → Copy greyed out at the exact moment the reader
+ * has something selected — and it would be *enabled* by the stale selection a drag like
+ * that leaves behind, which is worse.
+ */
 function hasEditorSelection(): boolean {
+  if (plainTableSelectionText() !== null) return true
   const selection = focusedEditor()?.state.selection
   return !!selection && !selection.empty
 }

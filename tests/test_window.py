@@ -6318,6 +6318,25 @@ word in the middle of it.
 Prose that comes after the table and also has a word worth reading.
 """
 
+# Two tables with **nothing between them**, which is the case a copy across tables has
+# to work in and the one that is easy to write a test for by accident: any prose between
+# two tables would put a block in the way, and the reader's complaint was precisely about
+# the copy when there is none.
+TWO_TABLES_DOC = """Prose that comes before the tables and is long enough to have a
+word in the middle of it.
+
+| Alpha | Bravo |
+| --- | --- |
+| one | two |
+| three | four |
+
+| Echo | Foxtrot |
+| --- | --- |
+| five | six |
+
+Prose that comes after the tables and also has a word worth reading.
+"""
+
 
 def test_a_range_across_a_table_is_one_continuous_highlight(window):
     """Prose → Visual table → prose reads as one selection, not a hole with a frame.
@@ -6445,6 +6464,198 @@ def test_a_table_in_a_range_is_painted_whole(window):
         f"a table in a range is painted whole, or not at all: {painted}")
     assert painted["marked"] == 0, (
         f"and it carries no block mark of its own any more: {painted}")
+
+
+def test_text_inside_a_visual_table_is_selected_word_by_word_and_copied(window):
+    """Text inside a Visual table is selected by the browser, highlighted to the words,
+    and copied off its range — across two tables with nothing between them.
+
+    **This is the regression gate for "a table is worse to select in than it was".** The
+    app used to fill every cell of the table whenever a selection touched it, so three
+    characters of one cell lit the whole grid up; and the clipboard came from the editor,
+    which cannot hold a selection inside an atom at all, so a copy of a table fragment was
+    either nothing at all or the whole table's markdown.
+
+    Each half below is load-bearing, and each is a measurement rather than a preference:
+
+    - **The highlight is drawn to the words.** Chromium paints *nothing* inside a table —
+      measured with the app's own fill taken off first, so the two cannot be confused:
+      neither `::selection` nor a `CSS.highlights` `::highlight()` on the same range left
+      anything but `#ffffff` in a cell. So the overlay is ours, and the gate compares the
+      overlay's rectangle with the **range's own rectangle**: a fragment of three
+      characters is a box three characters wide, and the cell around it is not filled. A
+      gate that sampled the cell would pass for the grid-wide fill, which is the
+      regression itself.
+    - **The copy is off the range, not off `Selection.toString()`.** The browser's own
+      text stops at the end of the first table — the asymmetry §3.7 measured from the
+      other direction — so a selection out of one table and into the next would copy the
+      first one twice and never the second.
+    - **The chrome cannot leak into either.** The range walks over the block's own
+      controls on its way in, and `Edit` / `Source` are neither what the reader selected
+      nor what they copied.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(TWO_TABLES_DOC))
+    _wait(window, "(() => ({ t: document.querySelectorAll('#editor-container .ss-plain').length }))()",
+          lambda d: d.get("t") == 2, timeout=25)
+    from PySide6.QtGui import QGuiApplication
+    expected = _selection_rgb(window)
+
+    # A fragment of one cell, the way a drag out of it leaves the selection.
+    boxes = _dump(window, r"""(() => {
+      const table = document.querySelectorAll('#editor-container .ss-plain')[0];
+      const cell = [...table.querySelectorAll('td')].find((c) => c.textContent === 'three');
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      const node = walker.nextNode();
+      const range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, 3);
+      const sel = getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      const before = [...table.querySelectorAll('td')].find((c) => c.textContent === 'one');
+      const inset = (el) => {
+        const r = el.getBoundingClientRect();
+        return [Math.round(r.left + 2), Math.round(r.top + 2),
+                Math.round(r.right - 2), Math.round(r.bottom - 2)];
+      };
+      const text = range.getBoundingClientRect();
+      return {
+        fragment: [Math.round(text.left), Math.round(text.top),
+                   Math.round(text.right), Math.round(text.bottom)],
+        cell: inset(cell),
+        before: inset(before),
+        cluster: inset(document.querySelector('.ss-plain .block-controls')),
+        userSelect: getComputedStyle(cell).userSelect,
+        text: String(sel),
+      };
+    })()""")
+
+    drawn = _wait(window, r"""(() => {
+      const rects = [...document.querySelectorAll('.ss-plain-selection-rect')];
+      const r = rects[0] ? rects[0].getBoundingClientRect() : null;
+      return {
+        count: rects.length,
+        box: r ? [Math.round(r.left), Math.round(r.top),
+                  Math.round(r.right), Math.round(r.bottom)] : null,
+        over: r ? !!(document.querySelector('.ss-plain-table')
+                     ?.contains(document.elementFromPoint(
+                       Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2))))
+                : false,
+        fills: document.querySelectorAll('.ss-cell-in-selection').length,
+      };
+    })()""", lambda d: d.get("count", 0) >= 1, timeout=5)
+
+    assert boxes["text"] == "thr", boxes
+    assert boxes["userSelect"] == "text", (
+        f"the cells are not selectable text: {boxes['userSelect']}")
+    assert drawn["count"] == 1, (
+        f"three characters of one cell drew {drawn['count']} boxes: {drawn}")
+    assert drawn["box"] == boxes["fragment"], (
+        f"the highlight is not on the words the reader selected: {drawn['box']} != "
+        f"{boxes['fragment']}")
+    assert drawn["over"], (
+        f"the highlight is not drawn inside the grid: {drawn}")
+    fragment_pixel = _dominant_pixel(window, drawn["box"])
+    assert fragment_pixel == expected, (
+        "a fragment of a cell is not painted in the app's selection colour, so the "
+        "highlight is not the reader's selection: %r != %r" % (fragment_pixel, expected))
+    assert _dominant_pixel(window, boxes["cell"]) != expected, (
+        "the whole cell is lit up for a fragment, which is the whole of the complaint")
+    assert _dominant_pixel(window, boxes["before"]) != expected, (
+        "the cell before the fragment is lit up too, so this is not a fragment at all")
+    assert _dominant_pixel(window, boxes["cluster"]) != expected, (
+        "the block's own controls are painted as part of a selection that never reached "
+        "them")
+    assert drawn["fills"] == 0, (
+        f"the cells are still filled in under a fragment: {drawn}")
+
+    # And the copy is the fragment.
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "c")
+    assert _clipboard_text() == "thr", (
+        "copying a fragment of a cell must give that fragment: %r" % _clipboard_text())
+
+    # **Across two tables with no other block between them**, which is the case the
+    # browser's own text cannot express.
+    cross = _dump(window, r"""(() => {
+      const tables = document.querySelectorAll('#editor-container .ss-plain');
+      const firstTextIn = (root, needle) => {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const at = n.textContent.indexOf(needle);
+          if (at >= 0) return { node: n, at };
+        }
+        return null;
+      };
+      const a = firstTextIn(tables[0], 'one');
+      const b = firstTextIn(tables[1], 'five');
+      const range = document.createRange();
+      range.setStart(a.node, a.at);
+      range.setEnd(b.node, b.at + 4);
+      const sel = getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      return {
+        // **The measurement the copy route exists for**: the browser's own text stops at
+        // the end of the first table.
+        browserText: String(sel),
+        between: tables[0].nextElementSibling.className,
+      };
+    })()""")
+    assert cross["between"] == "ss-plain", (
+        f"this test needs two tables with nothing between them: {cross['between']!r}")
+    assert "five" not in cross["browserText"], (
+        "the browser's own selection text no longer stops at the end of the first table, "
+        "so the copy route and its gate both need re-measuring: %r" % cross["browserText"])
+
+    # The highlight reaches **both** tables — which is what the browser would not have done
+    # for the second — and neither is filled to its edges.
+    painted = _wait(window, """(() => ({
+      rects: document.querySelectorAll('.ss-plain-selection-rect').length,
+      tables: [...document.querySelectorAll('#editor-container .ss-plain')]
+        .map((t) => [...t.querySelectorAll('.ss-plain-selection-rect')].length),
+      fills: document.querySelectorAll('.ss-cell-in-selection').length,
+      // Every box has to be inside the cell it was drawn in, which is the only way the
+      // block's own controls stay out of it: a range walking in from prose crosses them.
+      stray: [...document.querySelectorAll('.ss-plain-selection-rect')]
+        .filter((b) => !b.parentElement || !b.parentElement.matches('th, td')).length,
+    }))()""", lambda d: d.get("rects", 0) >= 2, timeout=5)
+    assert painted["tables"] == [painted["tables"][0], painted["tables"][1]] and \
+        min(painted["tables"]) >= 1, (
+        f"a range between two tables must be highlighted in both of them: {painted}")
+    assert painted["fills"] == 0, (
+        f"a range between two tables still fills cells instead of highlighting the "
+        f"words: {painted}")
+    assert painted["stray"] == 0, (
+        f"highlight boxes were drawn outside a cell — over the block's controls: {painted}")
+
+    # **Every box is painted**, sampled one by one: the claim is that the words under them
+    # read as selected, and a union box would say nothing (it is mostly cell padding, and a
+    # header cell's own background legitimately wins over anything under it).
+    for box in _dump(window, """(() => ({
+      boxes: [...document.querySelectorAll('.ss-plain-selection-rect')]
+        .map((r) => { const b = r.getBoundingClientRect();
+          return [Math.round(b.left), Math.round(b.top),
+                  Math.round(b.right), Math.round(b.bottom)]; }),
+    }))()""")["boxes"]:
+        got = _dominant_pixel(window, box)
+        assert got == expected, (
+            f"a highlight box is not painted in the app's selection colour, so the reader "
+            f"cannot see what they selected: {got} != {expected} at {box} ({painted})")
+
+    QGuiApplication.clipboard().clear()
+    _ctrl_key(window, "c")
+    copied = _clipboard_text()
+    assert copied == "one\ttwo\nthree\tfour\nEcho\tFoxtrot\nfive", (
+        f"a selection across two tables must copy both: {copied!r}")
+    for chrome in ("Edit", "Source"):
+        assert chrome not in copied, (
+            f"the block's own controls leaked into the copy: {copied!r}")
+
+def _selection_rgb(window):
+    """`--selection` as the page computes it, read from the token and not written down."""
+    token = _dump(window, "(() => ({ v: getComputedStyle(document.documentElement)"
+                       ".getPropertyValue('--selection').trim() }))()")["v"]
+    return tuple(int(token.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def test_copying_across_a_table_is_unaffected(window):
