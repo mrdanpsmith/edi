@@ -4697,6 +4697,130 @@ def test_the_task_list_button_touches_only_the_block_under_the_caret(window):
         f"times rather than once: {after}")
 
 
+def test_a_block_marker_typed_in_front_of_a_paragraph_keeps_its_words(window):
+    """`## ` in front of a paragraph converts it to a heading and **keeps its text**.
+
+    The report was silent text loss: type a block marker at the start of a paragraph that
+    already has words in it, and the words were gone. A block-start rule rebuilds the block
+    from the text its regex matched, and a regex can only match what is **before the
+    cursor** — so a marker typed in front of an existing paragraph replaced those words with
+    nothing.
+
+    Measured before the fix, in this four-block document with the caret at the start of the
+    second paragraph: `## ` made a heading holding nothing, `- [ ] ` a task item holding
+    nothing, ```` ```py ```` an empty code block, `---` a horizontal rule — four ways to
+    delete a sentence by typing three characters.
+
+    **A fence and a rule are whole-line constructs**, so they take the other decision: they
+    *decline* when the line has more on it, which is what keeps ```` ```py ``` plus prose as
+    the prose it is. The list rules keep the text, because for them it becomes the item's
+    text.
+
+    **Why `execCommand('insertText')` and not a key event.** This ProseMirror takes text
+    from `keypress` (`editHandlers` has no `beforeinput` text path), so a genuine keystroke
+    is the only real route into these rules — and a key event sent to the Qt window does not
+    reach the page: measured, `qtbot.keyClick` left the document untouched, so a gate built
+    on it would pass for a document that never received the marker at all.
+    `document.execCommand('insertText')` goes through Chromium's own editing pipeline, which
+    is what raises the `keypress`/`input` sequence the rules listen for, and it is therefore
+    the real thing: the rules fired, the block converted, and the words stayed.
+    """
+    doc = "First para.\n\nSecond para.\n\n## Heading\n\nTail para.\n"
+
+    def _load():
+        _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+              % json.dumps(doc))
+        _wait(window, """(() => ({
+          n: document.querySelectorAll('#editor-container > .ProseMirror > *').length,
+        }))()""", lambda d: d.get("n") == 4, timeout=25)
+
+    def _caret_at_start_of_second_paragraph():
+        _dump(window, """(() => {
+          const ed = document.querySelector('#editor-container > .ProseMirror');
+          const p = ed.querySelectorAll('.block-visual-mode > p')[1];
+          const range = document.createRange();
+          range.setStart(p.firstChild, 0); range.collapse(true);
+          const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+          ed.focus();
+          return { caret: String(sel) };
+        })()""")
+        time.sleep(0.4)
+
+    def _type(marker):
+        for ch in marker:
+            typed = _dump(window, """(() => {
+              const ed = document.querySelector('#editor-container .ProseMirror');
+              const ok = document.execCommand('insertText', false, %s);
+              return { ok, native: String(getSelection()).slice(0, 24) };
+            })()""" % json.dumps(ch))
+            assert typed["ok"] is True, (
+                f"the page did not take {ch!r}, so this test is not typing: {typed}")
+        return _read()
+
+    def _read():
+        out = _dump(window, """(() => {
+          const ed = document.querySelector('#editor-container > .ProseMirror');
+          return { blocks: [...ed.children].map((el) => {
+            // A code block is a CodeMirror instance, not a `<pre>` — so the fence cases
+            // need its own name or they read as '?'.
+            const inner = el.querySelector(
+              'h1,h2,h3,h4,h5,h6,p,pre,ul,blockquote,hr,.cm-editor');
+            if (!inner) return '?';
+            const kind = inner.classList.contains('cm-editor')
+              ? 'code' : inner.tagName.toLowerCase();
+            return kind + ':' + inner.textContent.slice(0, 24);
+          }) };
+        })()""")
+        time.sleep(0.3)
+        return out["blocks"]
+
+    # **A heading**, the ordinary case: the words become the heading's words.
+    _load()
+    _caret_at_start_of_second_paragraph()
+    heading = _type("## ")
+    assert heading[1] == "h2:Second para.", (
+        f"the marker converted the paragraph and kept its words: {heading}")
+    assert len(heading) == 4, heading
+    assert heading[0] == "p:First para." and heading[2] == "h2:Heading", heading
+    assert heading[3] == "p:Tail para.", heading
+
+    # **A fence on a line with prose after it**: nothing happens, because an opening fence
+    # with prose on the same line is prose.
+    _load()
+    _caret_at_start_of_second_paragraph()
+    fence = _type("```py ")
+    assert fence[1] == "p:```py Second para.", (
+        f"a fence on a line with prose must not convert the prose: {fence}")
+    assert len(fence) == 4, fence
+
+    # **A rule on a line with prose after it**, same decision.
+    _load()
+    _caret_at_start_of_second_paragraph()
+    rule = _type("---")
+    assert rule[1] == "p:---Second para.", (
+        f"a rule is a whole line, so it must not swallow a paragraph: {rule}")
+    assert len(rule) == 4, rule
+
+    # **And the ordinary case still converts**: a marker on a line of its own, which is
+    # what a fence is for and the half of the fence rule that must not regress.
+    _dump(window, "(() => { window.ediSetContent(''); return { d: 1 }; })()")
+    _wait(window, "(() => ({ n: document.querySelectorAll('#editor-container > .ProseMirror > *').length }))()",
+          lambda d: d.get("n", 0) >= 1, timeout=25)
+    _dump(window, """(() => {
+      const ed = document.querySelector('#editor-container > .ProseMirror');
+      const p = ed.querySelector('p');
+      const range = document.createRange();
+      range.setStart(p.firstChild || p, 0); range.collapse(true);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      ed.focus();
+      return { caret: String(sel) };
+    })()""")
+    time.sleep(0.3)
+    alone = _type("```py ")
+    assert alone[0].startswith("code:"), (
+        f"a fence on a line of its own is still a fence: {alone}")
+
+
 def test_an_open_sheet_is_not_marked_with_a_mode_bar(window):
     """A sheet wears the shared outline, never a bar of its own, and the chip says Edit.
 
@@ -7832,4 +7956,3 @@ def test_dbg_ctrl_c_claim(window):
     time.sleep(0.6)
     print("  clipboard:", len(QGuiApplication.clipboard().text()), "chars")
     assert True
-

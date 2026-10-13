@@ -44,6 +44,27 @@ So the only line that stood between a click and a duplicated document was `toggl
 
 **The unit tests all passed because every task-list test uses a one-block document**, where "the whole parent" and "the blocks in range" are the same set. That is the general lesson and it is worth stating as one: **a range that depends on the document's size needs a test document with more than one block in it**, or it is not testing the range. `src/toolbar.test.ts` now says so on the test, and `tests/test_window.py::test_the_task_list_button_touches_only_the_block_under_the_caret` drives the real button on a five-block document with the caret in the **second** one, asserting the block count is unchanged and that the document's own words are in it once.
 
+## Text a rule throws away
+
+**A block-start rule rebuilds its block from the text its regex matched, and a regex can only match what is before the cursor.** So a marker typed at the start of a paragraph that already had words in it replaced those words with nothing — four ways to delete a sentence by typing three characters, all of them silent because a deletion the reader asked for by typing looks exactly like an edit:
+
+| typed at the start of `Second para.` | before | after |
+|---|---|---|
+| `## ` | an **H2 holding nothing** | an H2 holding "Second para." |
+| `- [ ] ` | a **task item holding nothing** | a task item holding "Second para." |
+| ```` ```py ```` | an **empty code block** | **nothing happens** — the line stays prose |
+| `---` | a **horizontal rule** | **nothing happens** — the line stays prose |
+| `1. ` | an ordered list holding "Second para." | unchanged |
+| `> ` | a blockquote holding "Second para." | unchanged |
+
+**The two decisions are opposites on purpose.** A *list* marker makes the line the item's text, so keeping the rest is always an improvement — that is what every other markdown editor does. A *fence* and a *rule* are whole-line constructs, and an opening fence with prose after it is not a fence that lost its text, it is prose: so `textAfterMarker(state, end) !== ''` makes those two **decline** (`blockstart.ts`), which is the only outcome that cannot destroy anything. The last two rows are the library's (`wrappingInputRule` wraps the block rather than rebuilding it, so its content survives), which is why the two paths read differently and why `1. ` and `> ` were never affected.
+
+`blockStartKeymap`'s **Enter** path had the same defect with the same two fixes — it built the list with an empty item, so Enter after `- Second para.` deleted "Second para." — which is why the shared helper is `replaceWithList(state, …, kept)` and not a function called `replaceWithEmptyList`.
+
+**Every test in `blockstart.test.ts` typed into an empty document**, so "the text before the cursor" and "the whole paragraph" were the same string and the loss could not show. The four new tests type into a document with four blocks in it.
+
+One measurement worth keeping, because it decides how these gates are written at all: **this ProseMirror takes text from `keypress`** (`editHandlers` has no `beforeinput` text path), and **a key event sent to the Qt window does not reach the page** — `qtbot.keyClick` left the document untouched, so a gate built on it would pass for a document that never received the marker. `document.execCommand('insertText', false, ch)` does go through Chromium's own editing pipeline and raises the `keypress`/`input` sequence the rules listen for, which is what `test_a_block_marker_typed_in_front_of_a_paragraph_keeps_its_words` types with. Synthetic `beforeinput` and synthetic `keydown` both do **not** work, and a synthetic `mousedown` cannot move the caret at all — so a gate that dispatches one of those is testing nothing.
+
 ## Selection semantics
 
 `*selected*` is one idea with three owners, and the app is only coherent because they answer the same question three ways. Text keeps **the browser's** highlight, from `--selection`. A block with nothing the browser can paint inside — a diagram, a rule, an image, a CodeMirror code fence — wears the **block outline**, `--accent`, via `selectionHighlightPlugin` in `src/selectionExpand.ts`. A **Visual table** is *text* in a range, so it wears neither and paints its own cells from `--selection` (`TablePlainView`, `src/node/table.ts`). Those three are the whole of `isSelectedAsObject`; a fourth, a **working state**, takes the document out of play altogether (§ below).
