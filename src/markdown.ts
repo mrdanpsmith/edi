@@ -208,6 +208,33 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       const children = mapChildrenWithCarriers(node.children ?? [], schema)
       const attrs: Record<string, unknown> = {}
       if (node.checked != null) attrs.checked = node.checked
+      // GFM only reads a checkbox as a task marker when the item has *inline*
+      // content after it, so a task item whose first block is a block of its own
+      // — a code fence, a table — has no GFM spelling: written `- [x]` it reads
+      // back as the literal text `[x]` in a plain bullet, which puts our own
+      // output into the reader's file as words. That exact shape, a first
+      // paragraph that is nothing but the checkbox token, is what
+      // `serializeListItemContent` writes, so it is read back as the task it came
+      // from. The trade is that a bullet whose whole text *is* `[x]` is read as a
+      // task item — which is the reading GFM declines, since a marker with no
+      // content after it is not one. Words after it (`- [x] noted`) stay text.
+      if (attrs.checked == null && children.length > 0) {
+        const first = children[0]!
+        const only = first.type.name === 'paragraph' && first.childCount === 1 ? first.firstChild : null
+        const token = only?.isText ? only.text : null
+        if (token != null && /^\[[ xX]\]$/.test(token)) {
+          attrs.checked = token !== '[ ]'
+          children.shift()
+        }
+      }
+      // An item can be empty in the source — a bare `-` on its own line is a
+      // list item, and so is a step whose text has all been deleted — while
+      // `list_item` is `block+`. An empty fragment is not a legal one, so
+      // `schema.node` throws and takes the **whole document** down with it: one
+      // empty bullet anywhere in a file and the file will not open at all. An
+      // empty paragraph is what an empty item means, and it is what the editor
+      // puts its caret in.
+      if (children.length === 0) children.push(schema.node('paragraph'))
       return schema.node('list_item', attrs, children)
     }
 
@@ -337,13 +364,43 @@ function collectChildren(node: ProseNode): ProseNode[] {
   return children
 }
 
+/**
+ * Prefix every line of a serialized block with `indent`.
+ *
+ * **A block is indented in every line, not only the first, and that is what a
+ * list needs to survive a save.** A list item's children live inside it, so a
+ * line of one of them that starts in column 0 has left the item: the closing
+ * fence of a code block written at column 0 ends the *list*, not the block, and
+ * the next parse reads the code as prose and the rest of the item as a document
+ * of its own. An empty line is left empty — indenting it would add trailing
+ * spaces to a line that means to hold nothing, which is how a blank line inside
+ * a fenced block grows whitespace nothing will ever read.
+ */
+function indentLines(text: string, indent: string): string {
+  if (!indent) return text
+  return text
+    .split('\n')
+    .map((line) => (line ? indent + line : line))
+    .join('\n')
+}
+
+/** A fenced block: fence, content, fence — with the content indented as well. */
+function fencedBlock(content: string, info: string, indent: string): string {
+  const fence = codeFence(content)
+  const lines = [`${fence}${info}`, ...content.split('\n'), fence]
+  return indentLines(lines.join('\n'), indent)
+}
+
 function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_ENV): string {
   switch (node.type.name) {
     case 'doc':
       return collectChildren(node).map((c) => serializeNode(c, '', env)).join('\n\n') + '\n'
 
-    case 'paragraph':
-      return indent + serializeContent(node)
+    case 'paragraph': {
+      // A hard break inside the paragraph starts a new line, and a new line
+      // inside a list item has to carry the item's own indent to stay in it.
+      return indentLines(serializeContent(node), indent)
+    }
 
     case 'heading': {
       const level = node.attrs.level as number
@@ -352,15 +409,18 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
       // does not need to be written out.
       const explicitId = node.attrs.id as string | null | undefined
       const suffix = explicitId && explicitId !== headingSlug(node.textContent) ? ` {#${explicitId}}` : ''
-      return indent + '#'.repeat(level) + ' ' + serializeContent(node) + suffix
+      return indentLines('#'.repeat(level) + ' ' + serializeContent(node) + suffix, indent)
     }
 
     case 'blockquote': {
       const inner = collectChildren(node).map((c) => serializeNode(c, '', env)).join('\n\n')
-      return inner
-        .split('\n')
-        .map((line: string) => (line ? '> ' + line : '>'))
-        .join('\n')
+      return indentLines(
+        inner
+          .split('\n')
+          .map((line: string) => (line ? '> ' + line : '>'))
+          .join('\n'),
+        indent,
+      )
     }
 
     case 'bullet_list':
@@ -376,20 +436,17 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
       const content = node.attrs.content as string
       const typeAttr = node.attrs.type ? ` type="${node.attrs.type as string}"` : ''
       const labelAttr = node.attrs.label ? ` label="${(node.attrs.label as string).replace(/"/g, '')}"` : ''
-      const fence = codeFence(content)
-      return indent + fence + 'encrypted' + typeAttr + labelAttr + '\n' + content + '\n' + indent + fence
+      return fencedBlock(content, `encrypted${typeAttr}${labelAttr}`, indent)
     }
 
     case 'code_block': {
       const lang = (node.attrs.language as string) ?? ''
-      const content = node.textContent
       // A runnable block just has its shebang as the first content line; the
       // info string must stay empty so it round-trips as a bare fence.
       const language = lang.startsWith('#!') ? '' : lang
       // Match the fence to the content so embedded fences (e.g. a ```example```
       // shown inside a ```markdown fence) survive a save/reload round-trip.
-      const fence = codeFence(content)
-      return indent + fence + language + '\n' + content + '\n' + indent + fence
+      return fencedBlock(node.textContent, language, indent)
     }
 
     case 'horizontal_rule':
@@ -406,8 +463,7 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
 
     case MERMAID_TYPE: {
       const val = (node.attrs.value as string) ?? ''
-      const fence = codeFence(val)
-      return indent + fence + 'mermaid\n' + val + '\n' + indent + fence
+      return fencedBlock(val, 'mermaid', indent)
     }
 
     case 'table': {
@@ -421,10 +477,7 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
             ? pipes
             : `${pipes}\n\n${formatTableCarrier(formulas)}`
       }
-      return text
-        .split('\n')
-        .map((line) => indent + line)
-        .join('\n')
+      return indentLines(text, indent)
     }
 
     case 'text':
@@ -553,27 +606,74 @@ function serializeListItem(node: ProseNode, indent: string, env: FormulaEnv): st
   return serializeListItemContent(node, '-', indent, env)
 }
 
+/**
+ * A list item's bullet, split into the part that says where the item's content
+ * begins and the part written in front of that content.
+ *
+ * **These are not the same string, and the difference is a task item.** `- [x]`
+ * is a two-column marker (`- `) with `[x]` written as the item's own first
+ * words, so the content of `- [ ] Step:` starts at column 2 — not at column 6.
+ * Measuring the content indent off the whole bullet put every one of the item's
+ * other blocks four columns too far in, and four columns past the content start
+ * is exactly what turns a *fenced* code block into an **indented** one: the
+ * opening ``` stopped being a fence, landed in the item's prose, and the block
+ * came back from the next parse as an indented code block holding the fence text.
+ */
+function listBulletParts(bullet: string): { marker: string; prefix: string } {
+  return { marker: /^-\s+\[[ xX]\]/.test(bullet) ? '-' : bullet, prefix: bullet }
+}
+
+/** Put `text`'s first line on the item's bullet line, keeping every other line. */
+function firstLineOnto(text: string, bulletLine: string, contentIndent: string): string {
+  const nl = text.indexOf('\n')
+  const first = nl === -1 ? text : text.slice(0, nl)
+  const rest = nl === -1 ? '' : text.slice(nl)
+  const body = first.startsWith(contentIndent) ? first.slice(contentIndent.length) : first
+  return (body ? bulletLine + body : bulletLine.trimEnd()) + rest
+}
+
+/**
+ * Blocks whose markdown can begin on the item's own marker line.
+ *
+ * Only the ones that start with their content's own syntax can: a fence, a table
+ * and a list all have to open on a line of their own, and a fenced block whose
+ * ``` shares a line with `- ` is not a fence at all — it is a backtick run inside
+ * the item's paragraph, which is where the block's own text used to end up when
+ * the item began with one. Those get the marker line to themselves.
+ */
+const OPENS_ON_THE_MARKER_LINE = new Set(['paragraph', 'heading', 'blockquote'])
+
 function serializeListItemContent(
   node: ProseNode,
   bullet: string,
   indent: string,
   env: FormulaEnv,
 ): string {
-  const lines: string[] = []
-  const contentIndent = indent + ' '.repeat(bullet.length + 1)
-  node.content.forEach((child, _, i) => {
-    if (child.type.name === 'bullet_list' || child.type.name === 'ordered_list') {
-      lines.push(serializeNode(child, contentIndent, env))
-    } else {
-      const content = serializeNode(child, '', env)
-      if (i === 0) {
-        lines.push(indent + bullet + ' ' + content)
-      } else {
-        lines.push(contentIndent + content)
-      }
+  const { marker, prefix } = listBulletParts(bullet)
+  const contentIndent = indent + ' '.repeat(marker.length + 1)
+  const parts: string[] = []
+  node.content.forEach((child) => {
+    const content = serializeNode(child, contentIndent, env)
+    if (content === '') return
+    if (parts.length > 0) {
+      // A blank line between blocks: without it two paragraphs are read as one
+      // long one. It is the one place a list needs a blank line of its own.
+      parts.push('\n\n', content)
+      return
     }
+    // The item's own line. A block that cannot open on it gets the marker to
+    // itself, and **no blank line** under it: a blank line there ends the item,
+    // and everything below it is read as the document rather than as the item.
+    parts.push(
+      OPENS_ON_THE_MARKER_LINE.has(child.type.name)
+        ? firstLineOnto(content, indent + prefix + ' ', contentIndent)
+        : indent + prefix + '\n' + content,
+    )
   })
-  return lines.join('\n')
+  // An item whose blocks all serialize to nothing is still an item: written as
+  // the empty string it is a line of the file with no marker on it, and a list
+  // item that is written nowhere is one the next parse does not have back.
+  return parts.length === 0 ? indent + prefix : parts.join('')
 }
 
 // --- Public API ---

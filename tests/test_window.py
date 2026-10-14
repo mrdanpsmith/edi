@@ -8924,3 +8924,67 @@ def test_a_selected_visual_table_is_painted_by_its_cells_and_nothing_else(window
     for side in ("top", "bottom", "left", "right", "strip"):
         assert pixels[side] != accent_rgb, (
             f"**no accent ring on the {side}** of a selected Visual table: {pixels}")
+
+
+def test_saving_steps_with_code_blocks_keeps_them_steps(window, tmp_path):
+    """A numbered list of steps with a code block in each: **open, save, reopen.**
+
+    The report was that opening such a file screws it up. It did not screw up the
+    *rendering* — every step drew its code block correctly — it screwed up the
+    **save**, and the damage is only visible on the next open, which is why it
+    looked like opening was the thing at fault.
+
+    The cause was in the serializer, and it was one rule with two failures. A list
+    item's blocks were written with the item's indent on the *first line only*:
+
+    - the fence lines were indented but **the content between them was not**, so a
+      fenced block inside a step came out with its code in column 0 and its closing
+      fence at column 0 — and a closing fence at column 0 closes the *list*, not the
+      block. One save later the steps' code is prose and the rest of the document has
+      been re-read as the document;
+    - blocks inside an item were written with no blank line between them, so a step
+      with two paragraphs came back holding one.
+
+    This drives the whole round trip through the real shell — a file on disk, opened
+    by path, saved through the real Save command, and read back off disk — so what it
+    asserts is the file, not a serializer's opinion of it.
+    """
+    doc = ("# Steps\n\n"
+           "1. Install the thing:\n\n   ```bash\n   npm install thing\n   ```\n"
+           "2. Run it:\n\n   ```bash\n   npm run thing\n   ```\n\n"
+           "Done.\n")
+    path = tmp_path / "steps.md"
+    path.write_text(doc, encoding="utf-8")
+
+    def _open_and_save():
+        _dump(window, "(() => { window.ediMenuCommand('openRecent', %s); return { o: 1 }; })()"
+              % json.dumps(str(path)))
+        _wait(window, "(() => ({ t: (document.querySelector('#editor-container .ProseMirror')||{}).textContent }))()",
+              lambda d: "Install the thing" in (d.get("t") or ""), timeout=20)
+        _dump(window, "(() => { window.ediMenuCommand('save'); return { s: 1 }; })()")
+        _wait(window, "(() => ({ t: document.title }))()",
+              lambda d: "steps.md" in (d.get("t") or ""), timeout=20)
+
+    _open_and_save()
+    saved = path.read_text(encoding="utf-8")
+    assert saved == doc, f"one save changed the file:\n{saved!r}"
+
+    # Reopen what was written, save it again: a file that only survives one round
+    # trip is a file that is being eaten one open at a time.
+    _open_and_save()
+    assert path.read_text(encoding="utf-8") == saved, "the second save changed the file again"
+
+    # And the reopened file is still the document it was written as: two steps, each
+    # with its own code block inside the step, not two code blocks beside the list.
+    shape = _dump(window, """(() => {
+      const ed = document.querySelector('#editor-container .ProseMirror');
+      const items = [...ed.querySelectorAll('ol > li')];
+      return {
+        items: items.length,
+        perItem: items.map((li) => [...li.querySelectorAll('.cm-editor .cm-content')].map((c) => c.textContent)),
+        strayFences: ed.textContent.includes('```'),
+      };
+    })()""")
+    assert shape["items"] == 2, shape
+    assert shape["perItem"] == [["npm install thing"], ["npm run thing"]], shape
+    assert shape["strayFences"] is False, shape

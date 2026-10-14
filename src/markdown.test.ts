@@ -275,7 +275,10 @@ describe('further parse paths', () => {
     const doc = markdownToProse(md, schema)
     expect(doc.firstChild?.type.name).toBe('bullet_list')
     expect(doc.firstChild?.firstChild?.childCount).toBe(2)
-    expect(serialize(md)).toBe('- a\n  b\n')
+    // **The blank line is the item's own second block boundary**, not decoration:
+    // written directly under the first, `b` is a lazy continuation of the same
+    // paragraph and the item comes back holding one block instead of two.
+    expect(serialize(md)).toBe('- a\n\n  b\n')
   })
 
   it('keeps a shebang inside a bare code fence', () => {
@@ -337,6 +340,99 @@ describe('code fence robustness', () => {
     expect(serialize('`````mermaid\n```` x ````\n`````')).toBe(
       '`````mermaid\n```` x ````\n`````\n',
     )
+  })
+})
+
+describe('blocks inside a list item', () => {
+  /** Parse, save, reopen: the pair that turns a saved file back into a document. */
+  function reopen(markdown: string): { saved: string; doc: unknown } {
+    const saved = serialize(markdown)
+    return { saved, doc: markdownToProse(saved, schema).toJSON() }
+  }
+
+  it('keeps a fenced code block inside a numbered step', () => {
+    const md = '1. Install:\n\n   ```bash\n   npm install thing\n   ```\n2. Run:\n\n   ```bash\n   npm run thing\n   ```\n'
+    // **The content lines carry the item's indent, not just the fence lines.**
+    // Written at column 0 the closing fence ends the *list*, and the next parse
+    // reads the code as prose and everything after it as a document of its own —
+    // so one save is enough to lose the steps, and the next one loses the rest.
+    expect(serialize(md)).toBe(md)
+    expect(reopen(md).doc).toEqual(markdownToProse(md, schema).toJSON())
+  })
+
+  it('does not turn a step’s fence into an indented code block', () => {
+    // The task marker is `- [ ]` — five characters — but the item's content
+    // starts after `- `, at column 2. Measuring the content indent off the whole
+    // marker put the fence four columns past that, which is exactly what makes
+    // an *indented* code block: the ``` stopped being a fence and became the
+    // item's own prose, and the block came back holding the fence text.
+    const md = '- [ ] Step:\n\n  ```bash\n  npm i\n  ```\n'
+    expect(serialize(md)).toBe(md)
+    const doc = markdownToProse(serialize(md), schema)
+    const item = doc.firstChild!.firstChild!
+    expect(item.attrs.checked).toBe(false)
+    expect(item.child(1).type.name).toBe('code_block')
+    expect(item.child(1).textContent).toBe('npm i')
+  })
+
+  it('keeps a task step whose first block is a fence', () => {
+    // GFM only reads a checkbox as a task marker when inline content follows it,
+    // so this item has no spelling of its own: the marker stands alone on its
+    // line, with **no blank line** under it (a blank line there ends the item),
+    // and reading it back is what `listItem`'s checkbox-token case is for.
+    const md = '- [x]\n  ```bash\n  npm i\n  ```\n'
+    expect(serialize(md)).toBe(md)
+    const item = markdownToProse(serialize(md), schema).firstChild!.firstChild!
+    expect(item.attrs.checked).toBe(true)
+    expect(item.childCount).toBe(1)
+    expect(item.child(0).type.name).toBe('code_block')
+    expect(item.child(0).textContent).toBe('npm i')
+  })
+
+  it('keeps two paragraphs in one item as two paragraphs', () => {
+    // Directly under the first, `b` is a lazy continuation of the same
+    // paragraph, so the item loses a block on every save.
+    expect(serialize('- a\n\n  b')).toBe('- a\n\n  b\n')
+  })
+
+  it.each([
+    ['a fence in a nested step', '1. a\n\n   1. b\n\n      ```bash\n      npm i\n      ```\n'],
+    ['a fence in a task step nested under a step', '- [ ] a\n\n  1. b\n\n     ```bash\n     npm i\n     ```\n'],
+    ['a two-digit marker', '10. a\n\n    ```bash\n    npm i\n    ```\n'],
+    ['a blank line inside the fence', '1. a\n\n   ```bash\n   x\n\n   y\n   ```\n'],
+    ['a mermaid diagram', '1. a\n\n   ```mermaid\n   graph TD\n     A --> B\n   ```\n'],
+    ['a table', '1. a\n\n   | A | B |\n   | --- | --- |\n   | 1 | 2 |\n'],
+    ['a rule', '1. a\n\n   ---\n'],
+    ['a heading', '1. a\n\n   ## Sub\n'],
+    ['a hard break', '1. a\n\n   one  \n   two\n'],
+    ['a deeply nested fence', '1. a\n\n   - b\n\n     - c\n\n       ```bash\n       npm i\n       ```\n'],
+    ['an empty item holding a fence', '1.\n   ```bash\n   npm i\n   ```\n'],
+  ])('round-trips %s in a list item', (_name, md) => {
+    const { saved, doc } = reopen(md)
+    expect(saved).toBe(md)
+    expect(doc).toEqual(markdownToProse(md, schema).toJSON())
+  })
+
+  it('opens a file that holds an empty list item', () => {
+    // `list_item` is `block+`, so an empty fragment is not a legal one and
+    // `schema.node` throws — taking the *whole document* down with it, so a
+    // single bare `-` anywhere in a file means the file will not open at all.
+    expect(serialize('- a\n-\n- c')).toBe('- a\n-\n- c\n')
+    expect(markdownToProse('1.\n', schema).firstChild!.firstChild!.childCount).toBe(1)
+  })
+
+  it('leaves a checkbox that is written as words alone', () => {
+    // A marker with content after it is not a task marker, so it is text.
+    expect(markdownToProse('- [x] literally\n', schema)
+      .firstChild!.firstChild!.firstChild!.textContent).toBe('literally')
+    // And a marker with *nothing* after it is the one shape the checkbox-token
+    // case claims — which is the reading GFM declines, since a task marker needs
+    // content after it to be one.
+    const bare = markdownToProse('- [ ]\n', schema).firstChild!.firstChild!
+    expect(bare.attrs.checked).toBe(false)
+    expect(bare.childCount).toBe(1)
+    expect(bare.child(0).type.name).toBe('paragraph')
+    expect(bare.child(0).childCount).toBe(0)
   })
 })
 
