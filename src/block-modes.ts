@@ -10,8 +10,8 @@ import { BLOCK_CONTROLS_CLASS, pressTarget } from './press'
 /**
  * The press-facing names are **`src/press.ts`'s**, and they are re-exported here because they
  * used to live here: they are the three markers a press is classified by and the two DOM→position
- * helpers, and this module is where the record that dims and lights blocks lives. `press.ts` is
- * below it in the stack — it knows about DOM events and positions, not about modes — so the
+ * helpers, and this module is where the record of which block is in which mode lives. `press.ts`
+ * is below it in the stack — it knows about DOM events and positions, not about modes — so the
  * dependency runs one way and every other importer of these names keeps its import.
  */
 export {
@@ -136,52 +136,6 @@ export const BLOCK_MODE_SOURCE_CLASS = `${BLOCK_MODE_CLASS}-source`
 export const BLOCK_MODE_EDITING_CLASS = `${BLOCK_MODE_CLASS}-editing`
 export const BLOCK_MODE_FORM_CLASS = `${BLOCK_MODE_CLASS}-form`
 
-/**
- * The class every block **not** in the focus path wears while the page is in a
- * working state.
- *
- * **Dimmed and inert are two different claims and one class carries both.**
- * Dimmed is *presence* — the reader can see that the rest of the document has
- * receded, which is the one thing the block-level outlines cannot say: they answer
- * *which block*, and nothing in that vocabulary answers *what am I not working in*.
- * Inert is *possibility* — a click or drag in the dimmed region cannot create a
- * second selection, because nothing there receives the pointer. Inertness is what
- * makes "the document has a selection while a sheet is live" **impossible rather
- * than merely undrawn**, so nothing has to go round clearing selections afterwards.
- */
-export const BLOCK_DIMMED_CLASS = `${BLOCK_MODE_CLASS}-dimmed`
-
-/**
- * The other side of the same line, and the reason the dimmed set is a
- * *description* rather than a mark. See `dimmedDecorations`: a document whose only
- * non-default block is nested would otherwise see no change at the top level.
- */
-export const BLOCK_LIT_CLASS = `${BLOCK_MODE_CLASS}-lit`
-
-/**
- * Is `mode` a **working state** — the one the rest of the document recedes for?
- *
- * **The interaction axis plus a non-default form, and neither is `source`.** A
- * source form is a *reading* state: the reader is looking at the block's own
- * document. A sheet and a diagram's edit mode are *producing* states with a
- * selection surface of their own, and producing is what makes everything else in
- * the page irrelevant.
- *
- * This is deliberately **not** §7.2's sentence — *"anything not being viewed as
- * its document"* — which is right for the dashed outline because all three of its
- * states are non-default and all three should be marked. It is the wrong sentence
- * here, and that is the whole reason the outline and the dimming cannot be
- * generated from one predicate: under it, opening a paragraph's Source would dim
- * the whole document, for a block whose buffer is the reader's only other text.
- *
- * Read off the record rather than off a list of node types, so a block type that
- * declares an interaction state or a form gets dimming without being named here.
- */
-export function isWorkingMode(mode: BlockMode | null | undefined): boolean {
-  return mode !== null && mode !== undefined &&
-    (mode.interaction === 'editing' || mode.form !== undefined)
-}
-
 /** The node types whose rendered form carries an interaction state of its own. */
 const INTERACTIVE_BLOCKS = new Set(['mermaid_block', 'encrypted_block'])
 
@@ -259,28 +213,6 @@ function supportsMode(node: ProseNode, mode: BlockMode): boolean {
     return false
   }
   return true
-}
-
-/**
- * Every top-level block **carries a decoration describing whether it is lit** while
- * a working state is live — which is what makes the block-level two-state question
- * reach a node view at all, exactly as `BLOCK_MODE_CLASS` does for a mode. A
- * decoration that only marked the *dimmed* blocks could not carry it, because a
- * document whose only non-default block is **nested** (a table inside a list) would
- * see no change at the top level at all: `ViewDesc.matchesNode` compares a node's
- * decorations *by value*, and "no decoration here" is byte-identical between "no
- * mode anywhere" and "there is a sheet three levels down". So every block is
- * decorated and the class says which side of the line it is on.
- */
-function dimmedDecorations(state: EditorState): Decoration[] {
-  const lit = litBlockPositions(state)
-  if (lit.size === 0) return []
-  const decos: Decoration[] = []
-  state.doc.forEach((node, offset) => {
-    const classes = lit.has(offset) ? BLOCK_LIT_CLASS : BLOCK_DIMMED_CLASS
-    decos.push(Decoration.node(offset, offset + node.nodeSize, { class: classes }))
-  })
-  return decos
 }
 
 /**
@@ -451,7 +383,7 @@ export const blockModePlugin = new Plugin<BlockMode | null>({
   key: BLOCK_MODE_KEY,
   props: {
     decorations: (state: EditorState): DecorationSet => {
-      const decos = blockModeDecorations(state).concat(dimmedDecorations(state))
+      const decos = blockModeDecorations(state)
       return decos.length ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
     },
   },
@@ -657,12 +589,9 @@ export function blockFormMode(state: EditorState, pos: number | undefined): stri
  * focus that is not its own and repainting on a change it did not cause — the exact
  * coupling `blockModePlugin` was written to avoid.
  *
- * **Dimming does not need any of this.** Each editor's own record already answers
- * for its own document at every level: the outer record says the encrypted block is
- * working, so that block is lit and the prose around it is not; the reveal's record
- * says the sheet is working, so the sheet is lit and the reveal's other content is
- * not. The chain exists for **exclusivity**, which is the one question two editors
- * have to agree about — and that is why it holds views and the record does not.
+ * **The chain is for exclusivity and nothing else.** Each editor's own record already answers
+ * for its own document at every level, so the only question two editors have to agree about is
+ * *which* one holds the focus — and that is why it holds views and the record does not.
  *
  * The surface is four functions:
  *
@@ -985,15 +914,12 @@ function chromeOwnsClick(event: MouseEvent): boolean {
  * the block that opened it. It was also **one press that ended the state of the block a
  * reader was in and that a reader could reasonably expect to begin another's** — and the
  * two together is how a sheet got closed by a press aimed at whatever was behind it.
- * Presses that name no block are not rare: the dimmed blocks are `pointer-events: none`,
- * so a press in the dimmed region hit-tests past them to whatever is behind, which is
- * either the editor's own box (refused by `blockPosForElement`, §"which block is that?")
- * or a block on the far side — and a press below a lone board lands on the scroller,
- * which is the same case. **Both do nothing now.** Every way out that was designed is
- * still there: **Escape** (§5.3's ladder), the block's own **Done** / **Lock** button,
- * Alt+click *on the block*, and leaving the tab. Moving from one block to another costs
- * two presses — the first ends the state of the one you were in, the second opens the
- * other — which is what a deliberate move looks like.
+ * A press below a lone board lands on the scroller and names nothing, which is the
+ * same case. **Every way out that was designed is still there:** **Escape** (§5.3's
+ * ladder), the block's own **Done** / **Lock** button, Alt+click *on the block*, and
+ * leaving the tab. Moving from one block to another costs two presses — the first ends
+ * the state of the one you were in, the second opens the other — which is what a
+ * deliberate move looks like.
  *
  * The click is never swallowed — a word to select, a caret to place and a cell to
  * mark all still happen, which is the whole reason the mode gestures moved off
@@ -1003,23 +929,21 @@ export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
   if (!event.altKey || event.button !== 0) return false
   if (chromeOwnsClick(event)) return false
   // **The press is classified, not sniffed** (§`src/press.ts`): the gesture acts on a block and
-  // on nothing else, and `pressTarget` is the one answer to "which block is that?" — including
-  // the `dimmed` case, where the press's *coordinates* land in a block that the press's target
-  // does not name, and the old `blockPosForElement` call would have missed it.
-  const press = pressTarget(view, event, litBlockPositions(view.state))
+  // on nothing else, and `pressTarget` is the one answer to "which block is that?".
+  const press = pressTarget(view, event)
   // **Alt+click is one gesture with one meaning: the mode.** On a block, it toggles the mode that
-  // block has. Anywhere else — the dimmed region, the white space — it **closes**, which is the
-  // only thing a press that names no block can sensibly mean, and the only way out of a working
-  // state that does not require aiming at the block you are already in.
+  // block has. Anywhere else — the white space — it **closes**, which is the only thing a press
+  // that names no block can sensibly mean, and the only way out of a working state that does not
+  // require aiming at the block you are already in.
   //
-  // It was a fallback once, removed as "a press aimed at a dimmed block closed a live sheet" —
+  // It was a fallback once, removed as "a press aimed at some other block closed a live sheet" —
   // which was a real complaint, and the fix was never to forbid the gesture but to give it one
   // meaning: *it closes, and that is what a press that names nothing is for.* Alt+click has no
   // other meaning in the app, so this is the whole of it.
   if (press.kind === 'content' || press.kind === 'margin') {
     return toggleBlockModeFromGesture(view, press.pos)
   }
-  if (press.kind === 'dimmed' || press.kind === 'space' || press.kind === 'none') {
+  if (press.kind === 'space' || press.kind === 'none') {
     return leaveBlockMode(view)
   }
   return false
@@ -1191,6 +1115,41 @@ export function leaveBlockMode(view: EditorView, pos?: number): boolean {
   }
   view.dispatch(view.state.tr.setMeta(BLOCK_MODE_KEY, null))
   return true
+}
+
+/**
+ * The block that **used to** hold this editor's record, released — because the slot has
+ * already moved on to a *different* block.
+ *
+ * **This is the same release `leaveBlockMode` performs, and it cannot be `leaveBlockMode`.**
+ * That function's early-out (`modeFor(state, pos) === null`) exists so a caller that aimed at
+ * a block cannot close some *other* block's mode — and by the time a block has been displaced
+ * it is by definition not the one holding the record, so that early-out refuses exactly the
+ * call this needs. Hence the mode is handed in: it is the state that was there, read before
+ * the transaction that took it.
+ *
+ * **Why it is needed at all is the withdrawn overlay.** The record is one slot per editor, and
+ * `releaseOtherEditors` arbitrates only *between* editors — two blocks in one document never met
+ * there. A working state was therefore *displaced* rather than released: an overlay that faded
+ * the document refused the press that could have done it, so nothing ever found out. With the
+ * overlay gone the press is ordinary, and opening a paragraph's Source beside an open block left
+ * the reveal on screen with no record and no way to Lock it.
+ */
+export function releaseDisplacedBlock(view: EditorView, displaced: BlockMode): void {
+  // A source form's buffer is read on the way *in*, by `releaseSourceBlock`, because the buffer
+  // only exists while the block holds the record. Nothing is left here to commit.
+  if (displaced.representation === 'source') return
+  // An editing layer is **not** drawn from the record: an open block owns a nested editor and a
+  // diagram owns its own editing chrome, so only the subsystem can tear either down. This is the
+  // one case that needs a call.
+  if (displaced.interaction === 'editing') {
+    BLOCK_MODE_HANDLERS[displaced.type]?.exit?.(view, displaced.pos)
+  }
+  // **A form is drawn from the record, and the record has already moved.** A sheet's teardown is
+  // the record naming another block, so this function has nothing to do for one — and the obvious
+  // thing to write, `setMeta(BLOCK_MODE_KEY, null)`, would be the bug: the slot belongs to the
+  // block that *took* it, and clearing it here left the reader with no mode at all and the
+  // paragraph that had just opened its markdown closing again.
 }
 
 /** Toggle one axis of the block at `pos`, in both directions. */
@@ -1390,30 +1349,6 @@ export function toggleSourceMode(view: EditorView, pos: number): void {
   }
   enterSourceMode(view, pos)
 }
-
-/**
- * The blocks of *this* document that stay lit while its own record names a working
- * state — everything else in it is dimmed and inert.
- *
- * **A state-only question, and deliberately so: the chain is not consulted here.**
- * Each editor's own record already answers for its own document at every level. The
- * outer document's record says the encrypted block is working, so that block is lit
- * and the prose around it is not. The reveal's record says the sheet is working, so
- * the sheet is lit and the reveal's other content is not. Both answers are right at
- * once, which is what makes the second level work without a single cross-editor
- * lookup — and it is the reason the focus path can stay out of plugin state
- * entirely, where it would have made every editor repaint on a change that was not
- * its own.
- *
- * One position today, and it is a set so it need not stay one.
- */
-export function litBlockPositions(state: EditorState): Set<number> {
-  const mode = currentBlockMode(state)
-  if (mode === null || !isWorkingMode(mode)) return EMPTY_LIT
-  return new Set([mode.pos])
-}
-
-const EMPTY_LIT: Set<number> = new Set()
 
 /**
  * What a block type supports. This is the declaration a block makes about

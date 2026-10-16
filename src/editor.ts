@@ -20,12 +20,12 @@ import {
   enterSourceMode,
   exitBlockMode,
   leaveBlockMode,
+  releaseDisplacedBlock,
   setBlockMode,
 } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { blockDragPlugin } from './blockDrag'
 import { pressPlugin } from './press'
-import { litBlockPositions } from './block-modes'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
@@ -347,7 +347,7 @@ export function createBlockEditor(
     blockModePlugin,
     blockModeFocusPlugin,
     blockDragPlugin,
-    pressPlugin((view) => litBlockPositions(view.state)),
+    pressPlugin(),
     formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,
@@ -393,6 +393,14 @@ export function createBlockEditor(
     }
     const held = currentBlockMode(next)
     if (held !== before) {
+      // **The record is one slot, so taking it releases the block that had it.** The faded
+      // overlay used to refuse the press that could do this, so nothing ever found out;
+      // `keepOneNonVisualBlock` below arbitrates *between* editors, and two blocks in one
+      // document never met there. Read the state that was displaced *before* the
+      // transaction that took it — by the time it is gone the record names the new block.
+      if (before !== null && held !== null && before.pos !== held.pos) {
+        releaseDisplacedBlock(cur, before)
+      }
       options.onModeChange?.(held)
     }
     // The one focus path in the *page*, not in this document: an unlocked

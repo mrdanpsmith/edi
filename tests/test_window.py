@@ -3630,15 +3630,14 @@ def test_alt_click_on_a_code_blocks_text_toggles_its_modes(window):
 
 # The band's own selector, named **once**. Five probes below have to *find* the
 # rule in the loaded sheet to measure it, rewrite it, or force it on, and each used
-# to spell the whole selector out — so one legitimate change to the rule (it gained
-# an exclusion when a working state started dimming the document) read as "the rule
-# is not in the sheet" in five places at once, which is the failure mode
+# to spell the whole selector out — so one legitimate change to the rule read as "the
+# rule is not in the sheet" in five places at once, which is the failure mode
 # `BAND_MATCHES_PROBE` already warns about for anchors: the reader is sent looking
 # in the wrong place. One definition, so a change is one edit.
 BAND_SELECTOR = (
     ".ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,"
     " .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)"
-    ":not(.edi-block-mode-dimmed):not(.encrypted-block-reveal-editor *):hover::before"
+    ":not(.encrypted-block-reveal-editor *):hover::before"
 )
 BAND_SELECTOR_JS = json.dumps(BAND_SELECTOR)
 
@@ -3673,10 +3672,6 @@ HOVER_BAND_RULE = """(() => {
     inset: style.inset || [style.top, style.right, style.bottom, style.left].join(' '),
     blocks: HIT.filter((c) => SEL.includes(c)),
     notMode: SEL.includes(':not(.edi-block-mode)'),
-    // A dimmed block is one the reader is not in — no mode, and no pointer either —
-    // so the band stands down there for exactly the reason it stands down on a
-    // block mid-mode. This is the chain's complement, not a block-type list.
-    notDimmed: SEL.includes(':not(.edi-block-mode-dimmed)'),
     // A revealed encrypted block is a second editor inside the encrypted block
     // that already has a band, and its one block can never be what Alt+click would
     // alter. So the band has to be able to say "not in there".
@@ -4324,11 +4319,6 @@ BAND_MATCHES_PROBE = """(() => {
     '  </div>',
     '  <div class="runnable-block has-code-lang">code</div>',
     '  <div class="runnable-block has-code-lang edi-block-mode">code in a mode</div>',
-    // A working state live somewhere else in the document. The band stands down on
-    // a dimmed block for the reason it stands down on a block mid-mode: the block
-    // holds no mode and the pointer cannot reach it, so a band there would advertise
-    // an affordance that does not exist.
-    '  <div class="runnable-block has-code-lang edi-block-mode-dimmed">dimmed</div>',
     '</div>',
   ].join('\\n');
   document.body.appendChild(root);
@@ -4351,12 +4341,11 @@ BAND_MATCHES_PROBE = """(() => {
     const where = el.closest('.encrypted-block-reveal-editor') ? 'inside reveal'
       : el.closest('.encrypted-block') ? 'encrypted block' : 'document';
     // **Every distinguishing class has to be its own key.** An earlier version
-    // suffixed only on `edi-block-mode`, so a `edi-block-mode-dimmed` element
-    // reported itself as a plain `document` block and overwrote it — the dimmed
-    // fixture turned the ordinary block's `True` into its own `False`, which read
-    // as "the band stopped working" rather than as two elements sharing a key.
-    const state = el.classList.contains('edi-block-mode') ? ', in a mode'
-      : el.classList.contains('edi-block-mode-dimmed') ? ', dimmed' : '';
+    // suffixed only on one of them, so a second fixture element reported itself as
+    // a plain `document` block and overwrote the first — it turned the ordinary
+    // block's `True` into its own `False`, which read as "the band stopped working"
+    // rather than as two elements sharing a key.
+    const state = el.classList.contains('edi-block-mode') ? ', in a mode' : '';
     out[where + state] = el.matches(probe);
   });
   root.remove();
@@ -4392,8 +4381,6 @@ def test_the_hover_band_stays_out_of_a_revealed_encrypted_block(window):
         "a revealed encrypted block's one block must not be banded: %r" % out)
     assert out.get("document, in a mode") is False, (
         "a block already in a mode keeps the accent rule instead: %r" % out)
-    assert out.get("document, dimmed") is False, (
-        "a dimmed block must stand down too — it holds no mode and no pointer: %r" % out)
 
 
 def test_the_hover_band_does_not_paint_over_a_code_blocks_own_frame(window):
@@ -5279,42 +5266,15 @@ def test_prose_selection_is_the_apps_own_colour(window):
 
 
 # ── A working state ───────────────────────────────────────────────────────────
-# What the page looks like while a block is *producing* something: one block lit,
-# everything else dimmed and unreachable. Read out of the computed styles rather
-# than the classes, because the classes are the intent and the styles are the
-# claim — and the two halves of the claim are different properties of two
-# different elements, so they are read separately.
-WORKING_STATE = r"""(() => {
-  const editor = document.querySelector('#editor-container > .ProseMirror');
-  if (!editor) return { missing: true };
-  const scroller = document.querySelector('#editor-container');
-  const describe = (el) => el === null ? null : (() => {
-    const cs = getComputedStyle(el);
-    return {
-      cls: String(el.className).slice(0, 60),
-      opacity: cs.opacity,
-      pointerEvents: cs.pointerEvents,
-      cursor: cs.cursor,
-      isolating: cs.isolation !== 'auto' || cs.transform !== 'none'
-        || cs.filter !== 'none' || cs.contain !== 'none' || cs.willChange !== 'auto',
-      // A `filter` becomes the containing block for `position: absolute`
-      // descendants, which is how a dim would silently re-anchor every mermaid
-      // overlay. `opacity` below 1 does not.
-      filtered: cs.filter !== 'none',
-    };
-  })();
-  return {
-    lit: describe(document.querySelector('.edi-block-mode-lit')),
-    dimmed: [...editor.querySelectorAll(':scope > .edi-block-mode-dimmed')].map(describe),
-    scroller: describe(scroller),
-    dimOut: getComputedStyle(document.documentElement).getPropertyValue('--dim-out').trim(),
-    editorBg: getComputedStyle(document.documentElement).getPropertyValue('--editor-bg').trim(),
-  };
-})()"""
-
-# A sheet and a diagram, side by side: the working-state predicate is read off the
-# record, so both kinds of producing state dim and neither a source form nor an
-# ordinary paragraph does.
+# What the page looks like while a block is *producing* something: a live sheet, a
+# diagram being edited, an unlocked block. Exactly one of them holds the page's focus
+# path — and that is deliberately the *whole* of the claim. The rest of the document
+# is ordinary prose while one of them is live.
+#
+# It used not to be the whole of it. A working state used to dim every other
+# top-level block and refuse every press in it, on the claim that the rest of the
+# document should be *inert* while the reader was producing something. That overlay
+# is gone, and the gate below is the one that holds the line in its place.
 WORKING_STATE_DOC = """Prose before the board.
 
 ```mermaid
@@ -5329,14 +5289,40 @@ graph TD
 Prose after the table.
 """
 
+# Read out of the computed styles rather than the classes, because the classes are
+# the intent and the styles are the claim. There is no opacity to read for dimming
+# any more, so what is left to read is that **nothing is faded and nothing has taken
+# the pointer away** — plus the two names the removed feature owned, read as
+# absences, so that a rule coming back one declaration at a time fails here.
+WORKING_STATE = r"""(() => {
+  const editor = document.querySelector('#editor-container > .ProseMirror');
+  if (!editor) return { missing: true };
+  const describe = (el) => el === null ? null : (() => {
+    const cs = getComputedStyle(el);
+    return {
+      cls: String(el.className).slice(0, 60),
+      opacity: cs.opacity,
+      pointerEvents: cs.pointerEvents,
+      dimmed: el.classList.contains('edi-block-mode-dimmed'),
+    };
+  })();
+  return {
+    blocks: [...editor.children].map(describe),
+    scroller: describe(document.querySelector('#editor-container')),
+    dimOut: getComputedStyle(document.documentElement)
+      .getPropertyValue('--dim-out').trim(),
+  };
+})()"""
+
 
 def _alt_click_a_cell(window, selector):
-    """Alt+click a cell **at its own centre**, which the press classifier needs.
+    """Alt+click a cell **at its own centre**, so the press carries a real geometry.
 
-    A `MouseEvent` built without coordinates is at (0, 0), and the press's *geometry* is how
-    `pressTarget` decides whether it lands in a block that is dimmed — so a coordinate-less
-    synthetic click reads as the top-left corner of the window, which in a document with a working
-    state is a dimmed paragraph. Every real press has coordinates; this one had to be given them.
+    A `MouseEvent` built without coordinates is at (0, 0). The mode gesture names the
+    block it acts on from the event's *target*, so that part reads the same either way
+    — but the editor's own hit test reads the coordinates, and (0, 0) is the top-left
+    corner of the window rather than the cell. Every real press has coordinates; this
+    one had to be given them.
     """
     _dump(window, """(() => {
       const cell = document.querySelector(%s);
@@ -5357,112 +5343,47 @@ def _open_a_working_state(window):
     _alt_click_a_cell(window, "#editor-container .ss-plain-table td")
     _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .spreadsheet') }))()",
           lambda d: d.get("s") is True, timeout=15)
-    return _wait(window, WORKING_STATE, lambda d: d.get("dimmed"), timeout=10)
 
 
+def test_a_working_state_leaves_the_rest_of_the_document_alone(window):
+    """With a sheet live, every other block is ordinary prose.
 
-# Is the dimmed prose still readable? Measured through the actual paint rather than
-# off the palette: the paragraph's own colour, composited over `--editor-bg` by the
-# block's computed opacity, against WCAG's 4.5:1 for body text. That is the property
-# `--dim-out` has to satisfy in *either* scheme, and it is why the number can be
-# argued about without this gate having to be rewritten.
-#
-# Colours are read off a scratch element's computed style rather than off the custom
-# property: `--editor-bg` is `#fff`, and a hex triple has no digits for a naive parse
-# to find — which is the kind of thing that reads as "the probe is broken" rather
-# than as the value it was asked for.
-DIMMED_LEGIBILITY = r"""(() => {
-  const p = document.querySelector(
-    '#editor-container > .ProseMirror > .edi-block-mode-dimmed p');
-  const lit = document.querySelector('#editor-container > .ProseMirror > .edi-block-mode-lit');
-  if (!p || !lit) return { missing: true };
-  const scratch = document.createElement('span');
-  scratch.style.backgroundColor = '';
-  document.body.appendChild(scratch);
-  const read = (token) => {
-    scratch.style.backgroundColor =
-      getComputedStyle(document.documentElement).getPropertyValue(token);
-    return getComputedStyle(scratch).backgroundColor;
-  };
-  const lum = (rgb) => {
-    const v = rgb.map((c) => {
-      const s = c / 255;
-      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-    });
-    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
-  };
-  const parse = (value) => (value.match(/[0-9.]+/g) || []).slice(0, 3).map(Number);
-  const bg = parse(read('--editor-bg'));
-  const fg = parse(getComputedStyle(p).color);
-  const alpha = parseFloat(getComputedStyle(p).opacity);
-  const composited = fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha)));
-  const a = lum(composited), b = lum(bg);
-  return {
-    composited, bg, fg, alpha,
-    ratio: Number(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2)),
-    dimOut: getComputedStyle(document.documentElement).getPropertyValue('--dim-out').trim(),
-  };
-})()"""
+    This is the gate for the overlay that was withdrawn, and it is the mirror image of
+    the one it replaced. A working state used to dim every other top-level block and
+    refuse every press in it, on the claim that the rest of the document should be
+    *inert* while the reader was producing something. It never earned that: a sheet's
+    own block view already claims its grid, and the exclusivity a working state needs
+    is the record's — one focus path — rather than a scrim's.
 
-def test_a_working_state_dims_and_inerts_the_rest_of_the_document(window):
-    """With a sheet live, every other block is dimmed and unreachable — and the
-    surrounding prose is still legible.
-
-    This is the gate that catches §2.3 being implemented too broadly *or* not
-    broadly enough, and both halves are properties rather than literals:
-    `--dim-out` is one number for both schemes because dimming says *this is not
-    where you are*, which is about emphasis rather than hue, so the question the
-    gate asks is whether the dimmed text still clears a legible contrast against
-    `--editor-bg` — not whether it came out at 0.55.
-
-    **The scroller is asserted separately and must not dim.** Scrolling is the
-    container's job: a composer hanging below a short board has to stay reachable,
-    and inertness belongs on blocks, never on the thing you scroll.
+    **Three things are asserted, and the third is the one a rule comes back through.**
+    Nothing is faded, nothing has taken the pointer away, and neither name the removed
+    feature owned exists any more: not the class on a block, and not the token in the
+    stylesheet. A dimming rule restored one declaration at a time — the opacity, then
+    the class — fails the first two; one restored wholesale, with the token brought
+    back but the rule forgotten, fails the last.
     """
-    out = _open_a_working_state(window)
+    _open_a_working_state(window)
 
-    assert out["lit"] is not None and out["lit"]["opacity"] == "1", (
-        f"the block the reader is working in is dimmed too: {out}")
-    # The other three: the paragraph, the board, and the paragraph after it. The
-    # fourth block *is* the one holding the record.
-    assert len(out["dimmed"]) == 3, (
-        "every other top-level block should be dimmed — the paragraph before the "
-        f"board, the board, and the paragraph after the table: {out}")
+    out = _dump(window, WORKING_STATE)
+    assert not out.get("missing"), out
 
-    for entry in out["dimmed"]:
-        assert 0 < float(entry["opacity"]) < 1, (
-            f"a dimmed block is not dimmed: {entry}")
-        # **The dimmed block takes its own press**, which is the change: `pointer-events: none`
-        # took the press away from the block and handed it to the editor behind, which then
-        # mapped the press's *coordinates* into that same block — so a reader could put a caret
-        # in a paragraph beside a live sheet and type in it. Refusing the press is
-        # `src/press.ts`'s job and it needs the press to arrive, and a dimmed region that
-        # swallowed nothing would be invisible as a choice.
+    # Four blocks: the sheet's own table, the paragraph before the board, the board,
+    # and the paragraph after the table.
+    assert len(out["blocks"]) == 4, out
+    for entry in out["blocks"]:
+        assert entry["opacity"] == "1", (
+            f"a block is faded while a working state is live: {entry}")
         assert entry["pointerEvents"] != "none", (
-            f"a dimmed block must still receive its own press: {entry}")
-        assert entry["cursor"] == "default", (
-            f"and say with a cursor that a click there does nothing: {entry}")
-        # The band is `z-index: -1` and escapes into `.ProseMirror`'s stacking
-        # context; a dimmed block that isolated would trap it. `opacity` is the one
-        # stacking context it *may* create, and it does not move absolutely
-        # positioned descendants — `filter` would.
-        assert not entry["filtered"], (
-            f"dimming with filter would re-anchor every absolutely positioned "
-            f"overlay in the block: {entry}")
-    assert out["scroller"]["pointerEvents"] != "none", (
-        f"inertness leaked onto the scroll container: {out['scroller']}")
-    assert out["scroller"]["opacity"] == "1", (
-        f"the scroll container must not dim: {out['scroller']}")
+            f"a block has taken the pointer away while a working state is live: {entry}")
+        assert entry["dimmed"] is False, (
+            f"the withdrawn overlay's class is back on a block: {entry}")
+    assert out["dimOut"] == "", (
+        f"the withdrawn overlay's token is back in the stylesheet: {out}")
 
-    # ...and the property behind the number. WCAG's 4.5:1 for body text, measured
-    # through the actual paint: the dimmed paragraph's own colour, composited over
-    # the editor background by `--dim-out`.
-    contrast = _dump(window, DIMMED_LEGIBILITY)
-    assert not contrast.get("missing"), contrast
-    assert contrast["ratio"] >= 4.5, (
-        "the dimmed prose stops being legible, which is the failure --dim-out exists "
-        f"to avoid: {contrast}")
-    assert float(contrast["dimOut"]) == float(out["dimOut"]), (contrast, out)
+    # The scroller is asserted separately, and it is about scrolling rather than about
+    # this: a composer hanging below a short board has to stay reachable.
+    assert out["scroller"]["opacity"] == "1", out
+    assert out["scroller"]["pointerEvents"] != "none", out
 
 
 # ── An unlocked block is a working state ──────────────────────────────────────
@@ -5542,15 +5463,13 @@ def _encrypt_block_with(window, needle, password=BLOCK_PASSWORD, nth=None):
 
 
 def test_opening_a_block_takes_the_pages_one_working_state(window):
-    """Unlocking dims the document at once, and marks the block like any other.
+    """Unlocking marks the block like any other working state, and touches nothing else.
 
     Three claims in one test because they are one gesture:
 
-    - **The rest of the document is already dimmed and inert**, with no click into the
-      reveal at all. The plaintext is on screen and the reader's attention is on this
-      block, so the treatment is unlock-keyed rather than focus-keyed: waiting for a
-      focus would leave the window between "decrypted" and "notice" as exactly the
-      window in which the plaintext is readable and the document looks normal.
+    - **The rest of the document is left alone.** An unlocked block used to dim every
+      other top-level block, which was the withdrawn overlay again: an open block is
+      *one working state among the blocks*, not a scrim over the page.
     - **The block wears the shared dashed outline** and the chip names the state, and
       its cluster offers **Lock** rather than Unlock. The old 3px accent bar was standing
       in for "open", which the two-mark vocabulary had no slot for; adding the block
@@ -5562,8 +5481,8 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
       the record. The words are this block's own too: a diagram's axis is
       `Edit`/`Done`, and one that read "Edit" here is the diagram's vocabulary
       again.
-    - The **other** paragraph, which holds nothing, is dimmed — which is what makes the
-      dashed one the only outline on the page and therefore readable at a glance.
+    - The **other** paragraph holds nothing and is marked nothing, which is what makes
+      the dashed one the only outline on the page and therefore readable at a glance.
     """
     _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
           % json.dumps(THREE_PARAGRAPHS))
@@ -5571,12 +5490,18 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
           lambda d: d.get("p") is True, timeout=25)
     _encrypt_block_with(window, "Opening the door.")
 
-    out = _wait(window, r"""(() => ({
-      dimmed: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
-      lit: [...document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-lit')]
-        .map((el) => {
+    out = _wait(window, r"""(() => {
+      const reveal = document.querySelector('.encrypted-block-reveal');
+      // The block holding the record, found the way a reader finds it: from the
+      // reveal up to the block that owns it. There is no class naming the block that
+      // holds the record any more — the outline is the mark, and it is read below.
+      const el = reveal && reveal.closest('.encrypted-block');
+      return ({
+      others: [...document.querySelectorAll('#editor-container > .ProseMirror > *')]
+        .filter((other) => other !== el)
+        .map((other) => ({ cls: String(other.className).slice(0, 60),
+                           opacity: getComputedStyle(other).opacity })),
+      held: el === null ? [] : [(() => {
           const cs = getComputedStyle(el);
           return { dashed: cs.outlineStyle === 'dashed', width: parseFloat(cs.outlineWidth) || 0,
                    open: !!el.querySelector('.encrypted-block-reveal'),
@@ -5587,7 +5512,7 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
                    interaction: [...el.querySelectorAll(
                      ':scope > .block-controls > .block-control-interaction')]
                      .map((b) => b.textContent.trim()) };
-        }),
+        })()],
       // The bar that used to stand in for "open" is gone.
       bar: (() => {
         const r = document.querySelector('.encrypted-block-reveal');
@@ -5596,15 +5521,18 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
         return { width: cs.borderLeftWidth, colour: cs.borderLeftColor };
       })(),
       chip: (document.querySelector('#status-mode') || {}).textContent || '',
-    }))()""", lambda d: d.get("lit"), timeout=10)
+    });
+    })()""", lambda d: d.get("held"), timeout=10)
 
-    assert out["dimmed"] == 2, (
-        f"the other two blocks should be dimmed, with no click into the reveal: {out}")
-    assert len(out["lit"]) == 1, out
-    assert out["lit"][0]["open"], out
-    assert out["lit"][0]["dashed"] and out["lit"][0]["width"] >= 2, (
+    assert len(out["held"]) == 1, out
+    assert len(out["others"]) == 2, out
+    for entry in out["others"]:
+        assert entry["opacity"] == "1", (
+            "unlocking takes the page's focus path and nothing else: %r" % (out,))
+    assert out["held"][0]["open"], out
+    assert out["held"][0]["dashed"] and out["held"][0]["width"] >= 2, (
         f"an open block should wear the shared dashed mode outline: {out}")
-    assert out["lit"][0]["interaction"] == ["Lock"], (
+    assert out["held"][0]["interaction"] == ["Lock"], (
         f"the block's own row must carry exactly one control for its edit step, and "
         f"that one must read Lock while the block is open: {out}")
     accent = _accent_rgb(window)
@@ -5617,27 +5545,26 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
         f"words, which are not a diagram's: {out}")
 
 
-def test_a_second_block_cannot_be_opened_while_one_is_open(window):
-    """One at a time — and in the product the half that enforces it is **inertness**.
+def test_opening_a_second_block_takes_the_focus_path_from_the_first(window):
+    """One at a time — and now the *second* one is reachable, which is the point.
 
-    The rule is two blocks' — one holds the page's working state, and unlocking a
-    second locks the first. Only one of those is reachable any more, and it is worth
-    saying which and why: an open block **dims and inertises every other block**, so
-    the second block's controls are **refused** — the dimmed region still takes its own
-    press (so it can show a cursor saying a click there does nothing) and `src/press.ts`
-    refuses it. Exclusivity is therefore enforced twice over — by the press classifier at
-    the document level, and by the focus path for the one case that cannot reach, a working
-    state *inside* the open block (the next test).
+    The rule is two blocks': one holds the page's focus path, and taking it hands it over.
+    Which half of that was which used to be worth saying, because the first half was enforced
+    by refusing: an open block dimmed every other block, and a press in the dimmed region was
+    refused by `src/press.ts`. That scrim is gone, so a second block **can** now be opened
+    while one is open — and what happens is not that nothing occurs but that the first block
+    locks itself, which is the rule the focus path always enforced and the one the refusal
+    was only ever standing in for.
 
     Asserted as the behaviour that actually is, and through the real gesture: the second
-    block is **there**, a press on it is **refused**, and the open block's own **Lock** puts
-    the document back within reach. A version of this that drove a second unlock directly
-    would pass for an implementation with no exclusivity at all.
+    block's own **Source** control is pressed, the second block opens into its markdown, and
+    the block that was open is closed. A version of this that only checked the first block
+    locked would pass for a close button; a version that only checked the second block
+    opened would pass for no exclusivity at all.
 
-    What is genuinely given up is comparing two secrets side by side. That was a real
-    use, and it is refused on purpose, for a reason that has nothing to do with
-    selection: several decrypted secrets on one screen is a shoulder-surfing surface.
-    A refusal with that reason is better than a capability nobody thought to close.
+    What is genuinely given up is comparing two secrets side by side — and it was given up
+    when the scrim went, which is the honest trade: one open block is still one open block,
+    and a reader who wants two can have them without the document going dead around them.
     """
     _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
           % json.dumps(THREE_PARAGRAPHS))
@@ -5645,90 +5572,58 @@ def test_a_second_block_cannot_be_opened_while_one_is_open(window):
           lambda d: d.get("p") is True, timeout=25)
     _encrypt_block_with(window, "Opening the door.")
 
-    out = _wait(window, r"""(() => {
-      const editor = document.querySelector('#editor-container > .ProseMirror');
-      const idle = [...editor.children].filter(
-        (el) => el.classList.contains('edi-block-mode-dimmed'));
-      const first = idle[0];
-      const rect = first.getBoundingClientRect();
-      const x = Math.round(rect.left + 40), y = Math.round(rect.top + rect.height / 2);
-      const at = document.elementFromPoint(x, y);
-      return {
-        idle: idle.length,
-        hitsBlock: !!(at && first.contains(at)),
-        hit: at ? (at.className || at.tagName) : null,
-        pointerEvents: getComputedStyle(first).pointerEvents,
-        cursor: getComputedStyle(first).cursor,
-      };
-    })()""", lambda d: d.get("idle"), timeout=10)
+    _wait(window, r"""(() => ({
+      open: document.querySelectorAll('.encrypted-block-reveal').length,
+    }))()""", lambda d: d.get("open") == 1, timeout=15)
 
-    assert out["idle"] == 2, out
-    # **The dimmed block takes its own press** — it has to, or a cursor cannot say anything
-    # about it — and `src/press.ts` refuses that press. So the exclusivity claim is the
-    # refusal, and here it is through the gesture a reader would actually make.
-    assert out["pointerEvents"] != "none", out
-    assert out["cursor"] == "default", (
-        f"a dimmed region says with a cursor that a click there does nothing: {out}")
-
-    refused = _dump(window, """(() => {
-      const editor = document.querySelector('#editor-container > .ProseMirror');
-      const idle = [...editor.children].filter(
-        (el) => el.classList.contains('edi-block-mode-dimmed'))[0];
-      const before = document.querySelectorAll('.encrypted-block-reveal').length;
-      const litBefore = document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-lit').length;
-      // **The press that would *open* something**: a click on the dimmed block's own `Source`
-      // control. It must do nothing. (`Alt`+click there is deliberately *not* in this claim —
-      // it is the close gesture, and closes.)
-      const btn = idle.querySelector('.block-control-representation');
-      const r = idle.getBoundingClientRect();
-      const x = Math.round(r.left + 40), y = Math.round(r.top + r.height / 2);
-      if (btn) {
-        const br = btn.getBoundingClientRect();
-        const at = document.elementFromPoint(Math.round(br.left + br.width / 2),
-          Math.round(br.top + br.height / 2)) || btn;
-        for (const t of ['mousedown', 'mouseup', 'click']) {
-          at.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, button: 0,
-            clientX: Math.round(br.left + br.width / 2),
-            clientY: Math.round(br.top + br.height / 2) }));
-        }
-      }
-      return {
-        control: btn ? btn.textContent.trim() : null,
-        revealsBefore: before,
-        revealsAfter: document.querySelectorAll('.encrypted-block-reveal').length,
-        litBefore: litBefore,
-        litAfter: document.querySelectorAll(
-          '#editor-container > .ProseMirror > .edi-block-mode-lit').length,
-        inSource: idle.classList.contains('edi-block-mode-source'),
-      };
-    })()""")
-    assert refused["revealsAfter"] == refused["revealsBefore"], (
-        f"a second block cannot be opened while one is open: {refused}")
-    assert refused["litAfter"] == refused["litBefore"], (
-        f"and a press on a dimmed block does not move the one working state: {refused}")
-    assert refused["inSource"] is False, (
-        f"nor open the block it was aimed at: {refused}")
-
-    # ...and the way out is the block's own **Lock**, which is the one control an
-    # open block keeps on its own cluster. **Not** a press on the page: that used
-    # to end the session from anywhere, which is one press with no block named,
-    # and it is withdrawn for the reason the gesture's own docstring gives.
+    # **The press that takes the focus path**: a click on another block's own `Source`
+    # control. Called directly rather than dispatched at the point, because the cluster
+    # is `pointer-events: none` until the block is hovered — a press aimed at the
+    # button's centre hit-tests *past* it into the paragraph, which is the one
+    # mechanism this repo has the sharpest scar about.
     _dump(window, """(() => {
-      const lock = document.querySelector(
-        '.encrypted-block .block-control-interaction');
-      if (!lock) return { missing: true };
-      lock.click();
-      return { label: lock.textContent.trim() };
+      const editor = document.querySelector('#editor-container > .ProseMirror');
+      const other = [...editor.children]
+        .find((el) => el.textContent.indexOf('The window.') >= 0);
+      if (!other) return { missing: 'block' };
+      const btn = other.querySelector('.block-control-representation');
+      if (!btn) return { missing: 'control' };
+      const before = document.querySelectorAll('.encrypted-block-reveal').length;
+      btn.click();
+      return { control: btn.textContent.trim(), revealsBefore: before };
+    })()""")
+
+    # **Waited on, not read**: closing a reveal persists the plaintext back into the
+    # envelope first, and that is `crypto.subtle`, so the hand-over is not over when
+    # the second block's source form is on screen — it is over when the first is gone.
+    handed = _wait(window, r"""(() => ({
+      open: document.querySelectorAll('.encrypted-block-reveal').length,
+      sources: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .block-source-mode').length,
+    }))()""",
+        lambda d: d.get("sources") == 1 and d.get("open") == 0, timeout=20)
+    assert handed["open"] == 0, (
+        "the block that was open keeps the focus path after another block takes it: %r"
+        % (handed,))
+    assert handed["sources"] == 1, handed
+
+    # ...and the block that took it keeps the way out it always had: the source banner's
+    # own **Visual** button, which is *in flow* in the bar rather than floating over it
+    # (§6.3's reason a control in the cluster could not be used here).
+    _dump(window, """(() => {
+      const done = document.querySelector(
+        '#editor-container > .ProseMirror > .block-source-mode .block-source-exit');
+      if (!done) return { missing: 'exit' };
+      done.click();
+      return { label: done.textContent.trim() };
     })()""")
     left = _wait(window, r"""(() => ({
+      sources: document.querySelectorAll(
+        '#editor-container > .ProseMirror > .block-source-mode').length,
       open: document.querySelectorAll('.encrypted-block-reveal').length,
-      dimmed: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
-      lit: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-lit').length,
-    }))()""", lambda d: d.get("open") == 0, timeout=15)
-    assert left["dimmed"] == 0, f"closing the block left the document dimmed: {left}"
+    }))()""", lambda d: d.get("sources") == 0, timeout=15)
+    assert left["open"] == 0, (
+        f"leaving the source form handed the focus path back to nothing: {left}")
 
 
 def test_closing_a_block_commits_what_was_typed_into_it(window):
@@ -5804,21 +5699,22 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
     **outer** editor's record, and releasing that record *is* locking the block — so the
     common case of a sheet inside a reveal would close the thing it lives in.
 
-    Four things hold at once, and it is the set that is the claim:
+    Two things hold at once, and they are the claim:
 
-    - the **sheet** is lit and holds the dashed outline;
-    - the **encrypted block holding it** is lit too, and stays **open** — and wears **no
-      border of its own**, because the reader is not in there;
-    - the reveal's **other** content is dimmed;
-    - the **outer** document is dimmed.
+    - the **sheet** is a working state of the reveal's own document, and the sheet opens
+      at all;
+    - the **encrypted block holding it** stays **open**, and wears **no border of its
+      own**, because the reader is not in there.
 
-    The second is the one a per-editor implementation gets wrong by dimming one step
-    too close while leaving the prose two steps further away bright, and the *third* half
-    of it is the one that says it in the only way a reader can: **exactly one edit border
-    on the page**, and it is round the block being worked in. Two nested working states
-    used to show two, which is the one thing a mark that claims "you are working here" is
-    not allowed to do. It is counted from the computed outline rather than from the class
+    The second is the one a per-editor implementation gets wrong by taking one step too
+    close, and it is said in the only way a reader can: **exactly one edit border on the
+    page**, and it is round the block being worked in. Two nested working states used to
+    show two, which is the one thing a mark that claims "you are working here" is not
+    allowed to do. It is counted from the computed outline rather than from the class
     list, because the claim is about what is drawn.
+
+    The dimming that used to make each document recede around its own working state is
+    gone, and the border is what is left of that vocabulary: one mark, on one block.
     """
     _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
           % json.dumps("Opening the door.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nThe end.\n"))
@@ -5840,19 +5736,16 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
     out = _wait(window, r"""(() => {
       const editor = document.querySelector('#editor-container > .ProseMirror');
       const block = document.querySelector('#editor-container .encrypted-block');
-      const innerLit = [...document.querySelectorAll(
-        '.encrypted-block-reveal > .ProseMirror > .edi-block-mode-lit')].length;
-      const innerDimmed = [...document.querySelectorAll(
-        '.encrypted-block-reveal > .ProseMirror > .edi-block-mode-dimmed')].length;
       return {
         open: !!document.querySelector('.encrypted-block-reveal'),
         sheet: !!document.querySelector('.encrypted-block-reveal .spreadsheet'),
-        blockLit: block.classList.contains('edi-block-mode-lit'),
-        blockDimmed: block.classList.contains('edi-block-mode-dimmed'),
         blockMarked: block.classList.contains('edi-block-mode'),
-        outerDimmed: [...editor.children].filter(
-          (el) => el.classList.contains('edi-block-mode-dimmed')).length,
-        innerLit, innerDimmed,
+        blockEditing: block.classList.contains('edi-block-mode-editing'),
+        // The outer document is *not* receded: the withdrawn overlay's whole claim
+        // was that a working state two levels down reaches out and dims the prose
+        // around the block that holds it.
+        outerFaded: [...editor.children].filter(
+          (el) => getComputedStyle(el).opacity !== '1').length,
         // **Every edit border on the page, and whose it is.** Read from the computed
         // outline, because "one border" is a claim about what is drawn and the class list
         // is only the route to it.
@@ -5870,12 +5763,12 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
     })()""", lambda d: d.get("sheet") is True, timeout=15)
 
     assert out["open"], f"the block was closed out from under its own sheet: {out}"
-    assert out["blockLit"] and not out["blockDimmed"], (
-        f"the block holding the sheet has to stay lit with it: {out}")
     assert out["blockMarked"], (
         f"the block holding the sheet is still a block in a mode: {out}")
-    assert out["outerDimmed"] == 2, f"the outer document is what recedes: {out}"
-    assert out["innerLit"] == 1, out
+    assert not out["blockEditing"], (
+        f"the block holding the sheet is not where the reader is: {out}")
+    assert out["outerFaded"] == 0, (
+        f"a working state two levels down does not reach the outer document: {out}")
 
     drawn = [m for m in out["marks"] if m["style"] == "dashed" and m["width"] >= 2]
     assert len(drawn) == 1 and drawn[0]["sheet"], (
@@ -6332,18 +6225,12 @@ def test_replacing_a_document_discards_its_pending_typing(window):
 
 
 def test_a_source_block_is_not_a_working_state(window):
-    """Opening a block's Source dims nothing.
+    """Opening a block's Source takes the working state and hands it over.
 
-    This is the half of §2.4 that is easy to get wrong in the direction of
-    tidiness. §7.2's sentence — *anything not being viewed as its document* — covers
-    source, being edited **and** a sheet, and it is the right sentence for the
-    dashed outline because all three should be marked. It is the wrong sentence for
-    the dimming, and copying it here would mean that Alt+clicking a paragraph into
-    its markdown dimmed the whole document around a block whose buffer is the
-    reader's only other text.
-
-    So the outline and the dimming are generated from two different predicates, and
-    this is the test that says so.
+    A sheet is a *producing* state — it has a selection surface of its own — and a source
+    form is a *reading* state: the reader is looking at the block's own document. So the
+    two are not the same kind of thing, and the gesture that leaves a sheet is the one
+    that enters a source form rather than a second sheet.
     """
     _open_a_working_state(window)
     # Out of the sheet, and into a paragraph's Source instead. **Not** undo: a form
@@ -6363,25 +6250,26 @@ def test_a_source_block_is_not_a_working_state(window):
     })()""")
     source = _wait(window, """(() => ({
       src: !!document.querySelector('#editor-container .block-source-mode'),
-      dimmed: document.querySelectorAll('#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
+      sheet: document.querySelectorAll('#editor-container .spreadsheet').length,
     }))()""", lambda d: d.get("src") is True, timeout=10)
     assert source["src"], source
-    assert source["dimmed"] == 0, (
-        "a source form is a *reading* state — it dims nothing: %r" % source)
+    assert source["sheet"] == 0, (
+        "the sheet handed the working state over rather than sitting under it: %r" % source)
 
 
-def test_a_dimmed_document_cannot_take_a_second_selection(window):
-    """A press in the dimmed region does not create a selection, and does not
-    damage the grid that *is* holding one.
+def test_a_press_in_the_document_does_not_damage_the_grid_holding_a_selection(window):
+    """The grid's own selection is the grid's business, whatever the reader does outside it.
 
-    These are the two halves of inertness, and the second is the one that catches
-    §2.3 being implemented too broadly. Dimming is per-block and the rule is one
-    class, so the tempting mistake is to put `pointer-events: none` on the editor or
-    the scroller — which would also take the pointer out of the *focused* block's
-    grid, and a reader who had a cell selected would find the selection gone and the
-    grid deaf. The grid's `anchor`/`active`/`extra` and its `.ss-range` /
-    `.ss-selected` / `.ss-active` classes are the reader's work, and inertness must
-    not reach them.
+    This was half of "a dimmed document cannot take a second selection", and that test went
+    with the overlay. Its *other* half is still true and still worth a gate: the temptation
+    for any rule of that shape is to put `pointer-events: none` on the editor or the scroller
+    rather than on a block, which would reach the *focused* block's grid as well — and a
+    reader who had a cell selected would find the selection gone and the grid deaf.
+
+    So the claim is the narrower one: the grid's `anchor`/`active`/`extra` and its
+    `.ss-range` / `.ss-selected` / `.ss-active` classes are the reader's work, and a press in
+    the paragraph above or below the sheet leaves them exactly where they were. **Focus does
+    follow the press** — that is ordinary editing, and refusing it was the overlay's doing.
     """
     _open_a_working_state(window)
 
@@ -6405,21 +6293,17 @@ def test_a_dimmed_document_cannot_take_a_second_selection(window):
         range: grid.querySelectorAll('td.ss-range').length,
         selected: grid.querySelectorAll('td.ss-selected').length,
         active: grid.querySelectorAll('td.ss-active').length,
-        text: [...grid.querySelectorAll('td.ss-range')].map((t) => t.textContent),
       };
     })()""", lambda d: d.get("range", 0) > 0, timeout=10)
     assert grid["focused"] and grid["active"], grid
-    assert grid["range"] > 0, grid
 
-    # A real press on a paragraph above the sheet and on the one below it. The
-    # element under the point is deliberately *not* consulted: the question is what
-    # the browser's own hit test reaches when a pointer is put there. The two
-    # paragraphs are picked out by their own wrapper — a dimmed *board* also has
-    # `<p>` elements inside it, and pressing one of those would be a different test.
-    def _dimmed_paragraph(index):
+    # A real press on a paragraph above the sheet and on the one below it. The two
+    # paragraphs are picked out by their own wrapper — a *board* also has `<p>` elements
+    # inside it, and pressing one of those would be a different test.
+    def _paragraph(index):
         return _dump(window, """(() => {
           const els = [...document.querySelectorAll(
-            '#editor-container > .ProseMirror > .edi-block-mode-dimmed.block-visual-mode')]
+            '#editor-container > .ProseMirror > .block-visual-mode')]
             .map((el) => el.querySelector('p')).filter(Boolean);
           const el = els[%d];
           if (!el) return { missing: true, count: els.length };
@@ -6433,25 +6317,20 @@ def test_a_dimmed_document_cannot_take_a_second_selection(window):
           return { at: at.className || at.tagName, x, y, count: els.length };
         })()""" % index)
 
-    assert _dimmed_paragraph(0).get("count") == 2, (
-        "expected a paragraph on each side of the sheet: %r" % _dimmed_paragraph(0))
+    assert _paragraph(0).get("count") == 2, (
+        "expected a paragraph on each side of the sheet: %r" % _paragraph(0))
     for index in (0, 1):
-        pressed = _dimmed_paragraph(index)
-        assert not pressed.get("missing"), pressed
+        assert not _paragraph(index).get("missing"), _paragraph(index)
 
     after = _dump(window, """(() => {
       const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
-      const ed = window.ediSelectionState ? window.ediSelectionState() : null;
       return {
         focused: document.activeElement === grid,
         range: grid.querySelectorAll('td.ss-range').length,
         selected: grid.querySelectorAll('td.ss-selected').length,
         active: grid.querySelectorAll('td.ss-active').length,
-        native: String(getSelection()).slice(0, 60),
-        ed,
       };
     })()""")
-    assert after["focused"], f"the grid lost the caret to a dimmed block: {after}"
     assert after["range"] == grid["range"], f"the grid's selection moved: {after}"
     assert after["selected"] == grid["selected"], f"the grid's selection moved: {after}"
     assert after["active"] == grid["active"], f"the grid's active cell moved: {after}"
@@ -6588,49 +6467,37 @@ def test_escape_leaves_a_sheet_and_escape_in_a_cell_does_not(window):
     left = _wait(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),
-      dimmed: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
       active: document.activeElement
         ? String(document.activeElement.className).slice(0, 40) : null,
     }))()""", lambda d: d.get("plain") is True, timeout=10)
     assert left["sheet"] is False, left
-    assert left["dimmed"] == 0, f"leaving the sheet left the document dimmed: {left}"
 
 
-def test_a_press_in_the_dimmed_region_does_nothing_to_any_block(window):
-    """A press in the dimmed region reaches no block's mode, and moves no block's state.
+def test_a_press_beside_a_live_sheet_is_an_ordinary_press(window):
+    """A paragraph beside a live sheet is a paragraph, and `Alt`+click on it means its own mode.
 
-    §2.3's inertness used to be `pointer-events: none` on each dimmed block, so a press over one
-    hit-tested **past** it — and past a dimmed paragraph is **`.ProseMirror` itself**, the editor's
-    own box rather than any block in it. `blockPosForElement` read that as
-    `posAtDOM(view.dom, 0)` = `posAtStart` = **0**, so it named the document's *first* block,
-    wherever the pointer was.
+    This is the replacement for the dimmed region's gate, and the two claims are the two halves
+    of what the withdrawn overlay did. A press over a block it considered *not where the reader
+    is* used to be refused by `src/press.ts`, and an `Alt`+click there used to mean *close* —
+    because the press's coordinates landed in a block the press's target did not name, and the
+    classifier had a case for exactly that. The press names the block it is over, and the block it
+    is over is a block.
 
-    **It is no longer `pointer-events: none`**, which is the point: that property took the press
-    away from the block and handed it to the editor behind, which then mapped the press's
-    *coordinates* into that same block — which is how a reader could put a caret in a paragraph
-    beside a live sheet and type in it. The dimmed region now **takes its own press** (so it can
-    show a cursor saying a click there does nothing) and `src/press.ts` refuses it.
-
-    So the press **names the block it is over** now, and the claims are what the classifier owes
-    because of that:
-
-    - a **plain press** in the dimmed region opens nothing and selects nothing — it is the
-      *editor's* inert region, and it stays one;
-    - an **`Alt`+click** there is the **close** gesture, so it ends the live sheet rather than
-      opening an unrelated block in Source — which is the old bug's other half, and the fix was
-      never to forbid the gesture but to give it one meaning;
-    - a **right-click** there offers no block menu, which is the same resolver's other reader.
+    - a **plain press** in the paragraph does the ordinary thing: it opens nothing, and it puts
+      the caret where the reader clicked;
+    - an **`Alt`+click** in the paragraph toggles **that paragraph's** mode and hands the working
+      state over — the sheet closes and the paragraph's source form opens. One press, and it says
+      which block it is about.
     """
     _open_a_working_state(window)
 
-    def _press_in_the_dimmed_region(index, kind, alt=False):
+    def _press_beside_the_sheet(index, kind, alt=False):
         return _dump(window, """(() => {
           const ed = document.querySelector('#editor-container > .ProseMirror');
-          // Prose only: a dimmed *board* draws `<p>` labels of its own, and
-          // pressing one of those would be a different test.
+          // Prose only: a *board* draws `<p>` labels of its own, and pressing one of
+          // those would be a different test.
           const paras = [...ed.querySelectorAll(
-            ':scope > .edi-block-mode-dimmed.block-visual-mode')]
+            ':scope > .block-visual-mode')]
             .map((b) => b.querySelector('p')).filter(Boolean);
           const el = paras[%d];
           if (!el) return { missing: true, have: paras.length };
@@ -6652,53 +6519,45 @@ def test_a_press_in_the_dimmed_region_does_nothing_to_any_block(window):
           const ed = document.querySelector('#editor-container > .ProseMirror');
           return {
             sheet: !!document.querySelector('#editor-container .spreadsheet'),
+            plain: !!document.querySelector('#editor-container .ss-plain'),
             source: ed.querySelectorAll(':scope > .block-source-mode').length,
             cm: !!document.querySelector('#editor-container > .ProseMirror > .cm-editor'),
-            dimmed: ed.querySelectorAll(':scope > .edi-block-mode-dimmed').length,
-            selected: ed.querySelectorAll(':scope > .ProseMirror-selectednode').length,
-            firstBlock: String(ed.querySelector(':scope > *').className).slice(0, 40),
           };
         })()""")
 
-    # First: the press has to land where the bug lives — **on the dimmed block itself**, which is
-    # what it now receives. A press that hit-tested past it to the editor's own box was the old
-    # mechanism, and asserting it would pin the bug back in place.
-    below = _press_in_the_dimmed_region(1, 'click')
+    # First: the press has to land where the bug lived — **on the paragraph itself**. A press
+    # that hit-tested past it to the editor's own box was the old mechanism, and asserting it
+    # would pin the bug back in place.
+    below = _press_beside_the_sheet(1, 'click')
     assert below["pressed"].startswith("Prose after"), below
     assert below["target"].startswith("P"), (
-        f"this test is not pressing what it claims: the dimmed paragraph must receive its own"
-        f" press: {below}")
-    assert below["cursor"] == "default", (
-        f"and say with a cursor that a click there does nothing: {below}")
+        "this test is not pressing what it claims: the paragraph must receive its own "
+        f"press: {below}")
+    assert below["cursor"] != "default", (
+        f"and must still be a text cursor, because it is still ordinary prose: {below}")
 
     after = _state()
     assert after["source"] == 0 and after["cm"] is False, (
-        "a plain press in the dimmed region opened a block's Source form: %r" % (after,))
-    assert after["sheet"] and after["dimmed"] == 3, (
-        f"the press disturbed a live working state: {after}")
-    assert after["selected"] == 0, (
-        f"and selected nothing: {after}")
+        "a plain press opens no block's Source form: %r" % (after,))
+    assert after["sheet"], f"and it left the live working state alone: {after}"
 
-    # Then the gesture over it, which is the **close**: one meaning for `Alt`+click, and this is
-    # the case where a press names no block. The paragraph above the sheet must not open on the
-    # way — that is the old bug, and it is still the first thing to check.
-    alt = _press_in_the_dimmed_region(1, 'click', alt=True)
-    time.sleep(0.6)
-    left = _dump(window, """(() => ({
+    # Then the gesture over it, which is **its** mode and not a close: one meaning for
+    # `Alt`+click, and the block it names is the one it changes. Waited on for the same
+    # reason the encrypted-block gate is — the block that lost the record is *released*,
+    # and a sheet's release is the block view's own teardown.
+    _press_beside_the_sheet(1, 'click', alt=True)
+    left = _wait(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),
       source: document.querySelectorAll(
         '#editor-container > .ProseMirror > .block-source-mode').length,
-      dimmed: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
-    }))()""")
-    assert not left["sheet"] and left["plain"], (
-        f"an Alt+click in the dimmed region is the close gesture, so it ends the sheet: {left}")
-    assert left["source"] == 0, (
-        "and it did not open an unrelated block in Source on the way — the record went to the "
-        f"first block in the document, which was the old bug: {left}")
-    assert left["dimmed"] == 0, (
-        f"and the document is no longer dimmed, because nothing is being worked in: {left}")
+    }))()""", lambda d: d.get("source") == 1 and d.get("sheet") is False, timeout=20)
+    assert left["source"] == 1, (
+        "an Alt+click names the block it is over, so the paragraph is the one that opens: %r"
+        % (left,))
+    assert left["plain"], (
+        f"and the working state it took over is handed back as the table's plain form: {left}")
+
 
 def test_alt_click_outside_a_working_state_closes_it(window):
     """A press naming no block closes — and it must not take any *other* block's state.
@@ -6707,11 +6566,13 @@ def test_alt_click_outside_a_working_state_closes_it(window):
     and nothing else.** On a block it toggles that block's mode; a press that names no block can
     only mean *close*, so there is nothing for it to mean by accident.
 
-    It was withdrawn once as too eager — a press in the dimmed region hit-tested past the blocks
-    onto the scroll container, and the gesture finished the sheet: one press, no block named, a
-    working state closed by a click that was not about one. The fix for that was never to forbid
-    the gesture, it was to make it mean one thing — and the listener staying on the **scroller**
-    is why the press below a live sheet is the case that exercises it.
+    It was withdrawn once as too eager — a press in the scrim's own region hit-tested past the
+    blocks onto the scroll container, and the gesture finished the sheet: one press, no block
+    named, a working state closed by a click that was not about one. The fix for that was never
+    to forbid the gesture, it was to make it mean one thing — and the listener staying on the
+    **scroller** is why the press below a live sheet is the case that exercises it. The scrim
+    itself is gone, and what the rule needs to keep saying is the narrower half: *the white
+    space below a lone board names no block, and names no block is a close.*
     """
     _open_a_working_state(window)
 
@@ -6740,15 +6601,9 @@ def test_alt_click_outside_a_working_state_closes_it(window):
     after = _dump(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),
-      dimmed: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
-      lit: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-lit').length,
     }))()""")
     assert not after["sheet"] and after["plain"], (
         f"a press naming no block is the close gesture, so it closes: {after}")
-    assert after["dimmed"] == 0 and after["lit"] == 0, (
-        f"and leaves nothing lit, because nothing is being worked in: {after}")
 
     # **And the block's own gesture is still the toggle**, on the block: a table's edit step is
     # its form, so `Alt`+clicking a cell of the sheet is the toggle back to plain text (§5.2) —
@@ -6763,25 +6618,23 @@ def test_alt_click_outside_a_working_state_closes_it(window):
     left = _wait(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),
-      dimmed: document.querySelectorAll(
-        '#editor-container > .ProseMirror > .edi-block-mode-dimmed').length,
     }))()""", lambda d: d.get("sheet") is False, timeout=10)
     assert left["plain"], left
-    assert left["dimmed"] == 0, left
 
 
-def test_a_composer_still_scrolls_into_view_in_a_dimmed_document(window):
-    """Dimming takes the pointer away; it must not take scrolling away.
+def test_a_composer_still_scrolls_into_view_when_a_board_is_being_edited(window):
+    """An editing board does not take scrolling away.
 
     A card composer is an absolutely positioned field, so it contributes nothing to
     the block's height and `openInlineInput` grows the block's `padding-bottom` for
     exactly this reason — a field hanging below a short board has to be
-    *scrollable-to*. Inertness is `pointer-events: none` on **blocks**, never on the
-    scroller, so the question is whether it leaked one level up.
+    *scrollable-to*.
 
-    A board being edited is itself a working state, which makes this the only place
-    the two can be checked together: the document *is* dimmed, and the composer
-    being scrolled to is on the lit block.
+    Editing a board is a working state, which used to make this the one place the
+    scroller could be checked against the overlay: the scrim was per-block, and the
+    tempting mistake was to put it on the container. The scrim is gone, and the gate
+    is the claim that survives it — **scrolling is the container's job whatever the
+    block above it is doing** — read off the scroller's own computed style.
     """
     doc = ("Prose above the board.\n\n```mermaid\n" + KANBAN_BARE.strip()
            + "\n```\n\nProse below the board, far enough down that the document has to "
@@ -6792,11 +6645,6 @@ def test_a_composer_still_scrolls_into_view_in_a_dimmed_document(window):
           lambda d: d.get("m") is True, timeout=25)
     _enter_edit_mode(window)
     _wait(window, KANBAN_CHROME, lambda d: len(d["bands"]) == 5, timeout=15)
-
-    dimmed = _wait(window, WORKING_STATE, lambda d: d.get("dimmed"), timeout=10)
-    assert dimmed["dimmed"], (
-        "editing a board is a working state, so there is nothing dimmed here and "
-        f"this test is not testing what it claims: {dimmed}")
 
     scroller = _dump(window, """(() => {
       const el = document.querySelector('#editor-container');
@@ -8555,26 +8403,23 @@ Prose below.
 
 
 def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window):
-    """Block types by press regions: one classification each, and dimmed really is inert.
+    """Block types by press regions: one classification each, and two refusals that hold.
 
     **The table is the point.** A rule about presses that is only ever checked on one block type
     is a rule about that block type — that is how "a press on a block selects it" (true of a
-    diagram) became "a press on a block selects it" (false of the empty space beside a table),
-    and how "a dimmed block is inert" became a rule when `pointer-events: none` only ever
-    removed the *event target* while ProseMirror's own handler went on mapping the press's
-    *coordinates* to a position inside that block.
+    diagram) became "a press on a block selects it" (false of the empty space beside a table).
 
     So each row below is a **region**, pressed through the real gesture, and each column is a
-    **block type**. Four regions × five block types, and three refusals that are behaviour rather
+    **block type**. Four regions × five block types, and two refusals that are behaviour rather
     than wording:
 
-    - **a press in a dimmed block is inert** — no caret, and no text lands there. This is the
-      refusal that had to move: it is made by *stopping ProseMirror's own mousedown*, which a
-      plugin prop can do and nothing after the fact can.
     - **a press in a block's content is the block's business** — a cell press selects no cells
       and no block, because a range inside `contenteditable=false` is the browser's (§3.1).
     - **a press on a control is the button's** — the cluster's own button still does what it
-      says, with the block dimmed or not.
+      says, so a live sheet can always be closed from the sheet itself.
+
+    A third refusal used to be here: **a press in a dimmed block is inert**. That was the
+    withdrawn overlay's own rule, and the overlay is gone, so there is nothing left to refuse.
     """
     _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
           % json.dumps(PRESS_TABLE_DOC))
@@ -8604,8 +8449,6 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
           return {
             kinds: blocks.map(kindOf),
             texts: blocks.map((b) => b.textContent.slice(0, 20)),
-            lit: blocks.filter((b) => b.classList.contains('edi-block-mode-lit')).length,
-            dimmed: blocks.filter((b) => b.classList.contains('edi-block-mode-dimmed')).length,
             selectedNodes: document.querySelectorAll('.ProseMirror-selectednode').length,
             cellsPainted: document.querySelectorAll('.ss-cell-in-selection').length,
             caretBlock: blockOf === null ? -1 : blocks.indexOf(blockOf),
@@ -8675,85 +8518,6 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
             assert after["kinds"].count('para') == before["kinds"].count('para'), (
                 f"a press in the white space of a document with prose adds nothing: {after}")
 
-    # --- **The refusal that had to move: a dimmed block takes no caret and no text.**
-    # A document with prose around the table, because there has to be *something dimmed* to
-    # press: the reported case was a table-only document, and a `code_block` is not dimmable
-    # prose — it is a working state candidate of its own.
-    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
-          % json.dumps("Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n"))
-    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
-          lambda d: d.get("t") is True, timeout=25)
-    opened = _dump(window, """(() => {
-      const buttons = [...document.querySelectorAll(
-        '#editor-container .ss-plain .block-controls button')];
-      const btn = buttons.find((b) => /sheet|spread|edit/i.test(b.textContent + b.title));
-      if (!btn) return { noButton: buttons.map((b) => b.textContent) };
-      btn.click();
-      return { label: btn.textContent };
-    })()""")
-    assert opened.get("noButton") is None, f"the fixture can open a sheet: {opened}"
-    time.sleep(0.8)
-    sheet = _read()
-    assert sheet["lit"] == 1 and sheet["dimmed"] >= 2, (
-        f"the fixture really is a working state with the rest of the document dimmed: {sheet}")
-
-    # **The press aims at the paragraph *below* the table**, and that detail is the test: a press
-    # that reached ProseMirror would move the selection *there*, and one that did not leaves it
-    # where the document was loaded.
-    before_press = _read()
-    pressed = _dump(window, """(() => {
-      const blocks = [...document.querySelectorAll('#editor-container > .ProseMirror > *')];
-      const p = blocks[blocks.length - 1].querySelector('p');
-      const c = p.getBoundingClientRect();
-      const x = Math.round(c.left + 8), y = Math.round(c.top + c.height / 2);
-      const at = document.elementFromPoint(x, y);
-      if (!at) return { missing: true };
-      for (const t of ['mousedown', 'mouseup', 'click']) {
-        at.dispatchEvent(new MouseEvent(t,
-          { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
-      }
-      return { at: String(at.className || at.id || at.tagName).split(' ')[0], x, y };
-    })()""")
-    time.sleep(0.6)
-    inert = _read()
-    assert not pressed.get("missing"), pressed
-    # **The press lands on the dimmed block itself**, which is the change: the region used to be
-    # `pointer-events: none`, so the hit test walked past it to the editor's own box and the press
-    # named *nothing* — which is how "a dimmed block is inert" came to be believed, and how a
-    # reader could end up typing in one. It takes its own press now, so it can show a cursor
-    # saying a click there does nothing, and `src/press.ts` refuses it.
-    assert pressed["at"] == "P", (
-        f"a press over a dimmed block lands on the block, which receives it: {pressed}")
-    assert inert["caretBlock"] == before_press["caretBlock"], (
-        f"and the press changed no selection: {before_press} -> {inert}")
-    assert inert["caretBlock"] != len(inert["kinds"]) - 1, (
-        f"**specifically not into the block that was pressed**: {inert}")
-    assert inert["kinds"] == sheet["kinds"] and inert["texts"] == sheet["texts"], (
-        f"and nothing was typed, inserted or selected: {sheet} -> {inert}")
-    assert inert["selectedNodes"] == 0 and inert["cellsPainted"] == 0, (
-        f"and nothing got painted either: {inert}")
-
-    # **The cursor is the affordance**, and the gate for it is a computed style: `cursor: default`
-    # on the dimmed region, because a click there does nothing and the reader can see that
-    # before making it. (`not-allowed` would claim a prohibition the app does not have — and
-    # `Alt`+click in exactly this region *does* close the working state.)
-    cursor = _dump(window, """(() => {
-      const dimmed = document.querySelector(
-        '#editor-container > .ProseMirror > .edi-block-mode-dimmed');
-      return { cursor: getComputedStyle(dimmed).cursor,
-               pointerEvents: getComputedStyle(dimmed).pointerEvents };
-    })()""")
-    assert cursor["cursor"] == "default", (
-        f"a dimmed region says with a cursor that a click there does nothing: {cursor}")
-    assert cursor["pointerEvents"] != "none", (
-        f"and it receives the press so it can say so: {cursor}")
-
-    # **What this gate cannot say**, and it is the honest limit of the harness rather than of the
-    # rule: a synthetic `mousedown` **cannot move the browser's caret**, so a press here cannot
-    # demonstrate where a *real* press would put one. So the claims are that the refusal happens
-    # and nothing changes; the classification and the refusal's *ordering* — which are what make
-    # the rule true rather than merely observed — are unit-tested instead (`src/press.test.ts`).
-
     # --- **A press on a block's content is the block's business**: a cell selects no cells and
     # no block, because the range inside a cell is the browser's.
     _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
@@ -8777,8 +8541,8 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
     assert in_cell["selectedNodes"] == 0 and in_cell["cellsPainted"] == 0, (
         f"a press in a cell selects neither cells nor block: {in_cell}")
 
-    # --- **A press on a control is the button's**, and still is with the rest dimmed: the one
-    # press that must survive inertness, or a live sheet could not be locked.
+    # --- **A press on a control is the button's**: the one press that has to get through
+    # whatever the block around it is doing, or a live sheet could not be closed.
     reopened = _dump(window, """(() => {
       const buttons = [...document.querySelectorAll(
         '#editor-container .ss-plain .block-controls button')];
@@ -8789,7 +8553,8 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
     })()""")
     assert reopened.get("noButton") is None, f"the fixture can open a sheet: {reopened}"
     time.sleep(0.8)
-    assert _read()["lit"] == 1, "the sheet is open again, for the control claim"
+    assert "sheet" in _read()["kinds"], (
+        "the sheet is open again, for the control claim")
     control = _dump(window, """(() => {
       const labels = [...document.querySelectorAll(
         '#editor-container .spreadsheet .block-controls button')].map((b) => b.textContent.trim());
@@ -8807,9 +8572,9 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
     time.sleep(0.8)
     after_control = _read()
     assert control.get("noButton") is None, f"the cluster has a way out: {control}"
-    assert after_control["lit"] == 0 and "spreadsheet" not in after_control["kinds"], (
+    assert "sheet" not in after_control["kinds"], (
         f"a press on the cluster's own button still does what the button says — which is the"
-        f" one press that must survive inertness, or a live sheet could not be closed:"
+        f" one press that has to get through, or a live sheet could not be closed:"
         f" {control} -> {after_control}")
 
 

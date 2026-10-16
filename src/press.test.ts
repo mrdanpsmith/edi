@@ -3,7 +3,7 @@ import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
 import { markdownToProse } from './markdown'
-import { blockModePlugin, litBlockPositions, setBlockModeAt } from './block-modes'
+import { blockModePlugin, setBlockModeAt } from './block-modes'
 import { pressPlugin, gapTargetAt, pressTarget } from './press'
 
 /** Three tables: no textblock anywhere in the document. */
@@ -31,7 +31,7 @@ function createEditor(md: string): EditorView {
   const view = new EditorView(host, {
     state: EditorState.create({
       doc: markdownToProse(md, schema),
-      plugins: [blockModePlugin, pressPlugin((view) => litBlockPositions(view.state))],
+      plugins: [blockModePlugin, pressPlugin()],
     }),
   })
   views.push(view)
@@ -178,80 +178,19 @@ describe('what a press is', () => {
     const item = blockOffsets(view)[1]
 
     // The margin: names the block, is not its content, and carries the side pressed.
-    expect(pressTarget(view, pressOn(margin), new Set())).toEqual({
+    expect(pressTarget(view, pressOn(margin))).toEqual({
       kind: 'margin', pos: item, before: true,
     })
     // The content inside that margin: the same block, and its own business.
-    expect(pressTarget(view, pressOn(content), new Set())).toEqual({
+    expect(pressTarget(view, pressOn(content))).toEqual({
       kind: 'content', pos: item,
     })
     // The editor's own white space: names no block, and carries the nearest one and its side.
-    expect(pressTarget(view, pressOn(view.dom), new Set())).toEqual({
+    expect(pressTarget(view, pressOn(view.dom))).toEqual({
       kind: 'space', pos: item, before: true,
     })
     // **The vocabulary does not care who asks**: a press with a modifier is the same press.
-    expect(pressTarget(view, pressOn(margin, { shiftKey: true }), new Set()).kind).toBe('margin')
-  })
-
-  it('calls a press dimmed when it lands in a block that is not lit', () => {
-    // **The rule that was false, stated as a classification.** `pointer-events: none` removes a
-    // dimmed block from the *event target*, so such a press names no block at all — and the block
-    // it **lands in** is the nearest one, which is the only thing that can say whether this press
-    // would become a caret in a block the reader is not in.
-    //
-    // **It is asked by geometry rather than by `posAtCoords`**, and that is the reason this can
-    // be a test: the editor's own hit test needs a browser's caret, needs no such thing here,
-    // and — the reason the old rule was false — is not the same answer as the press's geometry
-    // when `pointer-events` is in play.
-    const view = createEditor('Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n')
-    const [above, table, below] = blockOffsets(view)
-    const inWhiteSpace = pressOn(view.dom, { clientX: -10, clientY: 145 })
-
-    // **Nothing lit** — no working state, no dimming, and no such thing as a dimmed block.
-    expect(pressTarget(view, inWhiteSpace, new Set()).kind).toBe('space')
-
-    const tr = view.state.tr
-    setBlockModeAt(view.state, tr, table, { form: 'sheet' })
-    view.dispatch(tr)
-    const lit = litBlockPositions(view.state)
-    expect([...lit]).toEqual([table])
-
-    // **The table's own white space is the lit block's**, so that press is not dimmed…
-    expect(pressTarget(view, pressOn(view.dom, { clientX: -10, clientY: 85 }), lit).kind)
-      .not.toBe('dimmed')
-    // …and a press that lands in either dimmed paragraph is, in the same document, in the same
-    // breath. One document, one lit set, three different answers.
-    expect(pressTarget(view, pressOn(view.dom, { clientX: -10, clientY: 25 }), lit))
-      .toEqual({ kind: 'dimmed', pos: above })
-    expect(pressTarget(view, pressOn(view.dom, { clientX: -10, clientY: 145 }), lit))
-      .toEqual({ kind: 'dimmed', pos: below })
-  })
-
-  it('refuses a dimmed press before ProseMirror can map it, and a lit one is not refused', () => {
-    // **The ordering is the mechanism.** `prosemirror-view` consults `runCustomHandler` before
-    // its own `mousedown`, so a plugin that returns `true` means the editor never maps the
-    // press's coordinates to a position at all — and a refusal made afterwards would be too
-    // late, because the caret would already be in the dimmed block.
-    const view = createEditor('Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n')
-    const [, table] = blockOffsets(view)
-    const tr = view.state.tr
-    setBlockModeAt(view.state, tr, table, { form: 'sheet' })
-    view.dispatch(tr)
-    const lit = (): ReadonlySet<number> => litBlockPositions(view.state)
-    const kinds: string[] = []
-    for (const y of [25, 145]) {
-      const event = pressOn(view.dom, { clientY: y })
-      kinds.push(pressTarget(view, event, lit()).kind)
-    }
-    expect(kinds).toEqual(['dimmed', 'dimmed'])
-
-    // **A press ProseMirror answered with a caret is left alone**, which is the whole difference
-    // between a refusal and a handler: the module answers the presses nothing else can and
-    // declines the rest.
-    const inTable = view.nodeDOM(table) as HTMLElement
-    const press = pressOn(inTable, { clientX: -10, clientY: 85 })
-    expect(pressTarget(view, press, lit()).kind).not.toBe('dimmed')
-    expect(view.state.doc.childCount).toBe(3)
+    expect(pressTarget(view, pressOn(margin, { shiftKey: true })).kind).toBe('margin')
   })
   it('names the nearest block and the side the press was on', () => {
     // **The geometry every answer is read off**, and it is one rule for the whole module: beside
@@ -293,18 +232,22 @@ describe('what a press is', () => {
     expect(view.state.doc.childCount).toBe(count)
   })
 
-  it('is not answered while a working state is live', () => {
-    // §3.2: everything outside a working state is dimmed and inert, and a margin is outside it
-    // like anything else.
+  it('is answered the same way while a working state is live elsewhere in the document', () => {
+    // **What a working state does *not* reach.** A sheet is open in the table; the prose around it
+    // is ordinary prose, and a press in the table's own margin is answered exactly as it is with
+    // no sheet open. The overlay that used to dim the document and refuse presses in it was
+    // withdrawn, and this is the claim that replaced it — *nothing* about a working state takes
+    // the rest of the document's presses away.
     const view = createEditor('Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n')
     const { margin } = markMargin(view, 1)
+    const table = blockOffsets(view)[1]
     const tr = view.state.tr
-    setBlockModeAt(view.state, tr, blockOffsets(view)[1], { form: 'sheet' })
+    setBlockModeAt(view.state, tr, table, { form: 'sheet' })
     view.dispatch(tr)
 
     press(margin, -10, 85)
 
     expect(view.state.selection.$from.parent.type.name).toBe('paragraph')
-    expect(view.state.selection.from).toBeLessThan(blockOffsets(view)[1])
+    expect(view.state.selection.from).toBeLessThan(table)
   })
 })

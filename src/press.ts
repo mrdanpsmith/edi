@@ -9,7 +9,6 @@
  * |---|---|
  * | `blockPosForElement` (`posAtDOM`) | which block does the *target* sit in? |
  * | class markers on the strip | margin or content? |
- * | `litBlockPositions` (plugin state) | is anything working? |
  * | a node view's `stopEvent` | does this view own the event? (asks ProseMirror to stay out) |
  * | `posAtCoords` (**coordinate geometry**) | what *position* is at these coordinates? |
  * | CSS `pointer-events` | which element is the event's *target*? |
@@ -18,14 +17,13 @@
  * `pointer-events` is in play. That is not a subtlety: `pointer-events: none` changes which
  * element a press's target is, and changes **nothing** about how coordinates map to a position —
  * `posAtCoords` → `posFromElement` → `findOffsetInNode` walks an element's children by geometry
- * and has no notion of `pointer-events` at all. So a dimmed block (`pointer-events: none`) is
- * unaddressable by DOM containment and **fully addressable by coordinates**, which is why the
- * claim "a dimmed block is inert" was false: ProseMirror's own mousedown handler was free to map
- * the press onto that block, and nothing in the app stopped it.
+ * and has no notion of `pointer-events` at all. **A press's own DOM containment and a press's own
+ * coordinates are two different questions, and a rule stated against one of them is a rule about
+ * that one.**
  *
- * **So this module asks the press's geometry rather than ProseMirror's.** A press lands in the
- * block *nearest* it — which is the same answer, needs no hit test, and is decidable in any
- * environment: the rule can be unit-tested because it does not depend on a browser's caret.
+ * **So this module asks the press's geometry where geometry is what is wanted.** A press lands in
+ * the block *nearest* it — the same answer, needing no hit test, and decidable in any environment:
+ * the rule can be unit-tested because it does not depend on a browser's caret.
  *
  * ## What a press is
  *
@@ -40,15 +38,7 @@
  *   the block, and the block's node view claims it so no block selection is born of it.
  * - **`space`** — the editor's own white space, with the nearest block and **which side of it**
  *   the press was on.
- * - **`dimmed`** — the press's *coordinates* resolve into a block that is dimmed (§3.2). It names
- *   no block by DOM containment, and that is the point: it must not become a caret.
  * - **`none`** — not this editor, or names nothing and resolves nowhere.
- *
- * **The order the questions are asked in is the design.** A press is `dimmed` before it is
- * anything else, because "would this press put a caret in a block the reader is demonstrably
- * not in" outranks "which region did it land in": a press in the white space beside a dimmed
- * paragraph resolves *into* that paragraph, so a classifier that asked the region first would
- * call it `space` and hand the reader a caret in a dimmed block.
  *
  * ## What happens
  *
@@ -66,8 +56,8 @@
  * in the block's own cluster.
  *
  * **Everything else is a refusal, and refusals are stated, not implied:** a `content` press is
- * the block's business (§3.1), a `control` press is the button's, a `dimmed` press is inert, and
- * any of `Shift`/`Ctrl`/`Alt`/`Meta` is a selection being extended or the block-mode toggle.
+ * the block's business (§3.1), a `control` press is the button's, and any of
+ * `Shift`/`Ctrl`/`Alt`/`Meta` is a selection being extended or the block-mode toggle.
  */
 import { Plugin, Selection } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
@@ -101,25 +91,12 @@ export function blockPosForElement(view: EditorView, target: EventTarget | null)
   // press that landed on the editor's own box named an unrelated block, and the
   // position depended on nothing but where the document starts.
   //
-  // **Which presses those are: every press over a dimmed block.** Inertness is
-  // `pointer-events: none` on the block (`styles.css`), so the hit test walks past
-  // it to whatever is behind, and behind a dimmed paragraph is the editor's own
-  // box. Measured: a press over the paragraph *below* a live sheet reported
-  // `elementFromPoint` → `.ProseMirror`, and the gesture then opened the paragraph
-  // *above* the sheet in Source — taking the one record off the working state, so
-  // a live sheet closed and the document stopped being dimmed by a press on a
-  // block that is supposed to receive nothing at all. The context menu read the
-  // same 0 and offered `Source` / `Encrypt block…` for it.
-  //
-  // §3.2's own reasoning assumed the hit test lands on the *scroll container*
-  // instead, which is true for the scroller's margin below a short block and
-  // false for every block's own pixels — and the gate that reads it only ever
-  // pressed the margin. So this guard is what makes "a press naming no block"
-  // true of the dimmed region as well, and it is one line here rather than a
-  // `pointer-events` exception at each of the two callers. It is also what makes
-  // the answer to the dimmed-region question *be* nothing: `blockModeGesture` acts
-  // on the block a press names and on nothing else, so `-1` here ends the question
-  // for both of its callers rather than sending either of them looking.
+  // **Any press outside every block lands there** — the editor's own padding and
+  // background are the scroller's white space wearing the editor's box, and
+  // `posAtDOM` cannot tell the two apart. So this one line is what makes "a press
+  // naming no block" true of the white space as well as of a node view's own DOM,
+  // and it is here rather than a `pointer-events` exception at each of the two
+  // callers.
   if (target === view.dom) return -1
   let inside: number
   try {
@@ -192,7 +169,6 @@ export type PressTarget =
   | { kind: 'content'; pos: number }
   | { kind: 'margin'; pos: number; before: boolean }
   | { kind: 'space'; pos: number; before: boolean }
-  | { kind: 'dimmed'; pos: number }
   | { kind: 'none' }
 
 /** A top-level block, and whether a press was on its leading or trailing side. */
@@ -247,19 +223,8 @@ export function onBlockMargin(target: EventTarget | null): boolean {
     target.closest(`.${BLOCK_CONTENT_CLASS}`) === null
 }
 
-/**
- * Classify a press.
- *
- * **Both DOM→position paths, because they disagree**: the region's answer comes from the
- * event's *target* (`posAtDOM`), and `dimmed` comes from the press's *coordinates*
- * (`posAtCoords`). Asking only one is how "dimmed is inert" came to be believed.
- */
-export function pressTarget(
-  view: EditorView,
-  event: MouseEvent,
-  /** The blocks that stay lit while a working state is live — `litBlockPositions(state)`. */
-  lit: ReadonlySet<number> = EMPTY_LIT,
-): PressTarget {
+/** Classify a press. */
+export function pressTarget(view: EditorView, event: MouseEvent): PressTarget {
   const { dom } = view
   const target = event.target
   // **Is this press in this editor at all?** The editor's own box, or the scroll container's own
@@ -274,28 +239,10 @@ export function pressTarget(
   // twice would be two geometry rules that could disagree.
   const nearest = gapTargetAt(view, event.clientX, event.clientY)
 
-  // --- **1. Dimmed.** The first question, because it is the only one whose answer is a
-  // refusal: a press that lands in a block the reader is demonstrably not in must not become a
-  // caret there. An empty `lit` says no working state is live, and then there is no dimming and
-  // no such thing as a dimmed block.
-  //
-  // **Asked by geometry, not by `posAtCoords`, and that is the whole reason it can be a rule.**
-  // The tempting answer is ProseMirror's own `posAtCoords`, which is what used to put the caret
-  // in a dimmed block: it maps the press's *coordinates* to a position and has no notion of
-  // `pointer-events`, so a dimmed block — which the press cannot even target — was still the
-  // block the press landed in. That is not a bug in either mechanism, it is the disagreement this
-  // module was made for, and the press's own geometry already answers it: **the block a press
-  // lands in is the nearest one**, which needs no hit test, no layout of the *browser's* caret,
-  // and no platform to be measured on.
-  if (lit.size > 0 && nearest !== null && !lit.has(nearest.pos)) {
-    return { kind: 'dimmed', pos: nearest.pos }
-  }
-
-  // --- **2. The block the press's target names**, by DOM containment — the other path, and the
-  // one that is right about *which element* this is.
+  // --- **1. The block the press's target names**, by DOM containment.
   const named = blockPosForElement(view, target)
   if (named === -1) {
-    // --- **3. White space**: the nearest block and the side, which is what a caret beside it
+    // --- **2. White space**: the nearest block and the side, which is what a caret beside it
     // needs. No block to name and no block near means no caret to place: `none` is the honest
     // answer for a press in an empty editor.
     if (nearest === null) return { kind: 'none' }
@@ -343,29 +290,20 @@ function plainPress(event: MouseEvent): boolean {
  *
  * **The refusals are the point as much as the answers**, and each one is a rule that used to be
  * a mechanism somewhere else: a press in a block's *content* is the block's business, a press on
- * a *control* is the button's, a press that *names no block and resolves into a dimmed one* is
- * inert, and a press with a modifier is extending a selection or is the block-mode toggle.
+ * a *control* is the button's, and a press with a modifier is extending a selection or is the
+ * block-mode toggle.
  */
-export function answerPress(
-  view: EditorView,
-  event: MouseEvent,
-  target: PressTarget,
-  lit: ReadonlySet<number> = EMPTY_LIT,
-): boolean {
+export function answerPress(view: EditorView, event: MouseEvent, target: PressTarget): boolean {
   switch (target.kind) {
     case 'none':
     case 'content':
     case 'control':
-    case 'dimmed':
       return false
     case 'margin':
     case 'space':
       break
   }
   if (!plainPress(event)) return false
-  // While a working state is live the rest of the document is inert (§3.2), and that includes
-  // the white space beside it.
-  if (lit.size > 0) return false
   // **A press in the editor's own white space is ProseMirror's**, and it answers it better than
   // this module could: it maps the press's *coordinates* onto the text, so a click inside a long
   // paragraph lands between the words the reader aimed at. So the one answer below is for the
@@ -397,36 +335,25 @@ export function answerPress(
  * **The one listener every press goes through.**
  *
  * **It is a plugin prop, so it runs before ProseMirror's own `mousedown`** — which is what makes
- * "inert" true rather than merely intended. `prosemirror-view`'s `initInput` consults
- * `runCustomHandler` before its own handler, so returning `true` here means ProseMirror never
- * maps the press's coordinates to a position at all. That is the whole mechanism behind the
- * dimmed rule: the caret in a dimmed block was ProseMirror's *own* listener answering, and a
- * refusal after the fact would be too late.
+ * a refusal here *true* rather than merely intended. `prosemirror-view`'s `initInput` consults
+ * `runCustomHandler` before its own handler, so returning `true` means ProseMirror never maps the
+ * press's coordinates to a position at all.
  *
- * **It is also bound to the scroll container, not only to `view.dom`**, because §3.2's own note
- * on the white space of a short document is that it is the *scroller* — a plugin prop is bound to
- * `view.dom` and would miss exactly the region with the most white space on the page. A press
- * inside `view.dom` bubbles to the container, so one listener on the container sees both regions,
- * and it sees them *after* ProseMirror's own handler, which is harmless: a press this answers
- * has already had ProseMirror try, and what it finds is either nothing or something this press
- * then replaces. **A press on the container's own box never reached ProseMirror at all**, so for
- * that region "after" is the only order there is.
+ * **It is also bound to the scroll container, not only to `view.dom`**, because the white space of
+ * a short document is on the *scroller* and a plugin prop is bound to `view.dom`, which would
+ * miss exactly the region with the most white space on the page. A press inside `view.dom` bubbles
+ * to the container, so one listener on the container sees both regions, and it sees them *after*
+ * ProseMirror's own handler, which is harmless: a press this answers has already had ProseMirror
+ * try, and what it finds is either nothing or something this press then replaces. **A press on
+ * the container's own box never reached ProseMirror at all**, so for that region "after" is the
+ * only order there is.
  */
-export function pressPlugin(
-  litPositions: (view: EditorView) => ReadonlySet<number>,
-): Plugin {
+export function pressPlugin(): Plugin {
   return new Plugin({
   props: {
     handleDOMEvents: {
       mousedown(view, event) {
-        const target = pressTarget(view, event as MouseEvent, litPositions(view))
-        // **A dimmed press is refused here and nowhere else**, and it is the one refusal that has
-        // to happen before ProseMirror's own mapping rather than after it.
-        if (target.kind === 'dimmed') {
-          event.preventDefault()
-          return true
-        }
-        return answerPress(view, event as MouseEvent, target, litPositions(view))
+        return answerPress(view, event as MouseEvent, pressTarget(view, event as MouseEvent))
       },
     },
   },
@@ -434,8 +361,7 @@ export function pressPlugin(
     const scroller = editorView.dom.parentElement
     if (scroller === null) return {}
     const onMouseDown = (event: MouseEvent): void => {
-      const lit = litPositions(editorView)
-      answerPress(editorView, event, pressTarget(editorView, event, lit), lit)
+      answerPress(editorView, event, pressTarget(editorView, event))
     }
     scroller.addEventListener('mousedown', onMouseDown)
     return {
@@ -446,6 +372,3 @@ export function pressPlugin(
   },
   })
 }
-
-/** No working state, no dimming, and the default every caller gets for free. */
-const EMPTY_LIT: ReadonlySet<number> = new Set()

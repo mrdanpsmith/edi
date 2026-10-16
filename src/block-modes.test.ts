@@ -13,8 +13,6 @@ import { enterDiagramEditMode, mermaidNodeViewPlugin } from './node/mermaid'
 import { enterSpreadsheetMode, tableNodeViewPlugin } from './node/table'
 import {
   BLOCK_CONTROLS_CLASS,
-  BLOCK_DIMMED_CLASS,
-  BLOCK_LIT_CLASS,
   BLOCK_MODE_CLASS,
   BLOCK_MODE_EDITING_CLASS,
   BLOCK_MODE_FORM_CLASS,
@@ -33,14 +31,14 @@ import {
   exitBlockMode,
   forgetView,
   focusIsDeeper,
-  isWorkingMode,
   interactionLabels,
   keepOneNonVisualBlock,
   leaveBlockMode,
-  litBlockPositions,
   modeFor,
+  releaseDisplacedBlock,
   rivalChains,
   setBlockForm,
+  setBlockModeAt,
   toggleBlockMode,
   toggleBlockModeFromGesture,
   toggleSourceMode,
@@ -244,6 +242,64 @@ describe('one block at a time', () => {
     })
     view.destroy()
     expect(board).toBe(0)
+  })
+})
+
+describe('a displaced working state is released, not just un-marked', () => {
+  // The faded overlay used to refuse the press that could take the slot from a block
+  // in a working state, so nothing ever found out that `releaseOtherEditors` arbitrates
+  // only *between* editors: two blocks in one document never met there. The record is
+  // one slot, and with the overlay gone any block can take it.
+  it('finishes an editing layer it displaced', () => {
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter.\n')
+    const [board, after] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+    expect(modeFor(view.state, board)?.interaction).toBe('editing')
+
+    enterSourceMode(view, after)
+
+    expect(modeFor(view.state, board)).toBeNull()
+    expect(modeFor(view.state, after)?.representation).toBe('source')
+    view.destroy()
+  })
+
+  it('leaves a displaced form to the record, and does not clear the block that took it', () => {
+    // **The bug this half is here for.** A sheet is drawn from the record, so the
+    // record naming another block *is* the teardown and this function has nothing to
+    // do for one — but the obvious thing to write, `setMeta(BLOCK_MODE_KEY, null)`,
+    // clears the slot the incoming block had just taken, so the paragraph that opened
+    // its markdown closed again and the reader was left with no mode at all.
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter.\n')
+    const [table, after] = allBlockPositions(view)
+    setBlockForm(view, table, 'sheet')
+    expect(blockFormMode(view.state, table)).toBe('sheet')
+
+    enterSourceMode(view, after)
+
+    // `blockFormMode` reads the record, so "no form" is `undefined` — the table is
+    // drawn from it, and a form with no record behind it is the default rendering.
+    expect(blockFormMode(view.state, table)).toBeUndefined()
+    expect(currentBlockMode(view.state)!.pos).toBe(after)
+    expect(modeFor(view.state, after)?.representation).toBe('source')
+    view.destroy()
+  })
+
+  it('has nothing to do for a displaced source form', () => {
+    // Its buffer is read on the way *in*, by `releaseSourceBlock`, because the buffer
+    // only exists while the block holds the record — so there is nothing left to commit
+    // and, as above, nothing to dispatch.
+    const view = createEditor('First.\n\nAfter.\n')
+    const [first, after] = allBlockPositions(view)
+    enterSourceMode(view, first)
+
+    const tr = view.state.tr
+    setBlockModeAt(view.state, tr, after, { representation: 'source' })
+    const displaced = currentBlockMode(view.state)!
+    view.dispatch(tr)
+    releaseDisplacedBlock(view, displaced)
+
+    expect(currentBlockMode(view.state)!.pos).toBe(after)
+    view.destroy()
   })
 })
 
@@ -1098,69 +1154,17 @@ describe('one non-visual block in the whole page', () => {
   })
 })
 
-describe('a working state is what the document recedes for', () => {
-  const litClasses = (view: EditorView): { lit: number; dimmed: number } => ({
-    lit: view.dom.querySelectorAll(`.${BLOCK_LIT_CLASS}`).length,
-    dimmed: view.dom.querySelectorAll(`.${BLOCK_DIMMED_CLASS}`).length,
-  })
-
-  it('dims every block but the one a sheet is open on', () => {
+describe('a press that lands on the editor itself names no block', () => {
+  // `posAtDOM(view.dom, 0)` answers `posAtStart`, i.e. **0**, and the walk that
+  // turns a position into a block reads that as the document's *first* block. Any
+  // press on the editor's own box — its padding, its background, the white space
+  // around every block — would then name an unrelated block, and the position
+  // would depend on nothing but where the document starts. **`-1` is not the
+  // first position**, which is the whole of what makes "a press naming nothing"
+  // true of the editor's own box rather than true of every node view's DOM only.
+  it('refuses the box of the editor itself, and still names a real block', () => {
     const view = createEditor('Before.\n\n| A |\n| --- |\n| 1 |\n\nAfter.')
     const positions = allBlockPositions(view)
-    expect(positions.length).toBe(3)
-
-    expect(litClasses(view)).toEqual({ lit: 0, dimmed: 0 })
-    expect(litBlockPositions(view.state).size).toBe(0)
-
-    toggleBlockModeFromGesture(view, positions[1])
-    expect(blockFormMode(view.state, positions[1])).toBe('sheet')
-
-    // Every block is *described*, not just the dimmed ones: a document whose only
-    // non-default block is nested would otherwise produce no top-level decoration
-    // at all and ProseMirror would never be asked about the change.
-    expect(litClasses(view)).toEqual({ lit: 1, dimmed: 2 })
-    expect([...litBlockPositions(view.state)]).toEqual([positions[1]])
-    view.destroy()
-  })
-
-  it('dims for a diagram being edited, the other producing state', () => {
-    const view = createEditor('Before.\n\n```mermaid\ngraph TD\n  A[Alpha]\n```\n\nAfter.')
-    const positions = allBlockPositions(view)
-    enterDiagramEditMode(view, positions[1])
-    expect(modeFor(view.state, positions[1])?.interaction).toBe('editing')
-    expect(litClasses(view)).toEqual({ lit: 1, dimmed: 2 })
-    view.destroy()
-  })
-
-  it('dims nothing for a source form, which is a reading state', () => {
-    // The load-bearing exclusion. §7.2's sentence — "anything not being viewed as
-    // its document" — covers source, editing and a sheet, and it is right for the
-    // dashed outline. Reusing it here would mean opening a paragraph's markdown
-    // dimmed the whole document around it.
-    const view = createEditor('Before.\n\nAfter.')
-    const positions = allBlockPositions(view)
-    enterSourceMode(view, positions[1])
-    expect(modeFor(view.state, positions[1])?.representation).toBe('source')
-    expect(isWorkingMode(modeFor(view.state, positions[1]))).toBe(false)
-    expect(litBlockPositions(view.state).size).toBe(0)
-    expect(litClasses(view)).toEqual({ lit: 0, dimmed: 0 })
-    view.destroy()
-  })
-
-  it('names no block for a press that hit-tested past the dimmed ones', () => {
-    // Inertness is `pointer-events: none` on each dimmed block, so a press over one
-    // hit-tests to whatever is behind it — and behind a dimmed paragraph is the
-    // editor's own box. `posAtDOM(view.dom, 0)` answers `posAtStart`, i.e. **0**,
-    // which the walk read as the document's *first* block: so the gesture opened
-    // that block in Source instead of naming none, which took the one record off a
-    // live working state. **The guard is what makes a press on a dimmed block mean *close***
-    // rather than mean *the first block in the document*: `-1` is not the first position, and
-    // the gesture's rule for a press that names nothing is to close the working state — which is
-    // only sane because nothing else was named.
-    const view = createEditor('Before.\n\n| A |\n| --- |\n| 1 |\n\nAfter.')
-    const positions = allBlockPositions(view)
-    toggleBlockModeFromGesture(view, positions[1])
-    expect(blockFormMode(view.state, positions[1])).toBe('sheet')
 
     expect(blockPosForElement(view, view.dom)).toBe(-1)
     expect(blockPosForElement(view, null)).toBe(-1)
@@ -1168,31 +1172,7 @@ describe('a working state is what the document recedes for', () => {
     // A press aimed at a real block still names it — the guard is the editor's own
     // box, not "the first thing the walk finds".
     expect(blockPosForElement(view, view.nodeDOM(positions[2]!))).toBe(positions[2])
-
-    // And through the gesture itself: aimed at the **dimmed block** — which now takes its press,
-    // so it names *itself*, and `pressTarget` is what says the press is inert — the sheet closes.
-    // That is the rule: `Alt`+click closes, and a dimmed block is where a reader aims to close.
-    const dimmed = view.nodeDOM(positions[0]!) as HTMLElement
-    expect(dimmed.classList.contains('edi-block-mode-dimmed')).toBe(true)
-    dimmed.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true, button: 0,
-        clientX: 4, clientY: 4 }),
-    )
-    expect(blockFormMode(view.state, positions[1])).not.toBe('sheet')
     view.destroy()
-  })
-
-  it('reads the predicate off the record, not off a list of block types', () => {
-    expect(isWorkingMode(null)).toBe(false)
-    expect(isWorkingMode(undefined)).toBe(false)
-    expect(isWorkingMode({ pos: 0, type: 'p', representation: 'visual', interaction: 'viewing' }))
-      .toBe(false)
-    expect(isWorkingMode({ pos: 0, type: 'p', representation: 'source', interaction: 'viewing' }))
-      .toBe(false)
-    expect(isWorkingMode({ pos: 0, type: 'table', representation: 'visual', interaction: 'viewing', form: 'sheet' }))
-      .toBe(true)
-    expect(isWorkingMode({ pos: 0, type: 'mermaid_block', representation: 'visual', interaction: 'editing' }))
-      .toBe(true)
   })
 })
 

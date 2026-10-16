@@ -376,10 +376,10 @@ class EncryptedBlockNodeView implements NodeView {
     // **Opening a block is taking the page's one focus path**, which is why it is
     // done through the record and not left as a per-block closure: everything §7.2
     // generates then comes for free — the dashed outline, the chip that names the
-    // state, the cluster's Done button, Alt+click, and the Escape rung — and the
-    // document dims and goes inert at once, because the plaintext is on screen and
-    // the reader's attention is on this block. It does not wait for a click into the
-    // reveal; by then there is nothing left to warn about.
+    // state, the cluster's Done button, Alt+click, and the Escape rung — and it
+    // takes the page's one working state with it, because the plaintext is on screen
+    // and the reader's attention is on this block. It does not wait for a click into
+    // the reveal; by then there is nothing left to warn about.
     //
     // Taken **after** the reveal editor exists, because the reveal is the chain's
     // next rung and has to be published first — and after the password, so a wrong
@@ -691,7 +691,7 @@ BLOCK_MODE_HANDLERS['encrypted_block'] = {
   toggle: (view, pos) => encryptedBlockViewFor(view, pos)?.toggle(),
   // **The axis has its own verbs, and it is still the same axis.** Revealing a
   // secret is a working state exactly as editing a diagram is — one at a time, one
-  // gesture, one focus path, dimmed and inert around it — but the act is not the
+  // gesture, one focus path around it — but the act is not the
   // same act, so the app says `Unlock` / `Lock` here and `Edit` / `Done` on a
   // diagram. `engaged` is a third word because the chip names the *state*: `Edit`
   // covers both jobs on a diagram, and `Unlock`/`Unlocked` are what it takes here.

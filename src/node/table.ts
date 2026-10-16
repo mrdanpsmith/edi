@@ -1844,10 +1844,10 @@ class TableNodeView implements NodeView, InlineCellHost {
     // second press meaning "done" rather than "you just lost what I typed".
     //
     // Which is what this rung is for. It used to call `view.focus()` and keep the
-    // sheet, which put the caret in a document the reader had been told was
-    // *inert* — nothing outside the sheet could be clicked — and so looked broken
-    // rather than finished. Releasing the form is the same route Alt+click takes,
-    // so there is exactly one way out of a sheet and both gestures behave alike.
+    // sheet, which put the caret in the document beside the grid the reader had
+    // just finished with, and so looked broken rather than finished. Releasing the
+    // form is the same route Alt+click takes, so there is exactly one way out of a
+    // sheet and both gestures behave alike.
     if (key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()

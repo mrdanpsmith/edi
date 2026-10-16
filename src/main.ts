@@ -42,7 +42,6 @@ import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
 import {
   blockModeFor,
-  litBlockPositions,
   modeFor,
   blockFormMode,
   interactionLabels,
@@ -1009,8 +1008,8 @@ function editSelectAll(): void {
   if (!view) return
   // A grid owns its own selection and has no "select all" of its own, so the document
   // command is not the reader's while one has the caret. Doing nothing is the only
-  // honest answer: selecting the whole document around a live sheet is the state
-  // §2.3 exists to prevent, and it is also what an inert document cannot express.
+  // honest answer: selecting the whole document around a live sheet would put a
+  // second selection on screen while the reader is working inside one.
   if (document.activeElement?.closest('.spreadsheet, .ss-plain')) return
   const scrollTop = editorContainer.scrollTop
   view.focus()
@@ -1310,11 +1309,9 @@ function buildBlockMenuItems(target: Element, event: MouseEvent): ContextMenuEnt
     entries.push({ type: 'item', label, onSelect, ...extra })
   }
 
-  // **The press is classified, not sniffed** (`src/press.ts`), with the event's own coordinates:
-  // a dimmed block takes its presses now that it is no longer `pointer-events: none`, so it
-  // *names* itself — and offering a dimmed block `Source` / `Encrypt block…` is exactly the bug
-  // that `pointer-events: none` was hiding.
-  const press = pressTarget(view, event, litBlockPositions(view.state))
+  // **The press is classified, not sniffed** (`src/press.ts`): the menu is offered for the block
+  // the press names, and for nothing else.
+  const press = pressTarget(view, event)
   if (press.kind !== 'content' && press.kind !== 'margin') return entries
   const pos = press.pos
   const node = view.state.doc.nodeAt(pos)
