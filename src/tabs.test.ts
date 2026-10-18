@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { Tabs, type TabContent, type TabCallbacks } from './tabs'
 import { createBlockEditor } from './editor'
 import { redo, undo } from 'prosemirror-history'
-import { getState } from './state'
+import { activateSession, getState } from './state'
 
 let markdownReturn = ''
 
@@ -311,5 +311,158 @@ describe('Tabs tab strip arrows', () => {
     scroll.dispatchEvent(new Event('scroll'))
     expect(left.disabled).toBe(false)
     expect(right.disabled).toBe(true)
+  })
+})
+
+/**
+ * The one caller-side rule behind every status-bar symptom.
+ *
+ * A tab swap is queued, and `enqueue` returns **before the swap has run** as
+ * soon as something on the outgoing document has to be written first — an open
+ * encrypted block's `flush` is `crypto.subtle`'s asynchronous work
+ * (`flushOpenReveals` in `src/node/encryptedblock.ts`). A caller that reads
+ * the session or the view on the line after asking for a switch therefore
+ * reads the tab being *left*, which is how one tab's path, word count and dirty
+ * flag end up describing another.
+ *
+ * So `Tabs` notifies from its own settle and no caller refreshes the chrome
+ * itself. These tests pin that, and the content hash is the document actually
+ * in the shared view — so a notification that arrives early fails here rather
+ * than in a screenshot.
+ */
+describe('Tabs notify after the swap, not when it was asked for', () => {
+  /**
+   * A content object whose `flush` resolves on a later turn, which is what
+   * makes every queued operation asynchronous: the ordinary case for a reader
+   * who has typed into an open reveal in the last 600 ms, and the reason this
+   * whole class of bug is intermittent.
+   */
+  function makeSlowContent() {
+    const view: { text: string } = { text: '' }
+    const content: TabContent = {
+      getMarkdown: () => view.text,
+      setMarkdown: (value: string) => {
+        view.text = value
+      },
+      flush: () => new Promise<void>((resolve) => setTimeout(resolve, 5)),
+    }
+    return { content, view }
+  }
+
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 40))
+
+  it('reports the tab that has arrived, with its own document in the view', async () => {
+    const { content, view } = makeSlowContent()
+    const seen: { id: string; text: string }[] = []
+    const tabs = new Tabs(createTabbar(), content, {
+      ...makeCallbacks(),
+      onActivate: (id) => seen.push({ id, text: view.text }),
+    })
+
+    tabs.addSession('FIRST')
+    await settle()
+    const first = tabs.activeId
+    tabs.addSession('SECOND')
+    await settle()
+
+    seen.length = 0
+    tabs.activate(first)
+    // The call has returned by now — the queued work has not. Nothing has been
+    // reported yet, and the view still holds the tab being left.
+    expect(seen).toEqual([])
+    expect(view.text).toBe('SECOND')
+
+    await settle()
+    expect(seen).toEqual([{ id: first, text: 'FIRST' }])
+  })
+
+  it('reports a tab opened into a new session once its content has landed', async () => {
+    const { content, view } = makeSlowContent()
+    const seen: { id: string; text: string }[] = []
+    const tabs = new Tabs(createTabbar(), content, {
+      ...makeCallbacks(),
+      onActivate: (id) => seen.push({ id, text: view.text }),
+    })
+
+    tabs.addSession('FIRST')
+    await settle()
+    seen.length = 0
+
+    tabs.addSession('SECOND')
+    expect(view.text).toBe('FIRST')
+
+    await settle()
+    expect(seen).toEqual([{ id: tabs.activeId, text: 'SECOND' }])
+  })
+
+  it('reports a document forced into the current tab, with it in the view', async () => {
+    const { content, view } = makeSlowContent()
+    const seen: { id: string; text: string }[] = []
+    const tabs = new Tabs(createTabbar(), content, {
+      ...makeCallbacks(),
+      onActivate: (id) => seen.push({ id, text: view.text }),
+    })
+
+    tabs.addSession('FIRST')
+    await settle()
+    const id = tabs.activeId
+    seen.length = 0
+
+    // **Synchronous, unlike a tab switch.** The document is being replaced
+    // rather than left, so there is nothing to write back and `discardPending`
+    // stands in for `flush` — which is why this path never had to queue and
+    // why the report is the same shape rather than a special case.
+    tabs.setActiveContent('REPLACED')
+    expect(view.text).toBe('REPLACED')
+    expect(seen).toEqual([{ id, text: 'REPLACED' }])
+  })
+
+  it('says nothing when the tab asked for is already in view', async () => {
+    const { content } = makeSlowContent()
+    const onActivate = vi.fn()
+    const tabs = new Tabs(createTabbar(), content, { ...makeCallbacks(), onActivate })
+
+    tabs.addSession('FIRST')
+    await settle()
+    onActivate.mockClear()
+
+    tabs.activate(tabs.activeId)
+    await settle()
+
+    expect(onActivate).not.toHaveBeenCalled()
+  })
+})
+
+describe('Tabs reports a desynced view instead of skipping quietly', () => {
+  it('says so rather than storing another tab\'s document under this one', () => {
+    const view = { text: '' }
+    const content: TabContent = {
+      getMarkdown: () => view.text,
+      setMarkdown: (value: string) => {
+        view.text = value
+      },
+    }
+    const tabs = new Tabs(createTabbar(), content, makeCallbacks())
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    tabs.addSession('ONE')
+    const first = tabs.activeId
+    tabs.addSession('TWO')
+    tabs.snapshotActive()
+    // Sessions are module state shared by every test in this file, so the first
+    // `addSession` above legitimately reported a desync against the session a
+    // previous test left active. Only the deliberate one below is of interest.
+    error.mockClear()
+
+    // Something outside `Tabs` moved the active session — a feature reaching
+    // for `activateSession` directly, which is the only way `appliedSession`
+    // can disagree with `active.id` (nothing else writes either). `Tabs` is not
+    // the only thing that knows which tab is in view, so this is the hazard the
+    // guard is the backstop for, and there is no production caller of it today.
+    activateSession(first)
+
+    tabs.snapshotActive()
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('is active but the view holds'))
+    error.mockRestore()
   })
 })

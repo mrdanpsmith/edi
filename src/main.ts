@@ -349,18 +349,15 @@ function openNewTab(): void {
 
 function openWelcome(): void {
   tabs.addSession(buildWelcomeMarkdown())
-  afterActivate()
 }
 
 function openFunctionReference(): void {
   const state = blockEditor?.getState()
   tabs.addSession(buildFunctionReferenceMarkdown(state ? documentFunctionsFor(state) : []))
-  afterActivate()
 }
 
 function openHelpGuide(): void {
   tabs.addSession(buildHelpGuideMarkdown())
-  afterActivate()
 }
 
 function buildHomeScreen(): HomeScreen {
@@ -429,8 +426,10 @@ async function openPendingFiles(): Promise<void> {
 async function openDocument(path: string): Promise<void> {
   const existing = findSessionByPath(path)
   if (existing) {
-    tabs.activate(existing.id)
-    afterActivate()
+    // Already-open *and* already-active is not a swap, so there is no settle
+    // to be called from — the one case the caller speaks for itself.
+    if (existing.id === tabs.activeId) afterActivate()
+    else tabs.activate(existing.id)
     return
   }
   try {
@@ -439,7 +438,6 @@ async function openDocument(path: string): Promise<void> {
     // references in opened documents resolve against the document's directory.
     tabs.addSession(content, path)
     void rememberRecent(path)
-    afterActivate()
   } catch (error) {
     reportError(`Failed to open ${path}`, error)
   }
@@ -621,7 +619,6 @@ async function revertFile(): Promise<void> {
     tabs.setActiveContent(content)
     setActiveDirty(false)
     tabs.snapshotActive()
-    afterActivate()
   } catch (error) {
     reportError(`Failed to revert ${path}`, error)
   }
@@ -1488,13 +1485,13 @@ function init(): void {
       // A document arrived on the home screen: create a tab for it.
       tabs.addSession(markdown)
     } else {
-      // Loads the document into the current tab: reset its scroll to top and
-      // record that the view now holds this session's content.
+      // Loads the document into the current tab, scrolled to the top. The
+      // scroll is `setActiveContent`'s to apply: it settles the scroll on the
+      // document that has *arrived*, and a swap that had to wait would
+      // otherwise leave the reader at the top of the one being left.
       tabs.setActiveContent(markdown)
-      editorContainer.scrollTop = 0
     }
     tabs.snapshotActive()
-    afterActivate()
   }
   bindMenuCommands({
     new: () => openNewTab(),

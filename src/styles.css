@@ -572,7 +572,20 @@ body {
    * paragraph as a visible line break, which looks identical to a hard break.
    * CommonMark collapses single newlines to a space (soft line break), so
    * override it. Hard breaks still show because they are hard_break nodes
-   * rendered as <br>, and code blocks keep pre-wrap via `.ProseMirror pre`. */
+   * rendered as <br>, and code blocks keep pre-wrap via `.ProseMirror pre`.
+   *
+   * **`normal` is one of the three values ProseMirror warns about**, and it will
+   * print this at every launch, once per process:
+   *
+   *   js: ProseMirror expects the CSS white-space property to be set,
+   *       preferably to 'pre-wrap'.
+   *
+   * That warning is `checkCSS` in `prosemirror-view` noticing that a later rule
+   * overrode its own stylesheet at equal specificity (`main.ts` imports
+   * `prosemirror-view/style/prosemirror.css` first). **It is not a symptom and
+   * the override is not a mistake** — `pre-wrap` here would be a rendering bug,
+   * not a fix: a Markdown document's soft line breaks would read as hard ones.
+   * Leave it alone. */
   white-space: normal;
 }
 

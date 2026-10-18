@@ -182,6 +182,19 @@ export class Tabs {
       // The view is not known to hold this session's document (e.g. a stray
       // transaction desynced it). Do not overwrite the session's last known
       // snapshot with foreign content.
+      //
+      // **This is reported rather than skipped quietly**, because the cost of
+      // skipping quietly is paid much later and by someone else: the session
+      // keeps its *previous* snapshot, the reader keeps typing into a view that
+      // is already desynced, and switching away and back resurrects text they
+      // have already watched disappear — the "this tab came back with another
+      // tab's content" report, arriving with nothing in the log to connect it
+      // to the moment it happened. A desync is a bug; say so at the moment it
+      // is observable rather than after it has been laundered into a snapshot.
+      console.error(
+        `tab ${active.id} is active but the view holds ${this.appliedSession || '(nothing)'}; ` +
+          'skipping the snapshot rather than storing another tab\'s document under it',
+      )
       return undefined
     }
     // Before the read, not after: see `TabContent.flush`.
@@ -204,6 +217,10 @@ export class Tabs {
       const settle = (): void => {
         this.content.setScroll?.(scrollTop)
         this.appliedSession = active.id
+        // Same contract as every other operation that changes what the view
+        // holds: the caller is told once the new content is on screen. See
+        // `notifyActive`.
+        this.notifyActive()
       }
       if (this.supportsStates()) {
         const state = this.content.createState!(markdown)
@@ -309,6 +326,32 @@ export class Tabs {
     )
   }
 
+  /**
+   * Tell the page which tab is now in view. **The one and only place it is
+   * told**, and the reason is the shape of `enqueue`.
+   *
+   * Every operation that changes what the shared view holds is queued, and a
+   * queued operation may return *before it has run*: `enqueue` executes the
+   * work synchronously when nothing is ahead of it, but an open encrypted
+   * block's `flush` is `crypto.subtle`'s asynchronous work, and from that
+   * moment the swap finishes on a later turn. So a caller cannot read the state
+   * it just asked to change on the line after asking — `getActive()` is still
+   * the tab being left, and the view is still that tab's document. A caller that
+   * wrote its own refresh there was refreshing the tab the reader was *leaving*,
+   * which is how a status bar comes to show one tab's path and word count while
+   * another is in view.
+   *
+   * Every operation therefore notifies from its own settle, after the content
+   * has been applied, and no caller refreshes the chrome itself. `addSession`,
+   * `activate` and `setActiveContent` all fire it; `close` fires it when
+   * another tab takes over, and has nothing to say when none is left, because
+   * then there is no tab in view to describe.
+   *
+   * `activate` on the tab that is *already* active is the one deliberate
+   * exception, and it is not a swap at all — nothing is queued and nothing
+   * moves, so it reports nothing. A caller that wants the chrome refreshed in
+   * that case is asking about a tab that did not change, and has to say so.
+   */
   private notifyActive(): void {
     this.callbacks.onActivate(this.activeId)
   }
