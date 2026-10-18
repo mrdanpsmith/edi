@@ -15,7 +15,9 @@
  * phase the block is in, the field, the drag, the menu, and the placement of
  * every overlay on the board. This file holds the two pure halves — the label
  * model and the source model — and the three things that need the DOM: the
- * editing layer of one render, the field a label is edited in, and the drag.
+ * editing layer of one render and the drag. (`session.openField` is the field a
+ * label is edited in; it lives in the session because an open field survives a
+ * render, which is the one piece of editing state that is not render-scoped.)
  * Nothing here holds state between renders, and nothing here patches a source
  * snapshot it took when it was built.
  */
@@ -1787,12 +1789,6 @@ export function removeKanbanColumn(source: string, column: number): string | nul
   return next === source ? null : next
 }
 
-/** How many cards a column delete would take with it, for the prompt to say. */
-export function kanbanColumnCardCount(source: string, column: number): number {
-  const doc = parseKanban(source)
-  return doc.cards.filter((card) => card.column === column && !isKanbanCardSlot(card, doc)).length
-}
-
 /** The columns a board really has: a drawn slot is a place to add one, not one. */
 function realKanbanColumns(doc: KanbanDoc): number[] {
   return doc.columns.filter((_line, index) => !isKanbanColumnSlot(index, doc))
@@ -3446,8 +3442,10 @@ interface ChromeBox {
  * doing: a control nobody can find is not quieter, it is missing.
  *
  * They are HTML in the preview rather than `foreignObject`s inside mermaid's own
- * layout: a view-mode diagram is a baked bitmap, which cannot host them, and an
- * overlay is rebuilt from the rendered sections on every render anyway.
+ * layout: the chrome exists only in edit mode, and a control rebuilt from the
+ * rendered sections on every render has nothing to gain from living in a drawing
+ * that is itself thrown away. (The bake is not the reason — a commit handler
+ * suppresses it, so a bitmap and this chrome are never on the same page.)
  *
  * Every control is registered with the session as an *overlay*, which is what
  * makes a control and a field the same kind of thing: one placement function, one

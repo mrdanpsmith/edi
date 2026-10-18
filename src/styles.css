@@ -1789,17 +1789,6 @@ body {
    until the reader asks to edit it; what marks that they have is now the same mark
    every other mode gets. */
 
-.ProseMirror .mermaid .mermaid-edit-toggle {
-  margin-left: 4px;
-  padding-inline: 8px;
-  font-weight: 600;
-}
-
-.ProseMirror .mermaid .mermaid-edit-toggle-on {
-  background: var(--accent);
-  color: var(--bg);
-}
-
 .ProseMirror .mermaid .mermaid-editables {
   cursor: text;
 }

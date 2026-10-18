@@ -48,9 +48,9 @@ formula kept in a comment and restored when the document reopens.
 
 Right-click a cell for undo/redo, cut, copy, paste, select all, clear
 contents, and inserting a row above or a column left; the block's
-`Table view` and `Edit source` sit below them. A right-click inside the
-current selection keeps it, and a column letter or row number offers to
-delete that column or row.
+`Visual`/`Edit` (which form the table is in) and `Source` sit below them. A
+right-click inside the current selection keeps it, and a column letter or row
+number offers to delete that column or row.
 
 Wrap a formula in inline marks to style the result without breaking the
 calculation: `**=SUM(B2:B3)**`, `*…*`, `` `…` ``, `==…==`, `~…~`, `^…^`.
@@ -73,16 +73,17 @@ not collide with built-ins, repeat, or form a loop.
 ## Masked fields
 
 The toolbar's **Insert encrypted field** stores a value as ciphertext — the
-markdown holds only `!masked[…]{label="…"}`, rendered as a masked pill.
-Click a pill to reveal, copy, or edit it (single password prompt per
-session), and the plaintext never appears in the document source.
+markdown holds only `!masked[…]{label="…"}`, rendered as a masked pill. Click
+a pill to reveal, copy, or edit it, and the
+plaintext never appears in the document source. Each of those asks for the
+password again — nothing is kept between reveals.
 
 ## Mermaid diagrams
 
 A fenced code block tagged `mermaid` renders as a diagram in the preview.
 
-To edit the picture, press **Edit** on the diagram's hover toolbar or
-double-click it; the right-click menu has **Edit diagram** too. The button
+To edit the picture, press **Edit** on the diagram's hover toolbar,
+`Alt+click` it, or use the right-click menu's **Edit diagram**. The button
 reads **Done** while you are in edit mode, and only one diagram is editable
 at a time.
 
@@ -98,18 +99,20 @@ A field taller than the column it fills grows the document to hold it, so the
 bottom of it is never cut off, and a card title is written rather than
 replaced, so the field grows as you type.
 
-A card is dragged by its text: point at it and a **✕** appears on the card
-itself, and goes again when the pointer leaves. A dragged card is the real
-one, lifted out of the board under your pointer, with a line in the slot it
-will drop into. A column is dragged by its header or its cards and moves
-whole, cards and all.
+A card is dragged by its text: the card itself is lifted out of the board
+under your pointer, with a line in the slot it will drop into. A column is
+dragged by its header or its cards and moves whole, cards and all.
 
-A column's own actions live in its **⋯**: add a column after it, rename it,
-or delete it with every card in it. The last column on a board is not
-offered a delete, because it would leave no board. The drawn column at the
-right is not a column yet, so it has no **⋯** of its own.
+A card has no control of its own. Drop it on the **+ Add a column** column at
+the right and it is deleted — that column becomes a bin for as long as you are
+holding a card, and says so.
 
-A **✕** asks first, naming what goes and how many cards go with it — it is
+A column's own actions live in its **⋯**: rename it, or delete it with every
+card in it. The last column on a board is not offered a delete, because it
+would leave no board. The drawn column at the right is not a column yet, so it
+has no **⋯** of its own.
+
+A delete asks first, naming what goes and how many cards go with it — it is
 one edit, so **undo** brings it all back.
 
 Only labels that can be rewritten are clickable. Anything Mermaid computed
@@ -130,8 +133,9 @@ straight into it.
 
 Card and column titles are free text. A title holding a character Mermaid
 cannot read in a plain label — a bracket or a parenthesis — is quoted in the
-source for you and drawn without the quotes; a title with a `"` in it is
-refused, with a note, because no quoting can carry one.
+source for you and drawn without the quotes; a `"` is carried as `&quot;`, so
+it needs no quoting of its own. The one title refused is one broken across
+two lines, which Mermaid has no way to read back.
 
 Right-click the diagram for Copy image / Save image…
 

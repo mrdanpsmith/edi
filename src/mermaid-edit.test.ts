@@ -10,7 +10,6 @@ import {
   KANBAN_CARD_SLOT,
   KANBAN_COLUMN_SLOT,
   kanbanAuthoringSource,
-  kanbanColumnCardCount,
   kanbanRealSource,
   moveKanbanCard,
   moveKanbanColumn,
@@ -834,11 +833,6 @@ describe('removeKanbanColumn', () => {
   it('reports a column that is not there as null', () => {
     expect(removeKanbanColumn(source, 9)).toBeNull()
     expect(removeKanbanColumn(source, -1)).toBeNull()
-  })
-
-  it('counts the cards a delete would take with it, for the prompt to say', () => {
-    expect(kanbanColumnCardCount(source, 0)).toBe(2)
-    expect(kanbanColumnCardCount(source, 2)).toBe(0)
   })
 })
 

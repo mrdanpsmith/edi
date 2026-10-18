@@ -3069,7 +3069,7 @@ class TablePlainView implements NodeView {
     // **The gutter, declared.** This element is as wide as the block and the grid is not, so
     // the white space beside the grid belongs to it — measured: block 48→1256 against a grid of
     // 48→253, which is a thousand pixels of it on a wide window. A press there is a request for
-    // a caret beside the table (`BLOCK_GUTTER_CLASS`, read by `src/gapParagraph.ts`), not a
+    // a caret beside the table (`BLOCK_MARGIN_CLASS`, read by `src/press.ts`), not a
     // click on the table: leaving it unmarked made that press *select* the block, which paints
     // the block-wide outline across all of that empty space and gives no caret at all.
     scroll.className = `ss-plain-scroll ${BLOCK_MARGIN_CLASS}`
@@ -3137,7 +3137,7 @@ class TablePlainView implements NodeView {
   private buildTable(): HTMLTableElement {
     const table = document.createElement('table')
     // **Both halves of the gutter, declared.** The strip around this grid is white space; the
-    // grid is its content, and the two markers are what tell `onBlockGutter` which side of that
+    // grid is its content, and the two markers are what tell `onBlockMargin` which side of that
     // element a press fell on — the strip *contains* the grid, so "inside the gutter" alone
     // would answer a click in a cell, which is the browser's text selection.
     table.className = `ss-plain-table ${BLOCK_CONTENT_CLASS}`
@@ -3265,7 +3265,7 @@ class TablePlainView implements NodeView {
    *   ProseMirror answered would fight the selection the reader is making with a mouse drag;
    * - **the control cluster**, whose buttons are the app's own controls;
    * - **the gutter** — the empty strip beside the grid, which is this block's *surface* and not
-   *   its content, and which is answered by `src/gapParagraph.ts` as a press in the white space.
+   *   its content, and which is answered by `src/press.ts` as a press in the white space.
    *
    * The gutter is claimed rather than released **because releasing it is what the report was
    * about**: handed to ProseMirror, a click there *selected the table*, and a selected table

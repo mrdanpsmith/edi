@@ -6626,7 +6626,7 @@ def test_a_composer_still_scrolls_into_view_when_a_board_is_being_edited(window)
     """An editing board does not take scrolling away.
 
     A card composer is an absolutely positioned field, so it contributes nothing to
-    the block's height and `openInlineInput` grows the block's `padding-bottom` for
+    the block's height and `session.openField` grows the block's `padding-bottom` for
     exactly this reason — a field hanging below a short board has to be
     *scrollable-to*.
 
@@ -7963,7 +7963,7 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
     # "all of the pixels between the left and right margin" with "nowhere to click", and the
     # empty strip is the space *around* a table rather than its surface: measured, the press
     # selected the table and the selection painted the whole width of the block while the words
-    # stopped at the grid. It is now answered as the white space it is (`gapParagraph.ts`), and
+    # stopped at the grid. It is now answered as the white space it is (`press.ts`), and
     # the gate for that is `test_the_space_beside_a_table_is_white_space_not_part_of_the_table`.
     # What stays here is the half that is still true: the press no longer reaches ProseMirror as
     # a *block* press, so it selects nothing.
