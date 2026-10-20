@@ -27,14 +27,11 @@ def prefs(tmp_path):
 
 
 def test_a_fresh_store_is_entirely_defaults(prefs):
-    assert prefs.all() == {"zoomFactor": 1.0, "toolbarVisible": True, "hoverBand": True}
-
-
-def test_the_defaults_are_the_ones_the_frontend_ships(prefs):
-    # Zoom at 100%, the toolbar row on, the hover band on — the three answers a
-    # reader has to be given before they have expressed a preference.
-    assert DEFAULTS == {"zoomFactor": 1.0, "toolbarVisible": True, "hoverBand": True}
-    assert NAMES == frozenset(DEFAULTS)
+    # The defaults themselves are the manifest's (`shared/edi-contract.json`,
+    # asserted in tests/test_contract.py against both this store and the page's
+    # DEFAULT_PREFERENCES) — so this only has to prove the store hands back
+    # exactly what it declares and nothing else.
+    assert prefs.all() == DEFAULTS
 
 
 def test_a_value_survives_a_new_store_over_the_same_file(prefs, tmp_path):

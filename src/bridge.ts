@@ -1,3 +1,5 @@
+import type { BridgeMethod, PreferenceName } from './contract'
+
 interface PendingRequest {
   resolve: (value: unknown) => void
   reject: (reason: Error) => void
@@ -49,7 +51,7 @@ declare global {
      * The persisted preferences, injected by `backend/window.py` before this
      * bundle runs. Absent when there is no shell (`npm run dev` in a browser).
      */
-    ediPreferences?: Partial<Record<'zoomFactor' | 'toolbarVisible' | 'hoverBand', unknown>>
+    ediPreferences?: Partial<Record<PreferenceName, unknown>>
   }
 }
 
@@ -123,8 +125,15 @@ export function onBridgeReady(callback: (bridge: BridgeObject | undefined) => vo
   void ensureChannel().then(() => callback(window.bridge))
 }
 
+/**
+ * Call one native bridge method and await its reply.
+ *
+ * `method` is a `shared/edi-contract.json` name (`BridgeMethod`), so a typo or
+ * a rename is a compile error here rather than an `Unknown method` reply or a
+ * silent no-op at runtime.
+ */
 export async function invoke<T = unknown>(
-  method: string,
+  method: BridgeMethod,
   payload: unknown = {},
   explicitId?: number,
 ): Promise<T> {
@@ -146,7 +155,7 @@ export async function invoke<T = unknown>(
  * id is shared by both channels so chunks route to the right caller.
  */
 export function invokeStream<T = unknown>(
-  method: string,
+  method: BridgeMethod,
   payload: unknown = {},
 ): StreamHandle<T> {
   const id = ++requestId

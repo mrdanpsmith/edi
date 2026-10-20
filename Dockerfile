@@ -11,7 +11,7 @@ RUN npm ci
 COPY tsconfig.json vite.config.ts index.html ./
 COPY scripts/ scripts/
 COPY src/ src/
-COPY tests/harness/ tests/harness/
+COPY shared/ shared/
 
 RUN npm run build
 # dist/ is now at /build/dist

@@ -22,6 +22,7 @@
  * from it (`setMenuState`) and a re-read of the injection would answer with the
  * answers this window booted with.
  */
+import { type PreferenceName } from './contract'
 import { invoke } from './bridge'
 
 export interface Preferences {
@@ -31,16 +32,21 @@ export interface Preferences {
 }
 
 /**
- * Must match `DEFAULTS` in `backend/preferences.py`. Both are load-bearing:
- * this is what a page gets when there is no shell to ask (`npm run dev` in a
- * browser, a unit test), and that is what the shell injects when it has never
- * been asked a question.
+ * Must match `DEFAULTS` in `backend/preferences.py`, and both must match
+ * `shared/edi-contract.json`'s `preferences` — that is the manifest this
+ * declaration is checked against, by name at typecheck time (`satisfies`, so
+ * a preference renamed or added only in the manifest fails `npm run check`
+ * here) and by value in `src/contract.test.ts`, which is where Python's
+ * `tests/test_contract.py` points too. Both are load-bearing: this is what a
+ * page gets when there is no shell to ask (`npm run dev` in a browser, a unit
+ * test), and that is what the shell injects when it has never been asked a
+ * question.
  */
 export const DEFAULT_PREFERENCES: Preferences = {
   zoomFactor: 1,
   toolbarVisible: true,
   hoverBand: true,
-}
+} satisfies Record<PreferenceName, number | boolean>
 
 /**
  * The injected snapshot, or the defaults, with each value taken only if it is

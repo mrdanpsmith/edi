@@ -393,7 +393,31 @@ class MainWindow(QMainWindow):
                 raise ValueError(f"{label!r} claims a key but declares no sequence")
             action.setShortcut(QKeySequence(declared))
         action.setShortcutContext(Qt.WindowShortcut)
-        action.triggered.connect(lambda _checked=False, cmd=command: self._menu_command(cmd))
+        self._link_command(action, command)
+        return action
+
+    def _link_command(self, action: QAction, command: str, argument: str = "") -> QAction:
+        """Name an action's command on the action itself, and wire it to the page.
+
+        Every command the menubar can dispatch goes through here exactly once,
+        and ``setData(command)`` is what makes the *built* menu bar readable as
+        data: ``tests/test_contract.py`` walks the real menus of a window built
+        by ``_build_menus`` and compares the commands it finds with
+        ``shared/edi-contract.json``. So a command string is written down in one
+        place per action instead of scattered across a lambda per call site, and
+        a rename on either side fails that test instead of leaving a menu item
+        that quietly does nothing.
+
+        ``argument`` is the per-action payload (a zoom rung, a recent path) —
+        bound at link time rather than read from the action, because it is part
+        of what the action *is*, not state that can change. Quit and About are
+        deliberately absent: they are not commands the page implements, so they
+        carry no name and the walk skips them.
+        """
+        action.setData(command)
+        action.triggered.connect(
+            lambda _checked=False, cmd=command, arg=argument: self._menu_command(cmd, arg)
+        )
         return action
 
     def _build_menus(self) -> None:
@@ -426,16 +450,12 @@ class MainWindow(QMainWindow):
         # and a menubar shortcut wins over the page, so one would cost that.
         self._rename_action = QAction("Re&name…", self)
         self._rename_action.setEnabled(False)
-        self._rename_action.triggered.connect(
-            lambda _checked=False: self._menu_command("rename")
-        )
+        self._link_command(self._rename_action, "rename")
         file_menu.addAction(self._rename_action)
 
         self._revert_action = QAction("&Revert", self)
         self._revert_action.setEnabled(False)
-        self._revert_action.triggered.connect(
-            lambda _checked=False: self._menu_command("revert")
-        )
+        self._link_command(self._revert_action, "revert")
         file_menu.addAction(self._revert_action)
 
         # Enabled by the frontend only while the document in view has a path.
@@ -445,9 +465,7 @@ class MainWindow(QMainWindow):
         self._copy_path_action = QAction("Copy File &Path", self)
         self._copy_path_action.setShortcut(QKeySequence("Ctrl+Alt+Shift+C"))
         self._copy_path_action.setEnabled(False)
-        self._copy_path_action.triggered.connect(
-            lambda _checked=False: self._menu_command("copyFilePath")
-        )
+        self._link_command(self._copy_path_action, "copyFilePath")
         file_menu.addAction(self._copy_path_action)
 
         file_menu.addSeparator()
@@ -457,7 +475,7 @@ class MainWindow(QMainWindow):
         # the page — see the Rename action above. This label used to claim it,
         # which is why block source mode had no working keyboard entry.
         export_action = QAction("&Export HTML…", self)
-        export_action.triggered.connect(lambda _checked=False: self._menu_command("export"))
+        self._link_command(export_action, "export")
         file_menu.addAction(export_action)
 
         file_menu.addSeparator()
@@ -489,13 +507,13 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
 
         select_all_action = QAction("Select &All", self)
-        select_all_action.triggered.connect(lambda _checked=False: self._menu_command("selectAll"))
+        self._link_command(select_all_action, "selectAll")
         edit_menu.addAction(select_all_action)
 
         edit_menu.addSeparator()
 
         encrypt_block_action = QAction("&Encrypt Block…", self)
-        encrypt_block_action.triggered.connect(lambda _checked=False: self._menu_command("encryptBlock"))
+        self._link_command(encrypt_block_action, "encryptBlock")
         edit_menu.addAction(encrypt_block_action)
 
         edit_menu.addSeparator()
@@ -509,29 +527,19 @@ class MainWindow(QMainWindow):
         self._insert_menu = menubar.addMenu("&Insert")
         insert_menu = self._insert_menu
         table_action = QAction("&Table…", self)
-        table_action.triggered.connect(
-            lambda _checked=False: self._menu_command("insertTableDefault")
-        )
+        self._link_command(table_action, "insertTableDefault")
         insert_menu.addAction(table_action)
         kanban_action = QAction("&Kanban Board…", self)
-        kanban_action.triggered.connect(
-            lambda _checked=False: self._menu_command("insertKanban")
-        )
+        self._link_command(kanban_action, "insertKanban")
         insert_menu.addAction(kanban_action)
         import_action = QAction("&Spreadsheet…", self)
-        import_action.triggered.connect(
-            lambda _checked=False: self._menu_command("importTable")
-        )
+        self._link_command(import_action, "importTable")
         insert_menu.addAction(import_action)
         text_action = QAction("&Text File…", self)
-        text_action.triggered.connect(
-            lambda _checked=False: self._menu_command("importText")
-        )
+        self._link_command(text_action, "importText")
         insert_menu.addAction(text_action)
         image_action = QAction("&Image…", self)
-        image_action.triggered.connect(
-            lambda _checked=False: self._menu_command("insertImage")
-        )
+        self._link_command(image_action, "insertImage")
         insert_menu.addAction(image_action)
         self._insert_actions = (table_action, kanban_action, import_action, text_action, image_action)
 
@@ -540,9 +548,7 @@ class MainWindow(QMainWindow):
         self._toolbar_action = QAction("&Toolbar", self)
         self._toolbar_action.setCheckable(True)
         self._toolbar_action.setChecked(True)
-        self._toolbar_action.triggered.connect(
-            lambda _checked=False: self._menu_command("toggleToolbar")
-        )
+        self._link_command(self._toolbar_action, "toggleToolbar")
         view_menu.addAction(self._toolbar_action)
 
         # The hover band — the faint band behind the block under the pointer, the
@@ -557,9 +563,7 @@ class MainWindow(QMainWindow):
         self._hover_band_action = QAction("&Hover Band", self)
         self._hover_band_action.setCheckable(True)
         self._hover_band_action.setChecked(True)
-        self._hover_band_action.triggered.connect(
-            lambda _checked=False: self._menu_command("toggleHoverBand")
-        )
+        self._link_command(self._hover_band_action, "toggleHoverBand")
         view_menu.addAction(self._hover_band_action)
 
         view_menu.addSeparator()
@@ -573,23 +577,17 @@ class MainWindow(QMainWindow):
         self._zoom_in_action.setShortcuts(
             [QKeySequence(QKeySequence.StandardKey.ZoomIn), QKeySequence("Ctrl+=")]
         )
-        self._zoom_in_action.triggered.connect(
-            lambda _checked=False: self._menu_command("zoomIn")
-        )
+        self._link_command(self._zoom_in_action, "zoomIn")
         view_menu.addAction(self._zoom_in_action)
 
         self._zoom_out_action = QAction("Zoom &Out", self)
         self._zoom_out_action.setShortcut(QKeySequence(QKeySequence.StandardKey.ZoomOut))
-        self._zoom_out_action.triggered.connect(
-            lambda _checked=False: self._menu_command("zoomOut")
-        )
+        self._link_command(self._zoom_out_action, "zoomOut")
         view_menu.addAction(self._zoom_out_action)
 
         reset_zoom_action = QAction("&Reset Zoom", self)
         reset_zoom_action.setShortcut(QKeySequence("Ctrl+0"))
-        reset_zoom_action.triggered.connect(
-            lambda _checked=False: self._menu_command("zoomReset")
-        )
+        self._link_command(reset_zoom_action, "zoomReset")
         view_menu.addAction(reset_zoom_action)
 
         view_menu.addSeparator()
@@ -600,9 +598,7 @@ class MainWindow(QMainWindow):
         for level in ZOOM_LEVELS:
             level_action = QAction(f"{round(level * 100)}%", self)
             level_action.setCheckable(True)
-            level_action.triggered.connect(
-                lambda _checked=False, value=level: self._menu_command("zoomTo", str(value))
-            )
+            self._link_command(level_action, "zoomTo", str(level))
             zoom_group.addAction(level_action)
             zoom_menu.addAction(level_action)
             self._zoom_actions[level] = level_action
@@ -610,14 +606,10 @@ class MainWindow(QMainWindow):
         self._help_menu = menubar.addMenu("&Help")
         help_menu = self._help_menu
         guide_action = QAction("&Edi Guide…", self)
-        guide_action.triggered.connect(
-            lambda _checked=False: self._menu_command("helpGuide")
-        )
+        self._link_command(guide_action, "helpGuide")
         help_menu.addAction(guide_action)
         reference_action = QAction("&Formula Reference…", self)
-        reference_action.triggered.connect(
-            lambda _checked=False: self._menu_command("formulaReference")
-        )
+        self._link_command(reference_action, "formulaReference")
         help_menu.addAction(reference_action)
         help_menu.addSeparator()
         about_action = QAction("&About Edi…", self)
@@ -651,11 +643,7 @@ class MainWindow(QMainWindow):
         for path in paths:
             action = self._recent_menu.addAction(_recent_label(path))
             action.setToolTip(path)
-            action.triggered.connect(
-                lambda _checked=False, target=path: self._menu_command(
-                    "openRecent", target
-                )
-            )
+            self._link_command(action, "openRecent", path)
 
     def open_external_url(self, url: str) -> None:
         """Open ``url`` in the system default application (usually a browser).

@@ -81,7 +81,7 @@ describe('bridge', () => {
       window.bridge = fake
     })
 
-    const promise = bridge.invoke('save')
+    const promise = bridge.invoke('setDirty')
     await vi.waitFor(() => expect(fake.invoke).toHaveBeenCalled())
     const id = fake.invoke.mock.calls[0]![1]
     fake._fire(JSON.stringify({ id, ok: false, error: 'boom' }))
@@ -94,7 +94,7 @@ describe('bridge', () => {
       window.bridge = fake
     })
 
-    const promise = bridge.invoke('save')
+    const promise = bridge.invoke('setDirty')
     await vi.waitFor(() => expect(fake.invoke).toHaveBeenCalled())
     const id = fake.invoke.mock.calls[0]![1]
     fake._fire(JSON.stringify({ id, ok: false }))
@@ -124,8 +124,8 @@ describe('bridge', () => {
       window.bridge = fake
     })
 
-    const first = bridge.invoke<string>('a')
-    const second = bridge.invoke<string>('b')
+    const first = bridge.invoke<string>('ping')
+    const second = bridge.invoke<string>('setDirty')
     await vi.waitFor(() => expect(fake.invoke).toHaveBeenCalledTimes(2))
     const idA = fake.invoke.mock.calls[0]![1]
     const idB = fake.invoke.mock.calls[1]![1]
