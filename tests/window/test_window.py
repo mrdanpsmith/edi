@@ -6,6 +6,10 @@ boots once.
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = [pytest.mark.window, pytest.mark.slow]
+
 import sys
 import time
 import base64
@@ -96,64 +100,6 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _wait_text,
     _zoom,
 )
-
-
-@pytest.fixture(scope="session")
-def window(qapp):
-    if not (DIST_DIR / "index.html").is_file():
-        pytest.fail(
-            f"frontend build not found at {DIST_DIR / 'index.html'}; "
-            "run `npm run build` before the backend tests"
-        )
-    win = MainWindow()
-    win.resize(1280, 800)
-    win.show()
-
-    state = {"ready": False}
-
-    def probe():
-        win._web.page().runJavaScript(
-            """
-            (function () {
-              if (!window.qt || !window.qt.webChannelTransport) return false;
-              return !!window.bridge && typeof window.bridge.invoke === 'function';
-            })()
-            """,
-            lambda v: state.__setitem__("ready", bool(v)),
-        )
-
-    def ready():
-        probe()
-        return state["ready"]
-
-    assert _pump_until(ready, timeout=12.0), "webview bridge never became ready"
-    yield win
-    win.close()
-
-
-@pytest.fixture
-def visible(window, qtbot):
-    if not window.isVisible():
-        window.show()
-    qtbot.waitUntil(window.isVisible, timeout=3000)
-    return window
-
-
-@pytest.fixture
-def stored_recents():
-    """Empty the persisted recent-files list, restoring the real value after.
-
-    QSettings() resolves its file at first use per-process and then caches the
-    location, so XDG_CONFIG_HOME cannot redirect it mid-session; save and
-    restore the value instead so the test stays self-contained.
-    """
-    settings = QSettings()
-    saved = settings.value("recentFiles", [])
-    settings.setValue("recentFiles", [])
-    try:
-        yield settings
-    finally:
-        settings.setValue("recentFiles", saved)
 
 
 def test_window_minimum_size(window):

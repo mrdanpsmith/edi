@@ -31,7 +31,7 @@ def _dump(win, script):
     """
     js = win._web.page().runJavaScript
     out = {}
-    js(f"JSON.stringify({script})", lambda v: out.update(json.loads(v) if isinstance(v, str) else {}))
+    js(f"window.ediDump({json.dumps(script)})", lambda v: out.update(json.loads(v) if isinstance(v, str) else {}))
     _pump_until(lambda: bool(out), timeout=5)
     return out
 
@@ -169,6 +169,11 @@ def _wait(win, script, predicate, timeout=15):
 
     assert _pump_until(probe, timeout=timeout), f"never satisfied: {seen['v']}"
     return seen["v"]
+
+
+# Unified polling helper (ediWait-style): dumps page state on timeout.
+def _edi_wait(win, script, predicate, timeout=15.0):
+    return _wait(win, script, predicate, timeout=timeout)
 
 
 def _enter_edit_mode(win, timeout=15):

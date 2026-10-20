@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-node.mjs && tsc --noEmit && vite build",
+    "build": "node scripts/check-node.mjs && tsc --noEmit && vite build && VITE_HARNESS=1 vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "coverage": "vitest run --coverage",

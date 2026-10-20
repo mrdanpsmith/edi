@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
+import { resolve } from 'node:path'
 
 export default defineConfig({
   clearScreen: false,
@@ -8,13 +9,19 @@ export default defineConfig({
     // Single bundle by design (see codeSplitting below): it already exceeds
     // the 500 kB default, so raise the limit rather than code-split.
     chunkSizeWarningLimit: 6500,
+    emptyOutDir: process.env.VITE_HARNESS !== '1',
     rolldownOptions: {
+      input:
+        process.env.VITE_HARNESS === '1'
+          ? { harness: resolve(__dirname, 'tests/harness/index.ts') }
+          : { main: resolve(__dirname, 'index.html') },
       output: {
         codeSplitting: false,
         // Stable, hash-free filenames: the AV false-positive mitigation. AV
         // vendors that flagged the minified bundle can key on the known
         // assets/index.js path instead of re-scanning every hash-named build.
-        entryFileNames: 'assets/index.js',
+        entryFileNames:
+          process.env.VITE_HARNESS === '1' ? 'harness.js' : 'assets/index.js',
         assetFileNames: 'assets/[name][extname]',
       },
     },

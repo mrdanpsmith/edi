@@ -10,6 +10,12 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
+# Isolate QSettings/QStandardPaths from the developer's real config: test mode
+# must be enabled before any PySide6 module (or QSettings) is first used.
+from PySide6.QtCore import QStandardPaths
+
+QStandardPaths.setTestModeEnabled(True)
+
 import pytest
 
 

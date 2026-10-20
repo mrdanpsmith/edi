@@ -1,0 +1,1 @@
+"""Real-WebEngine window tests (session-scoped MainWindow)."""

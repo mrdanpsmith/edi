@@ -3,7 +3,7 @@ import json
 import pytest
 
 from backend.window import DIST_DIR, MainWindow
-from tests.test_window import _pump_until
+from tests.mermaid_render import _pump_until
 
 C4 = 'C4Context\nPerson(user, "User")\nSystem(app, "App")\nRel(user, app, "Uses")'
 TREE = 'treeView-beta\nRoot\n  Child\n    Grandchild'

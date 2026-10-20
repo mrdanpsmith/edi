@@ -57,6 +57,17 @@ def win(qapp):
         return ready["v"]
 
     assert _pump_until(probe_ready, timeout=15), "bridge never ready"
+
+    from tests.harness_loader import harness_js
+
+    injected = {"done": False}
+
+    def _on_injected(_v):
+        injected["done"] = True
+
+    js(harness_js(), _on_injected)
+    _pump_until(lambda: injected["done"], timeout=5.0)
+
     yield w
     w.close()
     w.deleteLater()
