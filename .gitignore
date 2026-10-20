@@ -10,6 +10,7 @@ coverage-py/
 .cache/
 build/
 .npm/
+.qttest/
 
 # Python
 __pycache__/

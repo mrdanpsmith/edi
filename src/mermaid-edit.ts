@@ -34,6 +34,7 @@ import { promptForKanbanDelete } from './urlDialog'
 import type { DiagramSession, EditSubject, RenderScope } from './mermaid-session'
 import { FIELD_CLASS, sessionFor, stopEditing } from './mermaid-session'
 export { endSession as discardMermaidSession } from './mermaid-session'
+/** Re-exported from `./kanban-model` so existing importers continue to work. */
 
 /** The box a field is placed in, so the node view can keep its events out of ProseMirror. */
 export { FIELD_CLASS }

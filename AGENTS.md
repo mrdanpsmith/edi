@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## Agent workflow (read first)
+
+**Do not create branches, and do not commit.** Leave all changes in the working tree
+uncommitted and unbranched; the user reviews and commits them. Do not run `git commit`,
+`git checkout -b`, `git branch`, or push. If a task asks for a branch, implement the
+changes on the current branch and stop.
+
 Edi is a markdown editor. Frontend: ProseMirror (the document editor) + CodeMirror 6 (embedded code blocks only) + Mermaid + spreadsheet formulas (TypeScript/Vite) compiled to a static `dist/`. Backend: Python 3 + PySide6/QtWebEngine. A native `QWebEngineView` hosts `dist/index.html`; the page talks to Python via `QWebChannel` (`backend/bridge.py`). This is NOT a plain web app — `npm run dev` runs only the Vite server; the real app is Python.
 
 ## Inline marks
