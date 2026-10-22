@@ -3137,10 +3137,14 @@ CLUSTER_GEOMETRY = """
       if (box.width > 0) { text = [box.left, box.top, box.right, box.bottom]; break; }
     }
     const c = cluster ? cluster.getBoundingClientRect() : null;
+    const pill = cluster ? cluster.querySelector(':scope > .block-control-pill') : null;
+    const p = pill ? pill.getBoundingClientRect() : null;
     return {
       cls: String(block.className).split(' ')[0],
       block: [Math.round(b.left), Math.round(b.right)],
       cluster: c ? [Math.round(c.left), Math.round(c.right)] : null,
+      // The visible row, which stands off the block: see `.block-control-pill`.
+      pill: p ? [Math.round(p.left), Math.round(p.right)] : null,
       overlaps: !!(c && text) && !(c.right <= text[0] || c.left >= text[2] ||
                                    c.bottom <= text[1] || c.top >= text[3]),
     };
@@ -3220,6 +3224,16 @@ def test_a_blocks_controls_are_beside_it_and_never_over_its_text(window):
                 # past it, which is touching, not covering.
                 assert row["cluster"][0] >= row["block"][1] - 1, (
                     f"the row must start at the block's right edge or past it: {row}")
+                # **And the visible row stands off it.** A block being edited — or a
+                # selected atom — wears a 2px outline 2px outside its border box, so a
+                # row flush against the block painted over that segment. The pill
+                # starts 8px into the strip and still fits inside the gutter it lives
+                # in (8 + 80 + 8 is the 96px margin).
+                assert row["pill"] is not None, row
+                assert row["pill"][0] - row["block"][1] >= 4, (
+                    f"the row has to clear a block's outline (2px at 2px offset): {row}")
+                assert row["pill"][1] <= row["cluster"][1], (
+                    f"and it has to fit the margin that holds it: {row}")
 
             # **A table is its grid, so its controls hug it.** A rendered table used
             # to be as wide as the column with a small grid in the middle of it,
@@ -3426,15 +3440,78 @@ def test_a_blocks_controls_can_be_reached_with_the_pointer(window):
         _dump(window, "(() => window.ediUnreveal())()")
 
 
+def test_a_blocks_controls_clear_its_own_editing_outline(window):
+    """The row stands **off** the block, because the block's own edge is where its
+    outline is.
+
+    Reported as the tools *overlapping the editing border*. A block that is not
+    being viewed as its document — a diagram in its editing layer, a table as a
+    sheet, a revealed encrypted block — wears a 2px dashed accent outline at
+    `outline-offset: 2px`, and a selected atom wears the same shape solid: either
+    way 4px of accent line is painted **outside** the block's border box, and the
+    style that is on screen while you are editing is whichever of the two applies
+    (this one is selected, so it is solid). A row whose left edge was flush against
+    the block therefore painted its own opaque fill and 1px border over that
+    segment, which reads as the controls clipping the frame the reader is working
+    in.
+
+    The row now starts 8px inside the strip, and the distance is measured against
+    the outline's own computed width and offset rather than against a number in
+    this file, because the outline is the thing it has to clear. The strip behind
+    the gap is what keeps the standoff free: it is hit-testable across the whole
+    margin, so the pointer is on the block's own cluster the entire way
+    (`test_a_blocks_controls_can_be_reached_with_the_pointer` walks the same gap).
+    """
+    _set_scheme(window, False)
+    _render(window, "graph TD\n  A[Alpha] --> B[Beta]")
+    _enter_edit_mode(window)
+
+    out = _wait(window, """(() => {
+      const block = document.querySelector('#editor-container .mermaid');
+      const cluster = block && block.querySelector(':scope > .block-controls');
+      const pill = cluster && cluster.querySelector(':scope > .block-control-pill');
+      if (!pill) return { missing: true };
+      const cs = getComputedStyle(block);
+      const b = block.getBoundingClientRect();
+      const c = cluster.getBoundingClientRect();
+      const p = pill.getBoundingClientRect();
+      return {
+        mode: block.classList.contains('edi-block-mode-editing'),
+        style: cs.outlineStyle,
+        width: parseFloat(cs.outlineWidth) || 0,
+        offset: parseFloat(cs.outlineOffset) || 0,
+        blockRight: b.right,
+        strip: [Math.round(c.left), Math.round(c.right)],
+        pill: [p.left, p.right],
+      };
+    })()""", lambda d: d.get("mode") is True and d.get("style") in ("dashed", "solid"),
+        timeout=15)
+    assert not out.get("missing"), out
+    assert out["width"] >= 2 and out["offset"] >= 2, out
+    reach = out["width"] + out["offset"]
+    gap = out["pill"][0] - out["blockRight"]
+    assert gap >= reach + 2, (
+        f"the row has to clear the block's own editing outline ({out['width']}px at"
+        f" {out['offset']}px offset reaches {reach}px past the block) and it is"
+        f" {gap}px away: {out}")
+    # And it is still inside the margin it lives in: making room for the outline
+    # must not push the last button out of the page, which would put a horizontal
+    # scrollbar under the whole document.
+    assert out["pill"][1] <= out["strip"][1] + 1, (
+        f"the row has to fit the gutter it was given: {out}")
+
+
 def test_a_press_beside_a_shrink_wrapped_table_puts_the_caret_beside_it(window):
     """The white space to the right of a narrow table is **not** the table.
 
-    A block that hugs its grid has no margin of its own — the space beside it is
-    the editor's — so a press there reaches ProseMirror, and ProseMirror's own
-    answer, in the empty column beside a narrow atom, is a `NodeSelection` on that
-    atom: the whole table painted and no caret anywhere. `src/press.ts` therefore
-    answers a press in the page's white space *when what ProseMirror would answer
-    with is a block selection*, and places the caret at the nearest text instead.
+    A block that hugs its grid has no content in the space beside it: the row is
+    empty there, the block's own control strip is 96px of margin at its edge, and
+    the rest is the editor's white space. So a press there reaches ProseMirror, and
+    ProseMirror's own answer, in the empty column beside a narrow atom, is a
+    `NodeSelection` on that atom: the whole table painted and no caret anywhere.
+    `src/press.ts` therefore answers a press in the page's white space *when what
+    ProseMirror would answer with is a block selection*, and places the caret at
+    the nearest text instead.
 
     Real engine, real coordinates and a real hit test: which element is under the
     point is the whole question, and it is the one thing a unit test cannot ask.
@@ -4107,8 +4184,16 @@ def test_alt_click_on_a_code_blocks_text_toggles_its_modes(window):
 # rule is not in the sheet" in five places at once, which is the failure mode
 # `BAND_MATCHES_PROBE` already warns about for anchors: the reader is sent looking
 # in the wrong place. One definition, so a change is one edit.
+# **`> `, because the band is one per row and the row is a top-level block's.**
+# A nested block (a list item's paragraph, a blockquote's child) is inset past the
+# 24px every top-level block is indented by, and the band's `right` is written for
+# that indent; a descendant selector gave a nested block a band that ran its own
+# inset past the page's right edge (measured: 28px over at 900px wide), which is a
+# horizontal scrollbar across the document for as long as the pointer was on the
+# item. The band's left/right arithmetic below is only meaningful for a block whose
+# left edge is the editor's text column, so the selector says exactly that.
 BAND_SELECTOR = (
-    ".ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,"
+    ".ProseMirror > :is(.block-visual-mode, .mermaid, .runnable-block,"
     " .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode)"
     ":not(.encrypted-block-reveal-editor *):hover::before"
 )
@@ -4453,12 +4538,36 @@ BAND_GEOMETRY_PROBE = """(() => {
   document.head.appendChild(style);
   const pm = document.querySelector('.ProseMirror');
   const pmBox = pm.getBoundingClientRect();
+  const scroller = document.querySelector('#editor-container');
+  // A band box that spilled past the editor's right edge would be a horizontal
+  // scrollbar for as long as the pointer was on the block, so the widest band the
+  // probe draws is measured against the scroller: `scrollWidth` counts an
+  // absolutely positioned descendant, and the band is only a box while the probe
+  // class is on (at rest it has no `content`, so it costs nothing).
+  let overflow = 0;
+  // **Every element the rule would paint for**, found by asking the rule's own
+  // selector — not `[...pm.children]`, which is how this probe first "measured" a
+  // band on each row while a nested block's band (a list item's paragraph, say)
+  // drew past the page edge unmeasured. `:hover` is never true under `matches()`
+  // and `::before` is not a target at all, so both come off: what is left is the
+  // selector's own list and exclusions, which is the claim.
+  const hit = SEL.replace(':hover', '').replace('::before', '');
+  const candidates = [
+    ...pm.querySelectorAll(
+      '.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block'),
+  ].filter((el) => el.matches(hit));
+  const top = [...pm.children];
+  // The band is one per row, and the row belongs to the top-level block: anything
+  // here is a band whose arithmetic the sheet cannot satisfy.
+  const nested = candidates.filter((el) => !top.includes(el))
+    .map((el) => String(el.className).split(' ')[0] + ':' + el.tagName.toLowerCase());
   // A pseudo-element has no rect of its own — `getBoundingClientRect()` on the
   // host returns the *host's* box, which is how this probe first "measured" a
   // band that had not moved at all. Its computed offsets are what there is.
-  const rows = [...pm.children].map((el) => {
+  const rows = candidates.map((el) => {
     const box = el.getBoundingClientRect();
     el.classList.add('edi-band-probe');
+    overflow = Math.max(overflow, scroller.scrollWidth - scroller.clientWidth);
     const cs = getComputedStyle(el, '::before');
     const inset = {
       top: parseFloat(cs.top), right: parseFloat(cs.right),
@@ -4479,7 +4588,7 @@ BAND_GEOMETRY_PROBE = """(() => {
   style.remove();
   const pmCS = getComputedStyle(pm);
   return {
-    css, decls: rule.style.cssText,
+    css, decls: rule.style.cssText, overflow, nested,
     pmLeft: Math.round(pmBox.left), pmRight: Math.round(pmBox.right),
     padLeft: parseFloat(pmCS.paddingLeft) || 0,
     padRight: parseFloat(pmCS.paddingRight) || 0,
@@ -4493,18 +4602,31 @@ def test_the_hover_band_reaches_the_page_edges(window):
 
     The measurement is of a band produced by the *same* declarations as the live
     rule, so what is pinned is the geometry: the left edge cancels the block's 24px
-    margin and the editor's left padding, the right cancels the right padding, and
-    the band reaches past the block's own box above and below so consecutive blocks
-    read as one band.
+    margin and the editor's left padding, the right edge is the editor's own content
+    edge whatever the block's own width, and the band reaches past the block's box
+    above and below so consecutive blocks read as one band.
 
-    That sum is a block *plus the margins around it*, which for a block as wide as
-    the column is the page edge on both sides — and for the shrink-wrapped table in
-    this document is 96px of margin either side of a 63px grid. Both are the same
-    rule, which is why this asserts the rule and not the page edges: the band is
-    the row, and the row is the block's width.
+    **The right edge is the row, not the block.** A rendered table is as wide as its
+    grid (`.ss-plain`), so a band that cancelled the gutter from the block's own
+    right edge was 96px wide beside a 63px grid: a highlight that hugged the table
+    while every other block's spanned the page, which reads as the table's own
+    outline rather than as the row it sits in. The rule names the editor's content
+    width instead (`100cqw`, and `.ProseMirror` is the query container), so the band
+    is the row for every block type — a shrink-wrapped block included.
+
+    **And the row is the top-level block's, which is what the candidates are.** The
+    probe measures every element the rule's own selector matches rather than
+    `[...pm.children]`: a nested block carries the same classes, so measuring the
+    children left its band unmeasured, and a nested band is one the offsets cannot
+    satisfy — a list item's paragraph is inset 28px past the editor's text column,
+    and the band ran that far past the page's right edge. Measured at 900px wide:
+    band right 928, `#editor-container.scrollWidth` 928 — a horizontal scrollbar
+    across the whole document for as long as the pointer was on the item.
     """
     import json
     document = """A paragraph.
+
+> a quoted line
 
 - a list item
 - another
@@ -4533,25 +4655,52 @@ graph TD
     assert probe["css"], f"the band paints nothing: {probe['css']!r}"
 
     rows = probe["rows"]
-    assert len(rows) == 5, rows
+    assert len(rows) == 6, rows
+    # **One band per row, and a row is a top-level block.** Anything here is a band
+    # on a nested block, whose left and right the sheet cannot place: it is inset
+    # past the 24px the arithmetic assumes, so the band lands that much past the
+    # page's right edge (and the overflow assertion below then sees a scrollbar).
+    assert probe["nested"] == [], (
+        f"a nested block drew a band, and the band's offsets are written for a "
+        f"top-level block's indent: {probe['nested']}")
     for row in rows:
-        # **The band is the block plus the margins it sits in**, measured from the
-        # block's own box and the editor's own padding rather than from a number in
-        # this file: the left cancels the padding *and* the block's indent, the right
-        # cancels the padding alone (a block's right edge is already the content
-        # box's). Clamped at the editor's edges, which is where a full-width block's
-        # band ends up.
+        # **The band is the row the block sits in**, measured from the block's own
+        # box and the editor's own padding rather than from a number in this file:
+        # the left cancels the padding *and* the block's indent, and the right is the
+        # editor's content edge — for a paragraph because the gutter is the space
+        # left beside it, and for the shrink-wrapped table because the rule names the
+        # editor's width rather than the grid's.
         want_left = max(probe["pmLeft"],
                         row["blockLeft"] - probe["padLeft"] - row["marginLeft"])
-        want_right = min(probe["pmRight"], row["blockRight"] + probe["padRight"])
+        want_right = probe["pmRight"]
         assert abs(row["bandLeft"] - want_left) <= 1, (
             f"{row['cls']}: band left {row['bandLeft']} vs {want_left} ({row})")
         assert abs(row["bandRight"] - want_right) <= 1, (
-            f"{row['cls']}: band right {row['bandRight']} vs {want_right} ({row})")
+            f"{row['cls']}: the band has to reach the row's right edge, not the"
+            f" block's — band right {row['bandRight']} vs {want_right} ({row})")
         # And it stands off the block, which is what gives an opaque interior
         # (a code block's editor) somewhere to show.
         assert row["bandTop"] < row["blockTop"], row
         assert row["bandBottom"] > row["blockBottom"], row
+
+    # **The shrink-wrapped block is the one this is about**, so it is measured
+    # against its own grid as well: the band runs on past the table to the page edge
+    # rather than stopping at the block's own 96px of margin.
+    table = next(row for row in rows if row["cls"] == "ss-plain")
+    assert table["blockRight"] - table["blockLeft"] < 300, table
+    assert abs(table["bandRight"] - probe["pmRight"]) <= 1, (
+        f"a rendered table's row is the editor's row, not a 96px margin round its "
+        f"grid: {table}")
+
+    # And no band box spilled out of the editor. A band two pixels past the page
+    # edge is a horizontal scrollbar for as long as the pointer is on that block,
+    # which is how a bordered block's band announced that its border had not been
+    # accounted for (`--edi-band-border`); `scrollWidth` is what sees it, because
+    # the band really is that wide while it is drawn.
+    assert probe["overflow"] <= 1, (
+        f"a band box spilled past the editor's right edge — a horizontal scrollbar "
+        f"under the document for as long as the pointer is on the block: "
+        f"{probe['overflow']}px ({probe['rows']})")
 
 
 # The band's other half: what it paints *over*. `:hover` cannot be exercised here,
@@ -4789,7 +4938,7 @@ BAND_MATCHES_PROBE = """(() => {
   // read out of the sheet rather than spelled here. A probe that hardcoded the
   // whole selector reported a missing exclusion as "the rule is not in the sheet",
   // which sends the next person looking in the wrong place.
-  const HEAD = '.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block,'
+  const HEAD = '.ProseMirror > :is(.block-visual-mode, .mermaid, .runnable-block,'
     + ' .spreadsheet, .ss-plain, .encrypted-block)';
   const TAIL = ':hover::before';
   document.querySelectorAll('.edi-band-fixture').forEach((el) => el.remove());
@@ -4798,7 +4947,6 @@ BAND_MATCHES_PROBE = """(() => {
   root.innerHTML = [
     '<div class="ProseMirror">',
     '  <div class="encrypted-block">',
-    '    <div class="block-visual-mode">outer</div>',
     '    <div class="encrypted-block-reveal">',
     // The reveal's editor is `createBlockEditor` — the document's own factory — so
     // it marks its content exactly as the document does, and without the exclusion
@@ -4828,7 +4976,7 @@ BAND_MATCHES_PROBE = """(() => {
   // so both come off and what is left is the selector's own list and exclusions.
   const probe = found.replace(TAIL, '');
   const out = {};
-  root.querySelectorAll('.block-visual-mode, .runnable-block').forEach((el) => {
+  root.querySelectorAll('.block-visual-mode, .runnable-block, .encrypted-block').forEach((el) => {
     const where = el.closest('.encrypted-block-reveal-editor') ? 'inside reveal'
       : el.closest('.encrypted-block') ? 'encrypted block' : 'document';
     // **Every distinguishing class has to be its own key.** An earlier version

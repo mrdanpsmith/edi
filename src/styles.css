@@ -590,6 +590,15 @@ body {
      why it cannot be left to: the band would then be one Blink implementation
      detail away from being invisible, with nothing in the sheet to say so. */
   isolation: isolate;
+  /* **The band's right edge is measured from here.** A block that hugs its
+   * content — a rendered table is as wide as its grid — cannot say where its row
+   * ends, so the band's `right` is written against *this* element's content width
+   * (`100cqw`, in the band rule below) and this declaration is what makes that
+   * width nameable. `inline-size` containment is the cheapest kind: the editor's
+   * width comes from the page and never from its contents, so its own layout does
+   * not change, and the style containment that comes with it is inert here (this
+   * sheet uses no CSS counters). */
+  container-type: inline-size;
   /* ProseMirror's default `pre-wrap` renders a single newline inside a
    * paragraph as a visible line break, which looks identical to a hard break.
    * CommonMark collapses single newlines to a space (soft line break), so
@@ -755,8 +764,22 @@ body {
    a frame the reader is already looking into, and the question the band exists to
    answer is already answered: there is one encrypted block, it is the thing under
    the pointer, and its content is on screen. An encrypted block holds exactly one
-   block by design, so the inner one can never be the answer to anything. */
-.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
+   block by design, so the inner one can never be the answer to anything.
+
+   **Top-level blocks only, because the row is theirs.** The band's offsets are
+   written for a block that starts at the editor's 24px indent — which is
+   `.ProseMirror > .block-visual-mode`, a `>` rule for the same reason — and a
+   *nested* block (a list item's paragraph, a blockquote's child) is inset
+   further, so `100cqw - 100%` counted that inset as margin and the band ran
+   exactly that far past the page's right edge: measured at 900px, a list item's
+   paragraph drew its band to 928, which is a horizontal scrollbar across the whole
+   document for as long as the pointer was on that item. The row a nested block
+   sits in is its list's or its quote's row, that top-level block has the band, and
+   it is also the one that carries the control cluster — so the band and the
+   controls answer about the same box again. The `:not() *` above stays: a revealed
+   encrypted block's inner editor is its own `.ProseMirror`, where its block *is*
+   top-level. */
+.ProseMirror > :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
   /* **`var()`'s fallback is the band's default: drawn.** One declaration of
      `--hover-band-content` in the whole sheet, below, is what turns it off —
      which is the whole of the View → Hover Band option (`src/hoverBand.ts`,
@@ -773,21 +796,38 @@ body {
   z-index: -1;
   top: -4px;
   bottom: -4px;
-  /* **The band is the block plus the margins around it.** Both offsets are
-     written in the same variables the editor's padding is, because a band that
-     stopped at the text column would leave the cluster — which lives in the
-     margin — floating on the bare page, and every earlier band that failed to
-     reach the margin was the same arithmetic written twice and drifted once. The
-     left cancels the padding *and* the block's own 24px indent (`.ProseMirror >
-     .block-visual-mode`); the right cancels the padding alone, because a block's
-     right edge is already the content box's.
+  /* **The band is the row, and the row is the editor's content box.** The left
+     cancels the padding *and* the block's own 24px indent (`.ProseMirror >
+     .block-visual-mode`), which lands on the editor's left edge for every block,
+     because every **top-level** block starts there — and the band is drawn for
+     top-level blocks only (see the selector above), which is the same 24px the
+     arithmetic below assumes. It is written in the same variables the editor's
+     padding is, because a band that stopped at the text column would leave the
+     cluster — which lives in the margin — floating on the bare page.
 
-     So a block as wide as the column bands out to the window's edges, and a block
-     that hugs its content — a rendered table is as wide as its grid (`.ss-plain`)
-     — bands out by the same 96px on either side of a grid that may be 63px. One
-     rule, one meaning: the band is the row. */
+     **The right cannot be measured from the block**, and that is the whole
+     difference: a block that hugs its content — a rendered table is as wide as its
+     grid (`.ss-plain`) — has a right edge in the middle of the row, so a band that
+     cancelled the gutter from there stopped halfway across the page and the
+     highlight read as the table's own outline rather than as its row. The band is
+     the row the block sits in, so the offset is *the empty row to the block's
+     right plus the gutter*: `100cqw` is the editor's content width (`.ProseMirror`
+     is the query container, one rule above), `100%` is the block's own width, and
+     the 24px is the indent a full-width block's right edge already sits inside.
+     For a paragraph that is exactly `--edi-gutter-right` and the band ends on the
+     page edge; for a 63px grid it is most of the editor's width and the band still
+     ends on the page edge. One rule, one meaning: the band is the row.
+
+     `100%` is the block's **padding** box, so a block that draws its own border is
+     that much narrower inside it: `--edi-band-border` is the horizontal cost of
+     that border (zero on a block with none) and it is declared beside the border
+     itself, because those two facts are one decision. Without it a bordered block
+     — a code block's 1px frame — pushes the band two pixels past the page edge,
+     which is a horizontal scrollbar for as long as the pointer is on the block. */
   left: calc(-1 * (var(--edi-gutter-left, 24px) + 24px));
-  right: calc(-1 * var(--edi-gutter-right, 24px));
+  right: calc(
+    -1 * (100cqw - 100% + var(--edi-gutter-right, 24px) - 24px - var(--edi-band-border, 0px))
+  );
   border-radius: 6px;
   background: var(--block-hover);
   pointer-events: none;
@@ -827,11 +867,12 @@ body {
  *   margin. As a child of the block, hovering the strip is hovering the block, so
  *   the reveal has already happened when the pointer gets to a button.
  * - `.block-control-pill` is **the pill** — the visible face, at the strip's top
- *   left corner, flush against the block. It is `pointer-events: none` until it
- *   is revealed, so an invisible pill is inert: a press while the row is not
- *   shown is a press on the page (`src/press.ts`: a press on the cluster that is
- *   not on a button is white space, answered with a caret beside the block, never
- *   a mode flip the reader could not see coming).
+ *   left corner, standing 8px off the block so it clears the block's own outline
+ *   (see its rule). It is `pointer-events: none` until it is revealed, so an
+ *   invisible pill is inert: a press while the row is not shown is a press on the
+ *   page (`src/press.ts`: a press on the cluster that is not on a button is white
+ *   space, answered with a caret beside the block, never a mode flip the reader
+ *   could not see coming).
  *
  * **The strip is the whole right margin, not the row's own width**, for the same
  * reason: entering it anywhere keeps the row alive, so a pointer that crosses
@@ -839,7 +880,7 @@ body {
  *
  * The row cannot cover a glyph on any block type — including a paragraph whose
  * line runs to the column's edge, which is the case that killed the last three
- * designs — because it starts at the block's right edge, in the margin. */
+ * designs — because it starts past the block's right edge, in the margin. */
 .block-controls {
   position: absolute;
   left: 100%;
@@ -855,11 +896,22 @@ body {
 
 .block-control-pill {
   position: absolute;
-  /* Level with the block's first row of chrome, not below it — and flush against
-     the block's edge, because a gap between a block and its own controls is a
-     hole to cross. */
+  /* **The row stands off the block, because the block's own edge is where its
+     outline is.** A block that is not being viewed as its document wears a 2px
+     dashed accent outline at `outline-offset: 2px`, and a selected atom wears the
+     same shape solid — 4px outside the block's border box either way. A row flush
+     against the block therefore painted its own opaque fill and border *over the
+     outline's right-hand segment*, which reads as the controls clipping the frame
+     the reader is working in. So the pill starts 8px inside the strip: 4px clears
+     the outline and 4px is air. The gutter is sized for exactly this — 8 + 80 (the
+     widest row, three buttons) + 8 is the 96px margin.
+
+     **The gap is not a hole to cross**, which is what a gap between a block and
+     its controls would otherwise be: the strip is behind it, spans the whole
+     margin and is hit-testable always, so the pointer is on the block's own
+     cluster for the entire journey and the reveal survives it. */
   top: 2px;
-  left: 0;
+  left: 8px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -2228,6 +2280,10 @@ body {
 .ProseMirror .runnable-block {
   margin: 1em 0;
   border: 1px solid var(--border);
+  /* One decision, two declarations: the hover band measures from this block's
+     *padding* box, so its 1px frame is two pixels of horizontal room the band has
+     to be told about. See the band rule's `--edi-band-border`. */
+  --edi-band-border: 2px;
   border-radius: 6px;
   background: var(--surface);
   position: relative;
@@ -3212,6 +3268,9 @@ body {
      in the editor's gutter; see `.block-controls`. */
   position: relative;
   border: 1px dashed var(--border);
+  /* The band's arithmetic is against this block's *padding* box, so this frame is
+     two pixels it has to be told about; see the band rule's `--edi-band-border`. */
+  --edi-band-border: 2px;
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-secondary);
@@ -3263,4 +3322,16 @@ body {
   --edi-gutter-left: 0px;
   --edi-gutter-right: 0px;
   font-size: inherit;
+}
+
+/* **A nested editor has no gutter to stand off into.** Its blocks are top-level
+   blocks *of that editor*, so each gets a cluster, but that editor's gutter is 0 —
+   the frame around it is the reveal's own padding — and a strip with no width is
+   no surface at all. A row pushed 8px out into the frame would therefore be
+   unreachable: the pointer crosses the gap over the *frame*, which is not the
+   block, so the reveal is lost and the row goes inert under the hand. It sits on
+   the block's own edge here, which is where the row sat before the standoff
+   existed, and the block itself is the surface that reveals it. */
+.encrypted-block-reveal .block-control-pill {
+  left: 0;
 }
