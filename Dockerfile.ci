@@ -56,8 +56,10 @@ RUN python3 -m venv /opt/edi/venv \
         pytest-cov \
         defusedxml==0.7.1 \
         bandit \
-        pip-audit
+        pip-audit \
+        pyright
 
 # Sanity: the whole point is that imports resolve at job time.
 RUN /opt/edi/venv/bin/python -c \
-        "import PySide6, PyInstaller, pytest, pytestqt, pytest_cov, defusedxml, bandit, pip_audit; print('edi-builder OK', PySide6.__version__)"
+        "import PySide6, PyInstaller, pytest, pytestqt, pytest_cov, defusedxml, bandit, pip_audit; print('edi-builder OK', PySide6.__version__)" \
+    && /opt/edi/venv/bin/pyright --version

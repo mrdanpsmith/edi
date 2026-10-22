@@ -95,44 +95,44 @@ const statusRight = document.querySelector<HTMLElement>('#status-right')!
 const statusZoom = document.querySelector<HTMLButtonElement>('#status-zoom')!
 const tabbar = document.querySelector<HTMLElement>('#tabbar')!
 
-let lastNativeTitle = ''
+const lastNativeTitle = { value: '' }
 
 /** The current document zoom (see `src/zoom.ts`). */
-let documentZoom = DEFAULT_ZOOM
+const documentZoom = { value: DEFAULT_ZOOM }
 
-let blockEditor: BlockEditor | null = null
-let toolbar: Toolbar | null = null
-let homeScreen: HomeScreen | null = null
-let contextMenu: ContextMenu | null = null
-let searchPanel: SearchPanel | null = null
+const blockEditor: { value: BlockEditor | null } = { value: null }
+const toolbar: { value: Toolbar | null } = { value: null }
+const homeScreen: { value: HomeScreen | null } = { value: null }
+const contextMenu: { value: ContextMenu | null } = { value: null }
+const searchPanel: { value: SearchPanel | null } = { value: null }
 
 const tabs = new Tabs(tabbar, {
   getMarkdown(): string {
-    blockEditor?.commitSource()
-    return blockEditor?.getMarkdown() ?? ''
+    blockEditor.value?.commitSource()
+    return blockEditor.value?.getMarkdown() ?? ''
   },
   setMarkdown(value: string): void | Promise<void> {
-    return blockEditor?.setMarkdown(value)
+    return blockEditor.value?.setMarkdown(value)
   },
   createState(markdown: string): unknown {
-    return blockEditor?.createState(markdown)
+    return blockEditor.value?.createState(markdown)
   },
   getState(): unknown {
     // Same tab boundary as getMarkdown: commit any in-progress source-mode
     // content into the document before capturing the live editor state.
-    blockEditor?.commitSource()
-    return blockEditor?.getState()
+    blockEditor.value?.commitSource()
+    return blockEditor.value?.getState()
   },
   setState(state: unknown): void | Promise<void> {
-    return blockEditor?.applyState(state as import('prosemirror-state').EditorState)
+    return blockEditor.value?.applyState(state as import('prosemirror-state').EditorState)
   },
   // Read at the snapshot boundary, not at the swap: see `TabContent.flush`.
   flush(): void | Promise<void> {
-    return blockEditor?.flushReveals()
+    return blockEditor.value?.flushReveals()
   },
   // A document replaced from outside is not a tab being left: see `discardPending`.
   discardPending(): void {
-    blockEditor?.discardPending()
+    blockEditor.value?.discardPending()
   },
   getScroll(): number {
     return editorContainer.scrollTop
@@ -156,8 +156,8 @@ function updateTitle(): void {
   const active = getActive()
   if (!active) {
     document.title = 'Edi'
-    if (document.title !== lastNativeTitle) {
-      lastNativeTitle = document.title
+    if (document.title !== lastNativeTitle.value) {
+      lastNativeTitle.value = document.title
       void invoke('setTitle', { title: 'Edi' }).catch(() => undefined)
     }
     return
@@ -165,8 +165,8 @@ function updateTitle(): void {
   const name = active.path ? active.path.split('/').pop()! : UNTITLED
   const title = `${active.dirty ? '* ' : ''}${name} — Edi`
   document.title = title
-  if (document.title !== lastNativeTitle) {
-    lastNativeTitle = document.title
+  if (document.title !== lastNativeTitle.value) {
+    lastNativeTitle.value = document.title
     void invoke('setTitle', { title }).catch(() => undefined)
   }
 }
@@ -179,7 +179,7 @@ function updateStatus(): void {
     return
   }
   statusLeft.textContent = active.path ?? UNTITLED
-  const text = blockEditor?.getMarkdown() ?? ''
+  const text = blockEditor.value?.getMarkdown() ?? ''
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
 }
@@ -196,7 +196,7 @@ function updateStatus(): void {
  */
 function renderModeChip(mode: BlockMode | null): void {
   if (!statusMode) return
-  const view = mode !== null ? blockEditor?.getView() : undefined
+  const view = mode !== null ? blockEditor.value?.getView() : undefined
   const node = mode !== null && view !== undefined ? view.state.doc.nodeAt(mode.pos) : null
   if (mode === null || node === null || node === undefined) {
     statusMode.textContent = ''
@@ -238,14 +238,14 @@ function modeChipWords(node: ProseNode): string {
 }
 
 function updateZoomIndicator(): void {
-  statusZoom.textContent = formatZoom(documentZoom)
-  statusZoom.hidden = isDefaultZoom(documentZoom)
+  statusZoom.textContent = formatZoom(documentZoom.value)
+  statusZoom.hidden = isDefaultZoom(documentZoom.value)
 }
 
 function setZoom(factor: number): void {
-  documentZoom = clampZoom(factor)
-  applyZoom(documentZoom)
-  savePreference('zoomFactor', documentZoom)
+  documentZoom.value = clampZoom(factor)
+  applyZoom(documentZoom.value)
+  savePreference('zoomFactor', documentZoom.value)
   updateZoomIndicator()
   syncMenuState()
 }
@@ -255,7 +255,7 @@ function zoomTo(level?: string): void {
   if (Number.isFinite(factor)) setZoom(factor)
 }
 
-let lastZoomWheel = 0
+const lastZoomWheel = { value: 0 }
 
 /**
  * Ctrl+wheel / trackpad pinch zooms the document. It is throttled so a single
@@ -266,10 +266,10 @@ function onZoomWheel(event: WheelEvent): void {
   if (!(event.ctrlKey || event.metaKey)) return
   event.preventDefault()
   const now = Date.now()
-  if (now - lastZoomWheel < 100) return
-  lastZoomWheel = now
-  if (event.deltaY < 0) setZoom(zoomIn(documentZoom))
-  else if (event.deltaY > 0) setZoom(zoomOut(documentZoom))
+  if (now - lastZoomWheel.value < 100) return
+  lastZoomWheel.value = now
+  if (event.deltaY < 0) setZoom(zoomIn(documentZoom.value))
+  else if (event.deltaY > 0) setZoom(zoomOut(documentZoom.value))
 }
 
 function afterActivate(): void {
@@ -289,16 +289,16 @@ function syncMenuState(): void {
     canRevert: Boolean(active?.path),
     canCopyPath: Boolean(active?.path),
     canRename: Boolean(active?.path),
-    toolbarVisible: toolbar?.isVisible() ?? true,
+    toolbarVisible: toolbar.value?.isVisible() ?? true,
     hoverBand: isHoverBandEnabled(),
-    zoomFactor: documentZoom,
-    canZoomIn: canZoomIn(documentZoom),
-    canZoomOut: canZoomOut(documentZoom),
+    zoomFactor: documentZoom.value,
+    canZoomIn: canZoomIn(documentZoom.value),
+    canZoomOut: canZoomOut(documentZoom.value),
   }).catch(() => undefined)
 }
 
 function insertMarkdown(markdown: string): void {
-  blockEditor?.insertMarkdown(markdown)
+  blockEditor.value?.insertMarkdown(markdown)
 }
 
 function insertTable(markdown: string): void {
@@ -306,14 +306,14 @@ function insertTable(markdown: string): void {
 }
 
 function insertTableDefault(): void {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   if (!view) return
   insertSpreadsheetTable(view, 3, 3)
   setActiveDirty(true)
 }
 
 async function insertKanban(): Promise<void> {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   if (!view) return
   if (await insertKanbanBoard(view)) setActiveDirty(true)
 }
@@ -331,11 +331,11 @@ async function exportHtml(): Promise<void> {
     return
   }
   try {
-    const doc = blockEditor?.getView().state.doc
+    const doc = blockEditor.value?.getView().state.doc
     if (!doc) {
       return
     }
-    const bodyHtml = serializeDocToHtml(doc, formulaEnvFor(blockEditor!.getView().state))
+    const bodyHtml = serializeDocToHtml(doc, formulaEnvFor(blockEditor.value!.getView().state))
     await writeTextFile(path, buildExportHtml(fileName(path), bodyHtml))
     flashStatus(`Exported ${path}`)
   } catch (error) {
@@ -352,7 +352,7 @@ function openWelcome(): void {
 }
 
 function openFunctionReference(): void {
-  const state = blockEditor?.getState()
+  const state = blockEditor.value?.getState()
   tabs.addSession(buildFunctionReferenceMarkdown(state ? documentFunctionsFor(state) : []))
 }
 
@@ -373,7 +373,7 @@ function buildHomeScreen(): HomeScreen {
 
 function refreshRecents(): void {
   getRecentFiles()
-    .then((paths) => homeScreen?.setRecents(paths))
+    .then((paths) => homeScreen.value?.setRecents(paths))
     .catch(() => undefined)
 }
 
@@ -556,7 +556,7 @@ async function saveTo(path: string): Promise<void> {
     await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`)
   }
   try {
-    const md = blockEditor?.getMarkdown() ?? ''
+    const md = blockEditor.value?.getMarkdown() ?? ''
     await writeTextFile(path, md)
     afterSave(path)
   } catch (error) {
@@ -592,7 +592,7 @@ async function renameFile(): Promise<void> {
     await confirmAction(`"${name}" does not have a supported extension.\n\nContinue anyway?`)
   }
   try {
-    const md = blockEditor?.getMarkdown() ?? ''
+    const md = blockEditor.value?.getMarkdown() ?? ''
     await renameTextFile(oldPath, newPath, md)
     afterSave(newPath)
     flashStatus(`Renamed to ${name}`)
@@ -712,13 +712,13 @@ function focusIsForeign(): boolean {
  *
  * A revealed encrypted block is a whole second `EditorView` — the document's own
  * `createBlockEditor`, with the whole plugin stack — nested inside this one. The
- * document commands were bound to *one* editor (`blockEditor?.getView()`), and
+ * document commands were bound to *one* editor (`blockEditor.value?.getView()`), and
  * nothing in that path could ask which editor has focus, so a command run from
  * inside a reveal acted on a document the reader is not in: `Ctrl+C` read the
  * outer (always empty) selection and did nothing at all, and `Ctrl+X` would
  * additionally have yanked the caret out of the block the reader was standing in.
  *
- * **The toolbar already did this** — `getActiveEncryptedBlockView() ?? getView()` —
+ * **The toolbar.value already did this** — `getActiveEncryptedBlockView() ?? getView()` —
  * and it is why find and the clipboard were the inconsistencies rather than the
  * other way round. This function is that composition, named, so there is one
  * answer to "which editor is this command about" instead of three call sites
@@ -730,7 +730,7 @@ function focusIsForeign(): boolean {
  * the working-state dimming.)
  */
 function focusedEditor(): ProseEditorView | null {
-  return getActiveEncryptedBlockView() ?? blockEditor?.getView() ?? null
+  return getActiveEncryptedBlockView() ?? blockEditor.value?.getView() ?? null
 }
 
 function registerShortcuts(): void {
@@ -759,10 +759,10 @@ function registerShortcuts(): void {
       void requestQuit()
     } else if (key === '=' || key === '+') {
       event.preventDefault()
-      setZoom(zoomIn(documentZoom))
+      setZoom(zoomIn(documentZoom.value))
     } else if (key === '-' || key === '_') {
       event.preventDefault()
-      setZoom(zoomOut(documentZoom))
+      setZoom(zoomOut(documentZoom.value))
     } else if (key === '0') {
       event.preventDefault()
       setZoom(DEFAULT_ZOOM)
@@ -775,7 +775,7 @@ function registerShortcuts(): void {
     } else if (key === 'a' && !event.defaultPrevented) {
       // Focus the editor and select all. When the editor already had focus,
       // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
-      // this only kicks in when focus is elsewhere (e.g. the toolbar)
+      // this only kicks in when focus is elsewhere (e.g. the toolbar.value)
       // where the browser would otherwise select the whole window.
       if (!(document.activeElement instanceof HTMLInputElement) &&
           !(document.activeElement instanceof HTMLTextAreaElement)) {
@@ -835,7 +835,7 @@ function requestQuit(event?: CloseRequestEvent): void {
 }
 
 function toggleToolbar(): void {
-  toolbar?.toggle()
+  toolbar.value?.toggle()
   syncMenuState()
 }
 
@@ -849,7 +849,7 @@ function openSearch(replace = false): void {
   // Resolve **now**, while the caret still says which document the reader is in:
   // opening the bar takes the focus away from it, and the panel holds it from then
   // on. See `SearchPanel.open`.
-  searchPanel?.open({ replace })
+  searchPanel.value?.open({ replace })
 }
 
 // Menu-triggered undo/redo must not scroll: the transaction is dispatched with
@@ -858,7 +858,7 @@ function openSearch(replace = false): void {
 // content, so yanking the viewport to the restored selection is disorienting;
 // keyboard undo keeps its scroll-to-change behavior via the editor keymap.
 function editUndoNoScroll(): void {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   if (view) {
     view.focus()
     undoNoScroll(view.state, view.dispatch, view)
@@ -866,7 +866,7 @@ function editUndoNoScroll(): void {
 }
 
 function editRedoNoScroll(): void {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   if (view) {
     view.focus()
     redoNoScroll(view.state, view.dispatch, view)
@@ -1185,7 +1185,7 @@ async function pasteIntoInput(input: HTMLInputElement | HTMLTextAreaElement): Pr
 }
 
 function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   // Only offer undo/redo when there is actually history to traverse; a
   // enabled-but-no-op Redo just looks broken.
   const undoable = !!view && undoDepth(view.state) > 0
@@ -1232,7 +1232,7 @@ function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
 
 /** The link the right-click landed on, as its document range. */
 function linkRangeForTarget(target: Element | null): LinkRange | null {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   const anchor = target?.closest('a[href]')
   if (!view || !anchor || !view.dom.contains(anchor)) return null
   // The <a> ProseMirror drew *is* the mark's range, so the position at its
@@ -1265,14 +1265,14 @@ async function copyLink(link: LinkRange): Promise<void> {
  * range that no longer holds a link marks nothing at all.
  */
 function editLink(link: LinkRange): void {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   if (!view) return
   void promptForLink(link.text, link.href, { editing: true }).then((entered) => {
     if (entered === null) return
     const current = linkRangeAt(view.state.doc, link.from)
     if (!current) return
     // `applyLink` writes over the selection, so the range is selected first.
-    // It also leaves the linked text selected, which is where the toolbar's
+    // It also leaves the linked text selected, which is where the toolbar.value's
     // Link button picks the same link up from.
     view.dispatch(
       view.state.tr.setSelection(TextSelection.create(view.state.doc, current.from, current.to)),
@@ -1295,7 +1295,7 @@ function editLink(link: LinkRange): void {
  * longer needs a handle to identify the block it is in (§6.7).
  */
 function buildBlockMenuItems(target: Element, event: MouseEvent): ContextMenuEntry[] {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   if (!view) return []
   const entries: ContextMenuEntry[] = []
   const addItem = (
@@ -1397,7 +1397,7 @@ function blockWrapperFor(view: ProseEditorView, target: Element): HTMLElement | 
 }
 
 function encryptBlockCommand(): void {
-  const view = blockEditor?.getView()
+  const view = blockEditor.value?.getView()
   if (!view) return
   const selPos = view.state.selection.from
   let blockPos = -1
@@ -1436,8 +1436,8 @@ function init(): void {
   // can edit. (It is not `localStorage`: the page's web profile is
   // off-the-record, so nothing stored there outlives the process. See
   // `src/preferences.ts`.)
-  documentZoom = clampZoom(currentPreferences().zoomFactor)
-  applyZoom(documentZoom)
+  documentZoom.value = clampZoom(currentPreferences().zoomFactor)
+  applyZoom(documentZoom.value)
   updateZoomIndicator()
   // The hover band is on by default and read from the same place, before the
   // first paint for the same reason: the answer decides a pseudo-element's
@@ -1445,20 +1445,20 @@ function init(): void {
   // hover band drawn for a reader who has already turned the band off.
   applyHoverBand(isHoverBandEnabled())
   setEncryptedBlockImageResolver(resolveImageFileUrl)
-  blockEditor = createBlockEditor(editorContainer, '', {
+  blockEditor.value = createBlockEditor(editorContainer, '', {
     onOpenLink: openLink,
     onChange: () => setActiveDirty(true),
     onModeChange: renderModeChip,
     resolveImageSrc: resolveImageFileUrl,
   })
-  toolbar = new Toolbar(toolbarEl, { getView: () => focusedEditor() ?? blockEditor!.getView() }, [
+  toolbar.value = new Toolbar(toolbarEl, { getView: () => focusedEditor() ?? blockEditor.value!.getView() }, [
     { label: 'New', title: 'New (Ctrl+N)', markup: NEW_ICON, action: openNewTab },
     { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => void openFile() },
     { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => void saveFile() },
     { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => void saveFileAs() },
   ])
-  homeScreen = buildHomeScreen()
-  searchPanel = new SearchPanel({ getView: () => focusedEditor() })
+  homeScreen.value = buildHomeScreen()
+  searchPanel.value = new SearchPanel({ getView: () => focusedEditor() })
   registerShortcuts()
   // On `window`, not `#editor-container`: the start screen has no editor and
   // must zoom too, and a wheel that reached neither would fall through to
@@ -1475,8 +1475,8 @@ function init(): void {
     const target = event.target instanceof Element ? event.target : null
     const preserveFocus =
       target !== null && target.closest('.ss-edit-input, .ss-fx-input') !== null
-    contextMenu ??= new ContextMenu()
-    contextMenu.show(entries, event.clientX, event.clientY, { preserveFocus })
+    contextMenu.value ??= new ContextMenu()
+    contextMenu.value.show(entries, event.clientX, event.clientY, { preserveFocus })
   })
   // Drive content from the native shell (QWebChannel): the desktop shell loads
   // documents and the smoke/selftest harness drives headless runs via this hook.
@@ -1508,8 +1508,8 @@ function init(): void {
     export: () => void exportHtml(),
     toggleToolbar: () => toggleToolbar(),
     toggleHoverBand: () => toggleHoverBand(),
-    zoomIn: () => setZoom(zoomIn(documentZoom)),
-    zoomOut: () => setZoom(zoomOut(documentZoom)),
+    zoomIn: () => setZoom(zoomIn(documentZoom.value)),
+    zoomOut: () => setZoom(zoomOut(documentZoom.value)),
     zoomReset: () => setZoom(DEFAULT_ZOOM),
     zoomTo: (level) => zoomTo(level),
     formulaReference: () => openFunctionReference(),
@@ -1538,7 +1538,7 @@ function init(): void {
     syncDirty()
     syncMenuState()
     // Re-base an open search on the newly activated/swapped document.
-    searchPanel?.refresh()
+    searchPanel.value?.refresh()
   })
   // Re-resolve relative image references when the active document's path
   // changes (e.g. Save As into a different directory) so they keep pointing at
@@ -1548,7 +1548,7 @@ function init(): void {
     const path = getActive()?.path ?? null
     if (path !== lastImagePath) {
       lastImagePath = path
-      blockEditor?.resolveImages()
+      blockEditor.value?.resolveImages()
     }
   })
   if (IS_SELFTEST) {

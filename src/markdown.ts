@@ -30,10 +30,9 @@ export interface BlockOffset {
   nodePos: number
 }
 
-let blockIdCounter = 0
-function nextBlockId(): string {
-  return `block-${++blockIdCounter}`
-}
+// Block ids are generated per document (see buildBlockOffsets) rather than from a
+// process-wide counter, so two documents never share or depend on each other's
+// numbering — the module carries no mutable state of its own.
 
 function createProcessor() {
   return unified()
@@ -726,10 +725,11 @@ export function extractBlockMarkdown(
 export function buildBlockOffsets(doc: ProseNode): BlockOffset[] {
   const offsets: BlockOffset[] = []
   let pos = 1
+  let counter = 0
   doc.forEach((node) => {
     const globalPos = pos
     offsets.push({
-      id: nextBlockId(),
+      id: `block-${++counter}`,
       start: 0,
       end: 0,
       nodePos: globalPos,

@@ -17,14 +17,14 @@ import { BLOCK_MODE_HANDLERS, BLOCK_MODE_KEY, attachBlockControls, modeFor, setB
 import type { BlockControls } from '../block-modes'
 import type { ResolveImage } from '../image'
 
-let imageResolver: ResolveImage | undefined
+const imageResolver: { value: ResolveImage | undefined } = { value: undefined }
 export function setEncryptedBlockImageResolver(fn: ResolveImage | undefined): void {
-  imageResolver = fn
+  imageResolver.value = fn
 }
 
-let pendingUnlockPassword: string | null = null
+const pendingUnlockPassword: { value: string | null } = { value: null }
 
-let activeRevealView: EditorView | null = null
+const activeRevealView: { value: EditorView | null } = { value: null }
 
 /**
  * Every open reveal's editor, by the host element it lives in.
@@ -59,12 +59,12 @@ export function getActiveEncryptedBlockView(): EditorView | null {
     const view = revealViews.get(host)
     if (view !== undefined) return view
   }
-  return activeRevealView
+  return activeRevealView.value
 }
 
 /** Forget the reveal editor — focus returned to the document proper. */
 export function clearActiveEncryptedBlockView(): void {
-  activeRevealView = null
+  activeRevealView.value = null
 }
 
 // The reveal editor is a nested editor inside the main document's DOM, so a
@@ -75,7 +75,7 @@ export function clearActiveEncryptedBlockView(): void {
 // This is the *remembrance*, not the answer: `getActiveEncryptedBlockView` asks
 // the DOM first and only falls back to what this listener last saw.
 document.addEventListener('focusin', (event) => {
-  if (activeRevealView === null) return
+  if (activeRevealView.value === null) return
   const target = event.target
   if (target instanceof Element && (target.closest('.encrypted-block-reveal') !== null || target.closest('#toolbar') !== null)) return
   clearActiveEncryptedBlockView()
@@ -86,7 +86,7 @@ document.addEventListener('focusin', (event) => {
  * {@link unlockEncryptedBlockAt} for a block whose password was just given.
  */
 function primeEncryptedBlockShow(password: string): void {
-  pendingUnlockPassword = password
+  pendingUnlockPassword.value = password
 }
 
 /**
@@ -189,7 +189,7 @@ class EncryptedBlockNodeView implements NodeView {
   }
 
   private destroyTransient(): void {
-    if (activeRevealView === this.revealEditor) clearActiveEncryptedBlockView()
+    if (activeRevealView.value === this.revealEditor) clearActiveEncryptedBlockView()
     this.revealEditor?.destroy()
     this.revealEditor = null
     this.revealHost = null
@@ -220,7 +220,7 @@ class EncryptedBlockNodeView implements NodeView {
   }
 
   private async closeReveal(): Promise<void> {
-    if (activeRevealView === this.revealEditor) clearActiveEncryptedBlockView()
+    if (activeRevealView.value === this.revealEditor) clearActiveEncryptedBlockView()
     if (this.persistTimer !== null) {
       clearTimeout(this.persistTimer)
       this.persistTimer = null
@@ -309,8 +309,8 @@ class EncryptedBlockNodeView implements NodeView {
       await this.closeReveal()
       return
     }
-    const primed = pendingUnlockPassword
-    pendingUnlockPassword = null
+    const primed = pendingUnlockPassword.value
+    pendingUnlockPassword.value = null
     let plaintext: string | null = null
     const password = primed ?? await promptForPassword(getAttrs(this.node).label || 'encrypted block', async (pw) => {
       try {
@@ -352,7 +352,7 @@ class EncryptedBlockNodeView implements NodeView {
     this.revealPassword = password
     this.lastRevealedMd = plaintext
     this.revealInner = createBlockEditor(host, plaintext, {
-      resolveImageSrc: imageResolver,
+      resolveImageSrc: imageResolver.value,
       onChange: () => this.schedulePersist(),
       // This editor is a **rung** of the page's focus path, not a rival of it: the
       // block above is the encrypted block this reveal lives in, and saying so is
@@ -367,10 +367,10 @@ class EncryptedBlockNodeView implements NodeView {
     this.revealEditor.dom.classList.add('encrypted-block-reveal-editor')
     revealViews.set(host, this.revealEditor)
     this.revealEditor.dom.addEventListener('focusin', () => {
-      activeRevealView = this.revealEditor
+      activeRevealView.value = this.revealEditor
     })
     host.addEventListener('mousedown', () => {
-      activeRevealView = this.revealEditor
+      activeRevealView.value = this.revealEditor
     })
     this.revealEditor.focus()
     // **Opening a block is taking the page's one focus path**, which is why it is

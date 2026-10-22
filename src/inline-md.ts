@@ -47,9 +47,8 @@ function plainSegment(text: string): CellSegment {
   return { text, marks: [], href: null, hrefTitle: null, masked: null }
 }
 
-let cachedProcessor: ReturnType<typeof buildProcessor> | null = null
+const cachedProcessor: ReturnType<typeof buildProcessor> = buildProcessor()
 function processor(): ReturnType<typeof buildProcessor> {
-  if (!cachedProcessor) cachedProcessor = buildProcessor()
   return cachedProcessor
 }
 

@@ -14,15 +14,15 @@ type Listener = (state: StateSnapshot) => void
 const listeners = new Set<Listener>()
 
 const sessions: SessionMeta[] = []
-let activeId = ''
-let nextId = 1
+const activeId = { value: '' }
+const nextId = { value: 1 }
 
 export function getState(): StateSnapshot {
-  return { sessions: sessions.map((session) => ({ ...session })), activeId }
+  return { sessions: sessions.map((session) => ({ ...session })), activeId: activeId.value }
 }
 
 export function getActive(): SessionMeta | undefined {
-  return sessions.find((session) => session.id === activeId)
+  return sessions.find((session) => session.id === activeId.value)
 }
 
 export function findSessionByPath(path: string): SessionMeta | undefined {
@@ -35,9 +35,9 @@ export function subscribe(listener: Listener): () => void {
 }
 
 export function createSession(): string {
-  const id = `tab-${nextId++}`
+  const id = `tab-${nextId.value++}`
   sessions.push({ id, path: null, dirty: false })
-  activeId = id
+  activeId.value = id
   emit()
   return id
 }
@@ -47,7 +47,7 @@ export function activateSession(id: string): boolean {
   if (!session) {
     return false
   }
-  activeId = id
+  activeId.value = id
   emit()
   return true
 }
@@ -59,15 +59,15 @@ export function closeSession(id: string): string | null {
   }
   sessions.splice(index, 1)
   if (sessions.length === 0) {
-    activeId = ''
+    activeId.value = ''
     emit()
     return null
   }
-  if (activeId === id) {
-    activeId = sessions[Math.max(0, index - 1)]!.id
+  if (activeId.value === id) {
+    activeId.value = sessions[Math.max(0, index - 1)]!.id
   }
   emit()
-  return activeId
+  return activeId.value
 }
 
 export function setActivePath(path: string | null): void {

@@ -64,7 +64,7 @@ function injected(): Preferences {
   }
 }
 
-let current: Preferences = injected()
+const current: Preferences = injected()
 
 /** Every preference as this window last understood it. */
 export function currentPreferences(): Preferences {
@@ -78,6 +78,6 @@ export function currentPreferences(): Preferences {
  * record, and the shell is the one that has to catch up.
  */
 export function savePreference<K extends keyof Preferences>(name: K, value: Preferences[K]): void {
-  current = { ...current, [name]: value }
+  current[name] = value
   void invoke('setPreference', { name, value }).catch(() => undefined)
 }

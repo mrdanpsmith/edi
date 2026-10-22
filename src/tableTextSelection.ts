@@ -88,7 +88,7 @@ interface SelectionEnd {
   offset: number
 }
 
-let remembered: { anchor: SelectionEnd; focus: SelectionEnd } | null = null
+const remembered: { value: { anchor: SelectionEnd; focus: SelectionEnd } | null } = { value: null }
 
 /**
  * The selection to answer questions about: the live one when it is inside a table, and
@@ -104,22 +104,22 @@ let remembered: { anchor: SelectionEnd; focus: SelectionEnd } | null = null
 function selected(): PlainTableSelection | null {
   const live = liveSelectionInPlainTable()
   if (live !== null) return live
-  if (remembered === null) return null
-  if (!remembered.anchor.node.isConnected || !remembered.focus.node.isConnected) {
-    remembered = null
+  if (remembered.value === null) return null
+  if (!remembered.value!.anchor.node.isConnected || !remembered.value!.focus.node.isConnected) {
+    remembered.value = null
     return null
   }
   const range = document.createRange()
   try {
-    range.setStart(remembered.anchor.node, remembered.anchor.offset)
-    range.setEnd(remembered.focus.node, remembered.focus.offset)
+    range.setStart(remembered.value!.anchor.node, remembered.value!.anchor.offset)
+    range.setEnd(remembered.value!.focus.node, remembered.value!.focus.offset)
   } catch {
-    remembered = null
+    remembered.value = null
     return null
   }
-  const table = tableOf(remembered.anchor.node) ?? tableOf(remembered.focus.node)
+  const table = tableOf(remembered.value!.anchor.node) ?? tableOf(remembered.value!.focus.node)
   if (table === null) {
-    remembered = null
+    remembered.value = null
     return null
   }
   return { range, table }
@@ -371,22 +371,22 @@ export function rememberSelection(): void {
   const domSelection = typeof document.getSelection === 'function' ? document.getSelection() : null
   if (live !== null && domSelection !== null &&
     domSelection.anchorNode !== null && domSelection.focusNode !== null) {
-    remembered = {
+    remembered.value = {
       anchor: { node: domSelection.anchorNode, offset: domSelection.anchorOffset },
       focus: { node: domSelection.focusNode, offset: domSelection.focusOffset },
     }
-  } else if (live === null && (readerActed || (domSelection !== null && !domSelection.isCollapsed))) {
+  } else if (live === null && (readerActed.value || (domSelection !== null && !domSelection.isCollapsed))) {
     // A range the reader (or a `Ctrl+A`) put on the document, or a caret they moved.
-    remembered = null
+    remembered.value = null
   }
-  readerActed = false
+  readerActed.value = false
   paintPlainTableSelection()
 }
 
 /** The reader has done something that ends the selection: stop answering with it. */
 export function forgetPlainTableSelection(): void {
-  remembered = null
-  readerActed = false
+  remembered.value = null
+  readerActed.value = false
 }
 
 /**
@@ -396,16 +396,16 @@ export function forgetPlainTableSelection(): void {
  * copy command reads the selection between the keydown and the change.
  */
 function onKeyDown(): void {
-  readerActed = true
+  readerActed.value = true
 }
 
-let readerActed = false
+const readerActed: { value: boolean } = { value: false }
 
-let wired = false
+const wired: { value: boolean } = { value: false }
 
 export function wirePlainTableSelection(): void {
-  if (wired) return
-  wired = true
+  if (wired.value) return
+  wired.value = true
   document.addEventListener('selectionchange', rememberSelection)
   document.addEventListener('keydown', onKeyDown, true)
   document.addEventListener('mousedown', forgetPlainTableSelection, true)

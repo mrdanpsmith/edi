@@ -577,9 +577,9 @@ class MaskedFieldNodeView implements NodeView {
     // A freshly-inserted field is left revealed until the user hides it:
     // the user just typed the value and the password.
     const initial = String(this.node.attrs.content ?? '')
-    if (primedFieldReveal && primedFieldReveal.content === initial) {
-      const primed = primedFieldReveal
-      primedFieldReveal = null
+    if (primedFieldReveal.value && primedFieldReveal.value.content === initial) {
+      const primed = primedFieldReveal.value
+      primedFieldReveal.value = null
       this.interactions.unlockSilently(primed.value, primed.password, primed.content)
     }
   }
@@ -689,9 +689,9 @@ export function bindCellMaskedField(
     },
   })
 
-  if (primedFieldReveal && primedFieldReveal.content === content) {
-    const primed = primedFieldReveal
-    primedFieldReveal = null
+  if (primedFieldReveal.value && primedFieldReveal.value.content === content) {
+    const primed = primedFieldReveal.value
+    primedFieldReveal.value = null
     it.unlockSilently(primed.value, primed.password, primed.content)
   }
 
@@ -778,10 +778,10 @@ export async function promptForNewSecret(initialValue = ''): Promise<NewSecret |
 }
 
 /** One pending reveal injected right after a masked field is inserted. */
-let primedFieldReveal: { content: string; password: string; value: string } | null = null
+const primedFieldReveal: { value: { content: string; password: string; value: string } | null } = { value: null }
 
 export function primeMaskedFieldReveal(content: string, password: string, value: string): void {
-  primedFieldReveal = { content, password, value }
+  primedFieldReveal.value = { content, password, value }
 }
 
 export async function insertMaskedFieldCommand(view: EditorView): Promise<boolean> {

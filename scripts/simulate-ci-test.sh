@@ -58,7 +58,7 @@ fi
 # mid-run with a cryptic "No such file or directory"; the Docker cache makes
 # this a no-op whenever Dockerfile.ci is current.
 TOOLS='python pytest'
-[[ "$PYTEST_ONLY" == 1 ]] || TOOLS="$TOOLS bandit pip-audit"
+[[ "$PYTEST_ONLY" == 1 ]] || TOOLS="$TOOLS bandit pip-audit pyright"
 check_bake_tools() {
   docker run --rm "$IMAGE" bash -euc "
     missing=0
@@ -83,6 +83,9 @@ if [[ "$PYTEST_ONLY" == 1 ]]; then
 set -euo pipefail
 echo "[sim] python 3.10 source check"
 /opt/edi/venv/bin/python -m compileall -q backend tests scripts run_edi.py
+ln -sfn /opt/edi/venv .venv
+echo "[sim] python type check (pyright)"
+/opt/edi/venv/bin/pyright
 echo "[sim] pytest tests/ (backend only)"
 /opt/edi/venv/bin/pytest tests/
 echo "[sim] SIMULATED PYTEST PASSED"'
@@ -91,6 +94,7 @@ else
 set -euo pipefail
 echo "[sim] python 3.10 source check"
 /opt/edi/venv/bin/python -m compileall -q backend tests scripts run_edi.py
+ln -sfn /opt/edi/venv .venv
 echo "[sim] npm ci"
 npm ci --no-audit --no-fund
 echo "[sim] npm run lint"
@@ -103,6 +107,8 @@ echo "[sim] npm run coverage"
 npm run coverage
 echo "[sim] npm run build"
 npm run build
+echo "[sim] python type check (pyright)"
+/opt/edi/venv/bin/pyright
 echo "[sim] bandit (backend security, all findings)"
 /opt/edi/venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py run_edi.py -q
 echo "[sim] pytest tests/"
@@ -110,7 +116,7 @@ echo "[sim] pytest tests/"
 echo "[sim] npm audit (network)"
 npm run audit
 echo "[sim] pip-audit -r requirements.txt (network)"
-/opt/edi/venv/bin/pip-audit -r requirements.txt
+/opt/edi/venv/bin/pip-audit --cache-dir /builds/edi/build/ci-cache -r requirements.txt
 echo "[sim] SIMULATED TEST JOB PASSED"'
 fi
 
@@ -118,8 +124,9 @@ fi
 # by giving Qt/QSettings a throwaway config dir inside the (gitignored) build/
 # tree instead of the checkout, which HOME=/builds/edi would otherwise fill.
 CONFIG_DIR="$ROOT/build/ci-config"
-rm -rf "$CONFIG_DIR"
-mkdir -p "$CONFIG_DIR"
+CACHE_DIR="$ROOT/build/ci-cache"
+rm -rf "$CONFIG_DIR" "$CACHE_DIR"
+mkdir -p "$CONFIG_DIR" "$CACHE_DIR"
 
 print_step "Running CI \`test\` job simulation in $IMAGE (Python 3.10, headless, no gsettings)"
 docker run --rm \

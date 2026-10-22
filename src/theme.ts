@@ -1,12 +1,12 @@
 import { onBridgeReady, type BridgeObject } from './bridge'
 import { rethemeMermaid } from './node/mermaid'
 
-let currentScheme: 'dark' | 'light' | null = null
+const currentScheme: { value: 'dark' | 'light' | null } = { value: null }
 
 export function applyColorScheme(dark: boolean): void {
   const next = dark ? 'dark' : 'light'
-  if (currentScheme === next) return
-  currentScheme = next
+  if (currentScheme.value === next) return
+  currentScheme.value = next
   document.documentElement.dataset.colorScheme = next
   rethemeMermaid(dark)
 }

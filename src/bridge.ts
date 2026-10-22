@@ -55,10 +55,10 @@ declare global {
   }
 }
 
-let requestId = 0
+const requestId = { value: 0 }
 const pending = new Map<number, PendingRequest>()
 const streamHandlers = new Map<number, (event: StreamEvent) => void>()
-let channelPromise: Promise<void> | null = null
+const channelPromise = { value: null as Promise<void> | null }
 
 function connectResult(bridge: BridgeObject): void {
   bridge.result.connect((payload) => {
@@ -94,10 +94,10 @@ function connectResult(bridge: BridgeObject): void {
 }
 
 function ensureChannel(): Promise<void> {
-  if (channelPromise) {
-    return channelPromise
+  if (channelPromise.value) {
+    return channelPromise.value
   }
-  channelPromise = new Promise<void>((resolve) => {
+  channelPromise.value = new Promise<void>((resolve) => {
     if (window.bridge) {
       connectResult(window.bridge)
       resolve()
@@ -114,7 +114,7 @@ function ensureChannel(): Promise<void> {
       resolve()
     })
   })
-  return channelPromise
+  return channelPromise.value
 }
 
 export function hasBridge(): boolean {
@@ -142,7 +142,7 @@ export async function invoke<T = unknown>(
   if (!bridge) {
     throw new Error('Native shell bridge is not available')
   }
-  const id = explicitId ?? ++requestId
+  const id = explicitId ?? ++requestId.value
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve: resolve as (value: unknown) => void, reject })
     bridge.invoke(method, id, JSON.stringify(payload ?? {}))
@@ -158,7 +158,7 @@ export function invokeStream<T = unknown>(
   method: BridgeMethod,
   payload: unknown = {},
 ): StreamHandle<T> {
-  const id = ++requestId
+  const id = ++requestId.value
   const callbacks = new Set<(event: StreamEvent) => void>()
   streamHandlers.set(id, (event) => {
     callbacks.forEach((callback) => callback(event))

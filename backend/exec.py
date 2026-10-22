@@ -157,10 +157,11 @@ def run_code_block_streamed(
     """
     program, args, env = _resolve_run(shebang)
 
-    has_pty = pty is not None
-    stdout_master = None
-    stdout_slave = None
-    if has_pty:
+    # The pty is optional: on platforms without one (Windows) stdout streams over
+    # an ordinary pipe instead. A single code path takes the optional slave fd.
+    stdout_master: int | None = None
+    stdout_slave: int | None = None
+    if pty is not None:
         stdout_master, stdout_slave = pty.openpty()  # pyright: ignore[reportOptionalMemberAccess]
     # Same allow-listed interpreter, same explicit argv; streaming adds a pty
     # but nothing shell-related.
@@ -168,22 +169,22 @@ def run_code_block_streamed(
         proc = subprocess.Popen(  # nosec B603
             [program, *args],
             stdin=subprocess.PIPE,
-            stdout=stdout_slave if has_pty else subprocess.PIPE,
+            stdout=stdout_slave if stdout_slave is not None else subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            start_new_session=has_pty,
+            start_new_session=stdout_slave is not None,
         )
     except FileNotFoundError as exc:
-        if has_pty:
-            os.close(stdout_master)  # pyright: ignore[reportArgumentType]
+        if stdout_master is not None:
+            os.close(stdout_master)
         raise ValueError(f"Failed to start {program}: {exc}") from exc
     finally:
-        if has_pty:
+        if stdout_slave is not None:
             # The parent closes its copy of the slave; the child keeps the one it
             # inherited. If Popen failed the slave is still open here, so closing it
             # in finally means we never leak it and never double-close.
             try:
-                os.close(stdout_slave)  # pyright: ignore[reportArgumentType]
+                os.close(stdout_slave)
             except OSError:
                 pass
 
@@ -244,10 +245,16 @@ def run_code_block_streamed(
             except OSError:
                 pass
 
+    if stdout_master is not None:
+        stdout_reader = pty_reader
+        stdout_handle = stdout_master
+    else:
+        stdout_reader = pipe_reader
+        stdout_handle = proc.stdout  # pyright: ignore[reportOptionalMemberAccess]
     readers = [
         threading.Thread(
-            target=pty_reader if has_pty else pipe_reader,
-            args=(stdout_master if has_pty else proc.stdout, "stdout", stdout_chunks),
+            target=stdout_reader,
+            args=(stdout_handle, "stdout", stdout_chunks),
             daemon=True,
         ),
         threading.Thread(target=pipe_reader, args=(proc.stderr, "stderr", stderr_chunks), daemon=True),

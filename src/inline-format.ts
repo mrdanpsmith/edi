@@ -43,12 +43,12 @@ export interface InlineCellHost {
   applyCellLink(text: string, url: string): boolean
 }
 
-let activeHost: InlineCellHost | null = null
+const activeHost: { value: InlineCellHost | null } = { value: null }
 
 export function getActiveCellHost(): InlineCellHost | null {
-  return activeHost
+  return activeHost.value
 }
 
 export function setActiveCellHost(host: InlineCellHost | null): void {
-  activeHost = host
+  activeHost.value = host
 }
