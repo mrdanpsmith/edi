@@ -10,6 +10,7 @@ import {
 } from './kanban-model'
 import type { KanbanDoc } from './kanban-model'
 import { patchLabel, diagramFamily, type LabelTarget, type LabelRef, type DiagramFamily, labelElementIn } from './mermaid-patch'
+import { effectiveZoom } from './zoom'
 
 export const EDITABLE_CLASS = 'mermaid-editables'
 export const COLUMN_SLOT_CLASS = 'mermaid-kanban-column-slot'
@@ -41,7 +42,11 @@ export function indexOfLabel(scope: RenderScope, label: Element | null): number 
 function bandBox(band: Element): () => DOMRect {
   return () => {
     const at = band.getBoundingClientRect()
-    return new DOMRect(at.left, at.top, at.width, COMPOSER_HEIGHT)
+    // One line tall in *document* pixels, which is the space `COMPOSER_HEIGHT`
+    // is written in; the rect around it is viewport pixels like every other box
+    // handed to a placement, so the height is widened with it or a magnified
+    // board would get a field short by the zoom factor.
+    return new DOMRect(at.left, at.top, at.width, COMPOSER_HEIGHT * effectiveZoom(band))
   }
 }
 

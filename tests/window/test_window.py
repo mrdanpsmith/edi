@@ -2095,6 +2095,92 @@ def test_kanban_drawn_slot_creates_a_card(window):
     assert "Discarded" not in (gone["source"] or ""), gone
 
 
+def test_kanban_editors_sit_on_their_slots_when_the_document_is_magnified(window):
+    """A card composer, a column editor and the `⋯` are placed in document pixels.
+
+    Real browser only, and only at a zoom that is not 100%: `zoom:` makes
+    `getBoundingClientRect()` answer in viewport pixels, while an absolutely
+    positioned child's `left`/`top`/`width` are document pixels that the browser
+    multiplies on the way out. The placement used to copy one straight into the
+    other, so at 125% a composer sat a fifth of the way too far from the board's
+    corner and came out a fifth too wide — the field and the slot it was opened
+    from disagreed about where the card was, and every rung was further off.
+    """
+    _render(window, KANBAN_EMPTY)
+    _enter_edit_mode(window)
+    _zoom(window, "1.25")
+    _wait(window, KANBAN_SLOTS, lambda d: len(d["cards"]) == 4, timeout=15)
+
+    # A fresh composer *is* the card it stands in, so the two boxes are one box.
+    # Read only once the page has settled on it: opening a field near the bottom
+    # can give the editor a scrollbar, which narrows what the centred board is
+    # centred in and moves the drawing under the field by a few pixels — the
+    # placement re-runs for that, and the claim here is the box it settles on.
+    opened = _click_kanban_slot(window, 1)
+    opened = _wait(window, _field_and(
+        "document.querySelectorAll('.mermaid .items > g.node.mermaid-kanban-slot')[1]"
+    ), lambda d: d.get("agreed"), timeout=10)
+    assert opened.get("agreed"), opened
+    for edge in ("left", "right", "top", "bottom"):
+        assert opened["field"][edge] == pytest.approx(opened["anchor"][edge], abs=1.5), opened
+    _press_key(window, "Escape")
+    _wait(
+        window,
+        "(() => ({ gone: !document.querySelector('.mermaid-edit-input') }))()",
+        lambda d: d["gone"],
+    )
+
+    # A column's name stands in its band at one line: the band's own width and
+    # top, and one line tall in document pixels — 37.5 of them on screen at 125%.
+    _click_kanban_column_slot(window)
+    placed = _wait(window, _field_and(
+        "document.querySelector('.mermaid .sections > g.mermaid-kanban-column-slot')",
+        ("left", "right", "top"),
+    ), lambda d: d.get("agreed"), timeout=10)
+    assert placed.get("agreed"), placed
+    assert placed["field"]["height"] == pytest.approx(30 * 1.25, abs=1.5), placed
+    _press_key(window, "Escape")
+    _wait(
+        window,
+        "(() => ({ gone: !document.querySelector('.mermaid-edit-input') }))()",
+        lambda d: d["gone"],
+    )
+
+    # The `⋯` is sized and inset in the same space; opening its menu is a
+    # placement at 125%, which is what a board that merely *loaded* at 125% would
+    # have made possible at the next resize.
+    _open_kanban_menu(window, 0)
+    board = _dump(window, KANBAN_CHROME)
+    menus = _menus(board)
+    assert menus, board
+    assert _menu_in_its_band(board["bands"][0], menus[0], board["bands"][0]["name"]), board
+    _zoom(window, "1")
+
+
+def _field_and(anchor, edges=("left", "right", "top", "bottom")):
+    """One snapshot of the open field's box and the box it was opened from.
+
+    Both read in the same turn, because a board settles between two reads: two
+    boxes taken at two moments are two moments of the layout, not two boxes.
+    ``agreed`` is the claim a placement makes — the field stands on the thing it
+    replaces, along the edges the two really share — so a caller can wait for the
+    settle loop to finish rather than race it. A column editor is one line tall
+    in a band that is card-tall, so its bottom is not one of them.
+    """
+    checks = " && ".join(f"near(field.{edge}, anchor.{edge})" for edge in edges)
+    return (
+        "(() => { const f = document.querySelector('.mermaid-edit-field');"
+        f" const a = {anchor};"
+        " if (!f || !a) return { missing: true };"
+        " const box = (el) => { const r = el.getBoundingClientRect();"
+        "   return { left: r.left, right: r.right, top: r.top, bottom: r.bottom,"
+        "            width: r.width, height: r.height }; };"
+        " const field = box(f), anchor = box(a);"
+        " const near = (x, y) => Math.abs(x - y) <= 1;"
+        f" return {{ field, anchor, agreed: {checks} }}; }})()"
+    )
+
+
 def _menus(board):
     """The per-column `⋯` of a `KANBAN_CHROME` snapshot, matched to their bands.
 

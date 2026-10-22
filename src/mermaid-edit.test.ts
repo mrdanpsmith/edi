@@ -3148,6 +3148,96 @@ describe('the shape of a field', () => {
     delete window.HTMLTextAreaElement.prototype.scrollHeight
   })
 
+  /**
+   * Report every rect the page measures as `zoom` times its layout size, which
+   * is what `zoom:` does to `getBoundingClientRect` — and say so through
+   * `getComputedStyle` the way Chrome does, on the magnified ancestor only (a
+   * descendant reports its own, uninherited, `1`).
+   */
+  function magnify(preview: HTMLElement, zoom: number): () => void {
+    const original = globalThis.getComputedStyle
+    vi.stubGlobal('getComputedStyle', (el: Element) => ({
+      getPropertyValue: (property: string): string =>
+        property === 'zoom' && el === preview.parentElement ? String(zoom) : original(el).getPropertyValue(property),
+    }))
+    return () => vi.unstubAllGlobals()
+  }
+
+  /** A rect in viewport pixels for a layout rect, at `zoom`. */
+  function scaled(r: DOMRect, zoom: number): DOMRect {
+    return rect(r.left * zoom, r.top * zoom, r.width * zoom, r.height * zoom)
+  }
+
+  it('places a card composer on its slot when the document is magnified', async () => {
+    const { preview, svg } = await board(vi.fn())
+    const zoom = 1.25
+    // Every measurement is 125% of the layout, which is exactly the state this
+    // bug only ever appeared in: a viewport offset copied into `left` is 25% too
+    // far from the preview's corner, and a viewport width copied into `width` is
+    // multiplied by the zoom again on the way out. Both put the editor off its
+    // card — and a field is *only* its box, so there is nothing else to see.
+    svg.querySelectorAll<SVGElement>('.items > .node').forEach((card, index) => {
+      card.getBoundingClientRect = () => scaled(BOARD_CARD_RECTS[index] ?? BOARD_CARD_RECTS[0]!, zoom)
+    })
+    preview.getBoundingClientRect = () => scaled(rect(0, 10, 800, 600), zoom)
+    const restore = magnify(preview, zoom)
+    try {
+      const slots = [...svg.querySelectorAll<SVGElement>('.items > .node')]
+      const slot = cardSlots(svg)[0]!
+      const layout = BOARD_CARD_RECTS[slots.indexOf(slot)]!
+      clickAt(slot)
+
+      const field = document.querySelector<HTMLElement>('.mermaid-edit-field')!
+      // The layout box, relative to the preview: document pixels, not screen ones.
+      expect(field.style.left).toBe(`${layout.left}px`)
+      expect(field.style.top).toBe(`${layout.top - 10}px`)
+      expect(field.style.width).toBe(`${layout.width}px`)
+      expect(field.style.height).toBe(`${layout.height}px`)
+    } finally {
+      restore()
+    }
+  })
+
+  it('keeps a column editor and its menu in the column when the document is magnified', async () => {
+    const commit = vi.fn()
+    const { preview, svg } = await board(commit)
+    const zoom = 1.25
+    svg.querySelectorAll<SVGElement>('.sections > g').forEach((band, index) => {
+      const at = BOARD_BANDS[index] ?? BOARD_BANDS[0]!
+      band.querySelector('rect')!.getBoundingClientRect = () => scaled(at, zoom)
+      band.getBoundingClientRect = () => scaled(at, zoom)
+    })
+    preview.getBoundingClientRect = () => scaled(rect(0, 10, 800, 600), zoom)
+    const restore = magnify(preview, zoom)
+    try {
+      // The band's name, which is retyped in the band itself: one line tall, the
+      // band's full width, and at the band's own top-left.
+      click(editables(svg)[0]!)
+      const field = document.querySelector<HTMLElement>('.mermaid-edit-field')!
+      expect(field.style.left).toBe('0px')
+      expect(field.style.top).toBe('10px')
+      expect(field.style.width).toBe('140px')
+      expect(field.style.height).toBe('30px')
+      typeAndConfirm('', 'Escape')
+
+      // The `⋯` is sized and inset in document pixels too, and its list hangs off
+      // it: the same corner at 125% as at 100%, rather than a mark that has crept
+      // towards the right edge and a popover that has crept away from it.
+      const menu = svg.parentElement!.querySelector<HTMLElement>('.mermaid-kanban-menu')!
+      click(menu)
+      const list = document.querySelector<HTMLElement>('.mermaid-kanban-menu-list')!
+      expect(menu.style.left).toBe('114px')
+      expect(menu.style.top).toBe('18px')
+      expect(menu.style.width).toBe('18px')
+      expect(menu.style.height).toBe('18px')
+      expect(list.style.left).toBe('-58px')
+      expect(list.style.top).toBe('36px')
+      expect(list.style.width).toBe('190px')
+    } finally {
+      restore()
+    }
+  })
+
   it('edits a column name and a new column with the same field', async () => {
     const commit = vi.fn()
     const { svg } = await board(commit)

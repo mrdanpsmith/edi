@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   applyZoom,
   canZoomIn,
@@ -6,6 +6,7 @@ import {
   clampZoom,
   DEFAULT_ZOOM,
   DOC_ZOOM_EVENT,
+  effectiveZoom,
   formatZoom,
   isDefaultZoom,
   zoomIn,
@@ -83,5 +84,60 @@ describe('applyZoom', () => {
     // The announced level is the *clamped* one — the same number written to the
     // CSS variable, so a listener cannot redraw at a size that was never used.
     expect(seen).toEqual([1.5, 1.25])
+  })
+})
+
+describe('effectiveZoom', () => {
+  /** A document whose elements report `own` zoom for themselves, as Chrome does. */
+  function withZoom(own: Map<Element, string>) {
+    const original = globalThis.getComputedStyle
+    vi.stubGlobal('getComputedStyle', (el: Element) => ({
+      getPropertyValue: (property: string): string =>
+        property === 'zoom' ? (own.get(el) ?? '1') : original(el).getPropertyValue(property),
+    }))
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('multiplies the zoom of every ancestor, since zoom is not inherited', () => {
+    const outer = document.createElement('div')
+    const inner = document.createElement('div')
+    outer.appendChild(inner)
+    document.body.appendChild(outer)
+    // Chrome reports a descendant's *own* zoom and not its ancestor's — a label
+    // inside a magnified editor answers `1` — so the product is what says how
+    // many viewport pixels one document pixel is worth.
+    withZoom(
+      new Map([
+        [outer, '1.5'],
+        [document.body, '2'],
+      ]),
+    )
+    try {
+      expect(effectiveZoom(inner)).toBe(3)
+    } finally {
+      outer.remove()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('is 1 where nothing is magnified, and where a browser reports no zoom', () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    withZoom(
+      new Map([
+        [el, ''],
+        [document.body, 'nonsense'],
+      ]),
+    )
+    try {
+      expect(effectiveZoom(el)).toBe(1)
+      expect(effectiveZoom(null)).toBe(1)
+    } finally {
+      el.remove()
+      vi.unstubAllGlobals()
+    }
   })
 })

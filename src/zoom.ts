@@ -80,3 +80,28 @@ export function applyZoom(factor: number, root: HTMLElement = document.documentE
   root.style.setProperty('--doc-zoom', String(level))
   root.dispatchEvent(new CustomEvent(DOC_ZOOM_EVENT, { detail: { factor: level } }))
 }
+
+/**
+ * How much `el` is actually scaled by, from the CSS `zoom`s on it and its
+ * ancestors.
+ *
+ * Anything positioned *inside* the zoomed document has two coordinate spaces to
+ * keep apart: `getBoundingClientRect()` answers in viewport pixels (already
+ * multiplied by the zoom), while an absolutely positioned child's `left`/`top`
+ * are document pixels (the browser multiplies them on the way out). An overlay
+ * that copies one into the other is wrong by the zoom factor at every level but
+ * 100%, which is exactly the bug that appears only when somebody magnifies.
+ *
+ * `getComputedStyle(el).zoom` is the element's *own* zoom and is not inherited —
+ * an element inside a zoomed ancestor reports `1` — so the product up the tree is
+ * what says how many viewport pixels one document pixel is worth. A browser that
+ * does not know `zoom` at all reports nothing parseable, which is `1`.
+ */
+export function effectiveZoom(el: Element | null): number {
+  let factor = 1
+  for (let node = el; node !== null; node = node.parentElement) {
+    const own = Number.parseFloat(getComputedStyle(node).getPropertyValue('zoom'))
+    if (Number.isFinite(own) && own > 0) factor *= own
+  }
+  return factor
+}

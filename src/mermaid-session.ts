@@ -43,6 +43,8 @@
  * have moved an overlay, and keeps asking while a placement moves something.
  */
 
+import { effectiveZoom } from './zoom'
+
 // ── the field's own classes and sizes ─────────────────────────────────────
 
 /** The box an inline field is placed and sized by, and the only child it has. */
@@ -486,15 +488,23 @@ export class DiagramSession {
 
   /** Whether any overlay actually moved — what the settle loop is run by. */
   place(): boolean {
+    // Overlays are children of the preview, and the preview lives inside the
+    // document's own zoom (`#editor-container .ProseMirror`). A box read from the
+    // DOM is in viewport pixels; a `left`/`top`/`width` written here is in document
+    // pixels, which the browser multiplies again on the way out. Converting once,
+    // here, is what keeps every control on the thing it belongs to at 125% as well
+    // as at 100%.
+    const zoom = effectiveZoom(this.preview)
     const base = this.preview.getBoundingClientRect()
     let moved = false
     for (const { element, box } of this.overlays) {
       const at = box()
       if (at === null) continue
       // `scrollLeft` because the preview is a horizontal scroller: an absolute
-      // child is placed from the scrolled content, not from the visible box.
-      const left = `${at.left - base.left + this.preview.scrollLeft}px`
-      const top = `${at.top - base.top}px`
+      // child is placed from the scrolled content, not from the visible box — and
+      // `scrollLeft` is already in document pixels, like the offset being built.
+      const left = `${(at.left - base.left) / zoom + this.preview.scrollLeft}px`
+      const top = `${(at.top - base.top) / zoom}px`
       if (element.style.left !== left) {
         element.style.left = left
         moved = true
@@ -503,8 +513,11 @@ export class DiagramSession {
         element.style.top = top
         moved = true
       }
-      if (at.width !== undefined) element.style.width = `${at.width}px`
-      if (at.height !== undefined) element.style.height = `${at.height}px`
+      // A menu says its own width in document pixels (`MENU_WIDTH`) and each caller
+      // that reads a box says it in viewport pixels; both are the same space once
+      // the box is built, so this is the one conversion.
+      if (at.width !== undefined) element.style.width = `${at.width / zoom}px`
+      if (at.height !== undefined) element.style.height = `${at.height / zoom}px`
     }
     for (const { after } of this.overlays) {
       if (after?.() === true) moved = true
@@ -600,7 +613,15 @@ export class DiagramSession {
      * — the box, the growth, what has to be given back — follows it.
      */
     const drawn = spec.subject.box(found)
-    const state: EditState = { subject: found, size: { width: drawn.width, height: drawn.height } }
+    // The box is in viewport pixels; everything the field writes on itself is in
+    // document pixels. The size is kept in document pixels because it is the
+    // *layout* size the field should have — which does not change when the
+    // document is magnified, and would otherwise be multiplied by the zoom twice.
+    const scale = effectiveZoom(this.preview)
+    const state: EditState = {
+      subject: found,
+      size: { width: drawn.width / scale, height: drawn.height / scale },
+    }
     let closed = false
     let unplace: () => void = () => undefined
     /** Give the phase back when the field is gone, so the block is idle again. */
@@ -614,8 +635,14 @@ export class DiagramSession {
      */
     const fit = (): boolean => {
       if (closed) return false
+      const zoom = effectiveZoom(this.preview)
       const shown = Number.parseFloat(block.style.paddingBottom) || 0
-      const room = block.getBoundingClientRect().bottom - shown - element.getBoundingClientRect().bottom
+      // Room measured in document pixels, which is the space `padding-bottom`
+      // (and `FIELD_MARGIN`) live in: the block's own padding is unscaled, while
+      // both rects here are viewport pixels, so a raw subtraction would leave a
+      // field short by the zoom factor at every level but 100%.
+      const room =
+        (block.getBoundingClientRect().bottom - shown * zoom - element.getBoundingClientRect().bottom) / zoom
       const pad = room < FIELD_MARGIN ? Math.ceil(FIELD_MARGIN - room) : 0
       if (pad === shown) return false
       block.style.paddingBottom = pad === 0 ? '' : `${pad}px`
@@ -807,9 +834,11 @@ export class DiagramSession {
       open.state.subject = next
       // A different subject is a different box to be sized by: a card is drawn at
       // its own height and a re-anchored field has to take that one, not the one
-      // it happened to be stretched to over the card it left.
+      // it happened to be stretched to over the card it left. In document pixels,
+      // like the first capture, so a render at a new zoom is still the right size.
       const at = open.spec.subject.box(next)
-      open.state.size = { width: at.width, height: at.height }
+      const zoom = effectiveZoom(this.preview)
+      open.state.size = { width: at.width / zoom, height: at.height / zoom }
     }
     this.place()
     if (strayed) {

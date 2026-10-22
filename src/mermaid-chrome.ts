@@ -1,4 +1,5 @@
 import type { DiagramSession, RenderScope } from './mermaid-session'
+import { effectiveZoom } from './zoom'
 import {
   ADD_SLOT_CLASS,
   COLUMN_SLOT_CLASS,
@@ -168,7 +169,13 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
     const name = columnName(column)
     const menuBox = (): DOMRect => {
       const rect = sectionRect(section)
-      const size = KANBAN_BUTTON_HALF * 2
+      // The control is this size in *document* pixels (it is styled in the same
+      // space as the text around it), and every rect here is in viewport pixels.
+      // A placement converts back, so what is built here has to be in the space it
+      // is measured in or the inset shrinks by the zoom factor.
+      const zoom = effectiveZoom(container)
+      const size = KANBAN_BUTTON_HALF * 2 * zoom
+      const edge = KANBAN_BUTTON_EDGE * zoom
       // Centred on the column's own name, which is what it belongs to and what
       // the eye lines it up with. The band's top edge is not the header's: the
       // band is padded and the name is drawn inside that padding, so an inset
@@ -179,8 +186,8 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
       // out, which measures as no height at all.
       const shown = labelElementIn(section.querySelector('.cluster-label'))?.getBoundingClientRect()
       const top =
-        shown === undefined || shown.height <= 0 ? rect.top + KANBAN_BUTTON_EDGE : shown.top + shown.height / 2 - size / 2
-      return new DOMRect(rect.right - KANBAN_BUTTON_EDGE - size, top, size, size)
+        shown === undefined || shown.height <= 0 ? rect.top + edge : shown.top + shown.height / 2 - size / 2
+      return new DOMRect(rect.right - edge - size, top, size, size)
     }
 
     // Two items, and both are generic: the menu belongs to the column whose `⋯`
@@ -250,9 +257,12 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
       // markup put it — the top-left of the board, over the first column.
       const unplace = session.overlay(list, () => {
         // Attached to the `⋯`: the list starts exactly where its own button ends,
-        // and hangs inside the column because it is right-aligned to it.
+        // and hangs inside the column because it is right-aligned to it. Its width
+        // is a document-space constant like the button's, so it is widened to the
+        // viewport space this box is built in and the placement converts it back.
         const at = menuBox()
-        return { left: at.left + at.width - MENU_WIDTH, top: at.top + at.height, width: MENU_WIDTH }
+        const width = MENU_WIDTH * effectiveZoom(container)
+        return { left: at.left + at.width - width, top: at.top + at.height, width }
       })
       unplaced.push(unplace)
       closeMenu = () => {
