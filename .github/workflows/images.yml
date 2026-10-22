@@ -6,13 +6,6 @@
 #   * ghcr.io/<owner>/edi-builder:jammy     — Ubuntu 22.04 + Qt runtime libs,
 #     Node 22, and a venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
 #     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/build job.
-#   * ghcr.io/<owner>/edi-wine-builder:jammy — Ubuntu 22.04 + WineHQ-staging
-#     (>=11.5 devline so its bundled ICU satisfies Qt6Core.dll — wine-stable 11.0
-#     predates that), baked win_amd64 wheels, the Windows Python installer, the
-#     VC redist, and native `nsis` (Dockerfile.wine). No CI job consumes it
-#     any more — build-windows runs on a GitHub-hosted windows-2025 runner —
-#     so it is built purely for the local scripts/build-windows-wine.sh. It
-#     can be dropped (with Dockerfile.wine) without touching the release DAG.
 #
 # Building these is the single expensive setup step, cached in the registry
 # (buildx cache): rebuilds only happen when a Dockerfile / requirements file /
@@ -30,7 +23,6 @@ on:
     branches: [main]
     paths:
       - Dockerfile.ci
-      - Dockerfile.wine
       - requirements.txt
       - requirements-win.txt
       - .github/workflows/images.yml
@@ -74,16 +66,3 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-builder:cache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-builder:cache,mode=max
 
-      - name: Build and push edi-wine-builder
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.wine
-          push: true
-          # REQ_HASH invalidates the wheel bake when requirements-win.txt changes
-          # (evaluated after checkout, so it reflects the checked-out file).
-          build-args: |
-            REQ_HASH=${{ hashFiles('requirements-win.txt') }}
-          tags: ghcr.io/${{ github.repository_owner }}/edi-wine-builder:jammy
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-wine-builder:cache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/edi-wine-builder:cache,mode=max

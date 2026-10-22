@@ -10,11 +10,8 @@
 #   * <owner>/edi-builder:jammy      — Ubuntu 22.04 (glibc 2.35) + Qt runtime
 #     libs, Node 22, venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
 #     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/build job.
-# The Wine image (<owner>/edi-wine-builder:jammy) is NOT used by any job here;
-# it exists only for the legacy local scripts/build-windows-wine.sh. The
-# build-windows job runs on a GitHub-hosted windows-2025 runner and pip
-# installs its own venv, because PyInstaller cannot cross-compile and emulating
-# Windows made the build 30-50m and unrenderable.
+# The build-windows job runs on a GitHub-hosted windows-2025 runner and pip
+# installs its own venv, because PyInstaller cannot cross-compile.
 # The venv is a read-only image layer — never pip-install at job time; bake
 # changes into the images (images.yml). Nodes: images must exist in ghcr before
 # any CI run (run images.yml manually once after import).
@@ -22,10 +19,7 @@
 # The Linux onefile is built inside the SAME glibc 2.35 base, so the packaged
 # binary runs on older desktop Linux (Ubuntu 22.04 pin; glibc compatibility is
 # guaranteed by construction). macOS is built natively on macos-15 (arm64) by
-# scripts/build-macos.sh. Windows is built WITHOUT a Windows host: the wine
-# image runs real Windows Python + PyInstaller under WineHQ-staging via
-# scripts/build-windows-wine.sh (structural CArchive/PE validation; Wine cannot
-# render QtWebEngine). A full render only happens on a real Windows desktop
+# scripts/build-macos.sh. Windows is built natively on a windows-2025 runner
 # (scripts/build-windows.ps1).
 
 name: Release
@@ -173,22 +167,12 @@ jobs:
           retention-days: 30
 
   # Windows deliverables WITHOUT a Windows host (see workflow header comment).
-  # Windows builds on real Windows. It used to run on ubuntu inside the
-  # edi-wine-builder image (Dockerfile.wine + build-windows-wine.sh), which
-  # emulated the target: a Wine prefix had to be built from GUI installers
-  # under a synthetic X display (~26m), and then PyInstaller's walk of the
-  # ~1.5 GB PySide6 tree went through Wine's NT path layer, so a 3-minute
-  # build was 3 minutes on a good day and 30-50m on a bad one. Wine can also
-  # never import QtWebEngineCore, so its smoke was permanently reduced to the
-  # structural check -- the render it existed to perform was impossible there.
-  #
-  # PyInstaller cannot cross-compile, so this has to be a real Windows Python,
-  # and that is all this job is: run the native script (scripts/build-windows.
-  # ps1, previously the desktop-only path) on a GitHub-hosted Windows runner.
-  # Those runners are pre-warmed -- measured at 4s to provision, 0s "Set up
-  # job" -- so this is not the per-job VM spin-up that made GitLab's Windows
-  # runners cost minutes. The edi-web artifact carries dist/ + the .ico, so
-  # the job needs no Node, exactly as the Wine job did not.
+  # Windows builds on real Windows. PyInstaller cannot cross-compile, so
+  # this runs the native script (scripts/build-windows.ps1) on a GitHub-hosted
+  # Windows runner. Those runners are pre-warmed -- measured at 4s to
+  # provision, 0s "Set up job" -- so this is not the per-job VM spin-up that
+  # made GitLab's Windows runners cost minutes. The edi-web artifact carries
+  # dist/ + the .ico, so the job needs no Node.
   #
   # The timeout is 45m to match build-linux, not the Wine job's 180m: the
   # stages that justified 180m (wineboot, VC++ redist, the Python installer)

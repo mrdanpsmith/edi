@@ -1,7 +1,7 @@
 ; NSIS installer for Edi (Windows).
 ;
-; Built in the Wine build pipeline (native Linux makensis, baked into the
-; edi-wine-builder image) and on a Windows desktop:
+; Built by the CI build-windows job (native Windows makensis) and on a
+; Windows desktop:
 ;   makensis /DVERSION=0.5.0 /DSETUPEXE=dist-app\Edi-0.5.0-win64.exe \
 ;            /DICO=scripts\assets\app-icon.ico packaging\edi.nsi
 ; Define values are absolute paths when run from any directory.

@@ -1,7 +1,6 @@
 # Builds the Windows Edi binary: the PyInstaller onefile. This is the FULL-SMOKE
-# desktop path — CI produces the .exe inside the 'edi-wine-builder' image
-# (Dockerfile.wine + scripts/build-windows-wine.sh), which cannot host the
-# QtWebEngine renderer; only a real Windows machine can run the complete smoke.
+# desktop path — the CI job runs on a windows-2025 runner, which is the
+# only place the full QtWebEngine smoke can run.
 #
 # PyInstaller cannot cross-compile, so this must run on real Windows. The
 # frontend `dist/` and `scripts/assets/app-icon.ico` come from the `frontend`
@@ -13,9 +12,8 @@
 #   3. smoke test it offscreen (EDI_SELFTEST=1, verdict via EDI_SELFTEST_OUT)
 #   4. copy to dist-app\Edi-<ver>-win64.exe
 #
-# The NSIS installer (packaging/edi.nsi) is built by the CI wine job now
-# (native Linux makensis, `nsis` baked into Dockerfile.wine, absolute defines),
-# so this desktop path ships the onefile as-is. It can still produce a
+# The NSIS installer (packaging/edi.nsi) is built by the CI job now
+# (native Windows makensis, `choco install nsis`). It can still produce a
 # `-win64-setup.exe` by hand: running makensis from the checkout root with
 # ABSOLUTE -D defines (makensis resolves relative File/OutFile paths against
 # the SCRIPT's dir, not the CWD, and Linux makensis takes -D, not /D):

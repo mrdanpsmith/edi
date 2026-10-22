@@ -219,8 +219,8 @@ That writes `edi.png` into `~/.local/share/icons/hicolor` and an `edi.desktop`
 entry into `~/.local/share/applications` (respecting `XDG_DATA_HOME`); log out
 and back in if the gear icon persists.
 
-**Windows** — a real Windows Python + PyInstaller runs under WineHQ-staging in
-CI, so no Windows host is needed to cut a release:
+**Windows** — built natively on a GitHub-hosted Windows runner (PyInstaller
+cannot cross-compile), so a real Windows host is needed to cut a release:
 
 | Artifact | Install |
 | --- | --- |
@@ -294,15 +294,12 @@ wraps an existing binary (never rebuilds it) and needs `dpkg-deb`, `rpmbuild`
 (`sudo apt-get install rpm`) and `curl`.
 
 ```sh
-./scripts/build-windows-wine.sh [VERSION]   # Windows onefile + NSIS installer, on Linux
-./scripts/build-macos.sh [x.y.z]            # Edi.app + .dmg, on a Mac
+pwsh -File scripts/build-windows.ps1 -Version <ver>   # Windows onefile + NSIS installer, on Windows
+./scripts/build-macos.sh [x.y.z]                     # Edi.app + .dmg, on a Mac
 ```
 
-Windows binaries are built in a WineHQ-staging container that carries a real
-Windows Python and PyInstaller (PyInstaller cannot cross-compile, but Wine
-provides the Windows runtime that makes `edi.spec` take its `win32` branch);
-`scripts/build-windows.ps1` is the same build on a real Windows desktop. macOS
-must be built on a Mac, for the same reason.
+Windows binaries are built on a real Windows host (`scripts/build-windows.ps1`);
+macOS must be built on a Mac, for the same reason.
 
 ## Checks and tests
 

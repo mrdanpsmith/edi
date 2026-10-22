@@ -1,5 +1,4 @@
-# Windows-wheel pins for the Wine build (Dockerfile.wine bakes these into /opt/wheels;
-# build-windows.ps1 mirrors them for the desktop path). Keep in sync with requirements.txt.
+# Windows-wheel pins for the Windows build (build-windows.ps1 mirrors them). Keep in sync with requirements.txt.
 # pefile + pywin32-ctypes are PyInstaller's win32-marker deps — `pip download --platform
 # win_amd64` on Linux evaluates markers against the HOST, so it skips sys_platform=="win32"
 # deps and they must be pinned explicitly or the offline install fails.
