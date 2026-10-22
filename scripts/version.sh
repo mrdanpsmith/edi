@@ -70,7 +70,7 @@ print_next_steps() {
   local version="$1"
   printf '\nNext steps:\n'
   printf '  git add %s\n' "$VERSION_FILES"
-  printf '  git commit -m "Bump version to %s"\n' "$version"
+  printf '  git commit -m "Bump version to %s [skip changelog]"\n' "$version"
   printf '  ./scripts/version.sh tag\n'
   printf '  git push\n'
   printf '  git push origin v%s\n' "$version"

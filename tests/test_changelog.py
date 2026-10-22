@@ -59,3 +59,16 @@ def test_a_range_with_only_marked_commits_falls_back(repo: Path):
     _commit(repo, "b", "ci: tweak workflow [skip changelog]")
 
     assert _changelog(repo, "HEAD~1..HEAD").strip() == "- Internal changes only."
+
+
+def test_version_bump_commits_are_omitted_automatically(repo: Path):
+    _commit(repo, "a", "feat: visible")
+    _commit(repo, "b", "Bump version to 1.2.3")
+    _commit(repo, "c", "Bump minor version for next release.")
+    _commit(repo, "d", "Update minor version.")
+
+    out = _changelog(repo, "HEAD~3..HEAD")
+
+    assert "feat: visible" not in out  # range excludes first
+    # all three in range are version bumps -> fallback
+    assert "Internal changes only." in out
