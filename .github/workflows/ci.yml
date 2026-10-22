@@ -103,6 +103,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Frontend unit tests + coverage
         run: npm run coverage > /tmp/frontend-cov.txt 2>&1 || { tail -n 200 /tmp/frontend-cov.txt; exit 1; }
+      - name: Python type check
+        run: npx pyright
       - name: Bandit (source-security scan)
         run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py scripts/mermaid-label-probe.py run_edi.py -q
       - name: Backend tests + coverage

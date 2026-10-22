@@ -180,7 +180,7 @@ class Bridge(QObject):
         except (ValueError, TypeError) as exc:
             self._reply_error(request_id, f"Invalid image data: {exc}")
             return
-        image = QImage.fromData(raw, "PNG")
+        image = QImage.fromData(raw, "PNG")  # pyright: ignore[reportArgumentType]
         if image.isNull():
             self._reply_error(request_id, "Invalid PNG data")
             return
@@ -293,7 +293,7 @@ class Bridge(QObject):
                 raw = base64.b64decode(str(data), validate=True)
                 if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
                     raise ValueError("Not a PNG payload")
-                image = QImage.fromData(raw, "PNG")
+                image = QImage.fromData(raw, "PNG")  # pyright: ignore[reportArgumentType]
                 if image.isNull():
                     raise ValueError("Invalid PNG data")
                 with open(str(path), "wb") as fh:

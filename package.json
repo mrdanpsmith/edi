@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "dupcheck": "jscpd .",
     "audit": "npm audit --audit-level=high",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run dupcheck"
+    "check": "npm run typecheck && npm run lint && npm run test && npm run dupcheck",
+    "pyright": "npx pyright"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

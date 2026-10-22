@@ -85,7 +85,7 @@ class _AppPage(QWebEnginePage):
     keyboard, or JS-initiated navigation can replace the editor UI.
     """
 
-    def acceptNavigationRequest(self, url: QUrl, _navigation_type, is_main_frame: bool) -> bool:
+    def acceptNavigationRequest(self, url: QUrl, _navigation_type, is_main_frame: bool) -> bool:  # pyright: ignore[reportIncompatibleMethodOverride]
         if is_main_frame:
             return _is_main_index_file(url.toLocalFile())
         return True
@@ -202,7 +202,7 @@ def _load_qwebchannel_js() -> str:
         return _QWEBCHANNEL_JS.read_text(encoding="utf-8")
     qwebchannel_js = QFile(":/qtwebchannel/qwebchannel.js")
     if qwebchannel_js.open(QFile.OpenModeFlag.ReadOnly):
-        return str(qwebchannel_js.readAll(), "utf-8")
+        return str(qwebchannel_js.readAll(), "utf-8")  # pyright: ignore[reportArgumentType]
     raise FileNotFoundError("qwebchannel.js not found (vendored copy or Qt resource)")
 
 
@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
             if not declared:
                 raise ValueError(f"{label!r} claims a key but declares no sequence")
             action.setShortcut(QKeySequence(declared))
-        action.setShortcutContext(Qt.WindowShortcut)
+        action.setShortcutContext(Qt.WindowShortcut)  # pyright: ignore[reportAttributeAccessIssue]
         self._link_command(action, command)
         return action
 

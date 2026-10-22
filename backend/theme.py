@@ -65,7 +65,7 @@ def _read_dbus(service: str, path: str, interface: str, method: str, args) -> ob
     if not bus.isConnected():
         return None
     try:
-        registered = QDBusReply(bus.interface().isServiceRegistered(service))
+        registered = bus.interface().isServiceRegistered(service)
         if not registered.isValid() or not registered.value():
             return None
         iface = QDBusInterface(service, path, interface, bus)
@@ -114,7 +114,7 @@ def _probe_kconfig(path: str | None = None) -> Qt.ColorScheme | None:
     file directly works even when the frozen bundle's theme plugin is degraded.
     """
     try:
-        settings = QSettings(path or os.path.expanduser("~/.config/kdeglobals"), QSettings.IniFormat)
+        settings = QSettings(path or os.path.expanduser("~/.config/kdeglobals"), QSettings.IniFormat)  # pyright: ignore[reportAttributeAccessIssue]
         return _name_to_scheme(settings.value("ColorScheme"))
     except Exception:
         return None
@@ -124,7 +124,7 @@ def _probe_gtk(path: str | None = None) -> Qt.ColorScheme | None:
     """Read the active GTK theme from ``~/.config/gtk-3.0/settings.ini``."""
     try:
         settings = QSettings(
-            path or os.path.expanduser("~/.config/gtk-3.0/settings.ini"), QSettings.IniFormat
+            path or os.path.expanduser("~/.config/gtk-3.0/settings.ini"), QSettings.IniFormat  # pyright: ignore[reportAttributeAccessIssue]
         )
         prefer_dark = settings.value("Settings/gtk-application-prefer-dark-theme")
         if str(prefer_dark).lower() in ("true", "yes", "1"):
@@ -204,7 +204,7 @@ def _probe_gsettings_cli() -> object | None:
     if scheme in ("prefer-dark", "prefer-light"):
         return scheme
     if theme:
-        return "prefer-dark" if "dark" in theme.lower() else "prefer-light"
+        return "prefer-dark" if "dark" in str(theme).lower() else "prefer-light"
     return scheme
 
 

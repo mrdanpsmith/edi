@@ -73,7 +73,12 @@ def strip_shebang_line(source: str) -> str:
     return source
 
 
-def run_code_block(shebang: str, source: str) -> dict:
+def _resolve_run(shebang: str) -> tuple[str, list[str], dict[str, str]]:
+    '''Parse the shebang and build the interpreter argv + environment.
+
+    Shared by :func:`run_code_block` and :func:`run_code_block_streamed` so the
+    two paths cannot drift on shebang handling or environment setup.
+    '''
     parts = parse_shebang(shebang)
     if parts is None:
         raise ValueError(f"Invalid shebang: {shebang}")
@@ -87,6 +92,11 @@ def run_code_block(shebang: str, source: str) -> dict:
     if program == "python3":
         env.pop("PYTHONHOME", None)
         env.pop("PYTHONPATH", None)
+    return program, list(args), env
+
+
+def run_code_block(shebang: str, source: str) -> dict:
+    program, args, env = _resolve_run(shebang)
 
     # Running the code block the user chose to execute is the whole point of this
     # feature: the interpreter binary is allow-listed and nothing is
@@ -145,23 +155,13 @@ def run_code_block_streamed(
     On Windows there is no pty, so stdout streams over an ordinary pipe instead
     (still incremental, just without the tty line-buffering hint).
     """
-    parts = parse_shebang(shebang)
-    if parts is None:
-        raise ValueError(f"Invalid shebang: {shebang}")
-    interpreter, flags = parts[0], parts[1:]
-    resolved = interpreter_command(interpreter, flags)
-    if resolved is None:
-        raise ValueError(f"Unsupported interpreter: {interpreter}")
-    program, args = resolved
-
-    env = dict(os.environ)
-    if program == "python3":
-        env.pop("PYTHONHOME", None)
-        env.pop("PYTHONPATH", None)
+    program, args, env = _resolve_run(shebang)
 
     has_pty = pty is not None
+    stdout_master = None
+    stdout_slave = None
     if has_pty:
-        stdout_master, stdout_slave = pty.openpty()
+        stdout_master, stdout_slave = pty.openpty()  # pyright: ignore[reportOptionalMemberAccess]
     # Same allow-listed interpreter, same explicit argv; streaming adds a pty
     # but nothing shell-related.
     try:
@@ -175,7 +175,7 @@ def run_code_block_streamed(
         )
     except FileNotFoundError as exc:
         if has_pty:
-            os.close(stdout_master)
+            os.close(stdout_master)  # pyright: ignore[reportArgumentType]
         raise ValueError(f"Failed to start {program}: {exc}") from exc
     finally:
         if has_pty:
@@ -183,15 +183,15 @@ def run_code_block_streamed(
             # inherited. If Popen failed the slave is still open here, so closing it
             # in finally means we never leak it and never double-close.
             try:
-                os.close(stdout_slave)
+                os.close(stdout_slave)  # pyright: ignore[reportArgumentType]
             except OSError:
                 pass
 
     if on_start is not None:
         on_start(proc)
 
-    proc.stdin.write(strip_shebang_line(source).encode("utf-8"))
-    proc.stdin.close()
+    proc.stdin.write(strip_shebang_line(source).encode("utf-8"))  # pyright: ignore[reportOptionalMemberAccess]
+    proc.stdin.close()  # pyright: ignore[reportOptionalMemberAccess]
 
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
