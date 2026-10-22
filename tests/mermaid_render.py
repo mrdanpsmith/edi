@@ -305,15 +305,21 @@ def _press_source(win, expect_label="Source"):
     `elementFromPoint` rather than at the button directly, so the press has to
     land on what the reader sees — which is the only way a control painted over
     by the drawing shows up here.
+
+    The row is revealed by `:hover`, which a synthesised event cannot set, so the
+    *pill* is forced visible first — the pill and not the cluster, because the
+    cluster is the block's whole right margin and is hit-testable either way;
+    what is inert until revealed is the pill inside it.
     """
     out = _dump(
         win,
         f"""(() => {{
           const cluster = document.querySelector('.mermaid .block-controls');
-          if (!cluster) return {{ missing: true }};
-          cluster.style.opacity = '1';
-          cluster.style.pointerEvents = 'auto';
-          const b = [...cluster.querySelectorAll('button')]
+          const pill = cluster && cluster.querySelector('.block-control-pill');
+          if (!pill) return {{ missing: true }};
+          pill.style.opacity = '1';
+          pill.style.pointerEvents = 'auto';
+          const b = [...pill.querySelectorAll('button')]
             .find((x) => x.getAttribute('aria-label') === {json.dumps(expect_label)});
           if (!b) return {{ missing: 'no ' + {json.dumps(expect_label)} }};
           const r = b.getBoundingClientRect();

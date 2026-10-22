@@ -1468,16 +1468,29 @@ export function attachBlockControls(
   const buttons = source === null ? rest : [...rest, source]
   if (buttons.length === 0 && actions.length === 0) return null
 
+  // **Two boxes, and the split is what makes the row reachable.** `dom` is the
+  // block's whole right margin — as tall as the block, painting nothing, and
+  // always hit-testable — so a pointer travelling from the content to the buttons
+  // never leaves the block and its own cluster; the pill inside it is the visible
+  // face and is inert until the row is revealed. See `.block-controls` in
+  // `src/styles.css` for why each half is the size it is.
   const dom = document.createElement('div')
   dom.className = BLOCK_CONTROLS_CLASS
+  const pill = document.createElement('div')
+  pill.className = 'block-control-pill'
   const actionSlot = document.createElement('span')
   actionSlot.className = 'block-control-actions'
-  dom.append(...rest.map((entry) => entry.button), actionSlot)
-  if (source !== null) dom.append(source.button)
-  // Keep the caret out of the labels: clicking a <button> natively puts the text
-  // cursor inside its text, and a press that moved the caret into a control would
-  // deselect the block the user was working on.
+  pill.append(...rest.map((entry) => entry.button), actionSlot)
+  if (source !== null) pill.append(source.button)
+  dom.append(pill)
+  // Keep the caret out of the buttons: clicking a <button> natively puts the text
+  // cursor inside it, and a press that moved the caret into a control would
+  // deselect the block the user was working on. **Only the buttons** — the rest of
+  // the strip is the page's white space, so a press there has to reach
+  // `src/press.ts` and get a caret beside the block rather than nothing at all.
   dom.addEventListener('mousedown', (event) => {
+    const target = event.target
+    if (!(target instanceof Element) || target.closest('button') === null) return
     event.preventDefault()
     event.stopPropagation()
   })

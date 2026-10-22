@@ -812,25 +812,54 @@ body {
  * zoom toolbar, a plain table's lone button and an encrypted block's (invisible)
  * handle ended up as three different things in three different corners.
  *
- * **The same row, but not the same place: the gutter, not the block.** `left:
- * 100%` puts the row's left edge on the block's right edge and everything it
- * draws outside that edge, which is the one region of the page no block renders
- * into (see `--edi-gutter-left`/`--edi-gutter-right` on `.ProseMirror`). So the
- * row cannot cover a glyph on any block type — including a paragraph whose line
- * runs to the column's edge, which is the case that killed the last three
- * designs. */
+ * **Two boxes: a strip that is the margin, and a pill that is the row.** The
+ * split is the whole of why the row can be *reached* with a pointer:
+ *
+ * - `.block-controls` is **the strip** — the block's right margin, as tall as the
+ *   block and as wide as the margin. It paints nothing, and it is hit-testable
+ *   **always**. That is not a nicety: the row is drawn in the one region of the
+ *   page no block renders into, which therefore no `:hover` covers, so a row that
+ *   only became hit-testable when it appeared could never be entered — the
+ *   pointer leaves the block on its way to the buttons, the row fades, and the
+ *   buttons are unreachable. Measured, this is what made a *tall* block's controls
+ *   unpressable while a short one's worked: the path to a row at the top right of
+ *   a kanban board is inside the block for its first pixel and then 600px of
+ *   margin. As a child of the block, hovering the strip is hovering the block, so
+ *   the reveal has already happened when the pointer gets to a button.
+ * - `.block-control-pill` is **the pill** — the visible face, at the strip's top
+ *   left corner, flush against the block. It is `pointer-events: none` until it
+ *   is revealed, so an invisible pill is inert: a press while the row is not
+ *   shown is a press on the page (`src/press.ts`: a press on the cluster that is
+ *   not on a button is white space, answered with a caret beside the block, never
+ *   a mode flip the reader could not see coming).
+ *
+ * **The strip is the whole right margin, not the row's own width**, for the same
+ * reason: entering it anywhere keeps the row alive, so a pointer that crosses
+ * the block's right edge far below the pill still has something under it.
+ *
+ * The row cannot cover a glyph on any block type — including a paragraph whose
+ * line runs to the column's edge, which is the case that killed the last three
+ * designs — because it starts at the block's right edge, in the margin. */
 .block-controls {
   position: absolute;
-  /* **Flush against the block's edge, not 8px off it.** A margin between the
-     block and its own controls is a *hole*: `:hover` on the block is what reveals
-     the row, and a pointer crossing 8px of page on its way to the buttons leaves
-     every element that could keep the row alive. The row and the block are
-     therefore adjacent boxes, so the pointer never crosses anything — and the
-     space it lives in is the gutter, which is what keeps it off the text. */
   left: 100%;
-  /* Level with the block's first row of chrome, not below it. */
-  top: 2px;
+  top: 0;
+  /* The whole margin, and the block's whole height. */
+  width: var(--edi-gutter-right, 96px);
+  height: 100%;
   z-index: 3;
+  /* Dormant, not dead: the strip is a surface even when the row is not drawn. */
+  pointer-events: auto;
+  user-select: none;
+}
+
+.block-control-pill {
+  position: absolute;
+  /* Level with the block's first row of chrome, not below it — and flush against
+     the block's edge, because a gap between a block and its own controls is a
+     hole to cross. */
+  top: 2px;
+  left: 0;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -844,8 +873,8 @@ body {
   border-radius: 6px;
   opacity: 0;
   transition: opacity 150ms;
+  /* Inert until shown: see the strip's comment. */
   pointer-events: none;
-  user-select: none;
 }
 
 /* The reveal is keyed off the cluster's own wrapper rather than a per-block-type
@@ -853,8 +882,8 @@ body {
  * never mentioned it, so its controls were in the DOM and never shown. A control
  * that nothing can reach is not a control, and the cluster is the only control
  * the block has. */
-.block-controls:hover,
-.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls {
+.block-controls:hover > .block-control-pill,
+.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls > .block-control-pill {
   opacity: 1;
   pointer-events: auto;
 }

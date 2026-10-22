@@ -2938,6 +2938,49 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
     assert back["sheet"] and not back["plain"] and back["form"] == "Visual", back
 
 
+# ── Forcing the reveal, because this harness cannot hover ───────────────────
+#
+# The row is revealed by `:hover` on the block or on the cluster, and a synthesised
+# event does **not** set `:hover` in Chromium: no JS can hover, and a Qt-injected
+# mouse event never reaches the page. So a test that needs to ask a question of the
+# *revealed* row re-installs the page's own reveal declarations with `:hover` read
+# out of the loaded stylesheet and swapped for a class — the shipped rule, not a
+# copy of it — and puts that class on the blocks and the strips. `ediUnreveal`
+# takes both the rule and the class away, so nothing leaks into the next test.
+INSTALL_REVEAL = r"""(() => {
+  if (window.ediReveal) return { rules: window.ediRevealRules };
+  const bits = [];
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (const rule of rules) {
+      const sel = rule.selectorText;
+      if (!sel || !sel.includes(':hover') || !sel.includes('.block-control')) continue;
+      bits.push(sel.split(',').map((part) => part.replaceAll(':hover', '.edi-reveal'))
+        .join(',') + '{' + rule.style.cssText + '}');
+    }
+  }
+  const style = document.createElement('style');
+  style.className = 'edi-reveal-probe';
+  style.textContent = bits.join('\n');
+  document.head.appendChild(style);
+  window.ediRevealRules = bits.length;
+  window.ediReveal = () => {
+    const holders = document.querySelectorAll(
+      '#editor-container .ProseMirror > *, #editor-container .block-controls');
+    for (const el of holders) el.classList.add('edi-reveal');
+    return { n: holders.length };
+  };
+  window.ediUnreveal = () => {
+    for (const el of document.querySelectorAll('.edi-reveal')) el.classList.remove('edi-reveal');
+    document.querySelector('.edi-reveal-probe')?.remove();
+    delete window.ediReveal;
+    delete window.ediUnreveal;
+    return { d: 1 };
+  };
+  return { rules: bits.length };
+})()"""
+
+
 # What a code block's one control row holds, and — the claim this test exists
 # for — that nothing else is floating over the code where it sits. The copy button
 # used to be there: absolutely positioned in the same corner as the cluster, with
@@ -2958,7 +3001,9 @@ CODE_BLOCK_CONTROLS = """
   const buttons = [...cluster.querySelectorAll('button')];
   const bar = block.querySelector('.code-lang-bar');
   const floating = [...block.querySelectorAll('*')].filter((el) => {
-    if (el.classList.contains('block-controls')) return false;
+    // The cluster is the block's own chrome, and the pill *inside* it is the
+    // cluster's visible face — neither is a second control floating over the code.
+    if (el.closest('.block-controls')) return false;
     const r = rect(el);
     return cs(el).position === 'absolute' && r.width > 0 && r.height > 0;
   }).map((el) => String(el.getAttribute('class')));
@@ -3013,33 +3058,41 @@ def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
         "window.ediSetContent('```python\\nprint(1)\\nprint(2)\\n```'); true"
     )
     time.sleep(0.5)
-    plain = _dump(window, CODE_BLOCK_CONTROLS)
-    assert not plain.get("missing"), plain
-    # Copy, then Source: Source is the right-most control on every block (§6.3),
-    # so a block's own actions read to its left in the order the block itself does.
-    assert plain["buttons"] == ["Copy", "Source"], plain
-    # Nothing is left floating over the code, and nothing reserves room for it.
-    assert plain["floating"] == [], plain
-    assert not plain["reserve"], plain
-    assert all(plain["hits"]), plain
-    # Copy is one of the cluster's buttons, so it is drawn like the rest of them:
-    # one 1px border, no fill of its own, and the same height as its neighbour.
-    assert plain["borders"] == ["1px 1px 1px 1px"] * 2, plain
-    assert plain["backgrounds"] == ["rgba(0, 0, 0, 0)"] * 2, plain
-    assert len(set(plain["heights"])) == 1, plain
 
-    window._web.page().runJavaScript(
-        "window.ediSetContent('```\\n#!/usr/bin/env python3\\nprint(1)\\n```'); true"
-    )
-    time.sleep(0.5)
-    runnable = _dump(window, CODE_BLOCK_CONTROLS)
-    assert not runnable.get("missing"), runnable
-    # Copy, then Run, then Source — the block's own actions in the order the block
-    # reads in, with the one control every block has pinned to the right.
-    assert runnable["buttons"] == ["Copy", "Run", "Source"], runnable
-    assert runnable["floating"] == [], runnable
-    assert all(runnable["hits"]), runnable
-    assert len(set(runnable["heights"])) == 1, runnable
+    installed = _dump(window, INSTALL_REVEAL)
+    assert installed["rules"] >= 1, installed
+    try:
+        _dump(window, "(() => window.ediReveal())()")
+        plain = _dump(window, CODE_BLOCK_CONTROLS)
+        assert not plain.get("missing"), plain
+        # Copy, then Source: Source is the right-most control on every block (§6.3),
+        # so a block's own actions read to its left in the order the block itself does.
+        assert plain["buttons"] == ["Copy", "Source"], plain
+        # Nothing is left floating over the code, and nothing reserves room for it.
+        assert plain["floating"] == [], plain
+        assert not plain["reserve"], plain
+        assert all(plain["hits"]), plain
+        # Copy is one of the cluster's buttons, so it is drawn like the rest of them:
+        # one 1px border, no fill of its own, and the same height as its neighbour.
+        assert plain["borders"] == ["1px 1px 1px 1px"] * 2, plain
+        assert plain["backgrounds"] == ["rgba(0, 0, 0, 0)"] * 2, plain
+        assert len(set(plain["heights"])) == 1, plain
+
+        window._web.page().runJavaScript(
+            "window.ediSetContent('```\\n#!/usr/bin/env python3\\nprint(1)\\n```'); true"
+        )
+        time.sleep(0.5)
+        _dump(window, "(() => window.ediReveal())()")
+        runnable = _dump(window, CODE_BLOCK_CONTROLS)
+        assert not runnable.get("missing"), runnable
+        # Copy, then Run, then Source — the block's own actions in the order the block
+        # reads in, with the one control every block has pinned to the right.
+        assert runnable["buttons"] == ["Copy", "Run", "Source"], runnable
+        assert runnable["floating"] == [], runnable
+        assert all(runnable["hits"]), runnable
+        assert len(set(runnable["heights"])) == 1, runnable
+    finally:
+        _dump(window, "(() => window.ediUnreveal())()")
 
     # The row is level with the block's first row of chrome and **beside it**: a
     # control on a code block belongs in the margin at the block's own top line,
@@ -3187,6 +3240,190 @@ def test_a_blocks_controls_are_beside_it_and_never_over_its_text(window):
                     f"the text column is not centred in the page: {row} in {out['pm']}")
     finally:
         _resize_view(window, 1280)
+
+
+# — can the row be **reached**? A second question about the same box, and the one the
+# row's own geometry cannot answer: the row is drawn outside the block, in a region no
+# `:hover` covers, so the pointer that goes to fetch it leaves the block on the way.
+# Measured on the reported board (`pm/edi-pm.md`'s kanban): the row appeared at the
+# top-right of a 600px board and could not be pressed at all, because the pointer
+# crossed the block's right edge 500px below the row and every element that could
+# have kept the row alive was behind it.
+#
+# The harness cannot hover — a synthesised event does not set `:hover` in Chromium —
+# so this asks the question the hover is built out of: **what is under the pointer**,
+# at `elementFromPoint`, along the path a reader's hand takes.
+CLUSTER_REACH = r"""(() => {
+  const pm = document.querySelector('#editor-container .ProseMirror');
+  if (!pm) return { missing: true };
+  const kind = (x, y, block) => {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return 'none';
+    if (el.closest('button')) return 'button';
+    if (el.closest('.block-controls')) return 'strip';
+    return block.contains(el) ? 'block' : (el.closest('.ProseMirror') ? 'editor' : 'page');
+  };
+  const centre = (el) => {
+    const r = el.getBoundingClientRect();
+    return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+  };
+  const rows = [...pm.children].map((block) => {
+    const cluster = block.querySelector(':scope > .block-controls');
+    const pill = cluster && cluster.querySelector(':scope > .block-control-pill');
+    const b = block.getBoundingClientRect();
+    const c = cluster && cluster.getBoundingClientRect();
+    const p = pill && pill.getBoundingClientRect();
+    const buttons = pill ? [...pill.querySelectorAll('button')] : [];
+    // The journey a reader makes, at the row's own height: from 24px inside the
+    // block's right edge, over the edge, to the row. A single `page` sample in
+    // between is a pointer that has left the block and its cluster.
+    const py = p ? Math.round(p.top + p.height / 2) : Math.round(b.top + 10);
+    const path = [];
+    for (let x = Math.round(b.right - 24); p && x <= Math.round(p.left + 40); x += 4) {
+      path.push(kind(x, py, block));
+    }
+    // The entry from any height: a tall block's row is at its top, so the pointer
+    // has to be able to sit in the margin beside the *middle* of the block.
+    const entry = [0.1, 0.5, 0.9].map((f) => kind(
+      Math.round(b.right + 8), Math.round(b.top + b.height * f), block));
+    return {
+      cls: String(block.className).split(' ')[0],
+      block: [Math.round(b.left), Math.round(b.right), Math.round(b.height)],
+      bottom: Math.round(b.bottom),
+      strip: c ? [Math.round(c.left), Math.round(c.right), Math.round(c.height)] : null,
+      pill: p ? [Math.round(p.left), Math.round(p.top), Math.round(p.height)] : null,
+      entry,
+      path,
+      // At rest the pill is inert, so a button's own centre is the strip — a press
+      // there is white space and not a control the reader cannot see.
+      rest: buttons.map((btn) => kind(...centre(btn), block)),
+    };
+  });
+  // And the same buttons once the row is showing: each one has to be the thing
+  // under its own centre, or it is a picture of a button.
+  const revealed = !window.ediReveal ? null : (() => {
+    window.ediReveal();
+    return rows.map((row, i) => [...pm.children[i].querySelectorAll(
+      ':scope > .block-controls button')].map((btn) => {
+        const el = document.elementFromPoint(...centre(btn));
+        return { label: btn.getAttribute('aria-label'),
+                 self: el === btn || (!!el && btn.contains(el)) };
+      }));
+  })();
+  return { rows, revealed };
+})()"""
+
+
+def test_a_blocks_controls_can_be_reached_with_the_pointer(window):
+    """A row in the margin is only a control if the pointer can get to it.
+
+    The report: *it's sometimes impossible to click on the buttons … on hover on the
+    content instead of on the band of the content*, and the case that made it
+    certain was the kanban board in `pm/edi-pm.md`. The row is drawn outside the
+    block — that is what keeps it off the text — so the reveal is keyed to the
+    block's `:hover`, and a pointer leaving the block for the buttons takes the
+    reveal away with it. On a one-line paragraph the row is within a few pixels of
+    where the pointer already is, which is why the crossing often happened to work;
+    measured on that board at 1280x900, the block is 1617px tall and the row is a
+    28px box at its top, so the pointer crosses the block's right edge hundreds of
+    pixels below the row and the row is gone before the hand arrives.
+
+    So the cluster is **two boxes** (`.block-controls` the strip, `.block-control-pill`
+    the row) and the claims here are about the strip:
+
+    - it starts at the block's right edge and is **as tall as the block**, so the
+      margin beside any part of the block belongs to that block's row;
+    - the path from inside the block to the row never leaves the block or the strip
+      — no sample in between is the page;
+    - at rest the row is **inert** (its buttons are not what is under them), so an
+      invisible row cannot be pressed by accident;
+    - and when the row is showing, every button is the thing under its own centre.
+
+    The last one is read with the page's own reveal declarations re-installed as a
+    class (`INSTALL_REVEAL`): no JS can hover, and this is the mechanism the hover
+    is made of rather than a copy of its values.
+    """
+    _set_scheme(window, False)
+
+    window._web.page().runJavaScript(
+        "window.ediSetContent(%s); true" % json.dumps(
+            "Prose above the board.\n"
+            "\n"
+            "```mermaid\nkanban\n"
+            "  col5[To spec]\n    [HTML support]\n    [Printing]\n    [Mutex]\n"
+            "  col1[Specing]\n    [Gutters / margin / rendering of block elements]\n"
+            "    [Selection by pointer (shift-click, drag, one caret)]\n"
+            "    [STDIN support for code blocks]\n"
+            "  col6[To do]\n    [Opening / converting PDFs]\n"
+            "  col2[Speced]\n    [Deselect a Visual table]\n    [No caret in a document of only tables]\n"
+            "  col3[Doing]\n    [Implementing some maintainability garbage]\n"
+            "  col4[Done]\n    [Task list button duplicated the document]\n"
+            "```\n"
+            "\n"
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+            "\n"
+            "Prose below the board.\n"
+        )
+    )
+    _wait(window, "(() => ({ m: !!document.querySelector('#editor-container .mermaid svg') }))()",
+          lambda d: d.get("m") is True, timeout=25)
+    time.sleep(0.6)
+
+    installed = _dump(window, INSTALL_REVEAL)
+    assert installed["rules"] >= 1, installed
+    try:
+        out = _dump(window, CLUSTER_REACH)
+        assert not out.get("missing"), out
+        # Prose, the board, a table, prose.
+        assert [row["cls"] for row in out["rows"]] == [
+            "block-visual-mode", "mermaid", "ss-plain", "block-visual-mode"], out["rows"]
+        assert out["revealed"] is not None, out
+
+        for row in out["rows"]:
+            assert row["strip"] is not None, row
+            assert row["pill"] is not None, row
+            # **The strip is the block's whole right margin**: it starts where the
+            # block ends and it is as tall as the block, which is what makes the
+            # margin beside any part of a tall block belong to it.
+            assert row["strip"][0] >= row["block"][1] - 1, row
+            assert row["strip"][1] - row["strip"][0] == 96, row
+            assert row["strip"][2] == row["block"][2], row
+            # **And the pointer can sit on it at any height.** A row keyed to the
+            # block's own box would answer `page` for all three of these.
+            assert row["entry"] == ["strip"] * 3, (
+                f"the margin beside the block belongs to its row at every height, so a"
+                f" pointer can reach it from wherever the reader happens to be: {row}")
+            # **The journey never crosses the page.** This is the bug in hit-test
+            # terms: one `page` sample between the text and the row is the row fading
+            # out under the hand.
+            bad = [k for k in row["path"] if k in ("page", "editor", "none")]
+            assert not bad, (
+                f"the path from the block to its row never leaves the block and its"
+                f" cluster — no gap for the pointer to fall through: {row}")
+            assert row["path"][0] == "block" and row["path"][-1] == "strip", row
+            # **At rest the row is inert**: the thing under a button is the strip, so
+            # a press on a row the reader cannot see is a press on white space.
+            assert row["rest"] == ["strip"] * len(row["rest"]), (
+                f"an invisible button is not a button: {row}")
+
+        # The reported shape, so the claim above is made about the board it was
+        # reported on: the row is a small box at the top of a block several times its
+        # height, so most of the margin beside the board is nowhere near the row.
+        board = next(row for row in out["rows"] if row["cls"] == "mermaid")
+        assert board["block"][2] >= board["pill"][2] * 4, (
+            f"this board is several rows tall, so the row's own box cannot be reached"
+            f" from most of the height beside it — the reported gesture: {board}")
+        assert board["bottom"] - board["pill"][1] >= board["pill"][2] * 4, (
+            f"and the row sits at the top of it, far above the block's own bottom edge:"
+            f" {board}")
+
+        # **When it is showing, every button is the thing under its own centre.**
+        for row, hits in zip(out["rows"], out["revealed"]):
+            assert hits, row
+            assert all(hit["self"] for hit in hits), (
+                f"a revealed control has to be what the pointer presses: {row} {hits}")
+    finally:
+        _dump(window, "(() => window.ediUnreveal())()")
 
 
 def test_a_press_beside_a_shrink_wrapped_table_puts_the_caret_beside_it(window):
@@ -5765,7 +6002,7 @@ def test_opening_a_block_takes_the_pages_one_working_state(window):
                    // nested block editor inside this element and its blocks carry
                    // clusters of their own, which a descendant query counts.
                    interaction: [...el.querySelectorAll(
-                     ':scope > .block-controls > .block-control-interaction')]
+                     ':scope > .block-controls .block-control-interaction')]
                      .map((b) => b.getAttribute('aria-label')) };
         })()],
       // The bar that used to stand in for "open" is gone.
@@ -8187,13 +8424,14 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
           const table = block.querySelector('.ss-plain-table');
           const box = table.getBoundingClientRect();
           let x, y, target;
-          if (%s === 'margin') {
+          if (%s === 'margin' || %s === 'page') {
             // **Beside the grid.** The block is as wide as its grid (`.ss-plain` hugs it),
-            // so this point is past the block entirely and is the *page's* white space —
-            // the press the block's old blanket `stopEvent` claimed, and the one this fix
-            // gives back. 8px past the grid is past the block; the point is checked below
+            // so both of these points are past the block: `margin` is 8px past the grid,
+            // which is the block's own control strip (its right margin), and `page` is
+            // past that strip, on the editor's box. Both are white space and both are
+            // answered the same way; which element takes the press is checked below
             // rather than assumed.
-            x = Math.round(box.right + 8);
+            x = Math.round(box.right + (%s === 'page' ? 200 : 8));
             y = Math.round(box.top + box.height / 2);
             target = document.elementFromPoint(x, y);
           } else {
@@ -8213,7 +8451,7 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
               { bubbles: true, cancelable: true, button: 0, clientX: x + %d, clientY: y }));
           }
           return { at: String(target.className || target.tagName).split(' ')[0] };
-        })()""" % (index, json.dumps(where), dx))
+        })()""" % (index, json.dumps(where), json.dumps(where), json.dumps(where), dx))
 
     # **Half one, which has since changed its mind — and the change is the point.** This used
     # to assert that a press on the table's own margin *selects the table*, "as it always did
@@ -8230,19 +8468,22 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
                        "\nProse below.\n"))
     _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
           lambda d: d.get("t") is True, timeout=25)
+    # **The space beside a shrink-wrapped table is white space, and the block knows it.**
+    # The press used to land on `.ss-plain-scroll.block-margin` — a marker that existed
+    # because the block was as wide as the column and the grid hugged its left. The block
+    # is its grid now, so 8px past the table is the block's own control strip (its right
+    # margin; `.block-controls`), which `src/press.ts` answers as white space exactly like
+    # the page past it. Both surfaces are checked, because "beside the table" has to mean
+    # the same thing on either side of the strip's edge.
     margin = _press('margin')
     assert not margin.get("missing"), margin
-    # **The strip beside a shrink-wrapped table is the editor's, not the block's.** The
-    # press used to land on `.ss-plain-scroll.block-margin` — a marker that existed because
-    # the block was as wide as the column and the grid hugged its left. The block is its
-    # grid now, so 8px past the grid is past the block: the press reaches ProseMirror and
-    # `press.ts` answers it as the page's white space (the gate for that answer is
-    # `test_the_space_beside_a_table_is_white_space_not_part_of_the_table`). What this test
-    # owns is that the block claimed nothing: the press is not the table, not its scroll
-    # container, and the table is not selected.
-    assert margin["at"] == "ProseMirror", (
-        f"this press has to land on the editor beside the grid — the block is only as wide as"
-        f" the table, so the strip past it is the page's white space: {margin}")
+    assert margin["at"] == "block-controls", (
+        f"8px past the grid is the block's own margin strip, whose presses are white"
+        f" space: {margin}")
+    page = _press('page')
+    assert not page.get("missing"), page
+    assert page["at"] == "ProseMirror", (
+        f"and past the strip the press is the editor's: {page}")
     time.sleep(0.4)
     picked = _cells()
     assert picked["selectedNodes"] == [], (
@@ -8526,7 +8767,7 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
     start = _read()
     # **A 2x2 table is a tiny grid in a wide editor**, which is the whole of the report —
     # and the block is the grid now (`.ss-plain` shrink-wraps), so the strip beside it is the
-    # editor's white space rather than a margin of the block's own.
+    # block's own right margin, which is empty space on the page and is answered as such.
     assert start["gridX"] == start["blockX"], (
         f"the block hugs its grid, so their boxes are the same: {start}")
     assert start["gridX"][1] - start["gridX"][0] < 200, (
@@ -8535,11 +8776,16 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
     assert start["pmX"][1] - start["gridX"][1] > 300, (
         f"and the editor is far wider than it: {start}")
 
-    # **A click in the empty strip gives a caret**, and paints nothing at all.
+    # **A click in the empty strip gives a caret**, and paints nothing at all. 60px past the
+    # grid is inside the block's own control strip — its right margin, which paints nothing and
+    # is classified as white space by `src/press.ts` — so what this asserts is the answer, not
+    # which box took the press. (Past the strip is the editor's own box, and the press there is
+    # the same answer; `test_a_click_with_nothing_to_select_drops_a_visual_tables_fill` presses
+    # both and checks that they agree.)
     hit = _click_where(beside)
-    assert hit.get("missing") is not True and hit["at"] == "ProseMirror", (
-        f"this press has to land on the editor beside the grid to test anything — the block"
-        f" stops at the table's edge: {hit}")
+    assert hit.get("missing") is not True and hit["at"] == "block-controls", (
+        f"this press has to land on the block's margin beside the grid to test anything — the"
+        f" block stops at the table's edge and the strip starts there: {hit}")
     time.sleep(0.5)
     beside_out = _read()
     assert beside_out["blockSelected"] is False, (

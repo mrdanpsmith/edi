@@ -165,6 +165,14 @@ export const BLOCK_CONTENT_CLASS = 'block-content'
  * The control cluster — **and the third press-facing marker**, so all three live in
  * `src/press.ts`: `content`, `margin` and `controls` are the parts of a block a press is
  * classified by, and a module that cannot name them cannot ask the question.
+ *
+ * The cluster is **the block's whole right margin** (`.block-controls` in `src/styles.css`),
+ * not just the pill of buttons drawn at the top of it, because the margin is where the
+ * pointer has to be able to travel: the pill is the block's `:hover` away from being
+ * invisible, and a pointer that leaves the block for the buttons spends that journey over
+ * the margin. So a press anywhere in that strip is classified here, and the answer for
+ * everything in it that is not a button is `space` — white space beside the block, exactly
+ * like the page past the margin.
  */
 export const BLOCK_CONTROLS_CLASS = 'block-controls'
 
@@ -257,12 +265,13 @@ export function pressTarget(view: EditorView, event: MouseEvent): PressTarget {
 
   if (target instanceof Element) {
     if (target.closest(`.${BLOCK_CONTROLS_CLASS}`) !== null) {
-      // **A press on the row but not on one of its buttons is a press on the page.**
-      // The cluster is positioned just outside its block, so the box it occupies is white
-      // space with pictures in it; only the buttons are controls. Without this the strip of
-      // pill around them swallowed the "put a caret beside this block" gesture — which is
-      // exactly the gesture that stops a press beside a shrink-wrapped table from selecting
-      // the table.
+      // **A press on the strip but not on one of its buttons is a press on the page.**
+      // The cluster is the block's right margin, so the box it occupies is white space with
+      // pictures in it; only the buttons are controls. Without this the strip around them
+      // swallowed the "put a caret beside this block" gesture — which is exactly the gesture
+      // that stops a press beside a shrink-wrapped table from selecting the table. It is
+      // also why an *unrevealed* row is safe: its pill is `pointer-events: none`, so a press
+      // on a button the reader cannot see arrives here as the strip and is answered as space.
       if (target.closest('button') !== null) return { kind: 'control', pos: named }
       if (nearest === null) return { kind: 'none' }
       return { kind: 'space', pos: nearest.pos, before: nearest.before }
