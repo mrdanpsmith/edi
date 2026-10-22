@@ -188,7 +188,7 @@ def _enter_edit_mode(win, timeout=15):
         "(() => { const b = document.querySelector('.block-control-interaction');"
         " if (!b) return { missing: true };"
         " b.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));"
-        " return { label: b.textContent }; })()",
+        " return { label: b.getAttribute('aria-label') }; })()",
     )
     assert not clicked.get("missing"), "the block's control cluster had no Edit button"
     return _wait(
@@ -314,7 +314,7 @@ def _press_source(win, expect_label="Source"):
           cluster.style.opacity = '1';
           cluster.style.pointerEvents = 'auto';
           const b = [...cluster.querySelectorAll('button')]
-            .find((x) => x.textContent === {json.dumps(expect_label)});
+            .find((x) => x.getAttribute('aria-label') === {json.dumps(expect_label)});
           if (!b) return {{ missing: 'no ' + {json.dumps(expect_label)} }};
           const r = b.getBoundingClientRect();
           const x = r.left + r.width / 2;
@@ -324,7 +324,7 @@ def _press_source(win, expect_label="Source"):
           for (const type of ['mousedown', 'mouseup', 'click']) {{
             at.dispatchEvent(new MouseEvent(type, opts));
           }}
-          return {{ label: b.textContent, hit: at === b }};
+          return {{ label: b.getAttribute('aria-label'), hit: at === b }};
         }})()""",
     )
     assert not out.get("missing"), out
@@ -343,7 +343,7 @@ def _click_done(win):
         " b.dispatchEvent(new MouseEvent('mousedown', opts));"
         " b.dispatchEvent(new MouseEvent('mouseup', opts));"
         " b.dispatchEvent(new MouseEvent('click', opts));"
-        " return { label: b.textContent }; })()",
+        " return { label: b.getAttribute('aria-label') }; })()",
     )
     assert not pressed.get("missing"), "the control cluster had no Done button"
     return pressed
@@ -813,7 +813,8 @@ def _pointer_drag_column(win, column, slot):
 EDIT_STATE = (
     "(() => ({ editing: !!document.querySelector('.mermaid-editing'),"
     " marked: document.querySelectorAll('.mermaid-editables').length,"
-    " button: (document.querySelector('.block-control-interaction') || {}).textContent }))()"
+    " button: (document.querySelector('.block-control-interaction') || {})"
+    "  .getAttribute('aria-label') }))()"
 )
 
 # The words the drawn slots are written with, which are the editor's own: a card

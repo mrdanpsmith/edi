@@ -1884,9 +1884,10 @@ describe('TableNodeView grid', () => {
     // The form control is in the one cluster every block has, labelled from the
     // descriptor's own form list rather than from a per-call-site string.
     const cluster = view.dom.querySelector('.block-controls') as HTMLElement
-    expect(cluster.querySelector('.block-control-representation')?.textContent).toBe('Source')
+    expect(cluster.querySelector('.block-control-representation')?.getAttribute('aria-label'))
+      .toBe('Source')
     // A table's pair of modes reads like a diagram's: Edit, then Source.
-    expect(cluster.querySelector('.block-control-form')?.textContent).toBe('Edit')
+    expect(cluster.querySelector('.block-control-form')?.getAttribute('aria-label')).toBe('Edit')
     view.destroy()
   })
 

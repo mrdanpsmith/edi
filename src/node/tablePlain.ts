@@ -120,12 +120,12 @@ export class TablePlainView implements NodeView {
     if (!body) return
 
     const scroll = document.createElement('div')
-    // **The gutter, declared.** This element is as wide as the block and the grid is not, so
-    // the white space beside the grid belongs to it — measured: block 48→1256 against a grid of
-    // 48→253, which is a thousand pixels of it on a wide window. A press there is a request for
-    // a caret beside the table (`BLOCK_MARGIN_CLASS`, read by `src/press.ts`), not a
-    // click on the table: leaving it unmarked made that press *select* the block, which paints
-    // the block-wide outline across all of that empty space and gives no caret at all.
+    // **The gutter, declared.** The block hugs its grid now, so this element is the grid's own
+    // width in the usual case and there is nothing beside it to press; the declaration is what
+    // still says *which part of me is not my content* when the grid is wider than the column and
+    // the scroller has to be wider than the grid inside it. A press in that strip is a request
+    // for a caret beside the table (`BLOCK_MARGIN_CLASS`, read by `src/press.ts`), not a click
+    // on the table.
     scroll.className = `ss-plain-scroll ${BLOCK_MARGIN_CLASS}`
     scroll.appendChild(this.buildTable())
 
@@ -318,16 +318,18 @@ export class TablePlainView implements NodeView {
    * - **the cells**, because a range inside them is the *browser's* (§3.1) and a press that
    *   ProseMirror answered would fight the selection the reader is making with a mouse drag;
    * - **the control cluster**, whose buttons are the app's own controls;
-   * - **the gutter** — the empty strip beside the grid, which is this block's *surface* and not
-   *   its content, and which is answered by `src/press.ts` as a press in the white space.
+   * - **the gutter** — the strip of scroller beside a grid too wide for the column, which is
+   *   this block's *surface* and not its content, and which is answered by `src/press.ts` as a
+   *   press in the white space.
    *
    * The gutter is claimed rather than released **because releasing it is what the report was
    * about**: handed to ProseMirror, a click there *selected the table*, and a selected table
-   * paints the whole width of the block — measured, the fill and the outline ran 48→1256 around
-   * a 63px grid, which reads as a selected row with a table in it, and it left no place to click
-   * for a caret. A diagram's surface *should* select the diagram, which is why `mermaid.ts`
-   * releases it (*"clicking it still selects the block"*); **a table's gutter is not its
-   * surface**, it is the space around the table, and that is the distinction being claimed.
+   * paints the whole width of the block, which reads as a selected row with a table in it and
+   * leaves no place to click for a caret. A diagram's surface *should* select the diagram, which
+   * is why `mermaid.ts` releases it (*"clicking it still selects the block"*); **a table's gutter
+   * is not its surface**, it is the space around the table, and that is the distinction being
+   * claimed. A block that hugs its grid has no such strip — the white space beside it is the
+   * editor's, and `press.ts` answers for that one.
    */
   stopEvent(event: Event): boolean {
     const target = event.target

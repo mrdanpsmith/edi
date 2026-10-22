@@ -435,17 +435,20 @@ describe('one cluster per top-level block', () => {
     const view = createEditor(DOC)
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
     const heading = view.nodeDOM(0) as HTMLElement
-    expect(heading.querySelector('.block-control-representation')?.textContent).toBe('Source')
+    expect(heading.querySelector('.block-control-representation')?.getAttribute('aria-label'))
+      .toBe('Source')
     expect(heading.querySelector('.block-control-interaction')).toBeNull()
 
     const diagram = view.dom.querySelector<HTMLElement>('.mermaid')!
-    expect(diagram.querySelector('.block-control-representation')?.textContent).toBe('Source')
-    expect(diagram.querySelector('.block-control-interaction')?.textContent).toBe('Edit')
+    expect(diagram.querySelector('.block-control-representation')?.getAttribute('aria-label'))
+      .toBe('Source')
+    expect(diagram.querySelector('.block-control-interaction')?.getAttribute('aria-label'))
+      .toBe('Edit')
 
     // A spreadsheet is a table's *Edit*, so a table's cluster reads exactly like a
     // diagram's: Edit, then Source. One vocabulary, and one order.
     const table = view.dom.querySelector<HTMLElement>('.ss-plain')!
-    expect(table.querySelector('.block-control-form')?.textContent).toBe('Edit')
+    expect(table.querySelector('.block-control-form')?.getAttribute('aria-label')).toBe('Edit')
     view.destroy()
   })
 
@@ -456,7 +459,7 @@ describe('one cluster per top-level block', () => {
     // Edit still sits to the left of the pills it shares the row with.
     const view = createEditor(DOC)
     const labels = (dom: HTMLElement): string[] =>
-      [...dom.querySelectorAll('.block-controls button')].map((b) => b.textContent ?? '')
+      [...dom.querySelectorAll('.block-controls button')].map((b) => b.getAttribute('aria-label') ?? '')
 
     expect(labels(view.nodeDOM(0) as HTMLElement)).toEqual(['Source'])
     expect(labels(view.dom.querySelector<HTMLElement>('.ss-plain')!)).toEqual(['Edit', 'Source'])
@@ -521,12 +524,12 @@ describe('one cluster per top-level block', () => {
     const diagram = document.querySelector<HTMLElement>('.mermaid')!
     const encrypted = document.querySelector<HTMLElement>('.encrypted-block')!
     const button = (host: HTMLElement): HTMLButtonElement =>
-      host.querySelector<HTMLButtonElement>(':scope > .block-controls > .block-control-interaction')!
+      host.querySelector<HTMLButtonElement>(':scope > .block-controls .block-control-interaction')!
 
-    expect([button(diagram).textContent, button(diagram).title])
+    expect([button(diagram).getAttribute('aria-label'), button(diagram).title])
       .toEqual(['Edit', 'Edit this block (Alt+click)'])
     // The same axis, said the way this block's act is said.
-    expect([button(encrypted).textContent, button(encrypted).title])
+    expect([button(encrypted).getAttribute('aria-label'), button(encrypted).title])
       .toEqual(['Unlock', 'Unlock this block (Alt+click)'])
     for (const title of [button(diagram).title, button(encrypted).title]) {
       expect(title.toLowerCase()).not.toContain('diagram')
@@ -535,7 +538,7 @@ describe('one cluster per top-level block', () => {
     // And the other end, which is the word that names *leaving* rather than the
     // state — so it is a third word, and it is not `engaged`.
     enterBlockMode(view, allBlockPositions(view)[0]!, { interaction: 'editing' })
-    await vi.waitFor(() => expect(button(diagram).textContent).toBe('Done'))
+    await vi.waitFor(() => expect(button(diagram).getAttribute('aria-label')).toBe('Done'))
     expect(button(diagram).title).toBe('Done this block (Alt+click)')
     expect(interactionLabels('mermaid_block')).toEqual({ idle: 'Edit', active: 'Done', engaged: 'Edit' })
     expect(interactionLabels('encrypted_block'))

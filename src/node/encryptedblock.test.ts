@@ -75,7 +75,7 @@ describe('encrypted_block', () => {
     // their own. `>` is what says "this block's row".
     const row = (): string[] =>
       [...document.querySelectorAll('.encrypted-block > .block-controls button')]
-        .map((b) => b.textContent ?? '')
+        .map((b) => b.getAttribute('aria-label') ?? '')
 
     expect(row()).toEqual(['Unlock', 'Normalize', 'Source'])
 

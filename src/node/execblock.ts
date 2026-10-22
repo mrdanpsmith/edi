@@ -10,6 +10,7 @@ import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
 import { codeLanguageFor, shebangLanguage } from '../codeLanguages'
 import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../formulaDefs'
 import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
+import { CHECK_ICON, COPY_ICON, RUN_ICON, STOP_ICON, paintIcon } from '../icons'
 
 // A runnable code block is an ordinary `code_block` whose first line starts
 // with `#!`. Code blocks whose language tag (or shebang) resolves to a code
@@ -65,32 +66,61 @@ async function copyPlainText(text: string): Promise<void> {
  * buttons, so Copy is one of them and the collision cannot happen.
  *
  * `revealedCopyButton` below is the floating kind, for the one control that
- * genuinely floats over something the reader is looking at.
+ * genuinely floats over something the reader is looking at — and **that one keeps
+ * its word**. A floating pill over the run output is 8px from the text it copies
+ * and has room for a word; the cluster's Copy is a 24px square in the page gutter,
+ * where a word would push the row past the gutter. So `spelled` is the whole
+ * difference, and it is passed by the one caller that floats.
  */
-function copyButton(getText: () => string, onCopied?: () => void): HTMLButtonElement {
+function copyButton(
+  getText: () => string,
+  onCopied?: () => void,
+  spelled = false,
+): HTMLButtonElement {
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.className = 'code-copy'
-  btn.title = 'Copy to clipboard'
-  btn.textContent = 'Copy'
+  const face = (copied: boolean): void => {
+    if (spelled) {
+      btn.textContent = copied ? 'Copied!' : 'Copy'
+      btn.title = 'Copy to clipboard'
+      return
+    }
+    paintIcon(btn, copied ? CHECK_ICON : COPY_ICON, copied ? 'Copied' : 'Copy')
+    btn.title = 'Copy to clipboard'
+  }
+  face(false)
   // Keep the caret out of the button's label and stop the editor from treating
   // the click as a selection change.
   btn.addEventListener('mousedown', (e) => e.preventDefault())
   btn.addEventListener('click', () => {
     void copyPlainText(getText()).then(() => {
-      btn.textContent = 'Copied!'
-      // **The label is the whole of the feedback.** Fading the button out was a
+      face(true)
+      // **The face is the whole of the feedback.** Fading the button out was a
       // floating control getting out of the reader's way, and in the cluster it
       // did the opposite: the row kept the button's width, so it left a hole with
       // nothing in it and the row jumped back when the label came back. Only the
       // floating kind fades, and it asks for that itself.
       onCopied?.()
       window.setTimeout(() => {
-        btn.textContent = 'Copy'
+        face(false)
       }, 500)
     })
   })
   return btn
+}
+
+/**
+ * The cluster's **Run** / **Stop**, as a picture: a play triangle, then a square.
+ *
+ * Both the face and the name are written here so the button cannot show a play
+ * triangle while calling itself Stop — the state changes from a stream callback and
+ * from the click that starts the run, so two separate writes would be two places
+ * for it to slip.
+ */
+function paintRunButton(button: HTMLButtonElement, running: boolean): void {
+  paintIcon(button, running ? STOP_ICON : RUN_ICON, running ? 'Stop' : 'Run')
+  button.title = running ? 'Stop the run' : 'Run this block'
 }
 
 /**
@@ -117,7 +147,7 @@ function revealedCopyButton(
       btn.classList.remove('code-copy-fade')
       locked = false
     }, 500)
-  })
+  }, true)
   btn.classList.add('code-copy-float')
   let x = 0
   let y = 0
@@ -241,7 +271,7 @@ class RunnableBlockNodeView implements NodeView {
       const button = document.createElement('button')
       button.type = 'button'
       button.className = 'block-control exec-run'
-      button.textContent = 'Run'
+      paintRunButton(button, false)
       this.runButton = button
       button.addEventListener('click', () => {
         if (this.running) void this.stopRun()
@@ -369,7 +399,7 @@ class RunnableBlockNodeView implements NodeView {
     if (!button) return
     this.running = running
     button.disabled = false
-    button.textContent = running ? 'Stop' : 'Run'
+    paintRunButton(button, running)
     button.classList.toggle('exec-stop', running)
   }
 

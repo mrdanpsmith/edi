@@ -226,7 +226,7 @@ describe('block nodeView factory', () => {
     const dom = view.nodeDOM(pos) as HTMLElement
     const cluster = dom.querySelector('.block-controls') as HTMLElement
     expect(cluster).toBeTruthy()
-    expect(cluster.querySelector('.block-control-representation')?.textContent).toBe('Source')
+    expect(cluster.querySelector('.block-control-representation')?.getAttribute('aria-label')).toBe('Source')
     // The left-hand dot grid is gone outright (§6.6): nothing on the block, and
     // nothing in the gutter, holds a position snapshot written at build time.
     expect(view.dom.querySelector('.block-handle')).toBeNull()
@@ -240,9 +240,11 @@ describe('block nodeView factory', () => {
     enterSourceMode(view, pos)
     const dom = view.nodeDOM(pos) as HTMLElement
     expect(dom.querySelector('.block-controls')).toBeNull()
-    // One action, one place: a block is never showing two Visual controls.
+    // One action, one place: a block is never showing two Visual controls. A
+    // cluster button names itself in `aria-label` now, so both spellings count.
     const previews = Array.from(view.dom.querySelectorAll('button'))
-      .filter((button) => button.textContent === 'Visual')
+      .filter((button) => button.textContent === 'Visual' ||
+        button.getAttribute('aria-label') === 'Visual')
     expect(previews.length).toBe(1)
     view.destroy()
   })
@@ -590,8 +592,8 @@ describe('mermaid block controls', () => {
     const block = view.nodeDOM(pos) as HTMLElement
     const cluster = block.querySelector('.block-controls') as HTMLElement
     expect(cluster).toBeTruthy()
-    expect(cluster.querySelector('.block-control-representation')?.textContent).toBe('Source')
-    expect(cluster.querySelector('.block-control-interaction')?.textContent).toBe('Edit')
+    expect(cluster.querySelector('.block-control-representation')?.getAttribute('aria-label')).toBe('Source')
+    expect(cluster.querySelector('.block-control-interaction')?.getAttribute('aria-label')).toBe('Edit')
     expect(block.querySelector('.block-handle')).toBeNull()
     view.destroy()
   })
@@ -755,7 +757,7 @@ describe('mermaid visual mode rendering', () => {
     // for the cluster to hold.
     const cluster = block!.querySelector<HTMLElement>('.block-controls')
     expect(cluster).not.toBeNull()
-    expect(Array.from(cluster!.querySelectorAll('button')).map((b) => b.textContent))
+    expect(Array.from(cluster!.querySelectorAll('button')).map((b) => b.getAttribute('aria-label')))
       .toEqual(['Edit', 'Source'])
 
     view.destroy()
@@ -889,7 +891,7 @@ describe('mermaid visual mode rendering', () => {
     expect(editModeOf(view)).toBe(false)
     expect(block.classList.contains('mermaid-editing')).toBe(false)
     expect(view.dom.querySelectorAll('.mermaid-editables')).toHaveLength(0)
-    expect(editToggle(view).textContent).toBe('Edit')
+    expect(editToggle(view).getAttribute('aria-label')).toBe('Edit')
 
     view.destroy()
   })
@@ -906,7 +908,7 @@ describe('mermaid visual mode rendering', () => {
     expect(editModeOf(view)).toBe(true)
     expect(await rendered(view, '.mermaid-editables')).toBe(true)
     expect(view.dom.querySelector('.mermaid')!.classList.contains('mermaid-editing')).toBe(true)
-    expect(editToggle(view).textContent).toBe('Done')
+    expect(editToggle(view).getAttribute('aria-label')).toBe('Done')
     expect(editToggle(view).classList.contains('block-control-on')).toBe(true)
     // The source round-trips through the doc, attrs do not leak into markdown.
     expect(proseToMarkdown(view.state.doc)).toBe('```mermaid\ngraph TD\n  A[Alpha]\n```\n')
@@ -914,7 +916,7 @@ describe('mermaid visual mode rendering', () => {
     editToggle(view).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     expect(editModeOf(view)).toBe(false)
     expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
-    expect(editToggle(view).textContent).toBe('Edit')
+    expect(editToggle(view).getAttribute('aria-label')).toBe('Edit')
     expect(view.dom.querySelector('.mermaid')!.classList.contains('mermaid-editing')).toBe(false)
 
     view.destroy()
@@ -1010,7 +1012,7 @@ describe('mermaid visual mode rendering', () => {
     expect(await rendered(view, '.mermaid-edit-input', false)).toBe(true)
     expect(view.dom.querySelector('.mermaid-edit-input')).toBeNull()
     expect(await rendered(view, '.mermaid-editables', false)).toBe(true)
-    expect(editToggle(view).textContent).toBe('Edit')
+    expect(editToggle(view).getAttribute('aria-label')).toBe('Edit')
 
     view.destroy()
   })

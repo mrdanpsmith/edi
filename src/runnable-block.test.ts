@@ -107,7 +107,7 @@ describe('runnable code block node view', () => {
     expect(out.hidden).toBe(false)
 
     // Button flips to Stop while running.
-    expect(btn.textContent).toBe('Stop')
+    expect(btn.getAttribute('aria-label')).toBe('Stop')
     expect(btn.classList.contains('exec-stop')).toBe(true)
 
     // Output appears incrementally as chunks arrive, before the result resolves.
@@ -119,7 +119,7 @@ describe('runnable code block node view', () => {
     handle._finish()
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(btn.textContent).toBe('Run')
+    expect(btn.getAttribute('aria-label')).toBe('Run')
     expect(btn.classList.contains('exec-stop')).toBe(false)
     expect(out.hidden).toBe(false)
     expect(out.textContent.trim()).toBe('Hello, World!')
@@ -137,7 +137,7 @@ describe('runnable code block node view', () => {
     const btn = view.dom.querySelector('.exec-run') as HTMLButtonElement
     btn.click()
 
-    expect(btn.textContent).toBe('Stop')
+    expect(btn.getAttribute('aria-label')).toBe('Stop')
     btn.click()
 
     expect(invokeMock).toHaveBeenCalledWith('stopCodeBlock', { id: handle.id })
@@ -148,7 +148,7 @@ describe('runnable code block node view', () => {
     handle._finish()
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(btn.textContent).toBe('Run')
+    expect(btn.getAttribute('aria-label')).toBe('Run')
     expect(out.textContent).toContain('Process stopped')
 
     view.destroy()
@@ -287,7 +287,7 @@ describe('runnable code block node view', () => {
     first._emit({ id: first.id, kind: 'output', stream: 'stdout', text: 'run one\n' })
     first._finish()
     await new Promise((r) => setTimeout(r, 0))
-    expect(btn.textContent).toBe('Run')
+    expect(btn.getAttribute('aria-label')).toBe('Run')
 
     // Second run of the identical block must invoke the backend again and
     // replace the output rather than showing the cached first result.
@@ -350,7 +350,7 @@ describe('code block copy buttons', () => {
       expect(cluster.contains(copy)).toBe(true)
       // The block's own actions first, then Source — the one control every block
       // has is pinned to the right of the row (§6.3).
-      expect([...cluster.querySelectorAll('button')].map((b) => b.textContent))
+      expect([...cluster.querySelectorAll('button')].map((b) => b.getAttribute('aria-label')))
         .toEqual(['Copy', ...(md.includes('#!') ? ['Run'] : []), 'Source'])
       // Nothing is left floating over the code, and nothing reserves room for it.
       expect(view.dom.querySelectorAll('.code-copy-float').length)
@@ -397,7 +397,7 @@ describe('code block copy buttons', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(invokeMock).toHaveBeenCalledWith('copyText', { text: 'console.log("hi")' })
-    expect(btn.textContent).toBe('Copied!')
+    expect(btn.getAttribute('aria-label')).toBe('Copied')
     view.destroy()
   })
 
@@ -419,12 +419,12 @@ describe('code block copy buttons', () => {
     // nothing in it and the row snapped back when the label came back.
     expect(btn.classList.contains('code-copy-fade')).toBe(false)
     expect(btn.classList.contains('code-copy-show')).toBe(false)
-    expect(btn.textContent).toBe('Copied!')
+    expect(btn.getAttribute('aria-label')).toBe('Copied')
     expect(cluster.contains(btn)).toBe(true)
     expect(btn.offsetWidth).toBe(widthBefore)
 
     await vi.advanceTimersByTimeAsync(500)
-    expect(btn.textContent).toBe('Copy')
+    expect(btn.getAttribute('aria-label')).toBe('Copy')
     expect(btn.classList.contains('code-copy-fade')).toBe(false)
     expect(btn.offsetWidth).toBe(widthBefore)
     view.destroy()

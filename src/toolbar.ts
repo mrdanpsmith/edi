@@ -9,14 +9,7 @@ import { insertTable } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
 import { getActiveCellHost, type InlineCellHost, type InlineCellKind } from './inline-format'
 import { currentPreferences, savePreference } from './preferences'
-
-function icon(markup: string, viewBox = '0 0 16 16'): string {
-  return (
-    `<svg viewBox="${viewBox}" fill="none" stroke="currentColor" ` +
-    'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    `${markup}</svg>`
-  )
-}
+import { icon } from './icons'
 
 const BULLET_LINES = '<path d="M7 4h7M7 8h7M7 12h7"/>'
 

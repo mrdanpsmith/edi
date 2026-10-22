@@ -1863,9 +1863,9 @@ describe('context menu', () => {
         .map((button) => button.textContent ?? '')
     }
 
-    // 1. The cluster.
+    // 1. The cluster (whose face is an icon, so its word is its accessible name).
     const cluster = block.querySelector<HTMLButtonElement>('.block-control-interaction')!
-    expect(cluster.textContent).toBe('Unlock')
+    expect(cluster.getAttribute('aria-label')).toBe('Unlock')
     // 2. The menu — the same two words, and never the diagram's.
     expect(menuLabels()).toContain('Unlock')
     expect(menuLabels()).not.toContain('Edit')

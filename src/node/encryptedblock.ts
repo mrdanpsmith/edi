@@ -15,6 +15,7 @@ import { createBlockEditor } from '../editor'
 import { blockNodeView, showsSource } from '../blockview'
 import { BLOCK_MODE_HANDLERS, BLOCK_MODE_KEY, attachBlockControls, modeFor, setBlockMode, setBlockModeAt } from '../block-modes'
 import type { BlockControls } from '../block-modes'
+import { PLAIN_PAGE_ICON, paintIcon } from '../icons'
 import type { ResolveImage } from '../image'
 
 const imageResolver: { value: ResolveImage | undefined } = { value: undefined }
@@ -279,8 +280,8 @@ class EncryptedBlockNodeView implements NodeView {
     // true of `toggleBlockMode`, which reads the record, and **not** true of
     // `toggle`, which reads the block's own `revealHost` and so answers both ends.)
     const controls = attachBlockControls(this.node, this.view, this.getPos, [
-      this.blockButton('Normalize', 'encrypted-block-unmask', () => { void this.unmask_() },
-        'Convert to normal block (decrypted)'),
+      this.blockButton('Normalize', PLAIN_PAGE_ICON, 'encrypted-block-unmask',
+        () => { void this.unmask_() }, 'Convert to a normal block (decrypted)'),
     ])
     if (controls) {
       this.modeControls = controls
@@ -289,15 +290,21 @@ class EncryptedBlockNodeView implements NodeView {
   }
 
   private blockButton(
-    text: string,
+    label: string,
+    iconMarkup: string,
     cls: string,
     run: () => void,
     title?: string,
   ): HTMLButtonElement {
     const btn = document.createElement('button')
     btn.type = 'button'
-    btn.className = `block-control toolbar-btn ${cls}`
-    btn.textContent = text
+    // **Not `toolbar-btn`.** That class is the menubar row's metrics — 5px 8px of
+    // padding and a 20px glyph — and a cluster button is a 24px square in the page
+    // gutter. Keeping both meant the first had to be un-done by the second on every
+    // property they share, which is how the Copy button came to stand 3px taller
+    // than the button beside it.
+    btn.className = `block-control ${cls}`
+    paintIcon(btn, iconMarkup, label)
     if (title) btn.title = title
     btn.addEventListener('click', (e) => { e.stopPropagation(); run() })
     return btn

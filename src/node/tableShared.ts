@@ -9,6 +9,7 @@ import {
   setActiveCellHost,
 } from '../inline-format'
 import { bindCellMaskedField } from './masked'
+import { SHEET_ICON, TABLE_ICON, paintIcon } from '../icons'
 
 
 export interface CellRef {
@@ -122,6 +123,10 @@ export function tableFormAt(state: EditorState, pos: number | undefined): string
  * own vocabulary (§5.1) — labelled from the descriptor's form list so the cluster
  * and the context menu can never drift into two spellings of the same two words.
  * The button names the step it *goes to*, as every cluster control does.
+ *
+ * Its face is the *destination* too, for the same reason: a sheet shows the table
+ * icon and a rendered table shows the grid, so the picture answers "what happens if
+ * I press this" and not "where am I now".
  */
 export function formControl(
   view: EditorView,
@@ -136,7 +141,11 @@ export function formControl(
   const paint = (): void => {
     const at = getPos()
     const current = tableFormOf(view.state, at)
-    button.textContent = other(current)
+    paintIcon(
+      button,
+      current === 'sheet' ? TABLE_ICON : SHEET_ICON,
+      other(current),
+    )
     button.title = current === 'sheet'
       ? 'Draw this table as its markdown again'
       : 'Edit this table in a spreadsheet'

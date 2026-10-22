@@ -553,7 +553,29 @@ body {
 /* ── ProseMirror editor ── */
 
 .ProseMirror {
-  padding: 16px 24px 48px;
+  /* ── The margins a block's controls live in ────────────────────────────────
+   * **A block's controls sit beside it, not on it, and the right margin is the
+   * room they need.**
+   *
+   * The cluster is revealed by hovering a block, so wherever it is drawn it is
+   * drawn over whatever is underneath — and a block's own first line of text is
+   * what was underneath. Every earlier design looked for a few pixels of the
+   * block that were not a glyph (a rail above it, a pill on the band, the bar of
+   * a code block) and every one of them covered the text on some block type. The
+   * margin is the only region of the page that is *never* content, so that is
+   * where they went: `.block-controls` sits at `left: 100%` of the block,
+   * entirely outside it. See the cluster rule below.
+   *
+   * **Both margins are the same 96px of page, and fixed.** Three 24px buttons
+   * plus their gaps and border measure 80px, so 96px holds the row with room to
+   * spare; the left one is the same 96px so the *text* sits the same distance
+   * from either window edge, which is what makes the column read as a column. It
+   * is written as 72px because every block carries a 24px indent of its own
+   * (`.ProseMirror > .block-visual-mode`) — 72 + 24 is the 96 that the right edge
+   * gets for free, and the two numbers are *not* two decisions. */
+  --edi-gutter-left: 72px;
+  --edi-gutter-right: 96px;
+  padding: 16px var(--edi-gutter-right) 48px var(--edi-gutter-left);
   outline: none;
   font-size: 14px;
   line-height: 1.6;
@@ -751,8 +773,21 @@ body {
   z-index: -1;
   top: -4px;
   bottom: -4px;
-  left: -48px;
-  right: -24px;
+  /* **The band is the block plus the margins around it.** Both offsets are
+     written in the same variables the editor's padding is, because a band that
+     stopped at the text column would leave the cluster — which lives in the
+     margin — floating on the bare page, and every earlier band that failed to
+     reach the margin was the same arithmetic written twice and drifted once. The
+     left cancels the padding *and* the block's own 24px indent (`.ProseMirror >
+     .block-visual-mode`); the right cancels the padding alone, because a block's
+     right edge is already the content box's.
+
+     So a block as wide as the column bands out to the window's edges, and a block
+     that hugs its content — a rendered table is as wide as its grid (`.ss-plain`)
+     — bands out by the same 96px on either side of a grid that may be 63px. One
+     rule, one meaning: the band is the row. */
+  left: calc(-1 * (var(--edi-gutter-left, 24px) + 24px));
+  right: calc(-1 * var(--edi-gutter-right, 24px));
   border-radius: 6px;
   background: var(--block-hover);
   pointer-events: none;
@@ -775,28 +810,34 @@ body {
  * while its other controls are the block's own actions. This one rule replaces
  * six hover lists that each named their own blocks — which is how a diagram's
  * zoom toolbar, a plain table's lone button and an encrypted block's (invisible)
- * handle ended up as three different things in three different corners. */
+ * handle ended up as three different things in three different corners.
+ *
+ * **The same row, but not the same place: the gutter, not the block.** `left:
+ * 100%` puts the row's left edge on the block's right edge and everything it
+ * draws outside that edge, which is the one region of the page no block renders
+ * into (see `--edi-gutter-left`/`--edi-gutter-right` on `.ProseMirror`). So the
+ * row cannot cover a glyph on any block type — including a paragraph whose line
+ * runs to the column's edge, which is the case that killed the last three
+ * designs. */
 .block-controls {
   position: absolute;
-  /* Level with the block's first row of chrome, not below it. A code block's
-     language bar is 25px tall and starts 1px down (the block's border), so 6px
-     put the cluster across the bar *and* 11px of the first lines of code; the
-     source banner is the one that read correctly, because its own button is in
-     flow in the bar rather than floating over it. The cluster is one row taller
-     than a language bar, so it cannot fit *inside* one — but aligned to the top
-     it reads as belonging to the bar, which is what it is. */
+  /* **Flush against the block's edge, not 8px off it.** A margin between the
+     block and its own controls is a *hole*: `:hover` on the block is what reveals
+     the row, and a pointer crossing 8px of page on its way to the buttons leaves
+     every element that could keep the row alive. The row and the block are
+     therefore adjacent boxes, so the pointer never crosses anything — and the
+     space it lives in is the gutter, which is what keeps it off the text. */
+  left: 100%;
+  /* Level with the block's first row of chrome, not below it. */
   top: 2px;
-  right: 8px;
   z-index: 3;
   display: flex;
   align-items: center;
   gap: 2px;
-  /* 1px, not 2px, and that is what makes the row *be* the height of the bar it
-     sits on: a button is 21px, so 2px of padding made the pill 27px against a 25px
-     language bar and it hung 5px over the code. At 1px it is 25px and flush. The
-     button's own border is transparent at rest, so the pill's border is not
-     doubled against it; the buttons' padding is untouched, so nothing is smaller
-     to press. */
+  /* `max-content`, and it is not decoration: this box is positioned at the
+     block's right edge, so the room left for it is *zero* pixels and a flex row
+     left to fit itself wraps its buttons into a 31×102 tower. */
+  width: max-content;
   padding: 1px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
@@ -818,19 +859,33 @@ body {
   pointer-events: auto;
 }
 
+/* **One button, one square, one glyph.** The cluster is a row of pictures now, so
+   the size is fixed rather than grown from its label: a 24px square holds a
+   control the pointer can aim at, and it does not move when the button's word
+   changes (`Source` → `Visual` used to resize the pill, and so did `Copy` →
+   `Copied!`). The words did not go away — they are `aria-label`/`title` — see
+   `src/icons.ts`. */
 .block-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   font: inherit;
-  font-size: 11px;
-  line-height: 1.4;
   color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 2px 8px;
-  min-width: 24px;
   cursor: pointer;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  /* The face is an svg and the button is one line: no wrapping, no shrink. */
+  flex: none;
+}
+
+.block-control svg {
+  display: block;
+  width: 14px;
+  height: 14px;
 }
 
 .block-control:hover:not(:disabled) {
@@ -1240,6 +1295,8 @@ body {
 .spreadsheet {
   position: relative;
   margin: 1em 0 1em 24px;
+  /* No `padding-right` for the cluster: it sits outside the block now, in the
+     editor's gutter. */
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1638,6 +1695,14 @@ body {
 .ss-plain {
   position: relative;
   margin: 1em 0 1em 24px;
+  /* **A rendered table is as wide as its grid.** A 3-column table on a wide
+     window used to be a 1200px block with a 200px grid in it, so the block's
+     right edge — and, since the cluster hangs off that edge, the table's own
+     controls — sat a screen away from the thing they act on. The block hugs its
+     grid and the controls hug the block; `max-width` is the one clamp, and the
+     scroller shears the overflow when the grid is wider than the column. */
+  width: max-content;
+  max-width: 100%;
 }
 
 .ss-plain .ss-plain-scroll {
@@ -2211,13 +2276,9 @@ body {
   width: 100%;
 }
 
-/* Run/Stop lives in the block's control cluster with everything else's; only
-   the states that belong to a run rather than to a mode are left here. */
-.ProseMirror .block-controls .exec-run {
-  font-size: 11px;
-  padding: 2px 10px;
-}
-
+/* Run/Stop lives in the block's control cluster with everything else's, so it is
+   a 24px square like the rest of the row; only the states that belong to a run
+   rather than to a mode are left here. */
 .ProseMirror .block-controls .exec-run.exec-stop {
   color: var(--danger);
 }
@@ -2264,17 +2325,15 @@ body {
   cursor: pointer;
 }
 
-/* The cluster's copy gets **no** look of its own, and that is the point: it is a
-   block action like any other, so `.block-control` styles it. It used to keep
-   the floating button's border and background as well, which is a second border
-   round one button — and a second set of metrics, so it stood 3px taller than its
-   neighbours and made the row itself taller than the bar the row sits on. */
-.ProseMirror .block-controls .code-copy {
-  min-width: 5.5em;
-}
+/* The cluster's copy is a `.block-control` like its neighbours: one size, no look
+   of its own. It used to keep the floating button's border and background as
+   well, which is a second border round one button — and a second set of metrics,
+   so it stood 3px taller than its neighbours and made the row itself taller than
+   the bar the row sat on. */
 
 /* The floating one is positioned, JS-revealed (`.code-copy-show`) and carries the
-   look, so all three stay scoped to it. */
+   look, so all three stay scoped to it. It is the one Copy that keeps its word:
+   it floats over the output it copies, 8px from the text, and has the room. */
 .ProseMirror .code-copy-float {
   font: inherit;
   font-size: 11px;
@@ -2314,12 +2373,11 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* The bar carries the block's controls now, so it is tall enough to hold them:
-     5px makes it 29px against the 26px control row, where 3px made it 25px and
-     the row hung 3px over the code below it. The row is the block's, not the
-     bar's, so the bar grew rather than the buttons shrinking — a smaller Copy
-     would have been the same fix applied to the one thing the reader presses. */
-  padding: 5px 10px;
+  /* The bar carries the language badge and nothing else — the block's controls
+     live in the page gutter now — so it is back to the height a one-line bar
+     wants. It grew to 29px only to hold a 26px control row, and that row is no
+     longer inside it. */
+  padding: 3px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   border-radius: 6px 6px 0 0;
@@ -3121,7 +3179,8 @@ body {
 
 .encrypted-block {
   box-sizing: border-box;
-  /* The block's control cluster is absolutely positioned against it. */
+  /* The block's control cluster is absolutely positioned against it — outside it,
+     in the editor's gutter; see `.block-controls`. */
   position: relative;
   border: 1px dashed var(--border);
   border-radius: 6px;
@@ -3169,5 +3228,10 @@ body {
 .encrypted-block-reveal .ProseMirror {
   padding: 0;
   padding-bottom: 0;
+  /* A second editor inside a block: it has no gutter of its own, and its blocks
+     get no cluster (they are nested), so the band must not read these as page
+     margins. */
+  --edi-gutter-left: 0px;
+  --edi-gutter-right: 0px;
   font-size: inherit;
 }

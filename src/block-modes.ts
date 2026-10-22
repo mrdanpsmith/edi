@@ -6,6 +6,15 @@ import type { EditorView } from 'prosemirror-view'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { markdownToProse } from './markdown'
 import { BLOCK_CONTROLS_CLASS, pressTarget } from './press'
+import {
+  CHECK_ICON,
+  EDIT_ICON,
+  LOCK_ICON,
+  SOURCE_ICON,
+  UNLOCK_ICON,
+  VISUAL_ICON,
+  paintIcon,
+} from './icons'
 
 /**
  * The press-facing names are **`src/press.ts`'s**, and they are re-exported here because they
@@ -378,6 +387,34 @@ const DEFAULT_INTERACTION_LABELS: InteractionLabels = {
 export function interactionLabels(type: string): InteractionLabels {
   return BLOCK_MODE_HANDLERS[type]?.labels ?? DEFAULT_INTERACTION_LABELS
 }
+
+/**
+ * **The picture of the same axis**, paired with `interactionLabels` and read by
+ * the same button.
+ *
+ * It is a second table rather than a field on `InteractionLabels` because the
+ * labels are *words* and this is *art*: the context menu and the chip read the
+ * first and can have nothing to say about the second. What ties them together is
+ * that both are looked up by block type, on the same key, in the same repaint —
+ * so a type that renames its axis without a picture gets the default pencil,
+ * which is wrong-looking rather than wrong.
+ */
+interface ControlFaces {
+  idle: string
+  active: string
+}
+
+/** A pencil while idle, a tick once engaged — an editing layer, generically. */
+const DEFAULT_INTERACTION_FACES: ControlFaces = {
+  idle: EDIT_ICON,
+  active: CHECK_ICON,
+}
+
+const INTERACTION_FACES: Record<string, ControlFaces> = {
+  // A secret says Unlock/Lock, so it draws an open and a closed padlock.
+  encrypted_block: { idle: UNLOCK_ICON, active: LOCK_ICON },
+}
+
 
 export const blockModePlugin = new Plugin<BlockMode | null>({
   key: BLOCK_MODE_KEY,
@@ -1484,7 +1521,12 @@ function representationButton(
     paint: () => {
       const at = getPos()
       const source = at !== undefined && modeFor(view.state, at)?.representation === 'source'
-      button.textContent = source ? 'Visual' : 'Source'
+      // **The face is the action, and both halves are written in one call.** A
+      // button whose picture said "go to Source" while its name said "Visual"
+      // would be two answers to one question, and the pair is repainted from the
+      // record on every mode change, so a slip shows up as a control that lies
+      // for exactly one mode.
+      paintIcon(button, source ? VISUAL_ICON : SOURCE_ICON, source ? 'Visual' : 'Source')
       button.title = source
         ? 'Back to the rendered block (Esc)'
         : 'Show this block as markdown (Ctrl+Shift+E)'
@@ -1515,7 +1557,11 @@ function interactionButton(
       const at = getPos()
       const editing = at !== undefined && modeFor(view.state, at)?.interaction === 'editing'
       const labels = interactionLabels(type)
-      button.textContent = editing ? labels.active : labels.idle
+      const faces = INTERACTION_FACES[type] ?? DEFAULT_INTERACTION_FACES
+      // **The picture comes from the same declaration the words do**, so a block
+      // that renames its axis (an encrypted block says Unlock/Lock) also gets the
+      // padlock rather than a pencil that describes a diagram's edit.
+      paintIcon(button, editing ? faces.active : faces.idle, editing ? labels.active : labels.idle)
       // **The hover title is built from the same two words the label is**, so it
       // cannot describe a step this button does not offer. It used to name one block
       // type — "the diagram" — on the button every `interaction: 'toggle'` block
