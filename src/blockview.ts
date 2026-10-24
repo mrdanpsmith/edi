@@ -146,6 +146,10 @@ class BlockVisualNodeView implements NodeView {
     this.getPos = getPos
     this.dom = document.createElement('div')
     this.dom.className = 'block-visual-mode'
+    // A rule is the one block with no height of its own (its box is the 1px
+    // line), so its control strip has to be told to cover the whitespace that is
+    // its row. The class is the block type saying which box it is.
+    if (node.type.name === 'horizontal_rule') this.dom.classList.add('block-visual-rule')
 
     const semantic = createSemanticWrapper(node)
     if (semantic) {

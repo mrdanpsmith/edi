@@ -639,6 +639,17 @@ body {
   margin-left: 24px;
 }
 
+/* **A rule's row is the whitespace around it.** An `<hr>` is 1px tall, so the
+   strip — `height: 100%` of its block — was a 1px line the pointer had to find
+   exactly: the row existed, and the only way to reveal it was to sit on the
+   rule itself. The margins are where the rule's row actually is, so the strip
+   covers them. Nothing moves: the strip is absolutely positioned, paints
+   nothing, and the gap above and below the line is the same gap it now fills. */
+.ProseMirror > .block-visual-rule > .block-controls {
+  top: -1.5em;
+  height: calc(100% + 3em);
+}
+
 /* Task list checkboxes.
  *
  * The `z-index` is not styling, it is the checkbox's half of the hover band's
@@ -1776,14 +1787,14 @@ body {
 .ss-plain {
   position: relative;
   margin: 1em 0 1em 24px;
-  /* **A rendered table is as wide as its grid.** A 3-column table on a wide
-     window used to be a 1200px block with a 200px grid in it, so the block's
-     right edge — and, since the cluster hangs off that edge, the table's own
-     controls — sat a screen away from the thing they act on. The block hugs its
-     grid and the controls hug the block; `max-width` is the one clamp, and the
-     scroller shears the overflow when the grid is wider than the column. */
-  width: max-content;
-  max-width: 100%;
+  /* **A block is a row, and the row is as wide as the column.** A rendered table
+     used to shrink-wrap its grid (`width: max-content`), which was the only way
+     to keep its control cluster beside it — but it made the table the one block
+     whose box was not the row, so its controls sat in the middle of the page.
+     The block is a normal block now, like a paragraph whose text does not reach
+     the edge: **the grid inside is still as wide as its content** (the table is
+     `width: auto` below), and `.ss-plain-scroll` shears a grid wider than the
+     column, exactly as a diagram's `.mermaid-preview` does for a wide drawing. */
 }
 
 .ss-plain .ss-plain-scroll {
