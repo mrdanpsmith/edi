@@ -2918,12 +2918,12 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
         timeout=10,
     )
 
-    # The banner's Visual button is the way out of a source block, and a form is
+    # The cluster's Visual button is the way out of a source block, and a form is
     # sticky: it is the sheet this block left that comes back, not its default.
     # (Escape is the ladder's job and is covered as such.)
     _dump(
         window,
-        "(() => { const b = document.querySelector('.block-source-exit');"
+        "(() => { const b = document.querySelector('.block-source-mode .block-control-representation');"
         " if (!b) return { missing: true };"
         " b.click(); return { clicked: true }; })()",
     )
@@ -3108,6 +3108,84 @@ def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
     assert chrome is not None, runnable
     assert chrome["topGap"] <= 3, chrome
     assert chrome["standoff"] >= -1, chrome
+
+
+def test_a_source_blocks_way_out_lives_in_its_control_cluster(window):
+    """A source editor has no chrome of its own any more: its way out is the same
+    right-margin cluster every other block uses.
+
+    Real engine, because the first version put the cluster where it belonged and
+    then clipped it: `.block-source-mode` had `overflow: hidden` for its rounded
+    frame, and the cluster is positioned *outside* that frame (`left: 100%`), so
+    the buttons existed and could never be seen. The hit test is the one that
+    catches that; jsdom has no layout and happily reports the button.
+    """
+    _set_scheme(window, False)
+    window._web.page().runJavaScript(
+        "window.ediSetContent('First paragraph.\\n\\nSecond paragraph.'); true"
+    )
+    _wait(window, "(() => ({ p: document.querySelectorAll('#editor-container p').length }))()",
+          lambda d: d.get("p") == 2, timeout=15)
+
+    # Source is reached the way every block reaches it: the cluster button.
+    _dump(window, """(() => {
+      const b = document.querySelector('#editor-container .block-control-representation');
+      if (!b) return { missing: 'control' };
+      b.click();
+      return { label: b.getAttribute('aria-label') };
+    })()""")
+    _wait(window, "(() => ({ source: !!document.querySelector('.block-source-mode') }))()",
+          lambda d: d.get("source") is True, timeout=10)
+
+    # The old banner is gone, and the cluster carries the way back.
+    removed = _dump(window, """(() => ({
+      toolbar: !!document.querySelector('.block-source-toolbar'),
+      label: !!document.querySelector('.block-source-label'),
+      exit: !!document.querySelector('.block-source-exit'),
+      cluster: !!document.querySelector('.block-source-mode > .block-controls'),
+      button: (document.querySelector(
+        '.block-source-mode > .block-controls .block-control-representation') || {})
+        .getAttribute?.('aria-label') ?? null,
+    }))()""")
+    assert not removed["toolbar"] and not removed["label"] and not removed["exit"], removed
+    assert removed["cluster"] and removed["button"] == "Visual", removed
+
+    installed = _dump(window, INSTALL_REVEAL)
+    assert installed["rules"] >= 1, installed
+    try:
+        _dump(window, "(() => window.ediReveal())()")
+        hit = _dump(window, """(() => {
+          const btn = document.querySelector(
+            '.block-source-mode > .block-controls .block-control-representation');
+          if (!btn) return { missing: 'button' };
+          const r = btn.getBoundingClientRect();
+          const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return {
+            left: Math.round(r.left), width: Math.round(r.width),
+            hit: !!at && (at === btn || btn.contains(at)),
+            at: at ? at.tagName : null,
+          };
+        })()""")
+        assert not hit.get("missing"), hit
+        assert hit["width"] > 0, hit
+        assert hit["hit"], hit
+    finally:
+        _dump(window, "(() => window.ediUnreveal())()")
+
+    # ...and it is the same exit it always was: pressing it commits and returns
+    # to the rendering.
+    _dump(window, """(() => {
+      const b = document.querySelector(
+        '.block-source-mode > .block-controls .block-control-representation');
+      if (!b) return { missing: 'control' };
+      b.click();
+      return { clicked: true };
+    })()""")
+    back = _wait(window, """(() => ({
+      source: !!document.querySelector('.block-source-mode'),
+      visual: !!document.querySelector('.block-visual-mode'),
+    }))()""", lambda d: d.get("source") is False and d.get("visual") is True, timeout=10)
+    assert not back["source"] and back["visual"], back
 
 
 # — where every block's controls sit. Two questions, both of which jsdom cannot
@@ -3592,14 +3670,14 @@ def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
     after = _wait(
         window,
         "(() => ({ source: !!document.querySelector('.block-source-mode'),"
-        " banner: (document.querySelector('.block-source-label') || {}).textContent || null,"
+        " visual: (document.querySelector('.block-source-mode .block-control-representation') || {}).getAttribute('aria-label'),"
         " editing: !!document.querySelector('.mermaid-editing'),"
         " cluster: !!document.querySelector('.mermaid .block-controls'),"
         " marked: document.querySelectorAll('.mermaid-editables').length }))()",
         lambda d: d["source"] is True,
         timeout=10,
     )
-    assert after["banner"] == "Source", after
+    assert after["visual"] == "Visual", after
     assert not after["editing"], after
     assert not after["cluster"], after
     assert not after["marked"], after
@@ -3609,10 +3687,10 @@ def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
     # ...and back again, from the banner: one control, both directions.
     _dump(
         window,
-        "(() => { const b = document.querySelector('.block-source-exit');"
+        "(() => { const b = document.querySelector('.block-source-mode .block-control-representation');"
         " if (!b) return { missing: true };"
         " b.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));"
-        " return { label: b.textContent }; })()",
+        " return { label: b.getAttribute('aria-label') }; })()",
     )
     back = _wait(
         window,
@@ -6247,15 +6325,15 @@ def test_opening_a_second_block_takes_the_focus_path_from_the_first(window):
         % (handed,))
     assert handed["sources"] == 1, handed
 
-    # ...and the block that took it keeps the way out it always had: the source banner's
-    # own **Visual** button, which is *in flow* in the bar rather than floating over it
-    # (§6.3's reason a control in the cluster could not be used here).
+    # ...and the block that took it keeps the way out it always had: its source
+    # form's own **Visual** button, in the same right-margin cluster every block's
+    # mode controls live in.
     _dump(window, """(() => {
       const done = document.querySelector(
-        '#editor-container > .ProseMirror > .block-source-mode .block-source-exit');
+        '#editor-container > .ProseMirror > .block-source-mode .block-control-representation');
       if (!done) return { missing: 'exit' };
       done.click();
-      return { label: done.textContent.trim() };
+      return { label: done.getAttribute('aria-label') };
     })()""")
     left = _wait(window, r"""(() => ({
       sources: document.querySelectorAll(

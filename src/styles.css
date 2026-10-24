@@ -935,7 +935,7 @@ body {
  * that nothing can reach is not a control, and the cluster is the only control
  * the block has. */
 .block-controls:hover > .block-control-pill,
-.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls > .block-control-pill {
+.ProseMirror :is(.block-visual-mode, .block-source-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls > .block-control-pill {
   opacity: 1;
   pointer-events: auto;
 }
@@ -2521,39 +2521,13 @@ body {
 .block-source-mode {
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
+  /* **The cluster is a child of this box and sits outside it.** It is positioned
+     in the page's right gutter (`left: 100%`), so clipping the block to its own
+     rounded frame would clip the only way out of the source form. The CodeMirror
+     inside keeps its own `overflow: hidden` and border radius, which is what
+     actually draws the editor's frame. */
+  overflow: visible;
   background: var(--surface);
-}
-
-.block-source-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 8px 4px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-raised);
-}
-
-.block-source-label {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-
-.block-source-exit {
-  font: inherit;
-  font-size: 11px;
-  color: var(--accent);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-}
-
-.block-source-exit:hover {
-  background: var(--bg);
-  color: var(--text-primary);
 }
 
 .block-source-mode .cm-editor {

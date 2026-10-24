@@ -74,6 +74,7 @@ class BlockSourceNodeView implements NodeView {
   private node: ProseNode
   private view: EditorView
   private getPos: () => number | undefined
+  private controls: ReturnType<typeof attachBlockControls> = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -82,26 +83,6 @@ class BlockSourceNodeView implements NodeView {
 
     this.dom = document.createElement('div')
     this.dom.className = 'block-source-mode'
-
-    const toolbar = document.createElement('div')
-    toolbar.className = 'block-source-toolbar'
-
-    const label = document.createElement('span')
-    label.className = 'block-source-label'
-    label.textContent = 'Source'
-    toolbar.appendChild(label)
-
-    const exitBtn = document.createElement('button')
-    exitBtn.type = 'button'
-    exitBtn.className = 'block-source-exit'
-    exitBtn.textContent = 'Visual'
-    exitBtn.title = 'Back to the rendered block (Esc)'
-    exitBtn.addEventListener('click', () => {
-      this.exitSource(this.cm?.getValue() ?? '')
-    })
-    toolbar.appendChild(exitBtn)
-
-    this.dom.appendChild(toolbar)
 
     const markdown = (node.attrs.markdown as string ?? '') ||
       serializeBlock(this.node) ||
@@ -114,6 +95,9 @@ class BlockSourceNodeView implements NodeView {
     this.cm = createBlockCodeMirror(this.dom, markdown, (value) => {
       this.exitSource(value)
     }, initialPos)
+
+    this.controls = attachBlockControls(node, view, getPos)
+    if (this.controls) this.dom.appendChild(this.controls.dom)
 
     requestAnimationFrame(() => this.cm?.focus())
   }
@@ -143,6 +127,8 @@ class BlockSourceNodeView implements NodeView {
   }
 
   destroy(): void {
+    this.controls?.remove()
+    this.controls = null
     this.cm?.destroy()
   }
 }

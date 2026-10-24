@@ -1442,7 +1442,12 @@ export interface BlockControls {
  *
  * Returns null when there is nothing to put in it — a nested block (§6.7), or a
  * type with no modes at all, which is what keeps `source_block` (permanently in
- * its source form, so with the banner and never a cluster) out of it.
+ * its source form, so with neither a banner nor a cluster) out of it.
+ *
+ * **A block in its source form gets the same cluster**, not a toolbar inside the
+ * editor chrome: the source node views attach this, and its representation button
+ * is the way back. The interaction button is omitted while the block is in source
+ * because the raw-markdown buffer is not the rendered block's editing layer.
  */
 export function attachBlockControls(
   node: ProseNode,
@@ -1462,8 +1467,17 @@ export function attachBlockControls(
   // answer, so it is read here and nowhere else. A block with neither (a
   // `source_block`) has already been turned away above, so `source` is null only
   // for a type that can contribute actions and nothing else.
+  //
+  // **A block in its source form has no interaction axis on screen.** The raw
+  // markdown editor is not the block's editing layer, so offering Edit there
+  // would leave the source form only to re-enter it through a commit, a re-parse
+  // and a re-render. The representation button is the way back; the interaction
+  // button belongs to the rendered form.
+  const inSource = modeFor(view.state, pos)?.representation === 'source'
   const rest: ControlButton[] = []
-  if (descriptor.interaction === 'toggle') rest.push(interactionButton(view, getPos, node.type.name))
+  if (descriptor.interaction === 'toggle' && !inSource) {
+    rest.push(interactionButton(view, getPos, node.type.name))
+  }
   const source = descriptor.representation ? representationButton(view, getPos) : null
   const buttons = source === null ? rest : [...rest, source]
   if (buttons.length === 0 && actions.length === 0) return null
