@@ -6,6 +6,7 @@ import { confirmAction, hasBridge, invoke, showError } from './bridge'
 import { startThemeWatcher } from './theme'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
+import { mermaidPngSnapshots, snapshotMermaidHtml } from './mermaid-export'
 import { computeSpreadsheet } from './spreadsheet'
 import { redoDepth, redoNoScroll, undoDepth, undoNoScroll } from 'prosemirror-history'
 import { selectAll } from 'prosemirror-commands'
@@ -332,11 +333,12 @@ async function exportHtml(): Promise<void> {
     return
   }
   try {
-    const doc = blockEditor.value?.getView().state.doc
-    if (!doc) {
+    const state = blockEditor.value?.getView().state
+    if (!state) {
       return
     }
-    const bodyHtml = serializeDocToHtml(doc, formulaEnvFor(blockEditor.value!.getView().state))
+    const snapshots = await mermaidPngSnapshots(state.doc)
+    const bodyHtml = serializeDocToHtml(state.doc, formulaEnvFor(state), snapshots)
     await writeTextFile(path, buildExportHtml(fileName(path), bodyHtml))
     flashStatus(`Exported ${path}`)
   } catch (error) {
@@ -901,6 +903,8 @@ function editRedoNoScroll(): void {
  * drawn, and a fragment of a cell is not a table. `Ctrl+Shift+C` is the key that copies
  * markdown, and it still copies the editor's own selection.
  */
+let richClipboardTicket = 0
+
 function editCut(): void {
   const view = focusedEditor()
   if (!view) return
@@ -913,8 +917,9 @@ function editCut(): void {
   if (view.state.selection.empty) return
   view.focus()
   const { dom, text } = richSelectionHtml(view)
-  void writeClipboard({ html: dom.innerHTML, text })
+  const markdown = selectionMarkdownFor(view)
   view.dispatch(view.state.tr.deleteSelection())
+  void writeRichClipboard(dom, text, markdown)
 }
 
 function editCopy(): void {
@@ -928,7 +933,24 @@ function editCopy(): void {
   if (view.state.selection.empty) return
   view.focus()
   const { dom, text } = richSelectionHtml(view)
-  void writeClipboard({ html: dom.innerHTML, text })
+  void writeRichClipboard(dom, text, selectionMarkdownFor(view))
+}
+
+function writeRichClipboard(
+  dom: HTMLElement,
+  text: string,
+  markdown: string,
+): void {
+  const ticket = ++richClipboardTicket
+  if (!dom.querySelector('[data-mermaid-block]')) {
+    void writeClipboard({ html: dom.innerHTML, text, markdown })
+    return
+  }
+  void (async () => {
+    await snapshotMermaidHtml(dom)
+    if (ticket !== richClipboardTicket) return
+    await writeClipboard({ html: dom.innerHTML, text, markdown })
+  })()
 }
 
 /**
@@ -963,10 +985,12 @@ async function editPaste(): Promise<void> {
   if (!view) return
   let html: string | null = null
   let text: string | null = null
+  let markdown: string | null = null
   if (hasBridge()) {
-    const data = await invoke<{ text: string; html: string }>('readClipboardText')
+    const data = await invoke<{ text: string; html: string; markdown?: string }>('readClipboardText')
     html = data?.html || null
     text = data?.text || null
+    markdown = data?.markdown || null
   } else {
     try {
       const items = await navigator.clipboard.read()
@@ -977,12 +1001,22 @@ async function editPaste(): Promise<void> {
         if (item.types.includes('text/plain')) {
           text = await item.getType('text/plain').then((b) => b.text())
         }
+        if (item.types.includes('text/markdown')) {
+          markdown = await item.getType('text/markdown').then((b) => b.text())
+        }
       }
     } catch {
       return
     }
   }
   view.focus()
+  // **An Edi-to-Edi copy carries its selection as markdown, and that is the leg
+  // this app reads.** The HTML leg is for other apps (a mermaid block is a PNG
+  // there), so parsing it back would turn the diagram into a picture; the
+  // markdown leg is the document's own words, mermaid source included.
+  if (markdown && markdown.trim() !== '' && pasteAsMarkdown(view, markdown)) {
+    return
+  }
   // Rich media first: pasteHTML runs ProseMirror's full clipboard parser, which
   // preserves formatting (bold, links, code) and turns block HTML (our own
   // serializeForClipboard output) into real paragraphs. Only fall back to plain

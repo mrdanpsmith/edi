@@ -45,7 +45,9 @@ export const mermaidSchema = {
   parseDOM: [
     {
       tag: 'div[data-mermaid-block]',
-      getAttrs: (dom: HTMLElement) => ({ value: dom.textContent ?? '' }),
+      getAttrs: (dom: HTMLElement) => ({
+        value: dom.getAttribute('data-mermaid-source') ?? dom.textContent ?? '',
+      }),
     },
   ],
   toDOM(): DOMOutputSpec {

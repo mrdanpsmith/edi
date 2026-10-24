@@ -47,6 +47,19 @@ describe('writeClipboard', () => {
     expect(clipboardWrite).not.toHaveBeenCalled()
   })
 
+  it('sends the markdown flavor to the bridge when present', async () => {
+    mockedHasBridge.mockReturnValue(true)
+    mockedInvoke.mockResolvedValue(undefined)
+    await expect(
+      writeClipboard({ html: '<b>x</b>', text: 'x', markdown: '**x**' }),
+    ).resolves.toBe(true)
+    expect(mockedInvoke).toHaveBeenCalledWith('copyContent', {
+      html: '<b>x</b>',
+      text: 'x',
+      markdown: '**x**',
+    })
+  })
+
   it('falls back to the web clipboard when the bridge call fails', async () => {
     mockedHasBridge.mockReturnValue(true)
     mockedInvoke.mockRejectedValue(new Error('boom'))
@@ -67,6 +80,34 @@ describe('writeClipboard', () => {
     expect(htmlBlob.size).toBe('<b>x</b>'.length)
     expect(textBlob.type).toBe('text/plain')
     expect(textBlob.size).toBe(1)
+  })
+
+  it('writes a text/markdown blob when the payload carries markdown', async () => {
+    mockedHasBridge.mockReturnValue(false)
+    await expect(
+      writeClipboard({ html: '<b>x</b>', text: 'x', markdown: '**x**' }),
+    ).resolves.toBe(true)
+    const [item] = clipboardWrite.mock.calls[0][0]
+    const markdownBlob = item.items['text/markdown'] as Blob
+    expect(markdownBlob).toBeInstanceOf(Blob)
+    expect(markdownBlob.type).toBe('text/markdown')
+    expect(markdownBlob.size).toBe(5)
+  })
+
+  it('retries without the markdown flavor when the clipboard rejects it', async () => {
+    mockedHasBridge.mockReturnValue(false)
+    clipboardWrite
+      .mockRejectedValueOnce(new Error('unsupported'))
+      .mockResolvedValueOnce(undefined)
+    await expect(
+      writeClipboard({ html: '<b>x</b>', text: 'x', markdown: '**x**' }),
+    ).resolves.toBe(true)
+    expect(clipboardWrite).toHaveBeenCalledTimes(2)
+    const [first] = clipboardWrite.mock.calls[0][0]
+    expect(first.items['text/markdown']).toBeInstanceOf(Blob)
+    const [second] = clipboardWrite.mock.calls[1][0]
+    expect(second.items['text/markdown']).toBeUndefined()
+    expect(execCommand).not.toHaveBeenCalled()
   })
 
   it('falls back to execCommand when web clipboard write throws', async () => {

@@ -23,6 +23,18 @@ describe('schema parseDOM', () => {
     expect(para.child(1).type.name).toBe('hard_break')
   })
 
+  it('parses a copied mermaid snapshot back to its source', () => {
+    const container = document.createElement('div')
+    container.innerHTML =
+      '<figure data-mermaid-block data-mermaid-source="graph TD\nA">' +
+      '<img src="data:image/png;base64,UE5H">' +
+      '<details><summary>Mermaid source</summary><pre><code>graph TD\nA</code></pre></details>' +
+      '</figure>'
+    const doc = DOMParser.fromSchema(schema).parse(container)
+    expect(doc.child(0).type.name).toBe('mermaid_block')
+    expect(doc.child(0).attrs.value).toBe('graph TD\nA')
+  })
+
   it('parses a source block and mermaid block', () => {
     const container = document.createElement('div')
     container.innerHTML =

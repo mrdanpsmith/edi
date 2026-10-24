@@ -4,6 +4,7 @@ import { schema } from './schema'
 import { computeSpreadsheet } from './spreadsheet'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
 import { escapeHtml } from './utils'
+import type { MermaidPngMap } from './mermaid-export'
 
 const EXPORT_CSS = `
 :root {
@@ -201,6 +202,44 @@ body {
   overflow-x: auto;
 }
 
+.md-preview .mermaid-figure {
+  margin: 1em 0;
+  overflow-x: auto;
+}
+
+.md-preview .mermaid-figure > img {
+  display: block;
+  margin: 0 auto;
+  max-width: none;
+}
+
+.md-preview .mermaid-source {
+  margin-top: 0.5em;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.md-preview .mermaid-source > summary {
+  cursor: pointer;
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  user-select: none;
+}
+
+.md-preview .mermaid-source[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.md-preview .mermaid-source > pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .md-preview .masked-field {
   border: 1px solid var(--border);
   background: var(--surface);
@@ -229,7 +268,11 @@ body {
 }
 `
 
-export function serializeDocToHtml(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {
+export function serializeDocToHtml(
+  doc: ProseNode,
+  env: FormulaEnv = BUILTIN_ENV,
+  mermaidPngs: MermaidPngMap = new Map(),
+): string {
   const base = DOMSerializer.fromSchema(schema)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -237,7 +280,28 @@ export function serializeDocToHtml(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV
 
   nodes.mermaid_block = (node) => {
     const value = String(node.attrs.value ?? '')
-    return ['div', { class: 'mermaid' }, value]
+    const png = mermaidPngs.get(value)
+    if (!png) {
+      return ['div', { class: 'mermaid' }, value]
+    }
+    return [
+      'figure', { class: 'mermaid-figure' },
+      [
+        'img',
+        {
+          class: 'mermaid-snapshot',
+          src: `data:image/png;base64,${png.data}`,
+          alt: 'Mermaid diagram',
+          width: String(png.width),
+          height: String(png.height),
+        },
+      ],
+      [
+        'details', { class: 'mermaid-source' },
+        ['summary', 'Mermaid source'],
+        ['pre', ['code', { class: 'language-mermaid' }, value]],
+      ],
+    ]
   }
 
   nodes.masked_field = (node) => {
@@ -280,17 +344,8 @@ export function serializeDocToHtml(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV
 }
 
 export function buildExportHtml(title: string, bodyHtml: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
-    <title>${escapeHtml(title)}</title>
-    <style>${EXPORT_CSS}</style>
-  </head>
-  <body>
-${bodyHtml}
+  const mermaidScript = bodyHtml.includes('<div class="mermaid"')
+    ? `
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
     <script>
       mermaid.initialize({startOnLoad:false,theme:'default'})
@@ -306,7 +361,19 @@ ${bodyHtml}
             }
           }
         })
-    </script>
+    </script>`
+    : ''
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>${escapeHtml(title)}</title>
+    <style>${EXPORT_CSS}</style>
+  </head>
+  <body>
+${bodyHtml}${mermaidScript}
   </body>
 </html>
 `

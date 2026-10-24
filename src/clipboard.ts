@@ -3,6 +3,7 @@ import { hasBridge, invoke } from './bridge'
 export interface ClipboardPayload {
   html: string
   text: string
+  markdown?: string
 }
 
 /**
@@ -88,17 +89,32 @@ export async function readText(): Promise<string | null> {
 }
 
 async function webClipboardWrite(payload: ClipboardPayload): Promise<boolean> {
-  try {
-    if (typeof navigator.clipboard?.write === 'function') {
-      const item = new ClipboardItem({
-        'text/html': new Blob([payload.html], { type: 'text/html' }),
-        'text/plain': new Blob([payload.text], { type: 'text/plain' }),
-      })
-      await navigator.clipboard.write([item])
-      return true
+  if (typeof navigator.clipboard?.write === 'function') {
+    const items: Record<string, Blob> = {
+      'text/html': new Blob([payload.html], { type: 'text/html' }),
+      'text/plain': new Blob([payload.text], { type: 'text/plain' }),
     }
-  } catch {
-    // Fall through to the text-only fallback.
+    if (payload.markdown) {
+      items['text/markdown'] = new Blob([payload.markdown], { type: 'text/markdown' })
+    }
+    try {
+      await navigator.clipboard.write([new ClipboardItem(items)])
+      return true
+    } catch {
+      if (payload.markdown) {
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'text/html': items['text/html']!,
+              'text/plain': items['text/plain']!,
+            }),
+          ])
+          return true
+        } catch {
+          // Fall through to the text-only fallback.
+        }
+      }
+    }
   }
   return execCommandCopy(payload.text)
 }
