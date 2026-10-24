@@ -120,12 +120,12 @@ export class TablePlainView implements NodeView {
     if (!body) return
 
     const scroll = document.createElement('div')
-    // **The gutter, declared.** The block hugs its grid now, so this element is the grid's own
-    // width in the usual case and there is nothing beside it to press; the declaration is what
-    // still says *which part of me is not my content* when the grid is wider than the column and
-    // the scroller has to be wider than the grid inside it. A press in that strip is a request
-    // for a caret beside the table (`BLOCK_MARGIN_CLASS`, read by `src/press.ts`), not a click
-    // on the table.
+    // **The gutter, declared.** The block is the row, so this scroller is the block's whole
+    // width while the grid inside it is only as wide as its content: the strip beside the grid
+    // is white space, and the declaration is what says *which part of me is not my content*. A
+    // press in that strip is a request for a caret beside the table
+    // (`BLOCK_MARGIN_CLASS`, read by `src/press.ts`), not a click on the table. When the grid is
+    // wider than the column the same scroller shears the overflow.
     scroll.className = `ss-plain-scroll ${BLOCK_MARGIN_CLASS}`
     scroll.appendChild(this.buildTable())
 
@@ -328,8 +328,8 @@ export class TablePlainView implements NodeView {
    * leaves no place to click for a caret. A diagram's surface *should* select the diagram, which
    * is why `mermaid.ts` releases it (*"clicking it still selects the block"*); **a table's gutter
    * is not its surface**, it is the space around the table, and that is the distinction being
-   * claimed. A block that hugs its grid has no such strip — the white space beside it is the
-   * editor's, and `press.ts` answers for that one.
+   * claimed. A block that draws to its content declares no such strip — the white space beside
+   * it is the editor's, and `press.ts` answers for that one.
    */
   stopEvent(event: Event): boolean {
     const target = event.target

@@ -639,6 +639,17 @@ body {
   margin-left: 24px;
 }
 
+/* **A rule's row is the whitespace around it.** An `<hr>` is 1px tall, so the
+   strip — `height: 100%` of its block — was a 1px line the pointer had to find
+   exactly: the row existed, and the only way to reveal it was to sit on the
+   rule itself. The margins are where the rule's row actually is, so the strip
+   covers them. Nothing moves: the strip is absolutely positioned, paints
+   nothing, and the gap above and below the line is the same gap it now fills. */
+.ProseMirror > .block-visual-rule > .block-controls {
+  top: -1.5em;
+  height: calc(100% + 3em);
+}
+
 /* Task list checkboxes.
  *
  * The `z-index` is not styling, it is the checkbox's half of the hover band's
@@ -833,6 +844,24 @@ body {
   pointer-events: none;
 }
 
+/* **A rule's band is the row its strip already covers.** The generic band
+   leans 4px past the block's box — a merge with the neighbours' rows for a
+   block with one — but an `<hr>` is 1px tall, so 4px each way was a 9px
+   rectangle centred on the line, a sliver in the middle of ~48px of margin:
+   reported as the band being a couple of px high. The strip got this answer
+   first (its `.block-visual-rule` rule covers the collapsed margins), and this
+   left the two controls answering "where is this rule's row?" with different
+   boxes — the band the *only* thing on the page that still thought the line
+   was the row. So it covers what the strip covers, with the same numbers: the
+   hr margin rule below is the fact both restate, and if it moves, both move.
+   The selector carries the generic band's `:not(…)` guards at its own
+   specificity and sits directly after it, because that tie is how the
+   override wins the cascade rather than losing it. */
+.ProseMirror > .block-visual-rule:not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
+  top: -1.5em;
+  bottom: -1.5em;
+}
+
 /* **View → Hover Band, off.** The band's only shape decision is whether its
    pseudo-element exists, so this is the whole of the option on the stylesheet
    side: `none` is not a hidden box, it is no box, which leaves a turned-off
@@ -935,7 +964,7 @@ body {
  * that nothing can reach is not a control, and the cluster is the only control
  * the block has. */
 .block-controls:hover > .block-control-pill,
-.ProseMirror :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls > .block-control-pill {
+.ProseMirror :is(.block-visual-mode, .block-source-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls > .block-control-pill {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1361,6 +1390,9 @@ body {
   margin-top: 0.25em;
 }
 
+/* The rule's row. The 1.5em margins are the fact the `.block-visual-rule`
+   control strip and hover band both size their coverage from — restatements,
+   not copies, of this one decision (§ their own rules). */
 .ProseMirror hr {
   border: none;
   border-top: 1px solid var(--border);
@@ -1776,14 +1808,14 @@ body {
 .ss-plain {
   position: relative;
   margin: 1em 0 1em 24px;
-  /* **A rendered table is as wide as its grid.** A 3-column table on a wide
-     window used to be a 1200px block with a 200px grid in it, so the block's
-     right edge — and, since the cluster hangs off that edge, the table's own
-     controls — sat a screen away from the thing they act on. The block hugs its
-     grid and the controls hug the block; `max-width` is the one clamp, and the
-     scroller shears the overflow when the grid is wider than the column. */
-  width: max-content;
-  max-width: 100%;
+  /* **A block is a row, and the row is as wide as the column.** A rendered table
+     used to shrink-wrap its grid (`width: max-content`), which was the only way
+     to keep its control cluster beside it — but it made the table the one block
+     whose box was not the row, so its controls sat in the middle of the page.
+     The block is a normal block now, like a paragraph whose text does not reach
+     the edge: **the grid inside is still as wide as its content** (the table is
+     `width: auto` below), and `.ss-plain-scroll` shears a grid wider than the
+     column, exactly as a diagram's `.mermaid-preview` does for a wide drawing. */
 }
 
 .ss-plain .ss-plain-scroll {
@@ -2521,39 +2553,13 @@ body {
 .block-source-mode {
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
+  /* **The cluster is a child of this box and sits outside it.** It is positioned
+     in the page's right gutter (`left: 100%`), so clipping the block to its own
+     rounded frame would clip the only way out of the source form. The CodeMirror
+     inside keeps its own `overflow: hidden` and border radius, which is what
+     actually draws the editor's frame. */
+  overflow: visible;
   background: var(--surface);
-}
-
-.block-source-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 8px 4px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-raised);
-}
-
-.block-source-label {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-
-.block-source-exit {
-  font: inherit;
-  font-size: 11px;
-  color: var(--accent);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-}
-
-.block-source-exit:hover {
-  background: var(--bg);
-  color: var(--text-primary);
 }
 
 .block-source-mode .cm-editor {

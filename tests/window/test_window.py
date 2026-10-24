@@ -2918,12 +2918,12 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
         timeout=10,
     )
 
-    # The banner's Visual button is the way out of a source block, and a form is
+    # The cluster's Visual button is the way out of a source block, and a form is
     # sticky: it is the sheet this block left that comes back, not its default.
     # (Escape is the ladder's job and is covered as such.)
     _dump(
         window,
-        "(() => { const b = document.querySelector('.block-source-exit');"
+        "(() => { const b = document.querySelector('.block-source-mode .block-control-representation');"
         " if (!b) return { missing: true };"
         " b.click(); return { clicked: true }; })()",
     )
@@ -3110,6 +3110,84 @@ def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
     assert chrome["standoff"] >= -1, chrome
 
 
+def test_a_source_blocks_way_out_lives_in_its_control_cluster(window):
+    """A source editor has no chrome of its own any more: its way out is the same
+    right-margin cluster every other block uses.
+
+    Real engine, because the first version put the cluster where it belonged and
+    then clipped it: `.block-source-mode` had `overflow: hidden` for its rounded
+    frame, and the cluster is positioned *outside* that frame (`left: 100%`), so
+    the buttons existed and could never be seen. The hit test is the one that
+    catches that; jsdom has no layout and happily reports the button.
+    """
+    _set_scheme(window, False)
+    window._web.page().runJavaScript(
+        "window.ediSetContent('First paragraph.\\n\\nSecond paragraph.'); true"
+    )
+    _wait(window, "(() => ({ p: document.querySelectorAll('#editor-container p').length }))()",
+          lambda d: d.get("p") == 2, timeout=15)
+
+    # Source is reached the way every block reaches it: the cluster button.
+    _dump(window, """(() => {
+      const b = document.querySelector('#editor-container .block-control-representation');
+      if (!b) return { missing: 'control' };
+      b.click();
+      return { label: b.getAttribute('aria-label') };
+    })()""")
+    _wait(window, "(() => ({ source: !!document.querySelector('.block-source-mode') }))()",
+          lambda d: d.get("source") is True, timeout=10)
+
+    # The old banner is gone, and the cluster carries the way back.
+    removed = _dump(window, """(() => ({
+      toolbar: !!document.querySelector('.block-source-toolbar'),
+      label: !!document.querySelector('.block-source-label'),
+      exit: !!document.querySelector('.block-source-exit'),
+      cluster: !!document.querySelector('.block-source-mode > .block-controls'),
+      button: (document.querySelector(
+        '.block-source-mode > .block-controls .block-control-representation') || {})
+        .getAttribute?.('aria-label') ?? null,
+    }))()""")
+    assert not removed["toolbar"] and not removed["label"] and not removed["exit"], removed
+    assert removed["cluster"] and removed["button"] == "Visual", removed
+
+    installed = _dump(window, INSTALL_REVEAL)
+    assert installed["rules"] >= 1, installed
+    try:
+        _dump(window, "(() => window.ediReveal())()")
+        hit = _dump(window, """(() => {
+          const btn = document.querySelector(
+            '.block-source-mode > .block-controls .block-control-representation');
+          if (!btn) return { missing: 'button' };
+          const r = btn.getBoundingClientRect();
+          const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return {
+            left: Math.round(r.left), width: Math.round(r.width),
+            hit: !!at && (at === btn || btn.contains(at)),
+            at: at ? at.tagName : null,
+          };
+        })()""")
+        assert not hit.get("missing"), hit
+        assert hit["width"] > 0, hit
+        assert hit["hit"], hit
+    finally:
+        _dump(window, "(() => window.ediUnreveal())()")
+
+    # ...and it is the same exit it always was: pressing it commits and returns
+    # to the rendering.
+    _dump(window, """(() => {
+      const b = document.querySelector(
+        '.block-source-mode > .block-controls .block-control-representation');
+      if (!b) return { missing: 'control' };
+      b.click();
+      return { clicked: true };
+    })()""")
+    back = _wait(window, """(() => ({
+      source: !!document.querySelector('.block-source-mode'),
+      visual: !!document.querySelector('.block-visual-mode'),
+    }))()""", lambda d: d.get("source") is False and d.get("visual") is True, timeout=10)
+    assert not back["source"] and back["visual"], back
+
+
 # — where every block's controls sit. Two questions, both of which jsdom cannot
 # answer (it has no layout) and a screenshot of a just-mutated DOM cannot be
 # trusted with: does the row cover a glyph, and does making room for it cost the
@@ -3235,12 +3313,18 @@ def test_a_blocks_controls_are_beside_it_and_never_over_its_text(window):
                 assert row["pill"][1] <= row["cluster"][1], (
                     f"and it has to fit the margin that holds it: {row}")
 
-            # **A table is its grid, so its controls hug it.** A rendered table used
-            # to be as wide as the column with a small grid in the middle of it,
-            # which put its own buttons a screen away from the thing they act on.
+            # **A table's controls are the page's, like every other block's.** Its
+            # grid is narrow, but the block is the row — the same as a paragraph
+            # whose text stops short of the edge — so its cluster and its pill are
+            # where every other block's are, not at the grid's edge.
             table = next(row for row in out["rows"] if row["cls"] == "ss-plain")
-            assert table["block"][1] - table["block"][0] < 300, table
-            assert table["cluster"][0] == table["block"][1], table
+            para = next(row for row in out["rows"] if row["cls"] == "block-visual-mode")
+            assert table["cluster"][0] == para["cluster"][0], (
+                f"a table's cluster is in the page's margin like every other"
+                f" block's: table {table} paragraph {para}")
+            assert table["pill"][0] == para["pill"][0], (
+                f"and the row itself is in the same place: table {table}"
+                f" paragraph {para}")
 
             # **The text column is the same distance from either window edge.** The
             # left margin is written 24px smaller than the right because every block
@@ -3248,8 +3332,6 @@ def test_a_blocks_controls_are_beside_it_and_never_over_its_text(window):
             # sum is the margin the reader sees.
             left_edge, right_edge = out["pm"]
             for row in out["rows"]:
-                if row["block"][1] < right_edge - 1:
-                    continue  # the shrink-wrapped table, asserted above
                 assert row["block"][0] - left_edge == right_edge - row["block"][1], (
                     f"the text column is not centred in the page: {row} in {out['pm']}")
     finally:
@@ -3345,8 +3427,9 @@ def test_a_blocks_controls_can_be_reached_with_the_pointer(window):
     So the cluster is **two boxes** (`.block-controls` the strip, `.block-control-pill`
     the row) and the claims here are about the strip:
 
-    - it starts at the block's right edge and is **as tall as the block**, so the
-      margin beside any part of the block belongs to that block's row;
+    - it starts at the block's right edge, runs to the page's right edge and is
+      **as tall as the block**, so the margin beside any part of the block
+      belongs to that block's row;
     - the path from inside the block to the row never leaves the block or the strip
       — no sample in between is the page;
     - at rest the row is **inert** (its buttons are not what is under them), so an
@@ -3397,10 +3480,13 @@ def test_a_blocks_controls_can_be_reached_with_the_pointer(window):
             assert row["strip"] is not None, row
             assert row["pill"] is not None, row
             # **The strip is the block's whole right margin**: it starts where the
-            # block ends and it is as tall as the block, which is what makes the
-            # margin beside any part of a tall block belong to it.
+            # block ends and runs to the page's right edge — 96px for a block as wide
+            # as the column, and the row's empty space plus that 96px for a block that
+            # hugs its content — and it is as tall as the block. That is what makes
+            # the margin beside any part of a tall block belong to it.
             assert row["strip"][0] >= row["block"][1] - 1, row
-            assert row["strip"][1] - row["strip"][0] == 96, row
+            assert row["strip"][1] == out["rows"][0]["strip"][1], (
+                f"every strip ends at the page's right edge: {row}")
             assert row["strip"][2] == row["block"][2], row
             # **And the pointer can sit on it at any height.** A row keyed to the
             # block's own box would answer `page` for all three of these.
@@ -3438,6 +3524,136 @@ def test_a_blocks_controls_can_be_reached_with_the_pointer(window):
                 f"a revealed control has to be what the pointer presses: {row} {hits}")
     finally:
         _dump(window, "(() => window.ediUnreveal())()")
+
+
+def test_a_rules_whole_row_reaches_its_controls(window):
+    """A rule is 1px tall, so its row is the whitespace around it.
+
+    An `<hr>` is the one block whose box is not its row: the block is the 1px
+    line, and everything that reads as "the rule's row" is the margins above and
+    below it. A control strip keyed to the block's own `height: 100%` was
+    therefore a 1px line — technically reachable, and in practice a target the
+    pointer had to land on exactly, which is why a rule's Source button could
+    look like it did not exist.
+
+    So the strip covers the margins, and this asks the question the reveal is
+    built out of — **what is under the pointer** — in the margin above the line,
+    on the line, and below it, at the strip's own x. The block's box and the
+    editor's are measured rather than assumed, because a collapsed margin is
+    what makes the whitespace the rule's own.
+    """
+    _set_scheme(window, False)
+    window._web.page().runJavaScript(
+        "window.ediSetContent('Above the rule.\\n\\n---\\n\\nBelow the rule.'); true"
+    )
+    _wait(window, "(() => ({ r: !!document.querySelector('.block-visual-rule') }))()",
+          lambda d: d.get("r") is True, timeout=15)
+
+    out = _dump(window, """(() => {
+      const rule = document.querySelector('#editor-container .block-visual-rule');
+      const strip = rule && rule.querySelector(':scope > .block-controls');
+      if (!strip) return { missing: 'strip' };
+      const b = rule.getBoundingClientRect();
+      const c = strip.getBoundingClientRect();
+      const x = Math.round(c.left + c.width / 2);
+      const at = (y) => {
+        const el = document.elementFromPoint(x, Math.round(y));
+        if (!el) return 'none';
+        if (el.closest('button')) return 'button';
+        return el.closest('.block-controls') ? 'strip' : 'other';
+      };
+      return {
+        blockTop: Math.round(b.top), blockBottom: Math.round(b.bottom),
+        stripTop: Math.round(c.top), stripBottom: Math.round(c.bottom),
+        // The whitespace the row is made of: 1.5em above and below the 1px line.
+        above: at(b.top - 12), on: at(b.top + b.height / 2), below: at(b.bottom + 12),
+      };
+    })()""")
+    assert not out.get("missing"), out
+    assert out["stripTop"] <= out["blockTop"] - 12, (
+        f"the strip has to cover the margin above the rule, not start on its 1px"
+        f" box: {out}")
+    assert out["stripBottom"] >= out["blockBottom"] + 12, (
+        f"and the margin below it: {out}")
+    assert out["above"] == out["on"] == out["below"] == "strip", (
+        f"the whole row belongs to the rule's controls, so a pointer anywhere in"
+        f" it arrives at the strip: {out}")
+
+
+def test_a_rules_hover_band_covers_the_row_the_strip_covers(window):
+    """The rule's band takes the same row the strip already covers.
+
+    Reported as *the hover band on an hr is like 2px high*. The generic band
+    leans 4px past its block's box — a merge with the neighbours' rows for a
+    block that has one — but an `<hr>` is 1px tall, so 4px each way was a ~9px
+    rectangle centred on the line: a sliver in the middle of ~48px of margin,
+    and the one control on the page that still thought the line was the row.
+    The strip had been given the margins (`block-visual-rule`, pinned by
+    `test_a_rules_whole_row_reaches_its_controls`), and the band now takes that
+    same answer with the same numbers — the two controls must not disagree
+    about where a rule's row is.
+
+    `:hover` cannot be exercised here, so the rule-over rule's own declarations
+    are re-injected with `:hover` swapped for a class — the same instrument the
+    band geometry probes use — with `position` and `content` restored from the
+    band they override (the rule-over rule carries only the two offsets, and a
+    pseudo without `content` generates no box to measure). What is measured is
+    the pseudo's *computed* offsets: it has no rect of its own.
+    """
+    _set_scheme(window, False)
+    window._web.page().runJavaScript(
+        "window.ediSetContent('Above the rule.\\n\\n---\\n\\nBelow the rule.'); true"
+    )
+    _wait(window, "(() => ({ r: !!document.querySelector('.block-visual-rule') }))()",
+          lambda d: d.get("r") is True, timeout=15)
+
+    out = _dump(window, """(() => {
+      const rule = document.querySelector('#editor-container .block-visual-rule');
+      if (!rule) return { missing: 'rule' };
+      const strip = rule.querySelector(':scope > .block-controls');
+      if (!strip) return { missing: 'strip' };
+      const SEL = '.ProseMirror > .block-visual-rule:not(.edi-block-mode)'
+        + ':not(.encrypted-block-reveal-editor *):hover::before';
+      let band = null;
+      for (const sheet of document.styleSheets) {
+        let rules; try { rules = sheet.cssRules; } catch (err) { continue; }
+        for (const r of rules) { if (r.selectorText === SEL) band = r; }
+      }
+      if (!band) return { missing: 'band' };
+      const style = document.createElement('style');
+      style.textContent = SEL.replace(':hover', '.edi-band-probe')
+        + '{position: absolute;content: "";' + band.style.cssText + '}';
+      document.head.appendChild(style);
+      const b = rule.getBoundingClientRect();
+      const s = strip.getBoundingClientRect();
+      rule.classList.add('edi-band-probe');
+      const cs = getComputedStyle(rule, '::before');
+      const out = {
+        content: String(cs.content),
+        bandTop: Math.round(b.top + parseFloat(cs.top)),
+        bandBottom: Math.round(b.bottom - parseFloat(cs.bottom)),
+        stripTop: Math.round(s.top), stripBottom: Math.round(s.bottom),
+        blockTop: Math.round(b.top), blockBottom: Math.round(b.bottom),
+      };
+      rule.classList.remove('edi-band-probe');
+      style.remove();
+      return out;
+    })()""")
+    assert not out.get("missing"), out
+    assert out["content"] != "none", out
+    # The sliver is gone: the band reaches the margins above and below the line,
+    # the same ±12 the strip's own gate asks of the strip.
+    assert out["bandTop"] <= out["blockTop"] - 12, (
+        f"the band above the rule was the 4px lean around a 1px line — the very "
+        f"sliver the strip's row fix answered for the controls: {out}")
+    assert out["bandBottom"] >= out["blockBottom"] + 12, (
+        f"and the margin below it: {out}")
+    # And it answers with the strip's own numbers, so "where is this rule's row?"
+    # has one answer on the page rather than two boxes that disagree by 20px.
+    assert abs(out["bandTop"] - out["stripTop"]) <= 1, (
+        f"band and strip must cover the same margin above the line: {out}")
+    assert abs(out["bandBottom"] - out["stripBottom"]) <= 1, (
+        f"and the same margin below it: {out}")
 
 
 def test_a_blocks_controls_clear_its_own_editing_outline(window):
@@ -3501,17 +3717,15 @@ def test_a_blocks_controls_clear_its_own_editing_outline(window):
         f"the row has to fit the gutter it was given: {out}")
 
 
-def test_a_press_beside_a_shrink_wrapped_table_puts_the_caret_beside_it(window):
-    """The white space to the right of a narrow table is **not** the table.
+def test_a_press_beside_a_table_puts_the_caret_beside_it(window):
+    """The white space to the right of a table's grid is **not** the grid.
 
-    A block that hugs its grid has no content in the space beside it: the row is
-    empty there, the block's own control strip is 96px of margin at its edge, and
-    the rest is the editor's white space. So a press there reaches ProseMirror, and
-    ProseMirror's own answer, in the empty column beside a narrow atom, is a
-    `NodeSelection` on that atom: the whole table painted and no caret anywhere.
-    `src/press.ts` therefore answers a press in the page's white space *when what
-    ProseMirror would answer with is a block selection*, and places the caret at
-    the nearest text instead.
+    The block is the row, like a paragraph whose text stops short of the edge: to
+    the right of the grid is the block's own margin (the scroller is wider than
+    the table) and then the page. ProseMirror's own answer in the empty column
+    beside a narrow atom is a `NodeSelection` on that atom — the whole table
+    painted and no caret anywhere — so `src/press.ts` answers a press in that
+    margin as the white space it is and places the caret at the nearest text.
 
     Real engine, real coordinates and a real hit test: which element is under the
     point is the whole question, and it is the one thing a unit test cannot ask.
@@ -3529,7 +3743,10 @@ def test_a_press_beside_a_shrink_wrapped_table_puts_the_caret_beside_it(window):
 
     out = _dump(window, """(() => {
       const table = document.querySelector('#editor-container .ss-plain');
-      const box = table.getBoundingClientRect();
+      const grid = table.querySelector('.ss-plain-table');
+      const box = grid.getBoundingClientRect();
+      // **Past the grid, inside the row**: the block is as wide as the column, so
+      // 120px right of a 63px grid is still its scroller and nowhere near the edge.
       const x = box.right + 120;
       const y = box.top + box.height / 2;
       const at = document.elementFromPoint(x, y);
@@ -3539,9 +3756,10 @@ def test_a_press_beside_a_shrink_wrapped_table_puts_the_caret_beside_it(window):
       }
       const sel = document.getSelection();
       return {
-        // The press has to land on the editor *itself* and not on the table, or
-        // this is not the gesture under test at all.
-        target: at === document.querySelector('#editor-container .ProseMirror'),
+        // The press has to land in the row beside the grid and not on the grid
+        // itself, or this is not the gesture under test at all.
+        target: !!at && at.closest('.ss-plain') === table,
+        onMargin: !!at && !!at.closest('.ss-plain-scroll') && !at.closest('.ss-plain-table'),
         selectedAtom: document.querySelectorAll('.ProseMirror-selectednode').length,
         tableSelected: table.classList.contains('ProseMirror-selectednode'),
         gapCursor: !!document.querySelector('.ProseMirror-gapcursor'),
@@ -3549,9 +3767,9 @@ def test_a_press_beside_a_shrink_wrapped_table_puts_the_caret_beside_it(window):
         inTable: !!sel && !!sel.anchorNode && table.contains(sel.anchorNode),
       };
     })()""")
-    assert out["target"], (
-        "120px to the right of a 63px table is still inside the editor, which is "
-        "what makes this a press in the page's white space: %r" % (out,))
+    assert out["target"] and out["onMargin"], (
+        "120px to the right of the grid is still the table's row — the block is the"
+        " whole row, and that is what makes this a press beside the table: %r" % (out,))
     assert out["selectedAtom"] == 0 and not out["tableSelected"], (
         "a press beside the table selected it, which paints the whole block and "
         "leaves no caret: %r" % (out,))
@@ -3592,14 +3810,14 @@ def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
     after = _wait(
         window,
         "(() => ({ source: !!document.querySelector('.block-source-mode'),"
-        " banner: (document.querySelector('.block-source-label') || {}).textContent || null,"
+        " visual: (document.querySelector('.block-source-mode .block-control-representation') || {}).getAttribute('aria-label'),"
         " editing: !!document.querySelector('.mermaid-editing'),"
         " cluster: !!document.querySelector('.mermaid .block-controls'),"
         " marked: document.querySelectorAll('.mermaid-editables').length }))()",
         lambda d: d["source"] is True,
         timeout=10,
     )
-    assert after["banner"] == "Source", after
+    assert after["visual"] == "Visual", after
     assert not after["editing"], after
     assert not after["cluster"], after
     assert not after["marked"], after
@@ -3609,10 +3827,10 @@ def test_source_from_a_board_s_own_cluster_while_it_is_being_edited(window):
     # ...and back again, from the banner: one control, both directions.
     _dump(
         window,
-        "(() => { const b = document.querySelector('.block-source-exit');"
+        "(() => { const b = document.querySelector('.block-source-mode .block-control-representation');"
         " if (!b) return { missing: true };"
         " b.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));"
-        " return { label: b.textContent }; })()",
+        " return { label: b.getAttribute('aria-label') }; })()",
     )
     back = _wait(
         window,
@@ -4606,13 +4824,13 @@ def test_the_hover_band_reaches_the_page_edges(window):
     edge whatever the block's own width, and the band reaches past the block's box
     above and below so consecutive blocks read as one band.
 
-    **The right edge is the row, not the block.** A rendered table is as wide as its
-    grid (`.ss-plain`), so a band that cancelled the gutter from the block's own
-    right edge was 96px wide beside a 63px grid: a highlight that hugged the table
-    while every other block's spanned the page, which reads as the table's own
-    outline rather than as the row it sits in. The rule names the editor's content
-    width instead (`100cqw`, and `.ProseMirror` is the query container), so the band
-    is the row for every block type — a shrink-wrapped block included.
+    **The right edge is the row, not the block.** The rule names the editor's
+    content width (`100cqw`, and `.ProseMirror` is the query container) rather than
+    the block's own box, so the band is the row whatever the block's width. A table
+    first showed the difference: while it shrink-wrapped its grid, cancelling the
+    gutter from its own edge drew a 96px highlight beside a 63px grid, which read as
+    the table's own outline rather than as the row it sits in. The declaration stays
+    because the band is about the row, not about any one block's box.
 
     **And the row is the top-level block's, which is what the candidates are.** The
     probe measures every element the rule's own selector matches rather than
@@ -4667,9 +4885,8 @@ graph TD
         # **The band is the row the block sits in**, measured from the block's own
         # box and the editor's own padding rather than from a number in this file:
         # the left cancels the padding *and* the block's indent, and the right is the
-        # editor's content edge — for a paragraph because the gutter is the space
-        # left beside it, and for the shrink-wrapped table because the rule names the
-        # editor's width rather than the grid's.
+        # editor's content edge — the rule names the editor's width rather than the
+        # block's, which is what keeps the band the row whatever the block's own box.
         want_left = max(probe["pmLeft"],
                         row["blockLeft"] - probe["padLeft"] - row["marginLeft"])
         want_right = probe["pmRight"]
@@ -4683,11 +4900,12 @@ graph TD
         assert row["bandTop"] < row["blockTop"], row
         assert row["bandBottom"] > row["blockBottom"], row
 
-    # **The shrink-wrapped block is the one this is about**, so it is measured
-    # against its own grid as well: the band runs on past the table to the page edge
-    # rather than stopping at the block's own 96px of margin.
+    # **A rendered table's row is the editor's row**, like a paragraph's: the block
+    # spans the text column with the grid inside it, so its band is the page's and
+    # not a 96px margin round a grid.
     table = next(row for row in rows if row["cls"] == "ss-plain")
-    assert table["blockRight"] - table["blockLeft"] < 300, table
+    para = next(row for row in rows if row["cls"] == "block-visual-mode")
+    assert abs(table["blockRight"] - para["blockRight"]) <= 1, (table, para)
     assert abs(table["bandRight"] - probe["pmRight"]) <= 1, (
         f"a rendered table's row is the editor's row, not a 96px margin round its "
         f"grid: {table}")
@@ -6247,15 +6465,15 @@ def test_opening_a_second_block_takes_the_focus_path_from_the_first(window):
         % (handed,))
     assert handed["sources"] == 1, handed
 
-    # ...and the block that took it keeps the way out it always had: the source banner's
-    # own **Visual** button, which is *in flow* in the bar rather than floating over it
-    # (§6.3's reason a control in the cluster could not be used here).
+    # ...and the block that took it keeps the way out it always had: its source
+    # form's own **Visual** button, in the same right-margin cluster every block's
+    # mode controls live in.
     _dump(window, """(() => {
       const done = document.querySelector(
-        '#editor-container > .ProseMirror > .block-source-mode .block-source-exit');
+        '#editor-container > .ProseMirror > .block-source-mode .block-control-representation');
       if (!done) return { missing: 'exit' };
       done.click();
-      return { label: done.textContent.trim() };
+      return { label: done.getAttribute('aria-label') };
     })()""")
     left = _wait(window, r"""(() => ({
       sources: document.querySelectorAll(
@@ -8573,12 +8791,12 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
           const box = table.getBoundingClientRect();
           let x, y, target;
           if (%s === 'margin' || %s === 'page') {
-            // **Beside the grid.** The block is as wide as its grid (`.ss-plain` hugs it),
-            // so both of these points are past the block: `margin` is 8px past the grid,
-            // which is the block's own control strip (its right margin), and `page` is
-            // past that strip, on the editor's box. Both are white space and both are
-            // answered the same way; which element takes the press is checked below
-            // rather than assumed.
+            // **Beside the grid.** The block is the whole row — a table's box is
+            // the editor's column, exactly like a paragraph's — so both of these
+            // points are inside the block: `margin` is 8px past the grid and `page`
+            // is far into the empty row. Both are the scroller around the grid
+            // (`.ss-plain-scroll.block-margin`), which is white space, and both are
+            // answered the same way.
             x = Math.round(box.right + (%s === 'page' ? 200 : 8));
             y = Math.round(box.top + box.height / 2);
             target = document.elementFromPoint(x, y);
@@ -8616,22 +8834,21 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
                        "\nProse below.\n"))
     _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
           lambda d: d.get("t") is True, timeout=25)
-    # **The space beside a shrink-wrapped table is white space, and the block knows it.**
-    # The press used to land on `.ss-plain-scroll.block-margin` — a marker that existed
-    # because the block was as wide as the column and the grid hugged its left. The block
-    # is its grid now, so 8px past the table is the block's own control strip (its right
-    # margin; `.block-controls`), which `src/press.ts` answers as white space exactly like
-    # the page past it. Both surfaces are checked, because "beside the table" has to mean
-    # the same thing on either side of the strip's edge.
+    # **The space beside a table's grid is white space, and the block knows it.**
+    # The block is the row (like a paragraph, whatever the width of what it
+    # contains), so the empty room beside the grid is the scroller's own margin,
+    # marked `.block-margin` and answered by `src/press.ts` as white space. Both
+    # distances are checked, because "beside the table" has to mean the same thing
+    # at the grid's edge and further out into the row.
     margin = _press('margin')
     assert not margin.get("missing"), margin
-    assert margin["at"] == "block-controls", (
-        f"8px past the grid is the block's own margin strip, whose presses are white"
-        f" space: {margin}")
+    assert margin["at"] == "ss-plain-scroll", (
+        f"8px past the grid is the block's own margin around it, whose presses are"
+        f" white space: {margin}")
     page = _press('page')
     assert not page.get("missing"), page
-    assert page["at"] == "ProseMirror", (
-        f"and past the strip the press is the editor's: {page}")
+    assert page["at"] == "ss-plain-scroll", (
+        f"and further out into the row is the same margin: {page}")
     time.sleep(0.4)
     picked = _cells()
     assert picked["selectedNodes"] == [], (
@@ -8913,27 +9130,27 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
     # --- The reported document: a small table with prose around it.
     _load("Prose above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nProse below.\n")
     start = _read()
-    # **A 2x2 table is a tiny grid in a wide editor**, which is the whole of the report —
-    # and the block is the grid now (`.ss-plain` shrink-wraps), so the strip beside it is the
-    # block's own right margin, which is empty space on the page and is answered as such.
-    assert start["gridX"] == start["blockX"], (
-        f"the block hugs its grid, so their boxes are the same: {start}")
+    # **A 2x2 table is a tiny grid in a wide editor**, which is the whole of the report.
+    # The block is the row, exactly like a paragraph whose text stops short of the edge:
+    # it spans the column and the grid inside it is 63px wide, so the room to the right
+    # is the block's own margin and is answered as white space.
+    assert start["blockX"][1] - start["blockX"][0] > 300, (
+        f"the block is the row, as it is for every block: {start}")
     assert start["gridX"][1] - start["gridX"][0] < 200, (
-        f"a 2x2 table is a tiny grid in a wide editor, which is the whole of the report:"
-        f" {start}")
+        f"and a 2x2 grid is tiny inside it, which is the whole of the report: {start}")
+    assert start["gridX"][0] == start["blockX"][0], (
+        f"the grid starts at the block's left edge: {start}")
     assert start["pmX"][1] - start["gridX"][1] > 300, (
         f"and the editor is far wider than it: {start}")
 
     # **A click in the empty strip gives a caret**, and paints nothing at all. 60px past the
-    # grid is inside the block's own control strip — its right margin, which paints nothing and
-    # is classified as white space by `src/press.ts` — so what this asserts is the answer, not
-    # which box took the press. (Past the strip is the editor's own box, and the press there is
-    # the same answer; `test_a_click_with_nothing_to_select_drops_a_visual_tables_fill` presses
-    # both and checks that they agree.)
+    # grid is the block's own margin around the grid (`.ss-plain-scroll.block-margin`), which
+    # paints nothing and is classified as white space by `src/press.ts` — so what this asserts
+    # is the answer, not which box took the press.
     hit = _click_where(beside)
-    assert hit.get("missing") is not True and hit["at"] == "block-controls", (
-        f"this press has to land on the block's margin beside the grid to test anything — the"
-        f" block stops at the table's edge and the strip starts there: {hit}")
+    assert hit.get("missing") is not True and hit["at"] == "ss-plain-scroll", (
+        f"this press has to land on the block's margin beside the grid to test anything —"
+        f" the grid stops at its edge and the block's own row continues: {hit}")
     time.sleep(0.5)
     beside_out = _read()
     assert beside_out["blockSelected"] is False, (
@@ -8971,12 +9188,12 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
     # which is why the paint is the cells and nothing else:
     #
     # - *Outside the grid it is clipped away on three sides.* `.ss-plain-scroll` is
-    #   `overflow-x: auto; overflow-y: hidden` and its box is **exactly** the grid's (measured
-    #   when the block was still column-width: a grid of 48,161→253,221 inside a scroller of
-    #   48,161→1256,221; the scroller is the grid's own box now that the block hugs it), so an
-    #   outline drawn 2px out is cut on the top, bottom and left and **only the right survives** —
-    #   the report's *"only part of the blue selected border, on the right of the table"*, which
-    #   read as a rendering artifact rather than as a selection.
+    #   `overflow-x: auto; overflow-y: hidden` and its box is the block's — the
+    #   column's width (measured: a grid of 48,161→253,221 inside a scroller of
+    #   48,161→1256,221), so an outline drawn 2px out is cut on the top, bottom and
+    #   left and **only the right survives** — the report's *"only part of the blue
+    #   selected border, on the right of the table"*, which read as a rendering
+    #   artifact rather than as a selection.
     # - *Inside the grid it is painted over by the cells.* Every cell is
     #   `position: relative; isolation: isolate`, so the header row's own backgrounds cover a
     #   ring drawn inside the table's border: measured at `outline-offset: -2px` against a real

@@ -47,10 +47,10 @@
  * nearest text, on the side that was pressed — because the margin is the white space beside the
  * block and sits *inside* the block's DOM, where ProseMirror's own mapping cannot reach it.
  * **The same answer is given for the editor's own white space when ProseMirror would give a
- * block selection instead**: beside a shrink-wrapped table the press's coordinates map onto the
- * table itself, and a press there is a request for a caret beside it, not a request to select
- * it (§ *the answer* below). Everywhere else the white space is ProseMirror's, which lands the
- * caret on the words the reader aimed at.
+ * block selection instead**: in the white space beside a short atom, the press's coordinates
+ * map onto the atom itself, and a press there is a request for a caret beside it, not a request
+ * to select it (§ *the answer* below). Everywhere else the white space is ProseMirror's, which
+ * lands the caret on the words the reader aimed at.
  *
  * **A press never inserts anything.** It used to: a document of nothing but tables and code
  * blocks has nowhere to type, so a click in the white space made a paragraph — marking the file
@@ -136,14 +136,11 @@ export function blockPosForElement(view: EditorView, target: EventTarget | null)
  *
  * **Most blocks have none and declare nothing:** a diagram is drawn to its content, a rule is
  * its content, an image is its content — there is nothing beside any of them to press. A Visual
- * table declares one on its scroller, because the scroller is what carries the grid: when the
- * grid is wider than the column the scroller is the full width of the block and the grid inside
- * it slides, and the strip that is scroller-but-not-grid is white space rather than table.
+ * table declares one on its scroller, because the block is the whole row while its grid is as
+ * wide as its content: the strip that is scroller-but-not-grid is white space rather than table.
  *
- * **A block that hugs its content has no margin**, and that is the usual case now: a plain table
- * shrink-wraps its grid (`.ss-plain` in `styles.css`), so its box *is* the grid and there is no
- * strip of its own to declare. The white space beside it then belongs to the editor, which is
- * why `answerPress` has to answer for `space` as well as for `margin` — see below.
+ * **The white space beside a block with no margin is the editor's**, which is why `answerPress`
+ * has to answer for `space` as well as for `margin` — see below.
  *
  * **It is a declaration because "this part of me is not my content" is a fact only the block
  * knows**, and it is a *margin* rather than a "gutter" because the word named the symptom once
@@ -269,9 +266,10 @@ export function pressTarget(view: EditorView, event: MouseEvent): PressTarget {
       // The cluster is the block's right margin, so the box it occupies is white space with
       // pictures in it; only the buttons are controls. Without this the strip around them
       // swallowed the "put a caret beside this block" gesture — which is exactly the gesture
-      // that stops a press beside a shrink-wrapped table from selecting the table. It is
-      // also why an *unrevealed* row is safe: its pill is `pointer-events: none`, so a press
-      // on a button the reader cannot see arrives here as the strip and is answered as space.
+      // that stops a press in the margin beside a block's narrow content from selecting the
+      // block. It is also why an *unrevealed* row is safe: its pill is `pointer-events: none`,
+      // so a press on a button the reader cannot see arrives here as the strip and is answered
+      // as space.
       if (target.closest('button') !== null) return { kind: 'control', pos: named }
       if (nearest === null) return { kind: 'none' }
       return { kind: 'space', pos: nearest.pos, before: nearest.before }
@@ -331,11 +329,11 @@ export function answerPress(view: EditorView, event: MouseEvent, target: PressTa
   // this module could: it maps the press's *coordinates* onto the text, so a click inside a long
   // paragraph lands between the words the reader aimed at. So a `space` press is left to it —
   // **unless what it would answer with is a block selection rather than a caret.** `posAtCoords`
-  // returns a position either way, and in the white space beside a **narrow** block that position
-  // is the atom next to it: a `NodeSelection`, all of the table's pixels painted and no caret
-  // anywhere. That is the shape of a shrink-wrapped table (`.ss-plain` hugs its grid, see
-  // `styles.css`), so pressing to the right of a small table is a press beside a block, and this
-  // module answers it exactly as it answers one beside a wide block's margin.
+  // returns a position either way, and in the white space beside a **short** atom that position
+  // is the atom next to it: a `NodeSelection`, all of the block's pixels painted and no caret
+  // anywhere. That is the shape of a narrow atom in a wide row, so pressing in the editor's white
+  // space beside one is a press beside a block, and this module answers it exactly as it answers
+  // one beside a wide block's margin.
   //
   // The gate is the answer, not the ability to answer: a position inside text is handed back,
   // a position on an atom is taken.

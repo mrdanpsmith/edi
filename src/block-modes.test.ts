@@ -479,9 +479,8 @@ describe('one cluster per top-level block', () => {
     enterSourceMode(view, first)
     // The one-way dot grid of §1.5 returned early when the block it named was
     // already open, so the mode could not be turned off from there at all.
-    expect((view.nodeDOM(first) as HTMLElement).querySelector(`.${BLOCK_CONTROLS_CLASS}`)).toBeNull()
-    const banner = (view.nodeDOM(first) as HTMLElement).querySelector('.block-source-exit') as HTMLButtonElement
-    expect(banner.textContent).toBe('Visual')
+    const banner = (view.nodeDOM(first) as HTMLElement).querySelector('.block-control-representation') as HTMLButtonElement
+    expect(banner.getAttribute('aria-label')).toBe('Visual')
     banner.click()
     expect(currentBlockMode(view.state)).toBeNull()
     expect((view.nodeDOM(first) as HTMLElement).classList.contains('block-visual-mode')).toBe(true)
@@ -492,9 +491,9 @@ describe('one cluster per top-level block', () => {
     const view = createEditor('# Hello')
     const [first] = allBlockPositions(view)
     enterSourceMode(view, first)
-    expect(view.dom.querySelectorAll(`.${BLOCK_CONTROLS_CLASS}`).length).toBe(0)
+    expect(view.dom.querySelectorAll(`.${BLOCK_CONTROLS_CLASS}`).length).toBe(1)
     const previews = Array.from(view.dom.querySelectorAll('button'))
-      .filter((button) => button.textContent === 'Visual')
+      .filter((button) => button.getAttribute('aria-label') === 'Visual')
     expect(previews.length).toBe(1)
     view.destroy()
   })
@@ -718,7 +717,7 @@ describe('the Alt+click gesture (§5.2)', () => {
 
     altClick(view.dom.querySelector('h1'))
     expect(modeFor(view.state, heading)?.representation).toBe('source')
-    expect(view.dom.querySelector('.block-source-exit')?.textContent).toBe('Visual')
+    expect(view.dom.querySelector('.block-control-representation')?.getAttribute('aria-label')).toBe('Visual')
 
     // ...and the same press again, in the raw-markdown buffer, is the other end.
     // A CodeMirror is deliberately not `chromeOwnsClick`'s, precisely so this
@@ -1243,7 +1242,7 @@ describe('a mode flip reaches the node views (BLOCK_MODE_CLASS)', () => {
     const dom = view.nodeDOM(board) as HTMLElement
     expect(dom.classList.contains('block-source-mode')).toBe(true)
     expect(dom.querySelector('.mermaid-preview')).toBeNull()
-    expect(dom.querySelector('.block-source-exit')?.textContent).toBe('Visual')
+    expect(dom.querySelector('.block-control-representation')?.getAttribute('aria-label')).toBe('Visual')
     view.destroy()
   })
 

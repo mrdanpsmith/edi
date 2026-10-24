@@ -150,29 +150,13 @@ class MermaidNodeView implements NodeView {
     this.dom.innerHTML = ''
     this.dom.className = 'block-source-mode'
 
-    const toolbar = document.createElement('div')
-    toolbar.className = 'block-source-toolbar'
-    const label = document.createElement('span')
-    label.className = 'block-source-label'
-    label.textContent = 'Source'
-    toolbar.appendChild(label)
-
-    const exitBtn = document.createElement('button')
-    exitBtn.type = 'button'
-    exitBtn.className = 'block-source-exit'
-    exitBtn.textContent = 'Visual'
-    exitBtn.title = 'Back to the rendered block (Esc)'
-    exitBtn.addEventListener('click', () => {
-      this.exitSource(this.cm?.getValue() ?? '')
-    })
-    toolbar.appendChild(exitBtn)
-
-    this.dom.appendChild(toolbar)
-
     const markdown = serializeBlock(this.node)
     this.cm = createBlockCodeMirror(this.dom, markdown, (value) => {
       this.exitSource(value)
     })
+
+    this.controls = attachBlockControls(this.node, this.view, this.getPos)
+    if (this.controls) this.dom.appendChild(this.controls.dom)
 
     requestAnimationFrame(() => this.cm?.focus())
   }

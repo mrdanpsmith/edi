@@ -202,11 +202,10 @@ describe('block nodeView factory', () => {
     const pos = firstBlockPos(view)
     enterSourceMode(view, pos)
     const dom = view.nodeDOM(pos) as HTMLElement
-    const btn = dom.querySelector('.block-source-exit') as HTMLElement
+    const btn = dom.querySelector('.block-control-representation') as HTMLElement
     expect(btn).toBeTruthy()
     // §5.1: the two names for the two forms, wherever they are shown.
-    expect(btn.textContent).toBe('Visual')
-    expect(dom.querySelector('.block-source-label')?.textContent).toBe('Source')
+    expect(btn.getAttribute('aria-label')).toBe('Visual')
     view.destroy()
   })
 
@@ -234,17 +233,16 @@ describe('block nodeView factory', () => {
     view.destroy()
   })
 
-  it('source view shows the banner, and no floating cluster', () => {
+  it('source view shows the cluster, and no toolbar', () => {
     const view = createEditor('Hello world')
     const pos = firstBlockPos(view)
     enterSourceMode(view, pos)
     const dom = view.nodeDOM(pos) as HTMLElement
-    expect(dom.querySelector('.block-controls')).toBeNull()
-    // One action, one place: a block is never showing two Visual controls. A
-    // cluster button names itself in `aria-label` now, so both spellings count.
+    expect(dom.querySelector('.block-source-toolbar')).toBeNull()
+    expect(dom.querySelector('.block-controls')).toBeTruthy()
+    // One action, one place: a block is never showing two Visual controls.
     const previews = Array.from(view.dom.querySelectorAll('button'))
-      .filter((button) => button.textContent === 'Visual' ||
-        button.getAttribute('aria-label') === 'Visual')
+      .filter((button) => button.getAttribute('aria-label') === 'Visual')
     expect(previews.length).toBe(1)
     view.destroy()
   })
