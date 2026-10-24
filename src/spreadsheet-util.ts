@@ -190,6 +190,52 @@ export function inlineMarkdownToHtml(
   return renderCellHtml(text, opts?.indexedMasked ?? false, opts?.markMisleading ?? false)
 }
 
+/**
+ * Render a pipe-table `value` as the real `<table>` everything outside this
+ * editor should see — HTML export, and the `text/html` leg of every copy.
+ *
+ * This is the answer to "regular copy became markdown": the table atom used to
+ * serialize its raw pipe text into a `div[data-edi-table]`, which is exactly
+ * what this app needs to round-trip a *copy* (formulas, cell markup and quoted
+ * pipes stay byte-exact) and is exactly what an external editor cannot read —
+ * Confluence pastes the pipes as literal text. So the visible markup is a real
+ * grid (cells rendered through `inlineMarkdownToHtml`, the same as the export
+ * does), and the pipes ride in a `data-edi-table` *attribute*, which the
+ * schema's parse rule reads back first — the round trip survives the copy; the
+ * external reader takes the table.
+ *
+ * The rendered cells do not carry alignment — HTML has no column-level spelling
+ * for it here — but the delimiter row's colons still ride the attribute, so this
+ * app reads them back with `parsePipesAlign`. That matches the export table this
+ * builder replaced.
+ */
+export function richTableDom(value: string): HTMLTableElement {
+  const rows = parsePipes(value)
+  const table = document.createElement('table')
+  table.setAttribute('data-edi-table', value)
+  if (rows.length === 0) return table
+  const cell = (text: string, tag: 'th' | 'td'): HTMLElement => {
+    // `inlineMarkdownToHtml` returns an HTML string; a text node would escape
+    // the markup it renders, so the parsed HTML becomes the cell's content.
+    const el = document.createElement(tag)
+    el.innerHTML = inlineMarkdownToHtml(text)
+    return el
+  }
+  const head = document.createElement('thead')
+  const header = document.createElement('tr')
+  for (const text of rows[0]!) header.appendChild(cell(text, 'th'))
+  head.appendChild(header)
+  table.appendChild(head)
+  const body = document.createElement('tbody')
+  for (const row of rows.slice(1)) {
+    const tr = document.createElement('tr')
+    for (const text of row) tr.appendChild(cell(text, 'td'))
+    body.appendChild(tr)
+  }
+  table.appendChild(body)
+  return table
+}
+
 // --- Resolved tables (markdown without live formulas) ---
 
 const TABLE_CARRIER_OPEN = '<!-- edi-fml '

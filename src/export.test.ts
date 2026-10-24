@@ -137,7 +137,9 @@ describe('serializeDocToHtml', () => {
 
   it('renders tables', () => {
     const html = serializeDocToHtml(docFrom('| A | B |\n| --- | --- |\n| 1 | 2 |'))
-    expect(html).toContain('<table>')
+    // The schema's own `toDOM` draws the export table (`richTableDom`), and the
+    // raw pipe value rides its `data-edi-table` attribute.
+    expect(html).toContain('<table data-edi-table=')
     expect(html).toContain('<th>A</th>')
     expect(html).toContain('<td>1</td>')
     expect(html).toContain('<td>2</td>')

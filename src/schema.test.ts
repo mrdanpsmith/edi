@@ -35,6 +35,54 @@ describe('schema parseDOM', () => {
     expect(doc.child(1).attrs.value).toBe('graph TD\nA')
   })
 
+  describe('table', () => {
+    // Formulas, cell markup, quoted titles and an escaped pipe — everything the
+    // pipe value carries that a *rendered grid* cannot say.
+    const VALUE = '| A | B ("q") |\n| --- | --- |\n| **bold** \\| x | =A2*2 |'
+    const docWith = (value: string) =>
+      schema.nodes.doc.create(null, [schema.nodes.table.create({ value })])
+
+    it('serializes a real grid with the raw pipes on the attribute, not as text', () => {
+      const view = new EditorView(document.body, {
+        state: EditorState.create({ schema, doc: docWith(VALUE) }),
+      })
+      const table = document.querySelector('table')!
+      expect(table.getAttribute('data-edi-table')).toBe(VALUE)
+      expect(table.querySelectorAll('th')).toHaveLength(2)
+      // Cell markup is rendered exactly like the export and the grid show it:
+      // the raw pipes are the attribute's job, never the cell text's.
+      const first = table.querySelector('td')!
+      expect(first.innerHTML).toContain('<strong>bold</strong>')
+      expect(first.textContent).toBe('bold | x')
+      view.destroy()
+    })
+
+    it('reads its own copy back byte-exact from the attribute', () => {
+      // What the copy produced above, as it lands on the clipboard.
+      const container = document.createElement('div')
+      container.innerHTML = `<table data-edi-table="${VALUE.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></table>`
+      const doc = DOMParser.fromSchema(schema).parse(container)
+      expect(doc.child(0).type.name).toBe('table')
+      expect(doc.child(0).attrs.value).toBe(VALUE)
+    })
+
+    it('reads a foreign table from its rendered cells', () => {
+      // No attribute: the table came from Confluence or a web page, and its
+      // cells are the only text there is. This is the pre-attribute path.
+      const container = document.createElement('div')
+      container.innerHTML = '<table><tr><th>H1</th><th>H2</th></tr><tr><td>a</td><td>b</td></tr></table>'
+      const doc = DOMParser.fromSchema(schema).parse(container)
+      expect(doc.child(0).attrs.value).toBe('| H1 | H2 |\n| --- | --- |\n| a | b |')
+    })
+
+    it('still reads the raw-pipe div older writes left behind', () => {
+      const container = document.createElement('div')
+      container.innerHTML = `<div data-edi-table="">${VALUE.replace(/&/g, '&amp;')}</div>`
+      const doc = DOMParser.fromSchema(schema).parse(container)
+      expect(doc.child(0).attrs.value).toBe(VALUE)
+    })
+  })
+
   it('keeps a real link title from HTML', () => {
     const container = document.createElement('div')
     container.innerHTML = '<a href="https://e.com/a" title="documents the API">docs</a>'

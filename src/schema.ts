@@ -1,6 +1,6 @@
 import { Schema } from 'prosemirror-model'
 import type { SchemaSpec } from 'prosemirror-model'
-import { domTableToPipes } from './spreadsheet-util'
+import { domTableToPipes, richTableDom } from './spreadsheet-util'
 
 export function headingSlug(text: string): string | undefined {
   const id = text
@@ -141,22 +141,34 @@ const nodes: SchemaSpec['nodes'] = {
     attrs: { value: { default: '' }, _resolved: { default: false } },
     parseDOM: [
       {
-        tag: 'table',
+        tag: 'div[data-edi-table]',
         getAttrs(dom: HTMLElement) {
-          return { value: domTableToPipes(dom as HTMLTableElement) }
+          // toDOM used to write the raw pipe-table text into the element
+          // (mermaid pattern), so a copy/paste round trip preserved the cell
+          // markup. Kept for clipboards written by older builds.
+          return { value: dom.textContent ?? '' }
         },
       },
       {
-        tag: 'div[data-edi-table]',
+        tag: 'table',
         getAttrs(dom: HTMLElement) {
-          // toDOM writes the raw pipe-table text into the element (mermaid
-          // pattern), so a copy/paste round trip preserves the cell markup.
-          return { value: dom.textContent ?? '' }
+          // **This app's own copies ride an attribute.** `toDOM` leaves the raw
+          // pipe-table value (formulas, cell markup, quoted pipes) on
+          // `data-edi-table`, so a copy/paste round trip inside the editor puts
+          // the very same `value` back; a table copied from *anything else*
+          // (Confluence, a web page, Excel) has no such attribute, and its
+          // rendered cells are what is read.
+          const carried = (dom as HTMLTableElement).getAttribute('data-edi-table')
+          return { value: carried !== null ? carried : domTableToPipes(dom as HTMLTableElement) }
         },
       },
     ],
     toDOM(node) {
-      return ['div', { 'data-edi-table': '' }, node.attrs.value as string]
+      // The table *outside* this editor is a real grid, not its markdown:
+      // Confluence, Docs and Word render cells, not pipe rows. The raw value
+      // rides the attribute at parse time (above). `richTableDom`'s docstring
+      // is the whole story.
+      return { dom: richTableDom(node.attrs.value as string) }
     },
   },
 

@@ -3,7 +3,6 @@ import { DOMSerializer } from 'prosemirror-model'
 import { schema } from './schema'
 import { computeSpreadsheet } from './spreadsheet'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
-import { inlineMarkdownToHtml, parsePipes } from './spreadsheet-util'
 import { escapeHtml } from './utils'
 
 const EXPORT_CSS = `
@@ -256,25 +255,10 @@ export function serializeDocToHtml(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV
     return [`h${level}`, 0]
   }
 
-  nodes.table = (node) => {
-    const rows = parsePipes(String(node.attrs.value ?? ''))
-    if (rows.length === 0) {
-      return ['table', 0]
-    }
-    // `inlineMarkdownToHtml` returns an HTML string; DOMSerializer escapes
-    // strings as text, so build each cell as a real element instead.
-    const cell = (text: string, tag: 'th' | 'td'): { dom: HTMLElement } => {
-      const el = document.createElement(tag)
-      el.innerHTML = inlineMarkdownToHtml(text)
-      return { dom: el }
-    }
-    const head = ['thead', ['tr', {}, ...rows[0].map((c) => cell(c, 'th'))]]
-    const body = [
-      'tbody',
-      ...rows.slice(1).map((row) => ['tr', {}, ...row.map((c) => cell(c, 'td'))]),
-    ]
-    return ['table', head, body]
-  }
+  // The table needs no override any more: the schema's own `toDOM` is the rich
+  // grid export wants (`richTableDom`, which is where its docstring lives), and
+  // `computeSpreadsheet` below resolves the formulas the way `serializeDocToHtml`
+  // has always done.
 
   nodes.list_item = (node) => {
     const checked = node.attrs.checked as boolean | null

@@ -6,6 +6,7 @@ import { confirmAction, hasBridge, invoke, showError } from './bridge'
 import { startThemeWatcher } from './theme'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
+import { computeSpreadsheet } from './spreadsheet'
 import { redoDepth, redoNoScroll, undoDepth, undoNoScroll } from 'prosemirror-history'
 import { selectAll } from 'prosemirror-commands'
 import { TextSelection } from 'prosemirror-state'
@@ -911,7 +912,7 @@ function editCut(): void {
   if (plainTableSelectionText() !== null) return
   if (view.state.selection.empty) return
   view.focus()
-  const { dom, text } = view.serializeForClipboard(view.state.selection.content())
+  const { dom, text } = richSelectionHtml(view)
   void writeClipboard({ html: dom.innerHTML, text })
   view.dispatch(view.state.tr.deleteSelection())
 }
@@ -926,8 +927,28 @@ function editCopy(): void {
   }
   if (view.state.selection.empty) return
   view.focus()
-  const { dom, text } = view.serializeForClipboard(view.state.selection.content())
+  const { dom, text } = richSelectionHtml(view)
   void writeClipboard({ html: dom.innerHTML, text })
+}
+
+/**
+ * The selection as the **rich** clipboard copy carries it: ProseMirror's own
+ * `serializeForClipboard` output — which is the schema's `toDOM`, where a table
+ * is a real grid carrying its pipes on an attribute (`richTableDom`) — with the
+ * formulas a copied table's cells would show on screen solved into view values.
+ *
+ * The solve does not touch the document and cannot lose a formula: it repaints
+ * cells *inside the detached serialization*, while the raw pipes sit untouched
+ * on the `data-edi-table` attribute it renders them from, which is exactly where
+ * this app's paste parser reads a copied table back from. Confluence and Docs
+ * take the resolved grid; this app takes the formulas it was written with.
+ */
+function richSelectionHtml(
+  view: ProseEditorView,
+): { dom: HTMLElement; text: string } {
+  const { dom, text } = view.serializeForClipboard(view.state.selection.content())
+  computeSpreadsheet(dom, formulaEnvFor(view.state))
+  return { dom, text }
 }
 
 function copyAsMarkdown(): void {

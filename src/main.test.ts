@@ -10,6 +10,7 @@ import { markdownToProse, proseToMarkdown } from './markdown'
 import { encryptField } from './crypto'
 import { type ContextMenuEntry } from './contextmenu'
 import type { BlockMode } from './block-modes'
+import { clipboardTextPlugin } from './selectionExpand'
 
 
 const zeroRect = {
@@ -634,6 +635,72 @@ describe('keyboard shortcuts', () => {
     expect(sent![1].html).toContain('<strong>')
     expect(sent![1].text).toContain('bold')
     expect(proseToMarkdown(realView.state.doc)).not.toContain('bold')
+    realView.destroy()
+    host.remove()
+  })
+
+  it('copy keeps a table as a real grid — formulas solved, pipes on the attribute', async () => {
+    await loadMain()
+    mainState.hasBridge.mockReturnValue(true)
+    mainState.invoke.mockResolvedValue(undefined)
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const copyDoc = markdownToProse(
+      // The trailing paragraph is what a TextSelection can end in: a table is
+      // an atom, so `content.size - 1` would point at the boundary *before* it
+      // and copy would silently leave the table behind.
+      'Trims\n\n| X | Y |\n| --- | --- |\n| 1 | =A2*2 |\n| **go** | long\n\nAfter',
+      schema,
+    )
+    const realView = new EditorView(host, {
+      state: EditorState.create({
+        doc: copyDoc,
+        selection: TextSelection.create(copyDoc, 1, copyDoc.content.size - 1),
+        // The real editor carries this plugin (see `createBlockEditor`), and it
+        // is what renders a bracketed atom as markdown in the plain-text leg.
+        plugins: [clipboardTextPlugin],
+      }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    menu('copy')
+    await flushAsync()
+
+    const sent = mainState.invoke.mock.calls.find(
+      (call) => call[0] === 'copyContent',
+    ) as [string, { html: string; text: string }] | undefined
+    expect(sent).toBeDefined()
+    const html = sent![1].html
+    // **The table an external editor takes is a grid, not markdown.** The
+    // formula is solved into the view value (A2 is 1, so Y2 shows 2) and the
+    // cell markup is rendered — while the pipes, with the formula, ride the
+    // attribute this app's paste parser reads back. Confluence sees the table;
+    // this app round-trips the formulas.
+    expect(html).toContain('<table data-edi-table')
+    expect(html).toContain('data-edi-table="| X | Y |')
+    expect(html).toContain('| 1 | =A2*2 |')
+    expect(html).toContain('>2</td>')
+    expect(html).toContain('<td><strong>go</strong></td>')
+    // The plain-text leg is unchanged: markdown, pipes included.
+    expect(sent![1].text).toContain('| X | Y |')
+
+    // ...and the HTML this copy produced puts the table back in another view
+    // with the formula intact — the copy/paste round trip, end to end.
+    const host2 = document.createElement('div')
+    document.body.appendChild(host2)
+    const back = markdownToProse('end', schema)
+    const backView = new EditorView(host2, {
+      state: EditorState.create({ doc: back, selection: TextSelection.create(back, 1, 1) }),
+    })
+    // jsdom has no ClipboardEvent; ProseMirror only needs something truthy.
+    backView.pasteHTML(html, { clipboardData: null } as unknown as ClipboardEvent)
+    const pasted = proseToMarkdown(backView.state.doc)
+    expect(pasted).toContain('| 1 | =A2*2 |')
+    expect(pasted).toContain('**go** | long')
+    backView.destroy()
+    host2.remove()
+
     realView.destroy()
     host.remove()
   })
