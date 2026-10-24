@@ -3580,6 +3580,82 @@ def test_a_rules_whole_row_reaches_its_controls(window):
         f" it arrives at the strip: {out}")
 
 
+def test_a_rules_hover_band_covers_the_row_the_strip_covers(window):
+    """The rule's band takes the same row the strip already covers.
+
+    Reported as *the hover band on an hr is like 2px high*. The generic band
+    leans 4px past its block's box — a merge with the neighbours' rows for a
+    block that has one — but an `<hr>` is 1px tall, so 4px each way was a ~9px
+    rectangle centred on the line: a sliver in the middle of ~48px of margin,
+    and the one control on the page that still thought the line was the row.
+    The strip had been given the margins (`block-visual-rule`, pinned by
+    `test_a_rules_whole_row_reaches_its_controls`), and the band now takes that
+    same answer with the same numbers — the two controls must not disagree
+    about where a rule's row is.
+
+    `:hover` cannot be exercised here, so the rule-over rule's own declarations
+    are re-injected with `:hover` swapped for a class — the same instrument the
+    band geometry probes use — with `position` and `content` restored from the
+    band they override (the rule-over rule carries only the two offsets, and a
+    pseudo without `content` generates no box to measure). What is measured is
+    the pseudo's *computed* offsets: it has no rect of its own.
+    """
+    _set_scheme(window, False)
+    window._web.page().runJavaScript(
+        "window.ediSetContent('Above the rule.\\n\\n---\\n\\nBelow the rule.'); true"
+    )
+    _wait(window, "(() => ({ r: !!document.querySelector('.block-visual-rule') }))()",
+          lambda d: d.get("r") is True, timeout=15)
+
+    out = _dump(window, """(() => {
+      const rule = document.querySelector('#editor-container .block-visual-rule');
+      if (!rule) return { missing: 'rule' };
+      const strip = rule.querySelector(':scope > .block-controls');
+      if (!strip) return { missing: 'strip' };
+      const SEL = '.ProseMirror > .block-visual-rule:not(.edi-block-mode)'
+        + ':not(.encrypted-block-reveal-editor *):hover::before';
+      let band = null;
+      for (const sheet of document.styleSheets) {
+        let rules; try { rules = sheet.cssRules; } catch (err) { continue; }
+        for (const r of rules) { if (r.selectorText === SEL) band = r; }
+      }
+      if (!band) return { missing: 'band' };
+      const style = document.createElement('style');
+      style.textContent = SEL.replace(':hover', '.edi-band-probe')
+        + '{position: absolute;content: "";' + band.style.cssText + '}';
+      document.head.appendChild(style);
+      const b = rule.getBoundingClientRect();
+      const s = strip.getBoundingClientRect();
+      rule.classList.add('edi-band-probe');
+      const cs = getComputedStyle(rule, '::before');
+      const out = {
+        content: String(cs.content),
+        bandTop: Math.round(b.top + parseFloat(cs.top)),
+        bandBottom: Math.round(b.bottom - parseFloat(cs.bottom)),
+        stripTop: Math.round(s.top), stripBottom: Math.round(s.bottom),
+        blockTop: Math.round(b.top), blockBottom: Math.round(b.bottom),
+      };
+      rule.classList.remove('edi-band-probe');
+      style.remove();
+      return out;
+    })()""")
+    assert not out.get("missing"), out
+    assert out["content"] != "none", out
+    # The sliver is gone: the band reaches the margins above and below the line,
+    # the same ±12 the strip's own gate asks of the strip.
+    assert out["bandTop"] <= out["blockTop"] - 12, (
+        f"the band above the rule was the 4px lean around a 1px line — the very "
+        f"sliver the strip's row fix answered for the controls: {out}")
+    assert out["bandBottom"] >= out["blockBottom"] + 12, (
+        f"and the margin below it: {out}")
+    # And it answers with the strip's own numbers, so "where is this rule's row?"
+    # has one answer on the page rather than two boxes that disagree by 20px.
+    assert abs(out["bandTop"] - out["stripTop"]) <= 1, (
+        f"band and strip must cover the same margin above the line: {out}")
+    assert abs(out["bandBottom"] - out["stripBottom"]) <= 1, (
+        f"and the same margin below it: {out}")
+
+
 def test_a_blocks_controls_clear_its_own_editing_outline(window):
     """The row stands **off** the block, because the block's own edge is where its
     outline is.

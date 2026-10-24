@@ -844,6 +844,24 @@ body {
   pointer-events: none;
 }
 
+/* **A rule's band is the row its strip already covers.** The generic band
+   leans 4px past the block's box — a merge with the neighbours' rows for a
+   block with one — but an `<hr>` is 1px tall, so 4px each way was a 9px
+   rectangle centred on the line, a sliver in the middle of ~48px of margin:
+   reported as the band being a couple of px high. The strip got this answer
+   first (its `.block-visual-rule` rule covers the collapsed margins), and this
+   left the two controls answering "where is this rule's row?" with different
+   boxes — the band the *only* thing on the page that still thought the line
+   was the row. So it covers what the strip covers, with the same numbers: the
+   hr margin rule below is the fact both restate, and if it moves, both move.
+   The selector carries the generic band's `:not(…)` guards at its own
+   specificity and sits directly after it, because that tie is how the
+   override wins the cascade rather than losing it. */
+.ProseMirror > .block-visual-rule:not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
+  top: -1.5em;
+  bottom: -1.5em;
+}
+
 /* **View → Hover Band, off.** The band's only shape decision is whether its
    pseudo-element exists, so this is the whole of the option on the stylesheet
    side: `none` is not a hidden box, it is no box, which leaves a turned-off
@@ -1372,6 +1390,9 @@ body {
   margin-top: 0.25em;
 }
 
+/* The rule's row. The 1.5em margins are the fact the `.block-visual-rule`
+   control strip and hover band both size their coverage from — restatements,
+   not copies, of this one decision (§ their own rules). */
 .ProseMirror hr {
   border: none;
   border-top: 1px solid var(--border);
