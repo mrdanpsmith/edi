@@ -199,7 +199,7 @@ class Bridge(QObject):
 
     def _read_clipboard_text(self, request_id: int, _args: dict) -> None:
         mime = QGuiApplication.clipboard().mimeData()
-        markdown = bytes(mime.data("text/markdown")).decode("utf-8", "replace")
+        markdown = bytes(mime.data("text/markdown").data()).decode("utf-8", "replace")
         self._reply(request_id, {"text": mime.text(), "html": mime.html(), "markdown": markdown})
 
     def _read_text_file(self, request_id: int, args: dict) -> None:

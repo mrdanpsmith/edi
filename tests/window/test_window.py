@@ -8045,6 +8045,9 @@ def test_copying_across_a_table_is_unaffected(window):
     }))()""", lambda d: d.get("painted", 0) > 0, timeout=10)
     QGuiApplication.clipboard().clear()
     _ctrl_key(window, "c")
+    # The document ends in a diagram, so the copy rasterizes before writing.
+    assert _pump_until(lambda: QGuiApplication.clipboard().text().strip() != "", timeout=30), (
+        "the document copy never reached the clipboard")
     everything = _clipboard_text()
     assert "---" in everything, (
         f"the table no longer renders as markdown on the way out: {everything[:160]!r}")
