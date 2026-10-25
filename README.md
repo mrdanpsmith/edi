@@ -140,8 +140,13 @@ match.
 - Right-click a rendered diagram for **Copy image** / **Save image…**.
 - `File → Export HTML…` exports the whole rendered document — diagrams,
   computed values and code output included — as one self-contained HTML file.
-  It carries no keyboard shortcut, so `Ctrl+Shift+E` stays the block-source
-  toggle.
+  Mermaid diagrams are embedded as PNG snapshots, each followed by a
+  collapsible block holding its source. It carries no keyboard shortcut, so
+  `Ctrl+Shift+E` stays the block-source toggle.
+- Copying or cutting a selection uses the same representation: other apps get
+  each diagram as a PNG with its source underneath, while Edi also puts the
+  selection's markdown on the clipboard and prefers it when pasting back, so
+  an Edi-to-Edi round trip stays a Mermaid block.
 
 ### Menus and toolbar
 

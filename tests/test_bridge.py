@@ -394,14 +394,14 @@ def test_copy_text_sets_clipboard(bridge):
     assert QGuiApplication.clipboard().text() == "hello"
 
 
-def test_copy_content_sets_html_and_text_clipboard(bridge):
+def test_copy_content_sets_html_text_and_markdown_clipboard(bridge):
     from PySide6.QtGui import QGuiApplication
 
     bridge_obj, _window, result = bridge
     _invoke(
         bridge_obj,
         "copyContent",
-        {"html": "<strong>bold</strong>", "text": "bold"},
+        {"html": "<strong>bold</strong>", "text": "bold", "markdown": "**bold**"},
         42,
     )
     message = _wait_for(lambda: result.get(42))
@@ -411,6 +411,26 @@ def test_copy_content_sets_html_and_text_clipboard(bridge):
     assert mime.text() == "bold"
     assert mime.hasHtml()
     assert "<strong>bold</strong>" in mime.html()
+    assert bytes(mime.data("text/markdown")).decode("utf-8") == "**bold**"
+
+
+def test_read_clipboard_text_includes_the_markdown_flavor(bridge):
+    from PySide6.QtCore import QMimeData
+    from PySide6.QtGui import QGuiApplication
+
+    bridge_obj, _window, result = bridge
+    mime = QMimeData()
+    mime.setHtml("<p>x</p>")
+    mime.setText("x")
+    mime.setData("text/markdown", b"**x**")
+    QGuiApplication.clipboard().setMimeData(mime)
+
+    _invoke(bridge_obj, "readClipboardText", {}, 43)
+    message = _wait_for(lambda: result.get(43))
+    assert message["ok"] is True
+    assert message["data"]["markdown"] == "**x**"
+    assert message["data"]["html"] == "<p>x</p>"
+    assert message["data"]["text"] == "x"
 
 
 def test_copy_image_sets_clipboard(bridge):

@@ -157,5 +157,11 @@ beneath the block and **Stop** cancels a hung run.
 
 `File → Export HTML…` exports the rendered document — Mermaid diagrams,
 computed spreadsheet values, and code output included — as one self-contained
-HTML file you can share or archive.
+HTML file you can share or archive. Each Mermaid diagram is embedded as a PNG
+snapshot, with its source in a collapsible block underneath.
+
+Copying a selection uses the same HTML, so pasting into another app carries
+each diagram as a picture with its source below. The selection's markdown is
+also put on the clipboard, and Edi prefers it when pasting back — an
+Edi-to-Edi copy and paste keeps the diagram as a Mermaid block.
 

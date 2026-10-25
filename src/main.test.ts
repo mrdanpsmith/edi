@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EditorState, TextSelection } from 'prosemirror-state'
+import { AllSelection, EditorState, TextSelection } from 'prosemirror-state'
 import { Plugin } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { history, undo } from 'prosemirror-history'
@@ -67,6 +67,7 @@ const mainState = vi.hoisted(() => {
     addRecentFile: vi.fn().mockResolvedValue(undefined),
     copyText: vi.fn().mockResolvedValue(true),
     readText: vi.fn().mockResolvedValue('PASTED'),
+    snapshotMermaidHtml: vi.fn<(root: ParentNode) => Promise<void>>().mockResolvedValue(undefined),
     spreadsheetMenuEntries: vi.fn<(target: EventTarget | null) => ContextMenuEntry[] | null>(
       () => null,
     ),
@@ -208,6 +209,14 @@ vi.mock('./export', async () => {
   return {
     ...actual,
     serializeDocToHtml: (_doc: unknown) => `<p>${(_doc as { textContent?: string }).textContent ?? ''}</p>`,
+  }
+})
+
+vi.mock('./mermaid-export', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./mermaid-export')>()
+  return {
+    ...actual,
+    snapshotMermaidHtml: mainState.snapshotMermaidHtml,
   }
 })
 
@@ -468,6 +477,7 @@ beforeEach(() => {
   mainState.addRecentFile.mockReset().mockResolvedValue(undefined)
   mainState.copyText.mockReset().mockResolvedValue(true)
   mainState.readText.mockReset().mockResolvedValue('PASTED')
+  mainState.snapshotMermaidHtml.mockReset().mockResolvedValue(undefined)
   mainState.spreadsheetMenuEntries.mockReset().mockReturnValue(null)
   mainState.markdown = 'Welcome'
   mainState.selectionMarkdown = 'Welcome'
@@ -700,6 +710,104 @@ describe('keyboard shortcuts', () => {
     expect(pasted).toContain('**go** | long')
     backView.destroy()
     host2.remove()
+
+    realView.destroy()
+    host.remove()
+  })
+
+  it('copy sends the selection markdown as a clipboard flavor', async () => {
+    await loadMain()
+    mainState.hasBridge.mockReturnValue(true)
+    mainState.invoke.mockResolvedValue(undefined)
+    mainState.selectionMarkdown = '**bold**'
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('a **bold** tail', schema)
+    const realView = new EditorView(host, {
+      state: EditorState.create({
+        doc,
+        selection: TextSelection.create(doc, 1, doc.content.size - 1),
+      }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    menu('copy')
+    await flushAsync()
+
+    const sent = mainState.invoke.mock.calls.find(
+      (call) => call[0] === 'copyContent',
+    ) as [string, { html: string; text: string; markdown: string }] | undefined
+    expect(sent).toBeDefined()
+    expect(sent![1].markdown).toBe('**bold**')
+    expect(sent![1].html).toContain('<strong>bold</strong>')
+
+    realView.destroy()
+    host.remove()
+  })
+
+  it('copy turns a mermaid block into a PNG snapshot for external apps', async () => {
+    await loadMain()
+    mainState.hasBridge.mockReturnValue(true)
+    mainState.invoke.mockResolvedValue(undefined)
+    mainState.selectionMarkdown = '```mermaid\ngraph TD\n```'
+    mainState.snapshotMermaidHtml.mockImplementation(async (root: ParentNode) => {
+      const block = root.querySelector('[data-mermaid-block]')
+      if (!block) return
+      const figure = document.createElement('figure')
+      figure.className = 'mermaid-figure'
+      figure.innerHTML = '<img src="data:image/png;base64,UE5H"><details class="mermaid-source"><summary>Mermaid source</summary><pre><code class="language-mermaid">graph TD</code></pre></details>'
+      block.replaceWith(figure)
+    })
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const doc = markdownToProse('```mermaid\ngraph TD\n```', schema)
+    const realView = new EditorView(host, {
+      state: EditorState.create({ doc, selection: new AllSelection(doc) }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    menu('copy')
+    await flushAsync()
+
+    const sent = mainState.invoke.mock.calls.find(
+      (call) => call[0] === 'copyContent',
+    ) as [string, { html: string; text: string; markdown: string }] | undefined
+    expect(sent).toBeDefined()
+    expect(mainState.snapshotMermaidHtml).toHaveBeenCalledOnce()
+    expect(sent![1].html).toContain('data:image/png;base64,UE5H')
+    expect(sent![1].html).toContain('<details class="mermaid-source">')
+    expect(sent![1].markdown).toBe('```mermaid\ngraph TD\n```')
+
+    realView.destroy()
+    host.remove()
+  })
+
+  it('pastes the markdown clipboard flavor before the HTML one', async () => {
+    await loadMain()
+    stubLayout()
+    mainState.hasBridge.mockReturnValue(true)
+    mainState.invoke.mockResolvedValue({
+      text: 'graph TD',
+      html: '<figure><img src="data:image/png;base64,UE5H"></figure>',
+      markdown: '```mermaid\ngraph TD\n  A-->B\n```',
+    })
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const realView = new EditorView(host, {
+      state: EditorState.create({ doc: markdownToProse('abc', schema) }),
+    })
+    mainState.editorView = realView as unknown as typeof mainState.editorView
+
+    menu('paste')
+    await flushAsync()
+
+    const pasted = proseToMarkdown(realView.state.doc)
+    expect(pasted).toContain('```mermaid')
+    expect(pasted).toContain('A-->B')
+    expect(host.querySelector('img')).toBeNull()
 
     realView.destroy()
     host.remove()

@@ -31,12 +31,18 @@ describe('buildExportHtml', () => {
     expect(html).toMatch(/<body>\n<div/)
   })
 
-  it('loads mermaid from CDN for client-side rendering', () => {
-    const html = buildExportHtml('T', '')
+  it('loads mermaid from CDN when a diagram still needs client-side rendering', () => {
+    const html = buildExportHtml('T', '<div class="md-preview"><div class="mermaid">graph TD</div></div>')
     expect(html).toContain('cdn.jsdelivr.net/npm/mermaid@11')
     expect(html).toContain('mermaid.initialize')
     expect(html).toContain('startOnLoad:false')
     expect(html).toContain('mermaid.run')
+  })
+
+  it('omits the mermaid runtime when every diagram is a PNG snapshot', () => {
+    const html = buildExportHtml('T', '<div class="md-preview"><figure class="mermaid-figure"></figure></div>')
+    expect(html).not.toContain('cdn.jsdelivr.net')
+    expect(html).not.toContain('mermaid.run')
   })
 
   it('runs mermaid after the body is parsed so diagrams are found', () => {
@@ -211,11 +217,39 @@ describe('serializeDocToHtml', () => {
     expect(html).toContain('<th><del>2026</del></th>')
   })
 
-  it('renders mermaid blocks as div.mermaid, not pre/code', () => {
+  it('falls back to div.mermaid when no PNG snapshot is available', () => {
     const html = serializeDocToHtml(docFrom('```mermaid\ngraph TD\n  A-->B\n```'))
     expect(html).toContain('<div class="mermaid">')
     expect(html).toContain('graph TD')
     expect(html).not.toMatch(/<pre/)
+  })
+
+  it('renders a mermaid block as a PNG snapshot with collapsible source', () => {
+    const source = 'graph TD\n  A-->B'
+    const html = serializeDocToHtml(
+      docFrom(`\`\`\`mermaid\n${source}\n\`\`\``),
+      undefined,
+      new Map([[source, { data: 'iVBORw0KGgo=', width: 800, height: 450 }]]),
+    )
+    expect(html).toContain('<figure class="mermaid-figure">')
+    expect(html).toContain('src="data:image/png;base64,iVBORw0KGgo="')
+    expect(html).toContain('width="800"')
+    expect(html).toContain('height="450"')
+    expect(html).toContain('<details class="mermaid-source">')
+    expect(html).toContain('<summary>Mermaid source</summary>')
+    expect(html).toContain('<pre><code class="language-mermaid">graph TD\n  A--&gt;B</code></pre>')
+    expect(html).not.toContain('<div class="mermaid">')
+  })
+
+  it('escapes mermaid source in the collapsible code block', () => {
+    const source = 'graph TD\n  A["<script>"]'
+    const html = serializeDocToHtml(
+      docFrom(`\`\`\`mermaid\n${source}\n\`\`\``),
+      undefined,
+      new Map([[source, { data: 'png', width: 1, height: 1 }]]),
+    )
+    expect(html).toContain('&lt;script&gt;')
+    expect(html).not.toContain('<script>')
   })
 
   it('renders code blocks as pre/code', () => {

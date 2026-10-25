@@ -7253,6 +7253,10 @@ def test_ctrl_c_copies_the_cells_when_a_sheet_is_live_and_the_document_when_it_i
     _wait(window, BLOCK_OUTLINES, lambda d: len(d["selected"]) >= 1, timeout=10)
     QGuiApplication.clipboard().clear()
     _ctrl_key(window, "c")
+    # The document contains a diagram, so this copy rasterizes a snapshot before
+    # it writes the clipboard — the wait is the feature, not a flake.
+    assert _pump_until(lambda: QGuiApplication.clipboard().text().strip() != "", timeout=30), (
+        "the document copy never reached the clipboard")
     doc = _clipboard_text()
     assert "Prose before the board" in doc, (
         f"the document is not copyable again after leaving the sheet: {doc[:120]!r}")
@@ -8041,6 +8045,9 @@ def test_copying_across_a_table_is_unaffected(window):
     }))()""", lambda d: d.get("painted", 0) > 0, timeout=10)
     QGuiApplication.clipboard().clear()
     _ctrl_key(window, "c")
+    # The document ends in a diagram, so the copy rasterizes before writing.
+    assert _pump_until(lambda: QGuiApplication.clipboard().text().strip() != "", timeout=30), (
+        "the document copy never reached the clipboard")
     everything = _clipboard_text()
     assert "---" in everything, (
         f"the table no longer renders as markdown on the way out: {everything[:160]!r}")
@@ -9650,3 +9657,68 @@ def test_saving_steps_with_code_blocks_keeps_them_steps(window, tmp_path):
     assert shape["items"] == 2, shape
     assert shape["perItem"] == [["npm install thing"], ["npm run thing"]], shape
     assert shape["strayFences"] is False, shape
+
+
+def test_exported_html_embeds_mermaid_as_a_png_with_collapsible_source(window, tmp_path, monkeypatch):
+    """The exported HTML carries a PNG snapshot and its Mermaid source.
+
+    The export runs through the real shell: the Save dialog is answered by the
+    patched picker, the file is written by the real bridge, and the image is
+    rasterized by the same Chromium that paints the editor. The diagram is a
+    flowchart, whose HTML labels need no bake — so the snapshot is taken from a
+    fresh render of the source rather than from a bitmap already on screen.
+    """
+    _render(window, FLOW)
+    out = tmp_path / "diagram-export.html"
+
+    def pick(default_name, callback=None):
+        callback(str(out))
+
+    monkeypatch.setattr(window, "pick_export_path", pick)
+    _dump(window, "(() => { window.ediMenuCommand('export'); return { exported: true }; })()")
+    assert _pump_until(lambda: out.is_file() and out.stat().st_size > 0, timeout=30), (
+        "export never wrote the HTML file"
+    )
+
+    html = out.read_text(encoding="utf-8")
+    assert 'src="data:image/png;base64,' in html
+    assert '<details class="mermaid-source">' in html
+    assert '<summary>Mermaid source</summary>' in html
+    assert "graph TD" in html
+    assert "cdn.jsdelivr.net" not in html
+
+    encoded = html.split('data:image/png;base64,', 1)[1].split('"', 1)[0]
+    assert base64.b64decode(encoded)[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_copying_a_mermaid_selection_puts_a_png_and_markdown_on_the_clipboard(window):
+    """Ctrl+A / Ctrl+C on a diagram carries both representations.
+
+    The HTML leg is for other apps — a PNG followed by the collapsible source.
+    The markdown leg is what Edi itself reads back, so the diagram stays a
+    mermaid block rather than becoming the picture that was meant for Confluence.
+    """
+    _render(window, FLOW)
+    QGuiApplication.clipboard().clear()
+    _dump(
+        window,
+        "(() => { window.ediMenuCommand('selectAll'); window.ediMenuCommand('copy');"
+        " return { started: true }; })()",
+    )
+
+    def copied():
+        mime = QGuiApplication.clipboard().mimeData()
+        return mime is not None and "data:image/png;base64," in (mime.html() or "")
+
+    assert _pump_until(copied, timeout=30), "the copy never produced a PNG snapshot"
+
+    mime = QGuiApplication.clipboard().mimeData()
+    html = mime.html()
+    assert '<details class="mermaid-source">' in html
+    assert "<summary>Mermaid source</summary>" in html
+    assert "graph TD" in html
+    assert "cdn.jsdelivr.net" not in html
+
+    markdown = bytes(mime.data("text/markdown")).decode("utf-8")
+    assert "```mermaid" in markdown
+    assert "graph TD" in markdown

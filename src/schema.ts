@@ -238,7 +238,7 @@ const nodes: SchemaSpec['nodes'] = {
     parseDOM: [{
       tag: '[data-mermaid-block]',
       getAttrs(dom: HTMLElement) {
-        return { value: dom.textContent ?? '' }
+        return { value: dom.getAttribute('data-mermaid-source') ?? dom.textContent ?? '' }
       },
     }],
     toDOM(node) {
