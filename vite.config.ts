@@ -13,8 +13,8 @@ export default defineConfig({
     rolldownOptions: {
       input:
         process.env.VITE_HARNESS === '1'
-          ? { harness: resolve(__dirname, 'tests/harness/index.ts') }
-          : { main: resolve(__dirname, 'index.html') },
+          ? { harness: resolve(import.meta.dirname, 'tests/harness/index.ts') }
+          : { main: resolve(import.meta.dirname, 'index.html') },
       output: {
         codeSplitting: false,
         // Stable, hash-free filenames: the AV false-positive mitigation. AV
