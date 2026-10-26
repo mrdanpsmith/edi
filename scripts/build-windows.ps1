@@ -5,7 +5,8 @@
 # PyInstaller cannot cross-compile, so this must run on real Windows. The
 # frontend `dist/` and `scripts/assets/app-icon.ico` come from the `frontend`
 # CI job (byte-identical on every platform), so NO Node/npm is needed here.
-# It detects Python >= 3.10 on PATH (installs via Chocolatey only when missing),
+# It detects a supported Python (3.10–3.14) on PATH (installs 3.12 via Chocolatey
+# when none is present),
 # then:
 #   1. python venv with PySide6==6.11.1 + pyinstaller==6.22.0 (same pins as Linux)
 #   2. pyinstaller - edi.spec  ->  dist-app\Edi.exe
@@ -66,9 +67,10 @@ try {
     Write-Host "WARN: could not add Defender exclusion: $($_.Exception.Message)"
 }
 
-# --- Toolchain: Python only (PySide6 6.11 needs >= 3.10). The frontend and
-# icons are consumed from the `frontend` CI job artifacts, so Node is never
-# needed on this runner.
+# --- Toolchain: Python only. PySide6 6.11 supports 3.10 through 3.14, so the
+# launcher must not simply take the newest `py -3` — a runner whose default is
+# 3.15 can only resolve PySide6 6.12. The frontend and icons are consumed from
+# the `frontend` CI job artifacts, so Node is never needed on this runner.
 if (-not (Test-Path 'dist\index.html')) {
     throw 'dist\index.html missing — the `frontend` CI job artifact was not downloaded; run npm ci && npm run build locally first'
 }
@@ -76,24 +78,32 @@ if (-not (Test-Path 'scripts\assets\app-icon.ico')) {
     throw 'scripts\assets\app-icon.ico missing — the `frontend` CI job artifact was not downloaded; run node scripts/generate-icon.mjs locally first'
 }
 
-$pyOk = $false
+$PyLauncherArgs = $null
 if (Test-Command py) {
-    $pyVer = (& py -3 --version).Trim()
-    if ($pyVer -match '^Python 3\.(\d+)') {
-        $pyOk = [int]$Matches[1] -ge 10
+    foreach ($minor in 12, 13, 14, 11, 10) {
+        $candidate = "-3.$minor"
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $pyVer = (& py $candidate --version 2>&1 | Out-String).Trim()
+        $ErrorActionPreference = $oldEap
+        if ($LASTEXITCODE -eq 0 -and $pyVer -match "Python 3\.$minor\b") {
+            $PyLauncherArgs = $candidate
+            break
+        }
     }
 }
-if (-not $pyOk) {
+if (-not $PyLauncherArgs) {
     Write-Host 'Installing Python 3.12 via Chocolatey...'
     choco install python --version=3.12.8 -y --no-progress | Out-Null
     Assert-ExitCode 'choco install python'
     Update-Path
+    $PyLauncherArgs = '-3.12'
 }
 
 function Invoke-Py {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$PyArgs)
-    & py -3 @PyArgs
-    Assert-ExitCode "py -3 $($PyArgs -join ' ')"
+    & py $PyLauncherArgs @PyArgs
+    Assert-ExitCode "py $PyLauncherArgs $($PyArgs -join ' ')"
 }
 
 # --- Python venv (writes into the checkout like the Linux .venv; not committed)
