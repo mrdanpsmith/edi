@@ -1,5 +1,11 @@
 import { EditorState, EditorSelection, type Extension } from '@codemirror/state'
-import { EditorView, keymap, placeholder as cmPlaceholder, lineNumbers } from '@codemirror/view'
+import {
+  EditorView,
+  keymap,
+  placeholder as cmPlaceholder,
+  lineNumbers,
+  type KeyBinding,
+} from '@codemirror/view'
 import { history, historyKeymap } from '@codemirror/commands'
 import {
   autocompletion,
@@ -93,11 +99,37 @@ export interface BlockCodeMirror {
   destroy(): void
 }
 
+type ArrowOut = (dir: 1 | -1) => void
+
+/**
+ * An arrow at the first or last position of the CodeMirror document leaves the
+ * whole block. CodeMirror's own `ArrowUp`/`ArrowDown` bindings swallow those
+ * presses (they prevent the default even when there is nowhere left to move),
+ * so these have to run before `defaultKeymap` and hand the caret back.
+ */
+function arrowExitBindings(onArrowOut: ArrowOut | undefined): KeyBinding[] {
+  if (!onArrowOut) return []
+  const binding = (dir: 1 | -1) => ({
+    key: dir > 0 ? 'ArrowDown' : 'ArrowUp',
+    run(view: EditorView): boolean {
+      const { state } = view
+      if (state.selection.ranges.length !== 1) return false
+      const range = state.selection.main
+      const edge = dir > 0 ? state.doc.length : 0
+      if (!range.empty || range.head !== edge) return false
+      onArrowOut(dir)
+      return true
+    },
+  })
+  return [binding(1), binding(-1)]
+}
+
 export function createBlockCodeMirror(
   parent: HTMLElement,
   doc: string,
   onExit: (value: string) => void,
   initialPos?: number,
+  onArrowOut?: ArrowOut,
 ): BlockCodeMirror {
   const view = new EditorView({
     state: EditorState.create({
@@ -108,6 +140,7 @@ export function createBlockCodeMirror(
         // instead of the card closing *and* the source editor exiting.
         autocompletion({ override: [emojiCompletion] }),
         keymap.of([
+          ...arrowExitBindings(onArrowOut),
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,
@@ -159,13 +192,19 @@ export function createCodeEditor(
   doc: string,
   language: Extension,
   onChange: (value: string) => void,
+  onArrowOut?: ArrowOut,
 ): BlockCodeMirror {
   const view = new EditorView({
     state: EditorState.create({
       doc,
       extensions: [
         history(),
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        keymap.of([
+          ...arrowExitBindings(onArrowOut),
+          ...defaultKeymap,
+          ...historyKeymap,
+          indentWithTab,
+        ]),
         language,
         syntaxHighlighting(highlight),
         blockTheme,

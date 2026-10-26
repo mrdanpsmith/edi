@@ -2,6 +2,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
 import { attachBlockControls, commitSourceBlock, modeFor } from './block-modes'
+import { exitCodeBlock } from './codeBlockExit'
 import { serializeBlock } from './markdown'
 import { headingSlug } from './schema'
 
@@ -92,9 +93,15 @@ class BlockSourceNodeView implements NodeView {
       const nl = markdown.indexOf('\n')
       if (nl >= 0) initialPos = nl + 1
     }
-    this.cm = createBlockCodeMirror(this.dom, markdown, (value) => {
-      this.exitSource(value)
-    }, initialPos)
+    this.cm = createBlockCodeMirror(
+      this.dom,
+      markdown,
+      (value) => {
+        this.exitSource(value)
+      },
+      initialPos,
+      node.type.name === 'code_block' ? (dir) => this.arrowOut(dir) : undefined,
+    )
 
     this.controls = attachBlockControls(node, view, getPos)
     if (this.controls) this.dom.appendChild(this.controls.dom)
@@ -102,11 +109,20 @@ class BlockSourceNodeView implements NodeView {
     requestAnimationFrame(() => this.cm?.focus())
   }
 
-  private exitSource(value: string): void {
+  private commit(value: string): number | undefined {
     const pos = this.getPos()
-    if (pos === undefined) return
+    if (pos === undefined) return undefined
     commitSourceBlock(this.view, pos, value)
-    this.view.focus()
+    return pos
+  }
+
+  private exitSource(value: string): void {
+    if (this.commit(value) !== undefined) this.view.focus()
+  }
+
+  private arrowOut(dir: 1 | -1): void {
+    const pos = this.commit(this.cm?.getValue() ?? '')
+    if (pos !== undefined) exitCodeBlock(this.view, pos, dir)
   }
 
   update(node: ProseNode): boolean {

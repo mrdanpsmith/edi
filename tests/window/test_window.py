@@ -9722,3 +9722,69 @@ def test_copying_a_mermaid_selection_puts_a_png_and_markdown_on_the_clipboard(wi
     markdown = bytes(mime.data("text/markdown")).decode("utf-8")
     assert "```mermaid" in markdown
     assert "graph TD" in markdown
+
+
+def test_arrow_keys_leave_a_code_blocks_visual_and_source_views(window):
+    """`ArrowDown` at the end of a code block gets the caret out of it.
+
+    A grammar-backed block is an embedded CodeMirror instance, and CodeMirror's
+    own arrow keymap prevents the default even when its cursor cannot move — so
+    the press used to stop at the last line with no way out but the mouse. The
+    exit has to work from both of the block's editors: the visual one and the
+    raw-markdown Source form, where leaving must also commit the buffer.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps("before\n\n```js\nconst x = 1\n```\n\nafter"))
+    _wait(window, "(() => ({ e: !!document.querySelector('.runnable-block .cm-content') }))()",
+          lambda d: d.get("e") is True, timeout=15)
+
+    def selected_paragraph():
+        return (
+            "(() => { const n = document.getSelection()?.anchorNode;"
+            " const el = n && n.nodeType === 3 ? n.parentElement : n;"
+            " const p = el && el.closest('p');"
+            " return { p: p ? p.textContent : null,"
+            " inside: !!(el && el.closest('#editor-container .ProseMirror')) }; })()"
+        )
+
+    visual = _dump(window, """(() => {
+      const content = document.querySelector('.runnable-block .cm-content');
+      content.focus();
+      const send = (key, keyCode, ctrlKey = false) => content.dispatchEvent(
+        new KeyboardEvent('keydown',
+          { key, code: key, keyCode, ctrlKey, bubbles: true, cancelable: true }));
+      send('End', 35, true);
+      send('ArrowDown', 40);
+      return { d: 1 };
+    })()""")
+    assert visual.get("d") == 1, visual
+    _wait(window, selected_paragraph(),
+          lambda d: d.get("p") == "after" and d.get("inside") is True, timeout=10)
+
+    _dump(window, """(() => {
+      const button = document.querySelector('.runnable-block .block-control-representation');
+      button.click();
+      return { clicked: true };
+    })()""")
+    _wait(window, "(() => ({ s: !!document.querySelector('.block-source-mode .cm-content') }))()",
+          lambda d: d.get("s") is True, timeout=15)
+
+    source = _dump(window, """(() => {
+      const content = document.querySelector('.block-source-mode .cm-content');
+      content.focus();
+      const send = (key, keyCode, ctrlKey = false) => content.dispatchEvent(
+        new KeyboardEvent('keydown',
+          { key, code: key, keyCode, ctrlKey, bubbles: true, cancelable: true }));
+      send('End', 35, true);
+      send('ArrowDown', 40);
+      return { d: 1 };
+    })()""")
+    assert source.get("d") == 1, source
+    _wait(window, """(() => ({
+      left: !!document.querySelector('.block-source-mode'),
+      md: document.querySelector('#editor-container .ProseMirror').textContent,
+    }))()""",
+          lambda d: d.get("left") is False and "const x = 1" in (d.get("md") or "")
+          and "after" in (d.get("md") or ""), timeout=10)
+    _wait(window, selected_paragraph(),
+          lambda d: d.get("p") == "after" and d.get("inside") is True, timeout=10)

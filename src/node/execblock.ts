@@ -7,6 +7,7 @@ import { attachBlockControls, type BlockControls } from '../block-modes'
 import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
 import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
+import { exitCodeBlock } from '../codeBlockExit'
 import { codeLanguageFor, shebangLanguage } from '../codeLanguages'
 import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../formulaDefs'
 import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
@@ -236,9 +237,18 @@ class RunnableBlockNodeView implements NodeView {
     if (info) {
       const host = document.createElement('div')
       host.className = 'code-editor-host'
-      this.editor = createCodeEditor(host, node.textContent, info.extension, (value) => {
-        this.commitEditorText(value)
-      })
+      this.editor = createCodeEditor(
+        host,
+        node.textContent,
+        info.extension,
+        (value) => {
+          this.commitEditorText(value)
+        },
+        (dir) => {
+          const pos = this.getPos()
+          if (pos !== undefined) exitCodeBlock(this.view, pos, dir)
+        },
+      )
       this.dom.appendChild(host)
     } else {
       const pre = document.createElement('pre')
