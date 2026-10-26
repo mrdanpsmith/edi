@@ -6,13 +6,13 @@ Qt hooks stop collecting `platforms/`, `imageformats/` and friends, PyInstaller
 reports success, the .exe is produced, and the only symptom is a crash on a
 machine that lacks the DLLs. It has to be a separate check from the frozen
 smoke because the smoke can be SKIPPED as environmental (a host that cannot
-import QtWebEngineCore, or Wine's Chromium) -- and on exactly those hosts the
-smoke proves nothing about the bundle, so this is what still has to run.
+import QtWebEngineCore) -- and on such a host the smoke proves nothing about
+the bundle, so this is what still has to run.
 
 CArchiveReader is pure stdlib + PyInstaller, so this reads the .exe directly:
-no render, no X display, no working GPU. It therefore works identically on
-real Windows and under Wine, which is why both build paths call this one file
-rather than each carrying its own copy of the required-entry list.
+no render, no X display, no working GPU. It therefore runs on any host, which
+is why the Windows build job calls this one file rather than carrying its own
+copy of the required-entry list.
 
 Usage: check_bundle_contents.py <path-to-onefile.exe>
 Exits non-zero (and prints BUNDLE_MISSING) if anything required is absent.

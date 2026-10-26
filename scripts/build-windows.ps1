@@ -119,10 +119,10 @@ Assert-ExitCode 'pip install PySide6/pyinstaller'
 
 # --- Bundle Windows' system ICU next to Qt6Core.dll --------------------------
 # Qt6Core.dll hard-imports icuuc.dll (the Windows ICU). Real desktops have it
-# in System32, but Server SKUs and Wine < 11.5 do not — and PyInstaller's Qt
-# hooks only collect the platform plugins and translations if that isolated
-# `import PySide6.QtCore` succeeds. Copying the system ICU into the PySide6
-# package (a) lets the probe run on ANY build host and (b) makes the analysis
+# in System32, but Server SKUs do not — and PyInstaller's Qt hooks only collect
+# the platform plugins and translations if that isolated `import PySide6.QtCore`
+# succeeds. Copying the system ICU into the PySide6
+# package (a) lets the probe run on the build host and (b) makes the analysis
 # resolve icuuc.dll from an app path so it is shipped IN the bundle — the exe
 # then boots even on no-ICU Windows. ICU went unversioned-icuuc/icuin-first
 # (1703+) and gains the combined icu.dll from 1903+; copy whichever exist.

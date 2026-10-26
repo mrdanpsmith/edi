@@ -151,10 +151,10 @@ if sys.platform == 'win32':
             a.binaries.append((_dest, _dll_src, 'BINARY'))
 
     # Qt6Core.dll hard-imports icuuc.dll / icuin.dll (Windows' system ICU).
-    # Build hosts that lack System32 ICU (Wine, Server SKUs) have those staged
-    # next to Qt6Core.dll by the build script so the Qt metadata probe and the
-    # import-table analysis can resolve them; bundle them so the exe also boots
-    # on any no-ICU Windows. Deduped like the companion set above.
+    # The build script stages System32's copies next to Qt6Core.dll so the Qt
+    # metadata probe and the import-table analysis can resolve them; bundle
+    # them so the exe also boots on any no-ICU Windows. Deduped like the
+    # companion set above.
     _icu_srcs = ['icu.dll', 'icuuc.dll', 'icuin.dll']
     for _icu in _icu_srcs:
         _icu_src = _os.path.join(_pyside_dir, _icu)
