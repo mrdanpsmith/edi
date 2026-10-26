@@ -12,9 +12,13 @@
 #   check              Verify all declarations agree on a valid version
 #   tag                Create an annotated git tag v<current-version>
 #
+# `set` and `bump` stage the three version files and commit them with a
+# `[skip changelog]` marker. Pass `--no-commit` to leave them uncommitted.
+#
 # Examples:
 #   ./scripts/version.sh current
 #   ./scripts/version.sh bump patch
+#   ./scripts/version.sh bump patch --no-commit
 #   ./scripts/version.sh set 1.2.0
 #   ./scripts/version.sh check
 #   ./scripts/version.sh tag
@@ -23,6 +27,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+NO_COMMIT=0
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --no-commit) NO_COMMIT=1 ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+set -- "${ARGS[@]}"
 
 usage() {
   cat <<'EOF'
@@ -36,9 +50,16 @@ Commands:
   check              Verify all declarations agree on a valid version
   tag                Create an annotated git tag v<current-version>
 
+Options for set/bump:
+  --no-commit        Change the files without staging or committing them
+
+`set` and `bump` stage the three version files and commit them with a
+`[skip changelog]` marker by default.
+
 Examples:
   ./scripts/version.sh current
   ./scripts/version.sh bump patch
+  ./scripts/version.sh bump patch --no-commit
   ./scripts/version.sh set 1.2.0
   ./scripts/version.sh check
   ./scripts/version.sh tag
@@ -51,7 +72,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-VERSION_FILES="package.json package-lock.json backend/__init__.py"
+VERSION_FILES=(package.json package-lock.json backend/__init__.py)
 
 get_version() {
   node -p "require('./package.json').version"
@@ -69,12 +90,49 @@ apply_version() {
 print_next_steps() {
   local version="$1"
   printf '\nNext steps:\n'
-  printf '  git add %s\n' "$VERSION_FILES"
-  printf '  git commit -m "Bump version to %s [skip changelog]"\n' "$version"
+  if [ "$NO_COMMIT" -eq 1 ]; then
+    printf '  git add %s\n' "${VERSION_FILES[*]}"
+    printf '  git commit -m "Bump version to %s [skip changelog]"\n' "$version"
+  fi
   printf '  ./scripts/version.sh tag\n'
   printf '  git push\n'
   printf '  git push origin v%s\n' "$version"
   printf '\nPushing the v%s tag triggers the GitHub Actions release job.\n' "$version"
+}
+
+require_git_for_commit() {
+  if [ "$NO_COMMIT" -eq 1 ]; then return 0; fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "error: git is required to commit the version bump; use --no-commit to skip it" >&2
+    exit 1
+  fi
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "error: not inside a git work tree; use --no-commit to skip the commit" >&2
+    exit 1
+  fi
+}
+
+commit_version() {
+  local version="$1"
+  local message="Bump version to $version [skip changelog]"
+  git add -- "${VERSION_FILES[@]}"
+  if ! git commit -m "$message" >/dev/null; then
+    echo "error: failed to commit the version bump; the version files are staged" >&2
+    exit 1
+  fi
+  echo "Committed: $message"
+}
+
+finish_bump() {
+  local old="$1"
+  local new="$2"
+  echo "Bumped $old -> $new"
+  if [ "$NO_COMMIT" -eq 1 ]; then
+    echo "Skipped commit (--no-commit)."
+  else
+    commit_version "$new"
+  fi
+  print_next_steps "$new"
 }
 
 cmd_current() {
@@ -93,10 +151,10 @@ cmd_set() {
     echo "error: version unchanged ($version); pick a different version" >&2
     exit 1
   fi
+  require_git_for_commit
   npm version "$version" --no-git-tag-version >/dev/null
   apply_version "$version"
-  echo "Bumped $old -> $version"
-  print_next_steps "$version"
+  finish_bump "$old" "$version"
 }
 
 cmd_bump() {
@@ -107,11 +165,11 @@ cmd_bump() {
   esac
   local old new
   old="$(get_version)"
+  require_git_for_commit
   npm version "$part" --no-git-tag-version >/dev/null
   new="$(get_version)"
   apply_version "$new"
-  echo "Bumped $old -> $new"
-  print_next_steps "$new"
+  finish_bump "$old" "$new"
 }
 
 cmd_check() {
@@ -133,7 +191,7 @@ cmd_check() {
     echo "  backend/__init__.py: $init" >&2
     return 1
   fi
-  echo "OK: version $pkg agrees across $VERSION_FILES"
+  echo "OK: version $pkg agrees across ${VERSION_FILES[*]}"
 }
 
 cmd_tag() {
@@ -162,6 +220,13 @@ fi
 
 cmd="$1"
 shift
+
+if [ "$NO_COMMIT" -eq 1 ] &&
+  [ "$cmd" != set ] && [ "$cmd" != bump ] &&
+  [ "$cmd" != "-h" ] && [ "$cmd" != "--help" ]; then
+  echo "error: --no-commit is only valid with set and bump" >&2
+  exit 1
+fi
 
 case "$cmd" in
   current) cmd_current ;;

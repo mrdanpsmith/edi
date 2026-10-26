@@ -331,9 +331,11 @@ The version is tracked in `package.json`, `package-lock.json` and
 ./scripts/version.sh tag          # create annotated git tag v<current-version>
 ```
 
-`set`/`bump` update all three files and print the git commands to commit and
-push; pushing the `vX.Y.Z` tag starts the release, whose `release` job refuses to
-run if the tag does not match the declared version.
+`set`/`bump` update all three files, stage them, and commit with
+`Bump version to <version> [skip changelog]`. Pass `--no-commit` to leave the
+changes uncommitted; the script then prints the `git add`/`git commit` commands.
+Pushing the `vX.Y.Z` tag starts the release, whose `release` job refuses to run
+if the tag does not match the declared version.
 
 ## License
 
