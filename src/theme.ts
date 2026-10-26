@@ -12,12 +12,14 @@ export function applyColorScheme(dark: boolean): void {
 }
 
 function onNotify(payload: string): void {
-  let message: { type: string; dark?: boolean }
+  let parsed: unknown
   try {
-    message = JSON.parse(payload) as { type: string; dark?: boolean }
+    parsed = JSON.parse(payload)
   } catch {
     return
   }
+  if (typeof parsed !== 'object' || parsed === null) return
+  const message = parsed as { type?: unknown; dark?: unknown }
   if (message.type === 'colorScheme' && typeof message.dark === 'boolean') {
     applyColorScheme(message.dark)
   }

@@ -2,7 +2,7 @@ import 'prosemirror-view/style/prosemirror.css'
 import 'prosemirror-gapcursor/style/gapcursor.css'
 import './styles.css'
 
-import { confirmAction, hasBridge, invoke, showError } from './bridge'
+import { confirmAction, hasBridge, invoke, onBridgeReady, showError } from './bridge'
 import { startThemeWatcher } from './theme'
 
 import { buildExportHtml, serializeDocToHtml } from './export'
@@ -419,12 +419,46 @@ async function openFile(): Promise<void> {
 async function openPendingFiles(): Promise<void> {
   const paths = await getPendingFiles().catch(() => undefined)
   if (!paths || paths.length === 0) return
+  await openPaths(paths)
+}
+
+/** Open the supported paths in `paths`, in order, as tabs. */
+async function openPaths(paths: string[]): Promise<void> {
   for (const path of paths) {
     if (isSupportedFile(path)) {
       await openDocument(path)
     }
   }
 }
+
+interface NativeEvent {
+  type?: unknown
+  paths?: unknown
+}
+
+/**
+ * Events the native shell pushes outside a request/response pair.
+ *
+ * macOS delivers a double-clicked file to a *running* app as an open-document
+ * Apple Event, not as an argument to a new process (`QFileOpenEvent` in
+ * `backend/main.py`). The shell forwards it here so the file opens as a tab in
+ * this window instead of launching a second Edi.
+ */
+function onNativeEvent(payload: string): void {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return
+  }
+  if (typeof parsed !== 'object' || parsed === null) return
+  const event = parsed as NativeEvent
+  if (event.type !== 'openFiles' || !Array.isArray(event.paths)) return
+  const paths = event.paths.filter((path): path is string => typeof path === 'string')
+  void openPaths(paths)
+}
+
+const openingPaths = new Set<string>()
 
 async function openDocument(path: string): Promise<void> {
   const existing = findSessionByPath(path)
@@ -435,6 +469,11 @@ async function openDocument(path: string): Promise<void> {
     else tabs.activate(existing.id)
     return
   }
+  // A path can be asked for twice before its read finishes: a cold-launch
+  // event is in the pending list and a warm one arrives while that list is
+  // still being opened. One document is the answer to both.
+  if (openingPaths.has(path)) return
+  openingPaths.add(path)
   try {
     const content = await readTextFile(path)
     // The path is set before the content is rendered so that relative image
@@ -443,6 +482,8 @@ async function openDocument(path: string): Promise<void> {
     void rememberRecent(path)
   } catch (error) {
     reportError(`Failed to open ${path}`, error)
+  } finally {
+    openingPaths.delete(path)
   }
 }
 
@@ -1612,6 +1653,10 @@ function init(): void {
     openWelcome()
   }
   refreshRecents()
+  // Register the shell-event listener *before* asking for pending files: an
+  // open event that arrives during boot is queued by the shell until the first
+  // getPendingFiles call marks this page ready, so neither path can lose it.
+  onBridgeReady((bridge) => bridge?.notify?.connect(onNativeEvent))
   // Open any document Edi was launched with (silently ignored when there is
   // no native shell, e.g. plain `vite dev` in a browser).
   void openPendingFiles()

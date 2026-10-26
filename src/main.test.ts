@@ -52,6 +52,7 @@ const mainState = vi.hoisted(() => {
     showError: vi.fn().mockResolvedValue(undefined),
     pickOpenPath: vi.fn(),
     getPendingFiles: vi.fn().mockResolvedValue([]),
+    notifyHandlers: [] as Array<(payload: string) => void>,
     readTextFile: vi.fn(),
     pickSavePath: vi.fn(),
     writeTextFile: vi.fn(),
@@ -89,7 +90,13 @@ vi.mock('./bridge', () => ({
   confirmAction: mainState.confirmAction,
   showError: mainState.showError,
   onBridgeReady: (callback: (bridge: unknown) => void) => {
-    callback(undefined)
+    callback({
+      notify: {
+        connect: (handler: (payload: string) => void) => {
+          mainState.notifyHandlers.push(handler)
+        },
+      },
+    })
     return Promise.resolve()
   },
 }))
@@ -474,6 +481,7 @@ beforeEach(() => {
   mainState.confirmAction.mockReset().mockResolvedValue(true)
   mainState.getRecentFiles.mockReset().mockResolvedValue([])
   mainState.getPendingFiles.mockReset().mockResolvedValue([])
+  mainState.notifyHandlers = []
   mainState.addRecentFile.mockReset().mockResolvedValue(undefined)
   mainState.copyText.mockReset().mockResolvedValue(true)
   mainState.readText.mockReset().mockResolvedValue('PASTED')
@@ -985,6 +993,55 @@ describe('open and save', () => {
     mainState.readTextFile.mockClear()
     await loadMain()
     await flushAsync()
+    expect(mainState.readTextFile).not.toHaveBeenCalled()
+  })
+
+  it('opens files the shell pushes while Edi is already running', async () => {
+    mainState.readTextFile.mockResolvedValue('live content')
+    await loadMain()
+    await flushAsync()
+    expect(mainState.notifyHandlers.length).toBeGreaterThan(0)
+
+    for (const handler of mainState.notifyHandlers) {
+      handler(JSON.stringify({ type: 'openFiles', paths: ['/tmp/live.md'] }))
+    }
+    await flushAsync()
+
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(1)
+    expect(mainState.readTextFile).toHaveBeenCalledWith('/tmp/live.md')
+  })
+
+  it('opens a path once when two shell events race', async () => {
+    mainState.readTextFile.mockResolvedValue('live content')
+    await loadMain()
+    await flushAsync()
+
+    const payload = JSON.stringify({ type: 'openFiles', paths: ['/tmp/race.md'] })
+    for (const handler of mainState.notifyHandlers) {
+      handler(payload)
+      handler(payload)
+    }
+    await flushAsync()
+
+    const state = await stateModule()
+    expect(mainState.readTextFile).toHaveBeenCalledTimes(1)
+    expect(state.getState().sessions).toHaveLength(1)
+  })
+
+  it('ignores malformed and unsupported shell open events', async () => {
+    await loadMain()
+    await flushAsync()
+
+    for (const handler of mainState.notifyHandlers) {
+      handler('not json')
+      handler('null')
+      handler(JSON.stringify({ type: 'openFiles', paths: ['/tmp/live.bin'] }))
+      handler(JSON.stringify({ type: 'somethingElse', paths: ['/tmp/live.md'] }))
+      handler(JSON.stringify({ type: 'openFiles', paths: 'not an array' }))
+    }
+    await flushAsync()
+
     expect(mainState.readTextFile).not.toHaveBeenCalled()
   })
 

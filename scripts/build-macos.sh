@@ -17,6 +17,7 @@
 #   ./scripts/build-macos.sh [x.y.z]      # version from scripts/version.sh by default
 #
 # Output: dist-app/Edi-<ver>-macos-arm64.dmg
+#         dist-app/Edi-<ver>-arm64.zip + .sha256 (the curl installer's payload)
 #
 # Apple Silicon (arm64) only. The app is ad-hoc code-signed (arm64 will not
 # launch unsigned) but NOT notarized (no Apple Developer account in CI), so
@@ -113,6 +114,26 @@ print_step "Ad-hoc code-signing Edi.app"
 codesign --force --deep -s - "$APP"
 codesign --verify --deep --strict "$APP"
 
+# --- File association is part of the bundle ------------------------------------
+# edi.spec puts these in Info.plist; fail the build here rather than shipping an
+# app Finder will never offer for a .md file. Check the actual handler entries
+# (not just the imported UTI, which would still mention the identifier even if
+# CFBundleDocumentTypes had been dropped).
+print_step "Checking the Markdown document type"
+INFO="$APP/Contents/Info.plist"
+plutil -lint "$INFO"
+MARKDOWN_TYPE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:0:LSItemContentTypes:0' "$INFO" 2>/dev/null || true)"
+PLAIN_TYPE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:1:LSItemContentTypes:0' "$INFO" 2>/dev/null || true)"
+MARKDOWN_UTI="$(/usr/libexec/PlistBuddy -c 'Print :UTImportedTypeDeclarations:0:UTTypeIdentifier' "$INFO" 2>/dev/null || true)"
+if [[ "$MARKDOWN_TYPE" != "net.daringfireball.markdown" || \
+      "$PLAIN_TYPE" != "public.plain-text" || \
+      "$MARKDOWN_UTI" != "net.daringfireball.markdown" ]]; then
+  echo "error: Info.plist is missing its document types (edi.spec was not applied?)" >&2
+  echo "       CFBundleDocumentTypes: Markdown='$MARKDOWN_TYPE' plain-text='$PLAIN_TYPE'" >&2
+  echo "       UTImportedTypeDeclarations: Markdown='$MARKDOWN_UTI'" >&2
+  exit 1
+fi
+
 # --- Offscreen smoke test ------------------------------------------------------
 # Headless QtWebEngine (same flags CI uses for the Linux binary; a window does
 # briefly appear on a real desktop and exits via os._exit). macOS GUI bundles
@@ -159,4 +180,18 @@ ln -s /Applications "$DMG_STAGE/Applications"
 DMG="$ROOT/dist-app/Edi-$VERSION-macos-arm64.dmg"
 hdiutil create -volname "Edi $VERSION" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"
 rm -rf "$DMG_STAGE"
+
+# --- Curl-installer archive + checksum ------------------------------------------
+# `ditto` rather than `zip -r`: it keeps symlinks, permissions and extended
+# attributes inside the bundle, and the code signature with them. The install
+# script downloads this zip and its .sha256 sidecar from the release.
+print_step "Creating the curl-install archive"
+ZIP_NAME="Edi-$VERSION-arm64.zip"
+ZIP="$ROOT/dist-app/$ZIP_NAME"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+(
+  cd "$ROOT/dist-app"
+  shasum -a 256 "$ZIP_NAME" > "$ZIP_NAME.sha256"
+)
 print_step "Done: $DMG"
+print_step "Done: $ZIP (+ .sha256)"

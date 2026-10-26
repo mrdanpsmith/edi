@@ -121,6 +121,7 @@ describe('theme', () => {
     const bridge = fakeBridge()
     theme.initTheme(bridge)
     bridge._notify('not json')
+    bridge._notify('null')
     bridge._notify(JSON.stringify({ type: 'other', dark: true }))
     expect(scheme()).toBe('light')
     expect(retheme).toHaveBeenCalledWith(false)

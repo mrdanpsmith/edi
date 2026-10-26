@@ -14,7 +14,8 @@ import sys
 import time
 import warnings
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtGui import QFileOpenEvent
 from PySide6.QtWidgets import QApplication
 
 import backend.main as main_module
@@ -31,6 +32,10 @@ class _FakeWindow:
 
     def show(self) -> None:
         self._shown = True
+
+    def open_files(self, paths: list[str]) -> None:
+        self._opened_files = getattr(self, "_opened_files", [])
+        self._opened_files.append(list(paths))
 
     def push_event(self, event: dict) -> None:
         self._pushed_events = getattr(self, "_pushed_events", [])
@@ -87,6 +92,21 @@ class _StubTimer:
         pass
 
 
+class _FileOpenApp:
+    """The ``_EdiApplication`` file-open logic without a second QApplication.
+
+    A process has one QApplication, so the queue/handler methods are borrowed
+    onto a plain object: the FileOpen branch never touches the Qt base class.
+    """
+
+    event = main_module._EdiApplication.event
+    set_file_open_handler = main_module._EdiApplication.set_file_open_handler
+
+    def __init__(self) -> None:
+        self._file_open_handler = None
+        self._queued_files: list[str] = []
+
+
 def _pump(condition, timeout: float = 2.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -125,6 +145,7 @@ class _AppProxy:
     def __init__(self, real: QApplication) -> None:
         self._real = real
         self.set_icon_calls: list[object] = []
+        self.file_open_handler = None
 
     def setApplicationName(self, name: str) -> None:
         self._real.setApplicationName(name)
@@ -137,6 +158,9 @@ class _AppProxy:
 
     def setWindowIcon(self, icon) -> None:
         self.set_icon_calls.append(icon)
+
+    def set_file_open_handler(self, handler) -> None:
+        self.file_open_handler = handler
 
     def styleHints(self):
         return self._real.styleHints()
@@ -152,10 +176,36 @@ def _reset_timer_slots():
     _FakeQTimer.slots = []
 
 
+def test_file_open_events_queue_until_the_window_exists():
+    app = _FileOpenApp()
+
+    assert app.event(QFileOpenEvent(QUrl.fromLocalFile("/tmp/one.md"))) is True
+    # The same path delivered twice is one document, not two.
+    app.event(QFileOpenEvent(QUrl.fromLocalFile("/tmp/one.md")))
+    app.event(QFileOpenEvent(QUrl.fromLocalFile("/tmp/two.markdown")))
+    assert app._queued_files == ["/tmp/one.md", "/tmp/two.markdown"]
+
+    received: list[list[str]] = []
+    app.set_file_open_handler(received.append)
+    assert received == [["/tmp/one.md", "/tmp/two.markdown"]]
+    assert app._queued_files == []
+
+    # Once a window is attached, each event goes straight to it.
+    app.event(QFileOpenEvent(QUrl.fromLocalFile("/tmp/three.md")))
+    assert received[-1] == ["/tmp/three.md"]
+
+
+def test_file_open_events_ignore_non_local_urls():
+    app = _FileOpenApp()
+
+    assert app.event(QFileOpenEvent(QUrl("https://example.com/notes.md"))) is True
+    assert app._queued_files == []
+
+
 def test_main_sets_up_app_and_runs(monkeypatch):
     app = _app()
     proxy = _AppProxy(app)
-    monkeypatch.setattr(main_module, "QApplication", lambda argv: proxy)
+    monkeypatch.setattr(main_module, "_EdiApplication", lambda argv: proxy)
     monkeypatch.setattr(main_module, "MainWindow", _FakeWindow)
     QTimer.singleShot(0, app.quit)
 
@@ -163,12 +213,13 @@ def test_main_sets_up_app_and_runs(monkeypatch):
     assert app.applicationName() == "Edi"
     assert app.desktopFileName() == "edi"
     assert len(proxy.set_icon_calls) == 1
+    assert proxy.file_open_handler is not None
 
 
 def test_main_without_app_icon(monkeypatch):
     app = _app()
     proxy = _AppProxy(app)
-    monkeypatch.setattr(main_module, "QApplication", lambda argv: proxy)
+    monkeypatch.setattr(main_module, "_EdiApplication", lambda argv: proxy)
     monkeypatch.setattr(main_module, "MainWindow", _FakeWindow)
     monkeypatch.setattr(main_module, "load_app_icon", lambda: None)
     QTimer.singleShot(0, app.quit)
@@ -179,7 +230,8 @@ def test_main_without_app_icon(monkeypatch):
 
 def test_main_selftest_branch_sets_webengine_flags(monkeypatch):
     app = _app()
-    monkeypatch.setattr(main_module, "QApplication", lambda argv: app)
+    proxy = _AppProxy(app)
+    monkeypatch.setattr(main_module, "_EdiApplication", lambda argv: proxy)
     monkeypatch.setattr(main_module, "MainWindow", _FakeWindow)
     monkeypatch.setenv("EDI_SELFTEST", "1")
     monkeypatch.setenv("QTWEBENGINE_DISABLE_SANDBOX", "1")

@@ -296,13 +296,16 @@ jobs:
         with:
           name: edi-web
           path: .
-      - name: Build macOS app + dmg
+      - name: Build macOS app + dmg + curl archive
         run: ./scripts/build-macos.sh "${VER#v}"
-      - name: Upload dmg
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v7
         with:
           name: edi-macos
-          path: dist-app/Edi-*.dmg
+          path: |
+            dist-app/Edi-*.dmg
+            dist-app/Edi-*-arm64.zip
+            dist-app/Edi-*-arm64.zip.sha256
           if-no-files-found: error
           retention-days: 90
 
@@ -386,6 +389,11 @@ jobs:
         with:
           name: edi-macos
           path: artifacts
+      # The stable URL the installer advertises is
+      # releases/latest/download/install.sh, so every release carries the
+      # script itself alongside the platform artifacts.
+      - name: Stage the curl installer
+        run: cp install.sh artifacts/install.sh
       # Refuse to publish if the tag does not match the version declared in
       # package.json / backend/__init__.py (kept in sync by scripts/version.sh).
       - name: Verify tag matches declared version
@@ -411,7 +419,7 @@ jobs:
           # Commits marked `[skip changelog]` / `[no changelog]` are dropped.
           ./scripts/changelog.sh "$RANGE" >> /tmp/CHANGELOG.md
           printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
-          printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: replace `Edi-%s-win64.exe`); settings and documents are untouched. Linux: upgrade via your package manager. macOS: replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" >> /tmp/CHANGELOG.md
+          printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: replace `Edi-%s-win64.exe`); settings and documents are untouched. Linux: upgrade via your package manager. macOS: run the curl installer (`curl -fsSL https://github.com/%s/releases/latest/download/install.sh | bash`) or replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" "$GITHUB_REPOSITORY" >> /tmp/CHANGELOG.md
       - name: Create GitHub release
         run: |
           mapfile -t FILES < <(find artifacts -type f | sort)

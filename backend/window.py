@@ -317,6 +317,8 @@ class MainWindow(QMainWindow):
         channel = QWebChannel(self._web)
         channel.registerObject("bridge", self._bridge)
         self._web.page().setWebChannel(channel)
+        # A reload gets a fresh page that has not asked for pending files yet.
+        self._web.page().loadStarted.connect(self._bridge.reset_frontend_ready)
 
         script = QWebEngineScript()
         script.setName("qwebchannel")
@@ -695,6 +697,23 @@ class MainWindow(QMainWindow):
 
     def set_title(self, title: str) -> None:
         self.setWindowTitle(title or "Edi")
+
+    def open_files(self, paths: list[str]) -> None:
+        """Open files the OS asked Edi to open (macOS ``kAEOpenDocuments``).
+
+        A cold launch can deliver the event before the page has asked for its
+        pending files, so queue it there. Once the page is listening, push an
+        event and let the frontend open the files as tabs in this window.
+        """
+        files = [path for path in paths if path]
+        if not files:
+            return
+        self.raise_()
+        self.activateWindow()
+        if not self._bridge.frontend_ready:
+            self._bridge.add_pending_files(files)
+            return
+        self.push_event({"type": "openFiles", "paths": files})
 
     def push_event(self, event: dict) -> None:
         """Push a backend event to the webview (e.g. system color-scheme change)."""

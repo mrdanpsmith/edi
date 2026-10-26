@@ -589,6 +589,21 @@ def test_get_pending_files_empty_by_default(bridge):
     assert message["data"] == []
 
 
+def test_pending_files_queue_until_the_page_asks(bridge):
+    bridge_obj, _window, result = bridge
+    assert bridge_obj.frontend_ready is False
+
+    bridge_obj.add_pending_files(["/tmp/a.md", "/tmp/a.md", ""])
+    _invoke(bridge_obj, "getPendingFiles", request_id=2)
+    message = _wait_for(lambda: result.get(2))
+    assert message["ok"] is True
+    assert message["data"] == ["/tmp/a.md"]
+    assert bridge_obj.frontend_ready is True
+
+    bridge_obj.reset_frontend_ready()
+    assert bridge_obj.frontend_ready is False
+
+
 def test_open_url_missing_url_errors(bridge):
     bridge_obj, _window, result = bridge
     _invoke(bridge_obj, "openUrl", {})

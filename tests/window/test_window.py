@@ -109,6 +109,33 @@ def test_window_minimum_size(window):
     window.resize(1280, 800)
 
 
+def test_open_files_from_the_shell_opens_a_tab(window, tmp_path):
+    """A warm macOS open-document event becomes a tab in the running window."""
+    assert _pump_until(lambda: window._bridge.frontend_ready, timeout=5)
+    target = tmp_path / "from-finder.md"
+    target.write_text("# Opened by Finder\n", encoding="utf-8")
+
+    window.open_files([str(target)])
+    out = _wait(
+        window,
+        "(() => ({ tabs: [...document.querySelectorAll('.tab-title')].map((e) => e.textContent),"
+        " active: (document.querySelector('.tab.active .tab-title') || {}).textContent || null }))()",
+        lambda d: "from-finder.md" in d["tabs"] and d["active"] == "from-finder.md",
+    )
+    assert out["active"] == "from-finder.md"
+
+    _dump(
+        window,
+        "(() => { const b = document.querySelector('.tab.active .tab-close');"
+        " if (b) b.click(); return { clicked: !!b }; })()",
+    )
+    _wait(
+        window,
+        "(() => ({ tabs: [...document.querySelectorAll('.tab-title')].map((e) => e.textContent) }))()",
+        lambda d: "from-finder.md" not in d["tabs"],
+    )
+
+
 def _call_confirm(window):
     window._web.page().runJavaScript(
         "window.__confirmResult = 'pending';"

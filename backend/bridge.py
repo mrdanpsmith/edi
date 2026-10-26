@@ -37,6 +37,10 @@ class Bridge(QObject):
         super().__init__()
         self._window = window
         self._pending_files = list(pending_files or [])
+        # Set when the page first asks for pending files (at the end of its
+        # init). Until then an open-document event is queued rather than pushed
+        # over the notify signal, which would be lost before the page listens.
+        self._frontend_ready = False
         self._procs: dict[int, subprocess.Popen] = {}
         self._handlers = {
             "confirm": self._confirm,
@@ -431,8 +435,26 @@ class Bridge(QObject):
 
     def _get_pending_files(self, request_id: int, _args: dict) -> None:
         # File paths passed on the command line (e.g. Edi opened for a .md file
-        # from the file manager); the frontend opens them once the page boots.
+        # from the file manager) or queued by a cold-launch QFileOpenEvent; the
+        # frontend opens them once the page boots. The page's first call also
+        # marks it ready, so later file-open events can be pushed immediately
+        # instead of waiting for another boot.
+        self._frontend_ready = True
         self._reply(request_id, list(self._pending_files))
+
+    def add_pending_files(self, paths: list[str]) -> None:
+        """Queue paths for the page's next boot (it has not asked yet)."""
+        for path in paths:
+            if path and path not in self._pending_files:
+                self._pending_files.append(path)
+
+    def reset_frontend_ready(self) -> None:
+        """Forget that the page is listening (a reload starts a fresh one)."""
+        self._frontend_ready = False
+
+    @property
+    def frontend_ready(self) -> bool:
+        return self._frontend_ready
 
     def _quit(self, request_id: int, _args: dict) -> None:
         self._window.close()

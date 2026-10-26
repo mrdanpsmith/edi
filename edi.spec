@@ -256,6 +256,38 @@ elif sys.platform == 'darwin':
             'LSMinimumSystemVersion': '11.0',
             'NSHighResolutionCapable': True,
             'CFBundleDevelopmentRegion': 'en',
+            # Markdown is Edi's document type, so Finder can offer it in
+            # "Open With" and macOS can make it the default. Plain text is
+            # Alternate: Edi appears in the menu without claiming every .txt.
+            # The content type (not the deprecated CFBundleTypeExtensions) is
+            # what Launch Services reads.
+            'CFBundleDocumentTypes': [
+                {
+                    'CFBundleTypeName': 'Markdown Document',
+                    'CFBundleTypeRole': 'Editor',
+                    'LSHandlerRank': 'Default',
+                    'LSItemContentTypes': ['net.daringfireball.markdown'],
+                },
+                {
+                    'CFBundleTypeName': 'Plain Text Document',
+                    'CFBundleTypeRole': 'Editor',
+                    'LSHandlerRank': 'Alternate',
+                    'LSItemContentTypes': ['public.plain-text'],
+                },
+            ],
+            # Safety net: macOS defines this UTI already, but importing it
+            # guarantees .md/.markdown resolve to it even on a system where
+            # another app has overridden or dropped the declaration.
+            'UTImportedTypeDeclarations': [
+                {
+                    'UTTypeIdentifier': 'net.daringfireball.markdown',
+                    'UTTypeDescription': 'Markdown Document',
+                    'UTTypeConformsTo': ['public.plain-text'],
+                    'UTTypeTagSpecification': {
+                        'public.filename-extension': ['md', 'markdown'],
+                    },
+                },
+            ],
         },
     )
 

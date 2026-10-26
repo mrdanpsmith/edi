@@ -232,10 +232,27 @@ cannot cross-compile), so a real Windows host is needed to cut a release:
 | `Edi-X.Y.Z-win64-setup.exe` | run it; installs to `%ProgramFiles%\Edi` with Start Menu / desktop shortcuts and a Settings → Apps uninstall entry |
 | `Edi-X.Y.Z-win64.exe` | run directly; nothing is installed (settings are still shared via the registry) |
 
-**macOS** — `Edi-X.Y.Z-macos-arm64.dmg` (Apple Silicon), drag-to-Applications.
-The app is ad-hoc code-signed (arm64 will not launch unsigned) but not
-notarized, so the first open on another Mac warns: right-click → Open, or clear
-it with `xattr -dr com.apple.quarantine Edi.app`.
+**macOS** — Apple Silicon only. The curl installer downloads over HTTPS, checks
+the SHA-256 and the code signature, and replaces the installed app (`/Applications`
+when writable, otherwise `~/Applications`) without the Gatekeeper "Open Anyway"
+prompt a browser download gets (curl does not add the quarantine flag):
+
+```sh
+curl -fsSL https://github.com/mrdanpsmith/edi/releases/latest/download/install.sh | bash
+```
+
+Pin a version with
+`curl -fsSL https://github.com/mrdanpsmith/edi/releases/latest/download/install.sh | EDI_VERSION=X.Y.Z bash`;
+set `EDI_FORCE=1` the same way to reinstall the same version. Or use
+`Edi-X.Y.Z-macos-arm64.dmg` and drag it to Applications — the app is ad-hoc
+code-signed (arm64 will not launch unsigned) but not notarized, so the first
+open of a browser-downloaded copy warns: right-click → Open, or clear it with
+`xattr -dr com.apple.quarantine Edi.app`.
+
+The bundle declares the Markdown (`net.daringfireball.markdown`) and plain-text
+document types, so Finder can open `.md`/`.markdown` files with Edi and can make
+it the default: Get Info on a file → **Open with: Edi → Change All…** (the choice
+is stored against the bundle ID, so it survives upgrades).
 
 ## Upgrading
 
@@ -249,7 +266,9 @@ and documents are never touched.
   to a temp directory, so there is nothing to uninstall.
 - **Linux:** upgrade through your package manager with the new `.deb`/`.rpm`;
   AppImage and tar.gz users just download the new archive.
-- **macOS:** drag the new `Edi.app` over the old one in Applications.
+- **macOS:** run the curl installer again (it quits Edi, verifies the download
+  and replaces the app), or drag the new `Edi.app` over the old one in
+  Applications. The curl path avoids the Gatekeeper prompt on every upgrade.
 
 Nothing enforces version order — installing an older artifact over a newer
 install downgrades it.
@@ -300,7 +319,7 @@ wraps an existing binary (never rebuilds it) and needs `dpkg-deb`, `rpmbuild`
 
 ```sh
 pwsh -File scripts/build-windows.ps1 -Version <ver>   # Windows onefile + NSIS installer, on Windows
-./scripts/build-macos.sh [x.y.z]                     # Edi.app + .dmg, on a Mac
+./scripts/build-macos.sh [x.y.z]                     # Edi.app + .dmg + arm64 zip/.sha256, on a Mac
 ```
 
 Windows binaries are built on a real Windows host (`scripts/build-windows.ps1`);
