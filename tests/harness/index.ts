@@ -23,7 +23,9 @@ export interface EdiHarness {
 
 function dump(script: string): string {
   // Evaluate a page expression and serialise it so Python can json.loads it.
-  const value = eval(script)
+  // Indirect eval keeps the page expressions in global scope and avoids
+  // rolldown's direct-eval warning.
+  const value = (0, eval)(script)
   return JSON.stringify(value ?? null)
 }
 
