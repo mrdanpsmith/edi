@@ -48,15 +48,23 @@ JXA
 }
 
 # Ask on the terminal, not stdin: with `curl ... | bash` stdin is the script.
+# With nobody there to answer, fall back to the question's default -- which is
+# "keep what is already set" either way, so an unattended run changes nothing.
 ask_default_app() {
-  local reply=""
-  if ! { printf 'Make %s the default app for Markdown files? [y/N] ' "$APP_NAME" >/dev/tty; } 2>/dev/null; then
-    return 1
+  local question="$1" default="$2" reply=""
+  if ! { printf '%s ' "$question" > /dev/tty; } 2>/dev/null; then
+    [[ "$default" == "y" ]]
+    return
   fi
   if ! IFS= read -r reply < /dev/tty 2>/dev/null; then
     reply=""
   fi
-  [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
+  case "$reply" in
+    "") [[ "$default" == "y" ]] ;;
+    [Yy]|[Yy][Ee][Ss]) return 0 ;;
+    [Nn]|[Nn][Oo]) return 1 ;;
+    *) [[ "$default" == "y" ]] ;;
+  esac
 }
 
 [[ "$(uname -s)" == "Darwin" ]] || die "macOS only"
@@ -123,33 +131,40 @@ codesign --verify --deep --strict "$NEW_APP" || die "code signature invalid"
 # --- default Markdown app --------------------------------------------------
 # Registering the bundle imports Edi's Markdown type, and on a Mac where
 # nothing else owns it that can make Edi the handler. Which editor opens a
-# file is the user's choice, so ask before changing it -- and when the answer
-# is no (or there is no terminal to ask), put back whatever was the handler
-# before Edi arrived. With no Markdown handler at all, .md files fall back to
-# the plain-text handler (TextEdit on a stock Mac), which is what they opened
-# with before. This is read before the swap so the reading is pre-Edi.
+# file is the user's choice, so ask before changing it -- and a no puts back
+# whatever was the handler before Edi arrived. With no Markdown handler at
+# all, .md files fall back to the plain-text handler (TextEdit on a stock Mac),
+# which is what they opened with before. This is read before the swap so the
+# reading is pre-Edi.
 PREVIOUS_HANDLER="$(handler_for "$MARKDOWN_UTI")"
 RESTORE_HANDLER="$PREVIOUS_HANDLER"
-if [[ "$RESTORE_HANDLER" == "-" ]]; then
+if [[ "$RESTORE_HANDLER" == "-" || "$RESTORE_HANDLER" == "$BUNDLE_ID" ]]; then
   RESTORE_HANDLER="$(handler_for "$PLAIN_TEXT_UTI")"
   [[ "$RESTORE_HANDLER" == "-" ]] && RESTORE_HANDLER=""
 fi
 
-WANT_DEFAULT=0
+# Edi already being the default changes the question, not whether to ask it:
+# "Keep?" defaults to yes (Enter must not silently un-associate it), "Make?"
+# defaults to no. A no either way restores RESTORE_HANDLER after install.
 if [[ "$PREVIOUS_HANDLER" == "$BUNDLE_ID" ]]; then
-  WANT_DEFAULT=1
+  QUESTION="Keep ${APP_NAME} as the default app for Markdown files? [Y/n]"
+  DEFAULT_ANSWER="y"
 else
-  case "${EDI_SET_DEFAULT:-}" in
-    1|yes|true) WANT_DEFAULT=1 ;;
-    0|no|false) WANT_DEFAULT=0 ;;
-    "")
-      if ask_default_app; then
-        WANT_DEFAULT=1
-      fi
-      ;;
-    *) die "invalid EDI_SET_DEFAULT '${EDI_SET_DEFAULT}' (use 1 or 0)" ;;
-  esac
+  QUESTION="Make ${APP_NAME} the default app for Markdown files? [y/N]"
+  DEFAULT_ANSWER="n"
 fi
+
+WANT_DEFAULT=0
+case "${EDI_SET_DEFAULT:-}" in
+  1|yes|true) WANT_DEFAULT=1 ;;
+  0|no|false) WANT_DEFAULT=0 ;;
+  "")
+    if ask_default_app "$QUESTION" "$DEFAULT_ANSWER"; then
+      WANT_DEFAULT=1
+    fi
+    ;;
+  *) die "invalid EDI_SET_DEFAULT '${EDI_SET_DEFAULT}' (use 1 or 0)" ;;
+esac
 
 # --- quit running instance -------------------------------------------------
 if pgrep -xq "$APP_NAME"; then
@@ -190,7 +205,7 @@ if [[ "$WANT_DEFAULT" == "1" ]]; then
   fi
 elif [[ -n "$RESTORE_HANDLER" && "$RESTORE_HANDLER" != "$BUNDLE_ID" ]]; then
   if set_handler_for "$MARKDOWN_UTI" "$RESTORE_HANDLER"; then
-    log "Markdown files keep opening with ${RESTORE_HANDLER}"
+    log "Markdown files open with ${RESTORE_HANDLER}"
   else
     log "warning: could not restore the previous Markdown handler (${RESTORE_HANDLER})"
   fi
