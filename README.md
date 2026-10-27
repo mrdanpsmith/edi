@@ -7,7 +7,7 @@
 [![Downloads](https://img.shields.io/github/downloads/mrdanpsmith/edi/total)](https://github.com/mrdanpsmith/edi/releases)
 [![License GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](./LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)](#installing-a-release)
-[![Runtime](https://img.shields.io/badge/runtime-Python%203.10%2B%20%C2%B7%20Node%2020.19%2B-blue)](#building-from-source)
+[![Runtime](https://img.shields.io/badge/runtime-Python%203.10%2B%20%C2%B7%20Node%2020.19%2B-blue)](#development)
 
 Markdown has grown into a format for writing text, drawing diagrams and holding
 tables — but the editors for it still treat it as a way to make some words look
@@ -28,10 +28,7 @@ Available for Linux, Windows and macOS.
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Installing a release](#installing-a-release)
 - [Upgrading](#upgrading)
-- [Building from source](#building-from-source)
-- [Packaging](#packaging)
-- [Checks and tests](#checks-and-tests)
-- [Versioning](#versioning)
+- [Development](#development)
 - [License](#license)
 
 ## Features
@@ -85,7 +82,7 @@ function names:
 ### Mermaid you edit in place
 
 Fenced blocks tagged `mermaid` render as diagrams you can edit without touching
-the source: press **Edit** on the diagram, double-click it, or right-click →
+the source: press **Edit** on the diagram, `Alt+click` it, or right-click →
 **Edit diagram**, then click a label to retype it. Renaming a name the diagram
 uses in more than one place (an ER entity, a state, a class, a git branch, a
 requirement…) renames the references with it.
@@ -93,9 +90,10 @@ requirement…) renames the references with it.
 **Kanban boards** are the one diagram you build from the board itself: every
 column is drawn with an empty **+ Add a card**, and an empty **+ Add a column**
 stands at the right where the next one goes. Cards and whole columns are
-dragged with a drop line marking the exact slot, and a **✕** / **⋯** on a card
-or column deletes it (after asking, naming what goes with it) — one edit, so
-undo brings the whole thing back.
+dragged with a drop line marking the exact slot. A **⋯** on a column deletes it
+(after asking, naming what goes with it); a card is deleted by dropping it on
+the bin at the end of the board. Either way it is one edit, so undo brings the
+whole thing back.
 
 Only labels that can genuinely be rewritten are clickable: a value Mermaid
 computed rather than read (a treemap total, an axis tick, a bit range) stays
@@ -189,6 +187,7 @@ shortcut would shadow exactly that.
 | `Ctrl+Shift+V` | Paste as Markdown |
 | `Ctrl+Shift+E` | Toggle a block's source / visual view |
 | `Ctrl+B` / `Ctrl+I` | Bold / italic |
+| `Ctrl+Alt+C` | Inline code |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste |
 | `Ctrl+A` | Select all |
@@ -249,15 +248,13 @@ code-signed (arm64 will not launch unsigned) but not notarized, so the first
 open of a browser-downloaded copy warns: right-click → Open, or clear it with
 `xattr -dr com.apple.quarantine Edi.app`.
 
-The installer asks before taking over as the default app for Markdown files, and
-asks whether to keep it when Edi is already the default. A non-interactive run
-leaves the current association alone; a no restores the previous handler (or the
-plain-text fallback, TextEdit on a stock Mac). Set `EDI_SET_DEFAULT=1` to answer
-yes without the prompt, or `0` to answer no. The bundle declares the Markdown
-(`net.daringfireball.markdown`) and plain-text document types, so Finder can
-also open `.md`/`.markdown` files with Edi and can make it the default: Get Info
-on a file → **Open with: Edi → Change All…** (the choice is stored against the
-bundle ID, so it survives upgrades).
+When it installs or reinstalls, the installer asks before taking over as the
+default app for Markdown files, and asks whether to keep it when Edi is
+already the default. A non-interactive run leaves the association alone;
+answering no restores the previous handler or the plain-text fallback. Set
+`EDI_SET_DEFAULT=1` or `0` to answer without the prompt. Finder can also make Edi the default: Get Info on a file → **Open with:
+Edi → Change All…**. See [docs/macos-installer.md](docs/macos-installer.md) for
+the details.
 
 ## Upgrading
 
@@ -278,88 +275,29 @@ and documents are never touched.
 Nothing enforces version order — installing an older artifact over a newer
 install downgrades it.
 
-## Building from source
+## Development
 
-Requirements: Python 3.10+ (with `venv`), Node.js 20.19+/22.12+, and a Linux
-desktop with X11 or Wayland.
+Requirements: Python 3.10+ with `venv`, Node.js 20.19+/22.12+, and a desktop
+session for running the real app.
 
 ```sh
 ./scripts/install-deps.sh
-```
-
-This creates the virtualenv (`.venv/`, with PySide6), installs the npm
-dependencies and generates the app icon. Then build the frontend and run the
-Python shell — `npm run dev` on its own is only the Vite server, not the app:
-
-```sh
 npm run build
 .venv/bin/python run_edi.py
 ```
 
-### How it fits together
+`npm run dev` runs only the Vite server, not the app.
 
-- **Frontend** — the document editor is [ProseMirror](https://prosemirror.net)
-  (with CodeMirror 6 inside fenced code blocks), plus Mermaid and the spreadsheet
-  formula engine, in TypeScript. Vite builds it into a single static `dist/`.
-- **Backend** — Python 3 + PySide6. A native `QWebEngineView` hosts
-  `dist/index.html`; the page talks to Python over `QWebChannel`
-  (`backend/bridge.py`), which owns the file dialogs, file IO and code-block
-  execution.
-- **The document is the file** — plain markdown on disk. Nothing about the
-  spreadsheet, the diagrams or the encrypted fields needs a sidecar file.
+The developer guides live in [`docs/`](docs/README.md):
 
-## Packaging
+- [Architecture](docs/architecture.md) — frontend/backend split and repository map.
+- [Development](docs/development.md) — setup, commands, local CI and testing quirks.
+- [Distribution](docs/distribution.md) — platform builds and packaging.
+- [Releasing](docs/releasing.md) — version bumps, tags and changelogs.
 
-```sh
-./scripts/build-pyzip.sh            # single-file binary -> ./dist-app/edi
-./scripts/package-linux.sh [path/to/edi] [version]   # .deb / .rpm / .AppImage / tar.gz
-```
-
-`build-pyzip.sh` builds the frontend and bundles the app into one executable
-inside an Ubuntu 22.04 container (glibc 2.35), so the result also runs on older
-desktop Linux systems; the host's Node and Python versions do not matter, and
-the binary is smoke-tested offscreen before it reports success. `package-linux.sh`
-wraps an existing binary (never rebuilds it) and needs `dpkg-deb`, `rpmbuild`
-(`sudo apt-get install rpm`) and `curl`.
-
-```sh
-pwsh -File scripts/build-windows.ps1 -Version <ver>   # Windows onefile + NSIS installer, on Windows
-./scripts/build-macos.sh [x.y.z]                     # Edi.app + .dmg + arm64 zip/.sha256, on a Mac
-```
-
-Windows binaries are built on a real Windows host (`scripts/build-windows.ps1`);
-macOS must be built on a Mac, for the same reason.
-
-## Checks and tests
-
-```sh
-npm run check               # typecheck + eslint + frontend unit tests + duplicate scan
-npm run coverage            # frontend tests with a coverage report
-.venv/bin/pytest tests/     # backend tests (PySide6, offscreen)
-```
-
-Both halves are required to be green before a change lands, and CI runs the same
-commands: `npm run check` is the local gate, the `Release` pipeline adds the
-platform builds, and pushing a `vX.Y.Z` tag publishes the artifacts above.
-
-## Versioning
-
-The version is tracked in `package.json`, `package-lock.json` and
-`backend/__init__.py`, and `scripts/version.sh` keeps them in step:
-
-```sh
-./scripts/version.sh current      # print the current version
-./scripts/version.sh set 0.2.0    # set an explicit version
-./scripts/version.sh bump patch   # or minor / major, to auto-increment
-./scripts/version.sh check        # verify all declarations agree
-./scripts/version.sh tag          # create annotated git tag v<current-version>
-```
-
-`set`/`bump` update all three files, stage them, and commit with
-`Bump version to <version> [skip changelog]`. Pass `--no-commit` to leave the
-changes uncommitted; the script then prints the `git add`/`git commit` commands.
-Pushing the `vX.Y.Z` tag starts the release, whose `release` job refuses to run
-if the tag does not match the declared version.
+Both `npm run check` and `.venv/bin/pytest tests/` (after `npm run build`) must
+be green before a change lands. CI runs the same gate; pushing a `vX.Y.Z` tag
+starts the release.
 
 ## License
 
