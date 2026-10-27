@@ -249,10 +249,15 @@ code-signed (arm64 will not launch unsigned) but not notarized, so the first
 open of a browser-downloaded copy warns: right-click → Open, or clear it with
 `xattr -dr com.apple.quarantine Edi.app`.
 
-The bundle declares the Markdown (`net.daringfireball.markdown`) and plain-text
-document types, so Finder can open `.md`/`.markdown` files with Edi and can make
-it the default: Get Info on a file → **Open with: Edi → Change All…** (the choice
-is stored against the bundle ID, so it survives upgrades).
+The installer asks before making Edi the default app for Markdown files. A no —
+or a non-interactive run, where there is nobody to ask — leaves the existing
+default in place (falling back to the plain-text handler when no Markdown
+handler existed). Set `EDI_SET_DEFAULT=1` to opt in without the prompt, or `0`
+to skip the prompt and decline. The bundle declares the Markdown
+(`net.daringfireball.markdown`) and plain-text document types, so Finder can
+also open `.md`/`.markdown` files with Edi and can make it the default: Get Info
+on a file → **Open with: Edi → Change All…** (the choice is stored against the
+bundle ID, so it survives upgrades).
 
 ## Upgrading
 
