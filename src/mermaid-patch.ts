@@ -6,50 +6,19 @@ import {
   isKanbanColumnSlot,
 } from './kanban-model'
 import type { KanbanDoc, KanbanSlots } from './kanban-model'
-
-/** Mermaid's native label elements plus the HTML labels it wraps in foreignObjects. */
-const LABEL_SELECTOR = [
-  'text',
-  '.nodeLabel',
-  '.edgeLabel',
-  '.labelText',
-  '.loopText',
-  '.loopLabel',
-  '.titleText',
-  '.sectionTitle',
-  '.taskText',
-  '.taskTextOutside',
-  '.pieTitleText',
-].join(', ')
-
-/**
- * Labels mermaid generates rather than reads: axis ticks, pie percentages and
- * the icon sprites under `defs`/`marker`/`symbol`.
- */
-const GENERATED_LABEL_SELECTOR = 'g.tick, g.xAxis, g.yAxis, .slice, defs, marker, symbol, pattern, style'
-
-/**
- * Diagram families whose labels map onto a known source construct. Everything
- * else is `generic`, which is enough for a diagram whose labels each occur once
- * in the source (pie, mindmap, gantt, timeline, quadrant, treemap, …).
- */
-export type DiagramFamily =
-  | 'graph'
-  | 'sequence'
-  | 'kanban'
-  | 'state'
-  | 'er'
-  | 'class'
-  | 'git'
-  | 'requirement'
-  | 'sankey'
-  | 'wardley'
-  | 'venn'
-  | 'journey'
-  | 'treemap'
-  | 'xychart'
-  | 'packet'
-  | 'generic'
+import {
+  bandHeaderIn,
+  cardElements,
+  labelElementIn,
+  labelElements,
+  labelRole,
+  labelTextOf,
+  sectionElements,
+  type DiagramFamily,
+  type LabelRole,
+} from './mermaid-dom'
+export type { DiagramFamily } from './mermaid-dom'
+export { cardElements, labelElementIn, sectionElements }
 
 interface Span {
   start: number
@@ -100,38 +69,6 @@ export function diagramFamily(type: string): DiagramFamily {
 
 // ── reading labels out of the rendered SVG ─────────────────────────────────
 
-/** Elements a label may wrap, all of which round-trip to plain text. */
-const LABEL_WRAPPERS = new Set(['P', 'SPAN', 'TSPAN', 'DIV', 'B', 'I', 'EM', 'STRONG'])
-
-/**
- * The plain text of a label element, or `null` when it cannot round-trip: a
- * `<br/>` turns "a<br/>b" into "ab", markdown bold turns `**x**` into `x`, and
- * an icon contributes nothing at all. Those labels are left uneditable rather
- * than patched into something the source never said.
- */
-function labelTextOf(element: Element): string | null {
-  for (const node of Array.from(element.childNodes)) {
-    if (node.nodeType === 3) continue
-    if (node.nodeType !== 1) return null
-    const child = node as Element
-    // SVG element names are case-sensitive and `tagName` is lowercase for
-    // them (`tspan`), so compare case-insensitively or every native label
-    // mermaid wraps in a tspan (sequence participants, gantt, pie) is skipped.
-    if (!LABEL_WRAPPERS.has(child.tagName.toUpperCase())) return null
-    if (labelTextOf(child) === null) return null
-  }
-  const text = (element.textContent ?? '').trim()
-  return text.length > 0 ? text : null
-}
-
-/**
- * How a label relates to the rest of the source. A `text` label is prose that
- * happens to sit in the source verbatim; an `entity` label *names* something the
- * source also refers to elsewhere (an ER entity, a state, a git branch), so
- * renaming it has to rewrite every reference with it.
- */
-type LabelRole = 'text' | 'entity'
-
 /** Everything a mapper needs about a rendered label, minus the DOM. */
 export interface LabelRef {
   text: string
@@ -162,19 +99,6 @@ export interface LabelTarget extends LabelRef {
 const STEREO = /^<<.+>>$/
 
 /**
- * Per-family labels to leave out, because the value on screen is computed from
- * the source rather than read out of it: a treemap's per-section totals, a
- * packet field's bit range, an xy chart's y-axis tick numbers. Renaming any of
- * them would patch an unrelated number or string elsewhere in the source, so
- * they are not offered at all rather than offered and failed.
- */
-const GENERATED_BY_FAMILY: Partial<Record<DiagramFamily, string>> = {
-  treemap: '.treemapSectionValue, .treemapValue',
-  xychart: 'g.left-axis .label',
-  packet: '.packetByte',
-}
-
-/**
  * Every label of a rendered diagram that can be mapped back to source text.
  * Mermaid emits HTML labels inside `foreignObject` (the default) and native
  * `<text>` (sequence, gantt, pie, …); both are elements whose rect the overlay
@@ -190,7 +114,7 @@ export function labelTargets(svg: SVGSVGElement, family: DiagramFamily, source: 
     // Kanban renders three label slots per card (title, spacer, assignee) and
     // only the first is the card's own text; a section's label is its header.
     for (const section of sectionElements(svg)) {
-      const label = labelElementIn(section.querySelector('.cluster-label') ?? section)
+      const label = labelElementIn(bandHeaderIn(section) ?? section)
       const text = label && labelTextOf(label)
       if (label && text) targets.push({ el: label, text, role: 'text', occurrence: 0, count: 1 })
     }
@@ -202,10 +126,7 @@ export function labelTargets(svg: SVGSVGElement, family: DiagramFamily, source: 
     return editable(indexTargets(targets), family, source)
   }
 
-  const generated = GENERATED_BY_FAMILY[family] ?? ''
-  for (const el of Array.from(svg.querySelectorAll(LABEL_SELECTOR))) {
-    if (el.closest(GENERATED_LABEL_SELECTOR)) continue
-    if (generated && el.closest(generated)) continue
+  for (const el of labelElements(svg, family)) {
     const raw = labelTextOf(el)
     if (!raw) continue
     // A sankey node draws its name above a generated total in one text element;
@@ -269,40 +190,6 @@ function editable(
 }
 
 /**
- * Whether a label names a thing rather than describing one. Only families with
- * references to rewrite need the distinction; everything else is prose.
- */
-function labelRole(family: DiagramFamily, el: Element, text: string): LabelRole {
-  const inNode = (selector: string): boolean => el.closest(selector) !== null
-  switch (family) {
-    case 'state':
-      return inNode('.statediagram-state') ? 'entity' : 'text'
-    case 'er':
-      if (inNode('.attribute-type')) return 'text'
-      if (inNode('.attribute-name')) return 'text'
-      return inNode('g.node') ? 'entity' : 'text'
-    case 'class':
-      return inNode('.label-group') ? 'entity' : 'text'
-    case 'git':
-      return inNode('.branchLabel') ? 'entity' : 'text'
-    case 'sankey':
-      return 'entity'
-    case 'wardley':
-      return inNode('.wardley-node-label') ? 'entity' : 'text'
-    case 'venn':
-      return inNode('.venn-circle') ? 'entity' : 'text'
-    case 'journey':
-      return inNode('.legend') ? 'entity' : 'text'
-    case 'requirement':
-      // A requirement's rows are drawn as `Key: value`; what is left names the
-      // requirement, and the relations between them refer to it.
-      return text.includes(':') ? 'text' : 'entity'
-    default:
-      return 'text'
-  }
-}
-
-/**
  * Drop labels nested inside another label. Mermaid wraps a label in several
  * matching elements (`span.nodeLabel > p.nodeLabel`), and they all show the same
  * text, so only the outermost one is the label.
@@ -315,23 +202,6 @@ function outermost(targets: LabelTarget[]): LabelTarget[] {
     }
     return true
   })
-}
-
-/** The innermost label element of a group, skipping the empty spacer labels. */
-export function labelElementIn(scope: Element | null): Element | null {
-  if (!scope) return null
-  for (const el of Array.from(scope.querySelectorAll('.nodeLabel, .edgeLabel, text'))) {
-    if (labelTextOf(el) !== null) return el
-  }
-  return null
-}
-
-export function sectionElements(svg: SVGSVGElement): SVGElement[] {
-  return Array.from(svg.querySelectorAll<SVGElement>('.sections > g[class*="section-"]'))
-}
-
-export function cardElements(svg: SVGSVGElement): SVGElement[] {
-  return Array.from(svg.querySelectorAll<SVGElement>('.items > g.node'))
 }
 
 export function kanbanSlotElements(

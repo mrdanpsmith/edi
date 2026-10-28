@@ -11,6 +11,16 @@
 - the notice that keeps the last good diagram on screen when a patched source
   stops parsing.
 
+`src/mermaid-dom.ts` is the one place that reads mermaid's rendered SVG:
+its class names and the shape of its `g.node`/`g.section`/`foreignObject`
+output are implementation details an upgrade may change, so every selector
+that targets them lives there, with one rule per diagram family. It exposes
+label discovery and roles, board structure (columns, cards, headers), native
+text/shape helpers and `MERMAID_LABEL_WRAP_CSS`; the other Mermaid modules
+call those helpers instead of querying the drawing themselves. Selectors for
+Edi's own host elements (`.mermaid`, `.mermaid-preview`, the board chrome)
+stay with the modules that own them.
+
 `src/node/mermaid.ts` keeps the node view and the interaction-axis plumbing:
 `enterDiagramEditMode()`, `exitDiagramEditMode()` and
 `toggleDiagramEditMode()`. They are registered into `BLOCK_MODE_HANDLERS`, so
@@ -285,7 +295,7 @@ board's card width is fixed by `kanban.sectionWidth`, so nothing downstream can
 absorb that: the card is drawn at the width it was told to be, and the title
 paints *outside* it, over the columns next door.
 
-`MERMAID_LABEL_WRAP_CSS` (in `src/mermaid.ts`, passed as `themeCSS`) sets
+`MERMAID_LABEL_WRAP_CSS` (in `src/mermaid-dom.ts`, passed as `themeCSS`) sets
 `overflow-wrap: anywhere` on the label classes. It goes through `themeCSS`
 rather than our own stylesheet because `themeCSS` is embedded in the stylesheet
 mermaid *measures with*, so the label is already wrapped when the card, the

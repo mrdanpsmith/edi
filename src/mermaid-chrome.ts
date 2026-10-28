@@ -31,6 +31,7 @@ import {
   removeKanbanColumn,
 } from './kanban-model'
 import type { KanbanDoc } from './kanban-model'
+import { bandHeaderIn } from './mermaid-dom'
 
 // moved verbatim from mermaid-edit.ts
 export function attachKanbanChrome(session: DiagramSession, scope: RenderScope): () => void {
@@ -50,7 +51,7 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
   const cardsIn = (column: number): number =>
     doc.cards.filter((card) => card.column === column && !isKanbanCardSlot(card, doc)).length
   /** Where the header of a column is, as an index into the render's labels. */
-  const headerOf = (band: Element): number => indexOfLabel(scope, labelElementIn(band?.querySelector('.cluster-label') ?? band))
+  const headerOf = (band: Element): number => indexOfLabel(scope, labelElementIn(bandHeaderIn(band) ?? band))
 
   const layer = document.createElement('div')
   layer.className = KANBAN_CHROME_CLASS
@@ -184,7 +185,7 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
       // band is the fallback for a name with none: one that is not offered (a
       // repeated name, which has no single target) or one that has not been laid
       // out, which measures as no height at all.
-      const shown = labelElementIn(section.querySelector('.cluster-label'))?.getBoundingClientRect()
+      const shown = labelElementIn(bandHeaderIn(section))?.getBoundingClientRect()
       const top =
         shown === undefined || shown.height <= 0 ? rect.top + edge : shown.top + shown.height / 2 - size / 2
       return new DOMRect(rect.right - edge - size, top, size, size)

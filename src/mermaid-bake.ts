@@ -3,6 +3,7 @@
 // from `mermaid.ts` for backwards compatibility.
 
 import { resolvedTextFill } from './mermaid-colors'
+import { isHtmlLabel, textElements } from './mermaid-dom'
 import { DOC_ZOOM_EVENT } from './zoom'
 
 /**
@@ -183,8 +184,8 @@ function cssColorToRgb(value: string): { r: number; g: number; b: number } | nul
  * baked-bitmap treatment; fonts/colors that can't be corrupted stay vector.
  */
 export function diagramNeedsBake(svg: SVGSVGElement): boolean {
-  return Array.from(svg.querySelectorAll<SVGTextElement>('text, text tspan')).some((el) => {
-    if (el.closest('foreignObject')) return false
+  return textElements(svg).some((el) => {
+    if (isHtmlLabel(el)) return false
     const fill = resolvedTextFill(el)
     if (!fill) return false
     const rgb = cssColorToRgb(fill)

@@ -23,6 +23,16 @@ import {
   contains,
   hitTest,
 } from './mermaid-edit'
+import {
+  CARD_SELECTOR,
+  bandLabelIn,
+  headerAt,
+  headerIn,
+  itemLayer,
+  sectionFrame,
+  sectionGroupOf,
+  sectionLayer,
+} from './mermaid-dom'
 
 // ── kanban drag ────────────────────────────────────────────────────────────
 
@@ -127,7 +137,7 @@ interface DragHooks {
 }
 
 function cardAt(event: MouseEvent, cards: SVGElement[]): SVGElement | null {
-  return drawnElementAt(event, '.items > .node', cards)
+  return drawnElementAt(event, CARD_SELECTOR, cards)
 }
 
 /**
@@ -157,8 +167,8 @@ function columnAt(event: MouseEvent, sections: SVGElement[], cards: SVGElement[]
   if (hitTest(event, cards, (card) => card.getBoundingClientRect()) !== null) return -1
   const el = event.target
   if (el instanceof Element) {
-    if (el.closest('.cluster-label') || el.closest('.cluster-title')) return -1
-    const direct = el.closest<SVGElement>('.sections > g')
+    if (headerAt(el) !== null) return -1
+    const direct = sectionGroupOf(el)
     if (direct) {
       const index = sections.indexOf(direct)
       return index < 0 ? -1 : index
@@ -169,7 +179,7 @@ function columnAt(event: MouseEvent, sections: SVGElement[], cards: SVGElement[]
   // under the pointer is still a rename and not a grab.
   const hit = hitTest(event, sections, sectionRect)
   if (hit === null) return -1
-  const label = hit.querySelector('.cluster-label, .cluster-title')
+  const label = headerIn(hit)
   if (label && contains(label.getBoundingClientRect(), event.clientX, event.clientY)) return -1
   return sections.indexOf(hit)
 }
@@ -377,7 +387,7 @@ function kanbanTrash(drag: ArmedDrag): KanbanTrash {
   // to it: nothing is patched until a delete is confirmed.
   const card = slots.columnCard
   const parts = [
-    dressable(band?.querySelector('rect') ?? null, labelOf(band), 'Delete card'),
+    dressable(band === null ? null : sectionFrame(band), bandLabelIn(band), 'Delete card'),
     // The card says less than the band does, and it is not a whim: mermaid sized
     // each label box to the words it drew, and a `foreignObject` clips. The band's
     // box was sized for `+ Add a column` and holds the mark and both words with
@@ -385,7 +395,7 @@ function kanbanTrash(drag: ArmedDrag): KanbanTrash {
     // words are wider than that by more than the mark. Both strings are fixed, so
     // both boxes are the same size on every board -- which means the words that
     // fit are the same on every board, and a bin never says half of itself.
-    dressable(card?.querySelector('rect') ?? null, labelOf(card), 'Delete'),
+    dressable(card === null ? null : sectionFrame(card), bandLabelIn(card), 'Delete'),
   ]
   let lit = false
 
@@ -450,10 +460,6 @@ export function confirmThen(
   return promptForKanbanDelete(subject, consequence).then((confirmed) => {
     if (confirmed) session.patch(run)
   })
-}
-function labelOf(el: Element | null | undefined): Element | null {
-  const label = el?.querySelector('.cluster-label .nodeLabel, .cluster-title, .nodeLabel') ?? null
-  return label?.querySelector('p') ?? label
 }
 
 /**
@@ -747,7 +753,7 @@ function armCardDrag(drag: ArmedDrag, trash: KanbanTrash): void {
         session.patch((source) => moveKanbanCard(source, from, column, at))
       },
     },
-    { before: svg.querySelector('.items') },
+    { before: itemLayer(svg) },
   )
 }
 
@@ -793,7 +799,7 @@ function armColumnDrag(drag: ArmedDrag): void {
     // Carried, not grown, and held in a group of its own: the frame and its cards
     // are two lists the svg draws one after the other, so neither one's re-append
     // can put the column on top of the board.
-    { before: svg.querySelector('.sections'), scale: 1, layer: kanbanDragLayer(svg) },
+    { before: sectionLayer(svg), scale: 1, layer: kanbanDragLayer(svg) },
   )
 }
 /**
@@ -875,7 +881,7 @@ function columnGapAt(
 
 /** The section's background rect, i.e. the column area mermaid sized to its cards. */
 export function sectionRect(section: SVGElement): DOMRect {
-  const rect = section.querySelector('rect')
+  const rect = sectionFrame(section)
   return rect ? rect.getBoundingClientRect() : section.getBoundingClientRect()
 }
 

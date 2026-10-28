@@ -53,6 +53,7 @@ import {
   type DiagramFamily,
 } from './mermaid-patch'
 export * from './mermaid-patch'
+import { CARD_SELECTOR, cardGroupOf, nodeGroupOf } from './mermaid-dom'
 import { attachKanbanDrag, drawnElementAt } from './mermaid-drag'
 export { drawnElementAt, confirmThen, sectionRect } from './mermaid-drag'
 import {
@@ -267,8 +268,8 @@ function buildScope(svg: SVGSVGElement, source: string, family: DiagramFamily): 
   // by the very editor that renames it.
   if (slots !== null) {
     labels = labels.filter((target) => {
-      const node = target.el.closest('g.node')
-      return node === null || !slots.cards.has(node as SVGElement)
+      const node = nodeGroupOf(target.el)
+      return node === null || !slots.cards.has(node)
     })
   }
   return {
@@ -319,7 +320,7 @@ function attachEditingLayer(session: DiagramSession, svg: SVGSVGElement, source:
       if (hit !== null && (open.contains(hit.el) || hit.el.contains(open))) return
       if (open.contains(event.target as Node)) return
     }
-    if (!labelTargetAt(event, targets) && drawnElementAt(event, '.items > .node', scope.cards) === null) return
+    if (!labelTargetAt(event, targets) && drawnElementAt(event, CARD_SELECTOR, scope.cards) === null) return
     event.preventDefault()
     event.stopPropagation()
   }) as EventListener)
@@ -336,8 +337,8 @@ function attachEditingLayer(session: DiagramSession, svg: SVGSVGElement, source:
     const open = session.openSubject
     if (open !== null && (open.contains(target.el) || target.el.contains(open))) return
     const index = targets.indexOf(target)
-    const card = target.el.closest('.items > .node')
-    const cardIndex = card === null ? -1 : scope.cards.indexOf(card as SVGElement)
+    const card = cardGroupOf(target.el)
+    const cardIndex = card === null ? -1 : scope.cards.indexOf(card)
     if (cardIndex >= 0) {
       editCardTitle(session, cardIndex, false)
       return

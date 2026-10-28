@@ -2,6 +2,8 @@
 // native SVG text fills. Extracted from `mermaid.ts` to keep that module small.
 // Re-exported from `mermaid.ts` for backwards compatibility.
 
+import { isHtmlLabel, markerPaths, shapeElements, textElements } from './mermaid-dom'
+
 export const MERMAID_THEME_LIGHT: Record<string, string> = {
   primaryColor: '#d6e4ff',
   primaryTextColor: '#1f2328',
@@ -74,8 +76,8 @@ export function resolvedTextFill(el: SVGElement): string | null {
  * label's own color. HTML labels inside ``foreignObject`` are left untouched.
  */
 export function pinSvgTextColors(svg: SVGSVGElement): void {
-  for (const el of Array.from(svg.querySelectorAll<SVGTextElement>('text, text tspan'))) {
-    if (el.closest('foreignObject')) continue
+  for (const el of textElements(svg)) {
+    if (isHtmlLabel(el)) continue
     const fill = resolvedTextFill(el)
     if (!fill) continue
     el.style.fill = fill
@@ -242,8 +244,8 @@ export function adaptDiagramColors(svg: SVGSVGElement): void {
   const newTextColor = dark ? MERMAID_THEME_DARK.primaryTextColor : MERMAID_THEME_LIGHT.primaryTextColor
   const newLineColor = MERMAID_THEME_DARK.lineColor
 
-  for (const el of Array.from(svg.querySelectorAll<SVGTextElement>('text, text tspan'))) {
-    if (el.closest('foreignObject')) continue
+  for (const el of textElements(svg)) {
+    if (isHtmlLabel(el)) continue
     const fill = resolvedTextFill(el)
     if (!fill) continue
     const bg = effectiveBackgroundFor(el, svg)
@@ -254,7 +256,7 @@ export function adaptDiagramColors(svg: SVGSVGElement): void {
   }
 
   if (dark) {
-    for (const el of Array.from(svg.querySelectorAll<SVGLineElement | SVGRectElement | SVGPathElement>('line, rect, path, polygon, polyline'))) {
+    for (const el of shapeElements(svg)) {
       const stroke = getComputedStyle(el).stroke || el.getAttribute('stroke')
       if (!stroke || stroke === 'none' || stroke === 'transparent' || stroke.startsWith('url(')) continue
       const sc = parseCssColor(stroke)
@@ -265,7 +267,7 @@ export function adaptDiagramColors(svg: SVGSVGElement): void {
       el.style.stroke = newLineColor
     }
     // C4's arrowhead/arrowend markers carry no fill and default to black.
-    for (const markerPath of Array.from(svg.querySelectorAll<SVGPathElement>('marker path'))) {
+    for (const markerPath of markerPaths(svg)) {
       const fill = getComputedStyle(markerPath).fill || markerPath.getAttribute('fill')
       if (!fill || fill === 'none' || fill.startsWith('url(')) continue
       const sc = parseCssColor(fill)

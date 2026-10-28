@@ -10,6 +10,7 @@ import {
 } from './kanban-model'
 import type { KanbanDoc } from './kanban-model'
 import { patchLabel, diagramFamily, type LabelTarget, type LabelRef, type DiagramFamily, labelElementIn } from './mermaid-patch'
+import { cardPieces, sectionGroupOf } from './mermaid-dom'
 import { effectiveZoom } from './zoom'
 
 export const EDITABLE_CLASS = 'mermaid-editables'
@@ -172,8 +173,7 @@ function cardSubject(card: number): EditSubject {
       // By local name rather than by constructor: jsdom does not expose the SVG
       // element classes as globals, and what a card's frame *is* is a name
       // mermaid gave it rather than anything to do with which realm it came from.
-      const rect = el.querySelector<SVGRectElement>('rect')
-      const frame = el.querySelector<SVGForeignObjectElement>('foreignObject')
+      const { rect, frame } = cardPieces(el)
       if (rect !== null) {
         heights.set(el, {
           rect,
@@ -276,7 +276,7 @@ export function editColumnName(session: DiagramSession, index: number, band: Ele
 
 /** The band a label is drawn in, on a board, or `null` off one. */
 export function sectionOf(label: Element): Element | null {
-  return label.closest('.sections > g')
+  return sectionGroupOf(label)
 }
 
 /**
