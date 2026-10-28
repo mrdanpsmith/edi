@@ -1,0 +1,155 @@
+/* ── The one control cluster per block ─────────────────────────────────────
+ * Every top-level block shows the same row at the same place, revealed by the
+ * same rule, and its mode buttons come from `blockModeFor` (src/block-modes.ts)
+ * while its other controls are the block's own actions. This one rule replaces
+ * six hover lists that each named their own blocks — which is how a diagram's
+ * zoom toolbar, a plain table's lone button and an encrypted block's (invisible)
+ * handle ended up as three different things in three different corners.
+ *
+ * **Two boxes: a strip that is the margin, and a pill that is the row.** The
+ * split is the whole of why the row can be *reached* with a pointer:
+ *
+ * - `.block-controls` is **the strip** — the block's right margin, as tall as the
+ *   block and as wide as the margin. It paints nothing, and it is hit-testable
+ *   **always**. That is not a nicety: the row is drawn in the one region of the
+ *   page no block renders into, which therefore no `:hover` covers, so a row that
+ *   only became hit-testable when it appeared could never be entered — the
+ *   pointer leaves the block on its way to the buttons, the row fades, and the
+ *   buttons are unreachable. Measured, this is what made a *tall* block's controls
+ *   unpressable while a short one's worked: the path to a row at the top right of
+ *   a kanban board is inside the block for its first pixel and then 600px of
+ *   margin. As a child of the block, hovering the strip is hovering the block, so
+ *   the reveal has already happened when the pointer gets to a button.
+ * - `.block-control-pill` is **the pill** — the visible face, at the strip's top
+ *   left corner, standing 8px off the block so it clears the block's own outline
+ *   (see its rule). It is `pointer-events: none` until it is revealed, so an
+ *   invisible pill is inert: a press while the row is not shown is a press on the
+ *   page (`src/press.ts`: a press on the cluster that is not on a button is white
+ *   space, answered with a caret beside the block, never a mode flip the reader
+ *   could not see coming).
+ *
+ * **The strip is the whole right margin, not the row's own width**, for the same
+ * reason: entering it anywhere keeps the row alive, so a pointer that crosses
+ * the block's right edge far below the pill still has something under it.
+ *
+ * The row cannot cover a glyph on any block type — including a paragraph whose
+ * line runs to the column's edge, which is the case that killed the last three
+ * designs — because it starts past the block's right edge, in the margin. */
+.block-controls {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  /* The whole margin, and the block's whole height. */
+  width: var(--edi-gutter-right, 96px);
+  height: 100%;
+  z-index: 3;
+  /* Dormant, not dead: the strip is a surface even when the row is not drawn. */
+  pointer-events: auto;
+  user-select: none;
+}
+
+.block-control-pill {
+  position: absolute;
+  /* **The row stands off the block, because the block's own edge is where its
+     outline is.** A block that is not being viewed as its document wears a 2px
+     dashed accent outline at `outline-offset: 2px`, and a selected atom wears the
+     same shape solid — 4px outside the block's border box either way. A row flush
+     against the block therefore painted its own opaque fill and border *over the
+     outline's right-hand segment*, which reads as the controls clipping the frame
+     the reader is working in. So the pill starts 8px inside the strip: 4px clears
+     the outline and 4px is air. The gutter is sized for exactly this — 8 + 80 (the
+     widest row, three buttons) + 8 is the 96px margin.
+
+     **The gap is not a hole to cross**, which is what a gap between a block and
+     its controls would otherwise be: the strip is behind it, spans the whole
+     margin and is hit-testable always, so the pointer is on the block's own
+     cluster for the entire journey and the reveal survives it. */
+  top: 2px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* `max-content`, and it is not decoration: this box is positioned at the
+     block's right edge, so the room left for it is *zero* pixels and a flex row
+     left to fit itself wraps its buttons into a 31×102 tower. */
+  width: max-content;
+  padding: 1px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 150ms;
+  /* Inert until shown: see the strip's comment. */
+  pointer-events: none;
+}
+
+/* The reveal is keyed off the cluster's own wrapper rather than a per-block-type
+ * list, which is also why the encrypted block finally gets one: the old list
+ * never mentioned it, so its controls were in the DOM and never shown. A control
+ * that nothing can reach is not a control, and the cluster is the only control
+ * the block has. */
+.block-controls:hover > .block-control-pill,
+.ProseMirror :is(.block-visual-mode, .block-source-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):is(:hover, :focus-within) > .block-controls > .block-control-pill {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* **One button, one square, one glyph.** The cluster is a row of pictures now, so
+   the size is fixed rather than grown from its label: a 24px square holds a
+   control the pointer can aim at, and it does not move when the button's word
+   changes (`Source` → `Visual` used to resize the pill, and so did `Copy` →
+   `Copied!`). The words did not go away — they are `aria-label`/`title` — see
+   `src/icons.ts`. */
+.block-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font: inherit;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  /* The face is an svg and the button is one line: no wrapping, no shrink. */
+  flex: none;
+}
+
+.block-control svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.block-control:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.block-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* The interaction axis while it is on: the one cluster button that reports a
+   state rather than performing an action. */
+.block-control-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.block-control-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Block chrome is not content. */
+.ProseMirror .block-controls {
+  -webkit-user-select: none;
+  user-select: none;
+}
+

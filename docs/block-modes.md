@@ -67,7 +67,7 @@ into `BLOCK_MODE_HANDLERS`; `block-modes.ts` does not import it.
 ## One cluster per top-level block
 
 The cluster sits at the block's right edge and is revealed by one rule in
-`src/styles.css`.
+`src/styles/block-controls.css`.
 
 `attachBlockControls(node, view, getPos, actions)` generates the mode buttons
 and takes the block's own actions. A button reads its position from `getPos()`

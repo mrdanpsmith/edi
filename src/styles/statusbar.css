@@ -1,0 +1,59 @@
+#statusbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  height: 26px;
+  padding: 0 12px;
+  font-size: 12px;
+  line-height: 26px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+  /* Chrome, not content: same as the tab bar and the toolbar, a drag across the
+     file name or the word count is never meant to select them — and a double
+     click in the space under a short document would otherwise answer itself
+     with the nearest text on the page, which is this. */
+  user-select: none;
+}
+
+#status-right {
+  flex: none;
+}
+
+/* The mode chip: which block is in a mode, and what that mode is called. Its own
+   element rather than a corner of `#status-left`, which is the transient flash
+   slot and would overwrite it three seconds later. */
+#status-mode {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+#status-mode[hidden] {
+  display: none;
+}
+
+/* Shown only while the document is zoomed (hidden at 100%). */
+#status-zoom {
+  margin-left: auto;
+  padding: 0 6px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#status-zoom:hover {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+

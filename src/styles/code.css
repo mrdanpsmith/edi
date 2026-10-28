@@ -1,0 +1,281 @@
+/* ── Runnable code blocks ── */
+
+.ProseMirror .runnable-block {
+  margin: 1em 0;
+  border: 1px solid var(--border);
+  /* One decision, two declarations: the hover band measures from this block's
+     *padding* box, so its 1px frame is two pixels of horizontal room the band has
+     to be told about. See the band rule's `--edi-band-border`. */
+  --edi-band-border: 2px;
+  border-radius: 6px;
+  background: var(--surface);
+  position: relative;
+  margin-left: 24px;
+}
+
+.ProseMirror .runnable-block.edi-formula-invalid {
+  border-color: var(--danger);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+/* Block chrome is not content: a Ctrl/Cmd+Shift range that passes through or
+   brackets the block must not paint the language badge, the Copy button, the
+   line-number gutter or the block's control cluster as if they were selected
+   text. Both the pointer (`user-select`) and the selection highlight
+   (`::selection`) are suppressed on those elements. */
+.ProseMirror .runnable-block .code-copy,
+.ProseMirror .runnable-block .code-lang-bar,
+.ProseMirror .block-controls {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.ProseMirror .runnable-block .code-copy::selection,
+.ProseMirror .runnable-block .code-copy *::selection,
+.ProseMirror .runnable-block .code-lang-bar::selection,
+.ProseMirror .runnable-block .code-lang-bar *::selection,
+.ProseMirror .runnable-block .cm-gutters::selection,
+.ProseMirror .runnable-block .cm-gutters *::selection,
+.ProseMirror .block-controls::selection,
+.ProseMirror .block-controls *::selection {
+  background: transparent;
+  color: inherit;
+}
+
+/* The native highlight is suppressed inside a marked block, because the block's own
+   outline and tint *are* the selection there — the markdown of the whole block is
+   what gets copied, and a half-native highlight drawn across a table would say
+   something the copy does not do. `::selection` alone is not enough for the
+   CodeMirror gutter, which the browser paints as part of the covered line, hence
+   the descendant selector.
+
+   **This rule is why the marked set must stay small.** It erases the browser's own
+   selection across everything it matches, so applying it to ordinary text would
+   replace a real, familiar highlight with a decorative outline. It exists for
+   atoms, which have nothing else to show. */
+.ProseMirror .edi-block-selected::selection,
+.ProseMirror .edi-block-selected *::selection {
+  background: transparent;
+  color: inherit;
+}
+
+.ProseMirror .runnable-source {
+  margin: 0;
+  padding: 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  white-space: pre;
+  border-radius: 6px 6px 0 0;
+}
+
+.ProseMirror .runnable-source code {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+  white-space: pre;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  outline: none;
+  min-height: 1.5em;
+  color: inherit;
+  width: 100%;
+}
+
+/* Run/Stop lives in the block's control cluster with everything else's, so it is
+   a 24px square like the rest of the row; only the states that belong to a run
+   rather than to a mode are left here. */
+.ProseMirror .block-controls .exec-run.exec-stop {
+  color: var(--danger);
+}
+
+.ProseMirror .block-controls .exec-run.exec-stop:hover:not(:disabled) {
+  background: var(--danger-alt, var(--surface));
+  border-color: var(--danger);
+}
+
+.ProseMirror .block-controls .exec-run:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ProseMirror .exec-output {
+  margin: 0;
+  padding: 12px;
+  border: none;
+  border-radius: 0 0 6px 6px;
+  background: var(--exec-bg);
+  color: var(--exec-fg);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.ProseMirror .exec-output.exec-error {
+  border-top: 2px solid var(--danger);
+}
+
+.ProseMirror .exec-output-wrap {
+  position: relative;
+}
+
+/* Copy buttons. Two kinds, and the difference is the whole point of the change
+   that made them two: a code block's *source* copy lives in the block's control
+   cluster (`.block-control` styles it, and `.code-copy-source` names it), while
+   the *output* copy floats over the output it copies, because the output is a
+   region of its own and the reader is in the middle of it. Two floating controls
+   used to share the block's top-right corner — the copy and the cluster — and
+   the copy made room for itself with `padding-right` on the source. */
+.ProseMirror .code-copy {
+  cursor: pointer;
+}
+
+/* The cluster's copy is a `.block-control` like its neighbours: one size, no look
+   of its own. It used to keep the floating button's border and background as
+   well, which is a second border round one button — and a second set of metrics,
+   so it stood 3px taller than its neighbours and made the row itself taller than
+   the bar the row sat on. */
+
+/* The floating one is positioned, JS-revealed (`.code-copy-show`) and carries the
+   look, so all three stay scoped to it. It is the one Copy that keeps its word:
+   it floats over the output it copies, 8px from the text, and has the room. */
+.ProseMirror .code-copy-float {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 120ms;
+  z-index: 2;
+}
+
+.ProseMirror .code-copy-float.code-copy-show {
+  opacity: 1;
+}
+
+.ProseMirror .code-copy-float:hover {
+  background: var(--bg);
+}
+
+/* Only the floating one fades, and only because it is over the reader's text; the
+   cluster's copy keeps its slot and its label (`copyButton` in node/execblock.ts
+   is where that split is made). */
+.ProseMirror .code-copy-float.code-copy-fade {
+  opacity: 0 !important;
+  transition: opacity 500ms;
+}
+
+/* ── Code language bar / embedded code editor ── */
+
+.ProseMirror .code-lang-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* The bar carries the language badge and nothing else — the block's controls
+     live in the page gutter now — so it is back to the height a one-line bar
+     wants. It grew to 29px only to hold a 26px control row, and that row is no
+     longer inside it. */
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+/* The embedded CodeMirror host that replaces the `.runnable-source` pre for
+ * blocks with a code grammar. The CM theme handles the font and scroller; this
+ * gives it the same inset and bottom border as the plain renderer. */
+.ProseMirror .code-editor-host {
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  overflow-x: auto;
+}
+
+/* Keep the editor on the runnable-block surface (`--surface`) rather than the
+ * document background — CM injects its theme styles after this sheet at
+ * runtime, so the scoped theme override alone loses the cascade. */
+.ProseMirror .runnable-block .cm-editor,
+.ProseMirror .runnable-block .cm-scroller {
+  background: var(--surface);
+}
+
+/* Live per-line diagnostics for `edi-formula` blocks. */
+.ProseMirror .formula-errors {
+  border-top: 1px solid var(--border);
+}
+
+.ProseMirror .formula-error-row {
+  padding: 3px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
+.ProseMirror .formula-error-row::before {
+  content: '▲ ';
+}
+
+/* ── Block source mode (inline CodeMirror) ── */
+
+/* The frame around the raw-markdown editor is **chrome**, not a mode: it is what
+   makes an editor read as a panel, and it is why a source block has rounded
+   corners and clips its own contents. It is `--border` for the same reason the mode
+   outline is dashed and the selection outline solid — a solid accent line here would
+   be a third statement about the same fact, and it used to be the loudest one: an
+   open source block wore a bright accent frame around the whole editor while a
+   diagram being edited wore something else entirely. */
+.block-source-mode {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  /* **The cluster is a child of this box and sits outside it.** It is positioned
+     in the page's right gutter (`left: 100%`), so clipping the block to its own
+     rounded frame would clip the only way out of the source form. The CodeMirror
+     inside keeps its own `overflow: hidden` and border radius, which is what
+     actually draws the editor's frame. */
+  overflow: visible;
+  background: var(--surface);
+}
+
+.block-source-mode .cm-editor {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.block-source-mode .cm-editor .cm-scroller {
+  padding: 8px 12px;
+}
+
+.block-source-mode .cm-editor .cm-content {
+  font-family: inherit;
+}
+
+.block-source-mode .cm-editor .cm-gutters {
+  display: none;
+}
+
+.block-source-mode .cm-editor .cm-lineNumbers {
+  display: none;
+}
+

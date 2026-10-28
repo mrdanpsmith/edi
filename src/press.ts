@@ -163,7 +163,8 @@ export const BLOCK_CONTENT_CLASS = 'block-content'
  * `src/press.ts`: `content`, `margin` and `controls` are the parts of a block a press is
  * classified by, and a module that cannot name them cannot ask the question.
  *
- * The cluster is **the block's whole right margin** (`.block-controls` in `src/styles.css`),
+ * The cluster is **the block's whole right margin** (`.block-controls` in
+ * `src/styles/block-controls.css`),
  * not just the pill of buttons drawn at the top of it, because the margin is where the
  * pointer has to be able to travel: the pill is the block's `:hover` away from being
  * invisible, and a pointer that leaves the block for the buttons spends that journey over

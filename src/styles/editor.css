@@ -1,0 +1,144 @@
+/* ── ProseMirror editor ── */
+
+.ProseMirror {
+  /* ── The margins a block's controls live in ────────────────────────────────
+   * **A block's controls sit beside it, not on it, and the right margin is the
+   * room they need.**
+   *
+   * The cluster is revealed by hovering a block, so wherever it is drawn it is
+   * drawn over whatever is underneath — and a block's own first line of text is
+   * what was underneath. Every earlier design looked for a few pixels of the
+   * block that were not a glyph (a rail above it, a pill on the band, the bar of
+   * a code block) and every one of them covered the text on some block type. The
+   * margin is the only region of the page that is *never* content, so that is
+   * where they went: `.block-controls` sits at `left: 100%` of the block,
+   * entirely outside it. See the cluster rule below.
+   *
+   * **Both margins are the same 96px of page, and fixed.** Three 24px buttons
+   * plus their gaps and border measure 80px, so 96px holds the row with room to
+   * spare; the left one is the same 96px so the *text* sits the same distance
+   * from either window edge, which is what makes the column read as a column. It
+   * is written as 72px because every block carries a 24px indent of its own
+   * (`.ProseMirror > .block-visual-mode`) — 72 + 24 is the 96 that the right edge
+   * gets for free, and the two numbers are *not* two decisions. */
+  --edi-gutter-left: 72px;
+  --edi-gutter-right: 96px;
+  padding: 16px var(--edi-gutter-right) 48px var(--edi-gutter-left);
+  outline: none;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  /* **The band escapes into here**, and this is what it escapes into: the hover
+     band's `z-index: -1` is only above this element's own background — and below
+     every block's — while `.ProseMirror` itself is what puts it on screen. Remove
+     this and the band drops to the root stacking context, `body`'s own
+     background paints over it, and the affordance vanishes on every block at
+     once. `zoom` (declared below) already gives this element that property at
+     every zoom factor including the default `1`, which is measured and is exactly
+     why it cannot be left to: the band would then be one Blink implementation
+     detail away from being invisible, with nothing in the sheet to say so. */
+  isolation: isolate;
+  /* **The band's right edge is measured from here.** A block that hugs its
+   * content — a rendered table is as wide as its grid — cannot say where its row
+   * ends, so the band's `right` is written against *this* element's content width
+   * (`100cqw`, in the band rule below) and this declaration is what makes that
+   * width nameable. `inline-size` containment is the cheapest kind: the editor's
+   * width comes from the page and never from its contents, so its own layout does
+   * not change, and the style containment that comes with it is inert here (this
+   * sheet uses no CSS counters). */
+  container-type: inline-size;
+  /* ProseMirror's default `pre-wrap` renders a single newline inside a
+   * paragraph as a visible line break, which looks identical to a hard break.
+   * CommonMark collapses single newlines to a space (soft line break), so
+   * override it. Hard breaks still show because they are hard_break nodes
+   * rendered as <br>, and code blocks keep pre-wrap via `.ProseMirror pre`.
+   *
+   * **`normal` is one of the three values ProseMirror warns about**, and it will
+   * print this at every launch, once per process:
+   *
+   *   js: ProseMirror expects the CSS white-space property to be set,
+   *       preferably to 'pre-wrap'.
+   *
+   * That warning is `checkCSS` in `prosemirror-view` noticing that a later rule
+   * overrode its own stylesheet at equal specificity (`main.ts` imports
+   * `prosemirror-view/style/prosemirror.css` first). **It is not a symptom and
+   * the override is not a mistake** — `pre-wrap` here would be a rendering bug,
+   * not a fix: a Markdown document's soft line breaks would read as hard ones.
+   * Leave it alone. */
+  white-space: normal;
+}
+
+.ProseMirror:focus {
+  outline: none;
+}
+
+/* Block spacing: every top-level child of the ProseMirror doc */
+.ProseMirror > * {
+  margin-top: 0;
+  margin-bottom: 0.5em;
+}
+
+.ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.ProseMirror > .block-visual-mode {
+  position: relative;
+  margin-left: 24px;
+}
+
+/* **A rule's row is the whitespace around it.** An `<hr>` is 1px tall, so the
+   strip — `height: 100%` of its block — was a 1px line the pointer had to find
+   exactly: the row existed, and the only way to reveal it was to sit on the
+   rule itself. The margins are where the rule's row actually is, so the strip
+   covers them. Nothing moves: the strip is absolutely positioned, paints
+   nothing, and the gap above and below the line is the same gap it now fills. */
+.ProseMirror > .block-visual-rule > .block-controls {
+  top: -1.5em;
+  height: calc(100% + 3em);
+}
+
+/* Task list checkboxes.
+ *
+ * The `z-index` is not styling, it is the checkbox's half of the hover band's
+ * contract (§ "Which block would Alt+click alter?", below): the band is a
+ * `z-index: -1` pseudo-element, and a **native form control is painted underneath
+ * a negative-z-index sibling** unless it asks for a positive one of its own. So
+ * hovering a task list — the one block type whose own content is a row of bare
+ * controls — drew the band straight over every checkbox in it, and the checkboxes
+ * came and went with the pointer. Measured in the real engine: `z-index: 0` does
+ * not lift a checkbox clear of the band and `1` does, and the same is true of the
+ * item around it (`li` is `position: relative` from ProseMirror's own base sheet,
+ * so it takes a `z-index` too and still loses).
+ *
+ * The control cluster is the other half of the same contract — it carries
+ * `z-index: 3` and a band has never hidden it. Anything else that has to stay
+ * visible inside a banded block needs the same, and the band's own list below is
+ * where to check what those blocks contain. */
+.ProseMirror li[data-checked] {
+  list-style: none;
+  display: flex !important;
+  align-items: baseline;
+  gap: 0;
+}
+.ProseMirror li[data-checked] > input[type='checkbox'] {
+  margin: 0 0.4em 0 0;
+  margin-top: 0.35em;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent, #3b82f6);
+  position: relative;
+  z-index: 1;
+}
+.ProseMirror li[data-checked] p {
+  margin: 0;
+}
+
+.ProseMirror > .block-source-mode {
+  position: relative;
+  margin-left: 24px;
+  margin-right: 0;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+

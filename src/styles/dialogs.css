@@ -1,0 +1,198 @@
+.edi-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.edi-dialog {
+  width: min(420px, calc(100vw - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edi-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.edi-dialog-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.edi-dialog-input {
+  font: inherit;
+  font-size: 14px;
+  padding: 7px 9px;
+  color: var(--text-primary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.edi-dialog-input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.edi-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.toolbar-btn.toolbar-primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toolbar-btn.toolbar-primary:hover {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  filter: brightness(1.1);
+}
+
+.edi-dialog-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.edi-dialog-input-row .edi-dialog-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.edi-dialog-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+/* What a confirmation is about to do, below its title and above the buttons. */
+.edi-dialog-note {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* The one button in a confirmation that acts. It is red, because it is the one
+   that takes something away. */
+.toolbar-btn.toolbar-danger {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.toolbar-btn.toolbar-danger:hover {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  filter: brightness(1.1);
+}
+
+.edi-dialog-reveal-toggle {
+  flex: none;
+}
+
+.masked-field {
+  display: inline-block;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: baseline;
+}
+
+.masked-field .masked-field-dots {
+  letter-spacing: 1px;
+}
+
+.masked-field-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.masked-field-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.masked-field-btn:hover {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--surface-raised);
+}
+
+.masked-field-btn svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
+.masked-field.masked-field-revealed {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.masked-field .masked-field-value {
+  letter-spacing: 0;
+}
+
+.masked-field.masked-field-edit {
+  cursor: auto;
+}
+
+.masked-field.masked-field-cell {
+  cursor: pointer;
+}
+
+.masked-field.masked-field-cell .masked-field-actions {
+  display: inline-flex;
+}
+
+.masked-field-input {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  width: 16em;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text-primary);
+  padding: 0 4px;
+}
+

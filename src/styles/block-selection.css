@@ -1,0 +1,228 @@
+/* ── The active block ────────────────────────────────────────────────
+ * A left accent rule on the one block the record names, in that mode's colour.
+ * The status chip says *what* is in a mode; this says *where*, which is the half
+ * the chip cannot give. An inset shadow rather than a border, so marking a block
+ * costs it no layout — the rule is not content and must not reflow the document.
+ *
+ * These classes are also what makes a mode flip reach the node views at all:
+ * ProseMirror compares a node's decorations by value and skips the tree walk when
+ * they match, so the rule has to be distinct per mode (see `BLOCK_MODE_CLASS`). */
+/* ── Two outlines, and what each one means ───────────────────────────────────
+ * These are the whole of the app's block-level indication vocabulary, and they are
+ * kept to exactly two so that either can be read at a glance:
+ *
+ * | the block is… | drawn as |
+ * |---|---|
+ * | **selected** — in the selection | a **solid** accent outline, plus a tint |
+ * | **not being viewed as its document** — source, being edited, or a sheet | a **dashed** accent outline |
+ * | neither | nothing |
+ *
+ * **A block that is not being viewed as its document gets a dashed outline, whatever
+ * the mode and whatever the block type.** That was not true: §7.2 drew a 3px accent
+ * bar down the left edge, and a block in its source form additionally had a *solid*
+ * accent border of its own, so the two alternate states of a document looked nothing
+ * like each other and neither matched a third. Three separate treatments for three
+ * states, none of them the rule.
+ *
+ * One rule, one mark. Dashed is the choice because these states are the reader's own
+ * doing and temporary — a block you are editing right now — and a solid line is
+ * spent on selection, where it belongs (§ *selected* below). It is also drawn with
+ * `outline` rather than a `box-shadow`, so it costs the block no layout: the rule
+ * is chrome and must never reflow the document.
+ *
+ * A **form-only** mode — a table as a sheet — is in it too, and used to be excluded
+ * on the reasoning that a spreadsheet is a *rendering* rather than an alternate
+ * document. That left the one mark that answers "which block am I working in"
+ * answering differently per block type: a diagram being edited was dashed and a table
+ * being edited was not, and the sheet is the block where the reader is demonstrably
+ * working. It costs nothing in meaning to include it — a table in plain text holds no
+ * record and so stays unmarked, which is exactly the distinction the mark was carrying
+ * — and the sheet then wears a mark *and* its cells wear the grid's own selection
+ * highlight, which is the relationship a source form has with its buffer.
+ *
+ * So the rule is one sentence: **anything not being viewed as its document**. The
+ * chip names the state (`Source`, `Edit`, …) and the cluster button offers the way
+ * back; the outline says *where*, which is the half the chip cannot give. */
+.ProseMirror :is(.edi-block-mode-source, .edi-block-mode-editing, .edi-block-mode-form) {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* A block in its source form no longer wears the record's *bar* — the dashed
+   outline above says so — so nothing here needs to cancel a shadow. */
+.ProseMirror .block-source-mode {
+  box-shadow: none;
+}
+
+/* ── Selected block: one solid accent outline, for ATOMS ONLY ───────────────
+ * The other half of the vocabulary above, and the reason the mode outline is
+ * *dashed*: a solid accent line means **this block is selected**.
+ *
+ * **This applies to atoms and nothing else**, which is the whole design and not a
+ * limitation. The browser's own selection highlight is better for anything made of
+ * text — it is what a browser does, it follows the text exactly, and it is free. An
+ * atom (a table, a diagram, a code block) has no selectable text inside it, so a
+ * range across one shows *nothing at all* and the reader cannot tell whether it is
+ * in the selection or whether the selection stopped there. So the split is by what
+ * the browser can already express: text keeps the browser's, and only what the
+ * browser cannot show is marked.
+ *
+ * Marking *every* top-level block was tried, to make the two look alike. It made
+ * them worse on both counts — an outline round ordinary paragraphs reads as a
+ * decorative border around running text rather than as a selection, and because the
+ * native highlight is suppressed inside a marked block (see
+ * `.edi-block-selected::selection`) below, marking everything erased the browser's
+ * selection across the entire document at once: everything selected, nothing visible
+ * as selected. Two marks for one idea, and both of them wrong.
+ *
+ * So the class is only ever put on an atom — `selectionHighlightPlugin` decides, and
+ * ProseMirror puts `.ProseMirror-selectednode` on a whole-block `NodeSelection`,
+ * which is also an atom by definition. Declared after the mode outline, so a block
+ * that is both an atom in a mode and in the selection reads as selected.
+ */
+.ProseMirror .ProseMirror-selectednode,
+.ProseMirror .edi-block-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* **A selected Visual table wears its cells and nothing else** — no ring, on the block or on
+ * the grid. Two measurements put the ring out of reach, and the second is the better argument:
+ *
+ * 1. **A ring outside the grid is drawn where nothing can show it.** The grid lives in
+ *    `.ss-plain-scroll`, which is `overflow-x: auto; overflow-y: hidden` and whose box is
+ *    *exactly* the grid's own vertical extent (measured: a grid of 48,161→253,221 inside a
+ *    scroller of 48,161→1256,221, `overflow-y: hidden`). A 2px ring at `outline-offset: 2px` is
+ *    painted at 156.7 / 225.4 / 44 / 257.3 on that grid's four sides — **three of which are
+ *    outside the scroller's clip box** (top and bottom above and below it, left 4px left of it),
+ *    and only the right one is inside. That is what the report called *"only part of the blue
+ *    selected border, on the right of the table"*, and what read as a visual artifact.
+ * 2. **A ring inside the grid is painted over by the cells.** Every cell is
+ *    `position: relative; isolation: isolate`, so the header row's own backgrounds cover a ring
+ *    drawn inside the table's border. Measured against a real grab of the page at
+ *    `outline-offset: -2px`: the bottom and right segments paint on every sample, the left on
+ *    half of them and **the top on one of 49**.
+ *
+ * Only a positioned overlay paints over cells, and that is more machinery than the job is worth.
+ * **The cells already say it**: a table selected whole lights every one of them, which is §3.2's
+ * own distinction — a Visual table is *text in a range* and wears `--selection`, while the solid
+ * accent outline says *this block is an object* and belongs to a diagram, a rule or an image.
+ *
+ * The block's own accent outline goes with it. Every block is as wide as the text column — that
+ * is what a block *is* in this editor — so leaving it on painted a page-wide band around a small
+ * table: measured, the fill and the outline ran 48→1256 around a 63px grid, which reads as a
+ * selected row with a table in it and is what the report called "all the pixels between the left
+ * and right margin". The cell fill is the honest paint: a click on a table *does* select the
+ * whole of it, so the whole grid being lit is true — it is only the empty space beside it that
+ * was pretending to be part of the selection. */
+.ss-plain.ProseMirror-selectednode {
+  outline: none;
+  background: none;
+}
+
+/* ── The vocabulary: one token per meaning ───────────────────────────────────
+ * Four meanings appear in this stylesheet and they used to share one paint
+ * between them. `--selection` ("a range over content") was worn by the find
+ * chips, the grid's own cell range *and* the autocomplete's selected row, while
+ * **prose selection — the one thing every reader calls selected — had no token
+ * at all** and fell through to Chromium's own `#3367d1`. So the four things
+ * wearing `--selection` were four different ideas and the obvious one had none.
+ *
+ * | meaning | token | where |
+ * |---|---|---|
+ * | **selected** — a range | `--selection` | prose `::selection`, Visual table cells, the grid's own cell range |
+ * | **found** — a search match | `--find`, `--find-active` | `.edi-search-match` |
+ * | **under the pointer** | `--block-hover` | the hover band |
+ * | **working state** | dashed `--accent` outline | see the sheet/diagram rules |
+ *
+ * Four meanings, four tokens, and prose finally has one. The grid's cells keep
+ * `--selection` on purpose: a cell range *is* a selected range, and sharing the
+ * token is what makes it one.
+ *
+ * **`::selection` is deliberately the least specific rule in this sheet.** Two
+ * rules here erase the native highlight on purpose — the block chrome above
+ * (`user-select: none` partners, which is not content) and a marked atom, where
+ * the block's own outline *is* the selection — and both are more specific than
+ * this one, so they still win. Painting prose is the fix; painting over a block
+ * whose outline already answers is the bug the atom rule exists to avoid.
+ *
+ * CodeMirror is likewise untouched: its own theme styles `.cm-content
+ * ::selection` at two classes, so a source buffer keeps its editor's highlight
+ * rather than borrowing the document's. */
+.ProseMirror ::selection {
+  background-color: var(--selection);
+}
+
+/* ── A Visual table is text in a range ────────────────────────────────────────
+ * §2.2's table row: a table in its Visual rendering is mostly words laid out in
+ * rows, and a reader dragging across one expects to stop halfway down it. So it wears
+ * **the selection highlight**, from the same `--selection` token as prose — not the
+ * solid accent outline, which says *this block is an object*, and which is what a
+ * diagram, a rule, an image and a CodeMirror code block still get.
+ *
+ * **And the selection is the browser's own**, because the model cannot hold one here: a
+ * `table` node is `atom: true` with no content, so "three characters of that cell" is
+ * not a pair of positions that exist (`src/tableTextSelection.ts`). That is what the
+ * first rule is for — it makes the cells selectable text rather than leaving it to
+ * whatever `user-select: auto` resolves to inside a `contenteditable=false` subtree.
+ *
+ * **The cluster keeps its own `user-select: none`** because the second selector does not
+ * match it — `.block-controls` is not a `th`/`td` — which is the whole of what keeps the
+ * table's own buttons out of a copy of its text.
+ *
+ * **The highlight is drawn here, because Chromium draws none of it.** Measured in the real
+ * engine with the app's own fill taken off first, so the two cannot be confused: neither
+ * `::selection` nor a `CSS.highlights` `::highlight()` on the same range leaves anything
+ * but `#ffffff` inside a cell, in every direction. §3.1's wall, and it is not a
+ * bracketing-only wall. So it is drawn per cell, at the words' own geometry:
+ *
+ * | the range | what paints it |
+ * |---|---|
+ * | an end of it inside the cells — a fragment, a few cells, two tables | **the boxes below**, on the words |
+ * | merely bracketing the table (`Ctrl+A`, prose → prose) | **the cell fill**, whole, from `TablePlainView` |
+ *
+ * The cell fill is the bracketing answer and stays it: there the cells are the only thing
+ * that can paint at all, and a hole where the table is would read as "the selection
+ * stopped here". On the **cells**, because a header row and a cell's padding are chrome
+ * and not text.
+ *
+ * **`isolation: isolate` on a cell is load-bearing, not tidiness.** A box has to paint
+ * *over the cell's own background and under its text*, and that ordering is exactly what a
+ * stacking context buys: the cell's background, then its negative-`z-index` children,
+ * then its content. A single layer behind the whole table cannot do it — a header row's
+ * background is opaque and hides everything under it, which is what the first version of
+ * this did, and why its boxes over the header row were invisible while its boxes over the
+ * body were not.
+ */
+.ss-plain,
+.ss-plain :is(th, td) {
+  user-select: text;
+}
+
+.ss-plain :is(th, td) {
+  position: relative;
+  isolation: isolate;
+}
+
+.ss-plain-selection-rect {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--selection);
+}
+
+/* **The header row takes the fill too, and it takes a selector to do it.** A Visual table
+ * selected whole wears *its cells* and nothing else (see the rule above on why there is no ring),
+ * so a header row that stayed grey would read as a table that is only half selected — the same
+ * "half of it is painted" complaint in the opposite direction. `ss-plain .ss-plain-table thead
+ * th` is the one rule that sets a cell background outside this section, and at (0,2,2) it outranks
+ * the (0,2,1) selector here, so the class was on every header cell and none of them showed it.
+ * The second selector matches it and wins. */
+.ss-plain-table :is(th, td).ss-cell-in-selection,
+.ss-plain .ss-plain-table thead th.ss-cell-in-selection {
+  background: var(--selection);
+}
+

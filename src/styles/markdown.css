@@ -1,0 +1,147 @@
+/* ── Headings ── */
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3,
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 {
+  color: var(--md-heading);
+  line-height: 1.25;
+  margin: 1.5em 0 0.5em;
+  scroll-margin-top: 0.5em;
+}
+
+.ProseMirror h1:first-child {
+  margin-top: 0.4em;
+}
+
+.ProseMirror h1 {
+  font-size: 1.9em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+
+.ProseMirror h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+
+.ProseMirror h3 {
+  font-size: 1.25em;
+}
+
+/* ── Inline elements ── */
+
+.ProseMirror a {
+  color: var(--md-link);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ProseMirror a:hover {
+  text-decoration: underline;
+}
+
+.ProseMirror img.edi-image {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.ProseMirror img.edi-image-error {
+  border: 1px dashed var(--danger);
+  opacity: 0.6;
+}
+
+/* Inline decorations wrap the link text in a span inside the anchor. */
+.ProseMirror a .ml-misleading {
+  color: var(--danger);
+}
+
+/* Search matches: inline decorations wrap the matched text in a span, with the
+ * active match drawn more strongly than the rest. **Found, not selected** — a
+ * match is a place the search passed through and the reader may never take, so
+ * it wears `--find`/`--find-active` rather than `--selection`. Same classes in a
+ * table's cells (`highlightTableCell`), which is why the tokens rather than the
+ * rules carry the meaning. */
+.ProseMirror .edi-search-match {
+  background: var(--find);
+  border-radius: 2px;
+}
+
+.ProseMirror .edi-search-match-current {
+  background: var(--find-active);
+  color: var(--accent-contrast);
+  border-radius: 2px;
+}
+
+.ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 0.15em 0.35em;
+}
+
+.ProseMirror mark {
+  background: var(--md-mark);
+  color: inherit;
+  padding: 0 0.15em;
+  border-radius: 3px;
+}
+
+.ProseMirror sup,
+.ProseMirror sub {
+  line-height: 0;
+}
+
+/* ── Block elements ── */
+
+.ProseMirror blockquote {
+  margin: 0.5em 0;
+  padding: 0 1em;
+  border-left: 4px solid var(--border);
+  color: var(--md-quote);
+}
+
+.ProseMirror pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.88em;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 2em;
+}
+
+.ProseMirror li + li {
+  margin-top: 0.25em;
+}
+
+/* The rule's row. The 1.5em margins are the fact the `.block-visual-rule`
+   control strip and hover band both size their coverage from — restatements,
+   not copies, of this one decision (§ their own rules). */
+.ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+
+.ProseMirror p {
+  margin: 0.5em 0;
+}
+

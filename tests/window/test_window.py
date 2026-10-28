@@ -5854,7 +5854,7 @@ def test_a_table_as_a_sheet_is_marked_like_any_other_mode(window):
         f"a table in its default rendering is not a block in a mode: {plain['plain']}")
 
 
-# The two outlines of the block-level vocabulary (styles.css §7.2): a **solid**
+# The two outlines of the block-level vocabulary (block-selection.css §7.2): a **solid**
 # accent outline means *selected*, a **dashed** one means *not being viewed as its
 # document*.
 #

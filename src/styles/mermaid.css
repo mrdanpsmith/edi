@@ -1,0 +1,395 @@
+/* ── Mermaid diagrams ── */
+
+.ProseMirror .mermaid {
+  position: relative;
+  margin-left: 24px;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+.ProseMirror .mermaid .mermaid-preview {
+  overflow-x: auto;
+  position: relative;
+  /* Keep clicks from ever starting a text selection inside a diagram — diagram
+     text is meant to be read, not selected (copy-as-image uses the vector
+     source and is unaffected). */
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* Diagrams are displayed as baked bitmaps (see bakeDiagram in src/mermaid.ts):
+   on-screen glyphs must be raster the repaint bug cannot touch. The vector SVG
+   stays in the DOM, hidden, as the source for copy-as-image and re-bakes. */
+.ProseMirror .mermaid .mermaid-img {
+  display: block;
+  margin: 0 auto;
+}
+.ProseMirror .mermaid .mermaid-source {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.ProseMirror .mermaid svg {
+  display: block;
+  margin: 0 auto;
+}
+/* Chromium makes SVG nodes natively draggable: a kanban card would start the
+   browser's own drag (drag image, no pointer events) before our threshold is
+   crossed, and the card would silently snap back on drop. The group a held column
+   is carried in holds cards too, and it is not under `.items` while it is there. */
+.ProseMirror .mermaid .items > .node,
+.ProseMirror .mermaid .kanban-drag-layer .node {
+  -webkit-user-drag: none;
+}
+
+.ProseMirror .mermaid-error {
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
+  background: var(--surface);
+  padding: 10px 14px;
+  margin: 1em 0;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+/* ── Visual editing of rendered diagrams ── */
+
+/* A diagram being edited used to have its **own** frame here: 1px dashed accent,
+   3px out. It was the only block in the app that drew one, which is what "a dotted
+   outline that occasionally occurs for some blocks" was — and a dashed frame at a
+   different weight and offset is not a rule, it is a leftover.
+
+   It is gone, and the dashed accent outline every non-visual mode now uses (see
+   "Two outlines" above) says this instead. Edit mode is still explicit — the
+   cluster's **Edit**, Alt+click, the context menu — so the preview stays a preview
+   until the reader asks to edit it; what marks that they have is now the same mark
+   every other mode gets. */
+
+.ProseMirror .mermaid .mermaid-editables {
+  cursor: text;
+}
+
+/* The field an inline edit is made in. It owns the geometry, because a field is
+   absolutely positioned: an absolutely positioned child of a horizontal scroller
+   is placed from the scrolled content rather than from the visible box, so the
+   wrapper is what adds the preview's scroll back. */
+.ProseMirror .mermaid .mermaid-edit-field {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* A field that is about to *add* something is drawn as one — the same dashed
+   accent the drawn slot it stands in has, so the slot visibly becoming the field
+   is what says the value is new rather than a replacement. */
+.ProseMirror .mermaid .mermaid-edit-field-new .mermaid-edit-input {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+
+.ProseMirror .mermaid .mermaid-edit-input {
+  font: inherit;
+  font-size: 0.95em;
+  width: 100%;
+  color: var(--text-primary);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 3px;
+  margin: 0;
+  outline: none;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
+}
+
+/* A composer types a title that is being *written* rather than replaced, so it
+   wraps: the whole of what is being typed stays visible instead of scrolling out
+   of sight to the right, and it is the field that resizes rather than the board
+   that grows — one line per line of the title, up to the cap the script keeps it
+   to, and past that it scrolls rather than climbing over the columns behind. */
+.ProseMirror .mermaid .mermaid-edit-input-wrap {
+  display: block;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.25;
+  padding: 2px 3px;
+  min-height: 1.25em;
+  box-sizing: border-box;
+}
+
+.ProseMirror .mermaid .mermaid-edit-input.mermaid-edit-invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+/* A failed re-render leaves the last good diagram alone, so the only thing to
+   report is a transient notice over the block. */
+.ProseMirror .mermaid .mermaid-edit-notice {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  z-index: 4;
+  transform: translateX(-50%);
+  max-width: 90%;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--danger);
+  background: var(--surface-raised);
+  color: var(--danger);
+  font-size: 0.8em;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* The card being dragged is the real one, so it is styled as *held* rather than
+   dimmed as a source: a drag clone used to sit on top of it, and a faded ghost
+   marked the slot it had left. Nothing is dimmed now — the gap the card came
+   from is the record, and the line below is the promise. */
+.ProseMirror .mermaid .kanban-dragging-card {
+  /* Off the hit-testing while it travels: the drop is decided by the column
+     under the pointer, not by whatever the card happens to be passing over. */
+  pointer-events: none;
+  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 35%));
+}
+
+/* A whole list is lifted the same way a card is — the frame and its cards, which
+   are two separate sibling lists, so both carry the class. The frame is what the
+   pointer was holding, so it is what gets the shadow: the cards ride along
+   inside it. `outline` rather than a filter, because the frame is an svg
+   rectangle and a drop-shadow on it would be drawn *under* its own fill. */
+.ProseMirror .mermaid .kanban-dragging-column {
+  pointer-events: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Mermaid's svg clips its own content (`overflow: hidden`) and the preview is a
+   scroll container, so a real card travelling off the board would be cut off
+   mid-drag instead of following the pointer. Both have to let it out. */
+.ProseMirror .mermaid-preview.kanban-dragging {
+  overflow: visible;
+}
+
+.ProseMirror .mermaid-preview.kanban-dragging > svg {
+  overflow: visible;
+}
+
+/* The gap the card will drop into, spanning the column like Trello's line: it is
+   the only part of a drag that answers "which slot", which the column outline
+   cannot say. It is an svg child ahead of `.items`, so every card paints over
+   it — the dragged one included — and `non-scaling-stroke` keeps it 3px on a
+   board that is zoomed to something else. */
+.ProseMirror .mermaid .kanban-drop-line {
+  stroke: var(--accent);
+  stroke-width: 3px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.ProseMirror .mermaid .kanban-drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+
+/* The board's own controls in edit mode. They are HTML overlays positioned from
+   the card or column they belong to, so their `left`/`top` are their top-left
+   corner and every one of them is given its own box; the layer only ever exists
+   in edit mode, and this keeps them out of a preview regardless. Every one is a
+   `button`, so the double click that ends an edit session leaves them alone too. */
+.ProseMirror .mermaid .mermaid-kanban-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.ProseMirror .mermaid .mermaid-kanban-btn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  /* The layer is inert, so a control opts back in to the pointer — which is what
+     lets a button that is not there take no clicks at all. */
+  pointer-events: auto;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease,
+    background 120ms ease;
+}
+
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The `⋯` is the one control that stays on screen: a menu nobody can find is not
+   a quiet board, it is a board with no way to rename or delete a column. It is
+   drawn as a quiet mark rather than a control, so it reads as the corner of the
+   column rather than as a second heading. */
+.ProseMirror .mermaid .mermaid-kanban-menu {
+  font-size: 0.85em;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0.65;
+}
+
+.ProseMirror .mermaid .mermaid-kanban-menu:hover,
+.ProseMirror .mermaid .mermaid-kanban-menu:focus-visible {
+  opacity: 1;
+}
+
+/* A card and a column are *held*, and the cursor says so: an open hand over
+   either, a closed one while either is in the air. The grab belongs to the drag
+   and the drag belongs to the thing that has somewhere to go, which is why the
+   two slots below are not in this rule at all — a slot is nowhere, so it is not
+   held by anything. */
+.ProseMirror .mermaid.mermaid-editing .items > g.node:not(.mermaid-kanban-slot),
+.ProseMirror .mermaid.mermaid-editing .sections > g:not(.mermaid-kanban-column-slot) {
+  cursor: grab;
+}
+
+/* A held column's frame and cards are in the lift's own group rather than in
+   `.sections`/`.items` (see `kanbanDragLayer`), so the rule is named there too —
+   the cursor is inherited, and a column that stops saying "in the air" under the
+   pointer that is holding it says the opposite of what is true. */
+.ProseMirror .mermaid-preview.kanban-dragging .items > g.node,
+.ProseMirror .mermaid-preview.kanban-dragging .sections > g,
+.ProseMirror .mermaid-preview.kanban-dragging .kanban-drag-layer {
+  cursor: grabbing;
+}
+
+/* The two ways into the board are *part of the board*: mermaid draws a card slot
+   at the foot of every column and a column slot at the end of the board, so there
+   is nothing to hover for and nothing to position. They are muted because they
+   hold nothing yet — a placeholder is only a place — and brighten under the
+   pointer, which is the only hover a slot has. Their cursor is the caret, because
+   a click on one opens a field to type a title in: the slot is not a copy of
+   anything and it is not held by anything, it is written on. The dashed edge is
+   the *field* that opens in one, not the slot (see .mermaid-edit-field-new). */
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot {
+  cursor: text;
+}
+
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot .nodeLabel,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot .section-label {
+  opacity: 0.62;
+  transition: opacity 120ms ease;
+}
+
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot:hover rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-slot:hover .nodeLabel,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot:hover rect,
+.ProseMirror .mermaid.mermaid-editing .mermaid-kanban-column-slot:hover .section-label {
+  opacity: 1;
+}
+
+/* The bin a card is dragged onto is the board's own drawn card slot, so there
+   is nothing here to position: its card and the band it stands in are dressed in
+   place, and all the mark needs is to sit on the label's line like a word. That is
+   the one thing an inline svg in a foreignObject does not do on its own, and the
+   reason it was drawn at all — *and* `display` is not optional here: every svg in
+   a diagram is a block (`.ProseMirror .mermaid svg`), and a block mark pushes the
+   words after it onto a line of their own, which a `foreignObject` sized to one
+   line then clips. The bin said "Delete" and showed no "card". */
+.ProseMirror .mermaid .mermaid-kanban-bin-mark {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  margin: 0 0.35em 0 0;
+  vertical-align: -0.2em;
+  stroke: var(--danger);
+  fill: none;
+}
+
+/* The bin at rest: the card slot in the drawn column is the space a card is
+   deleted into, and it is drawn — mermaid sized the band around it and a drag may
+   not re-render the drawing — but it is not *there*. A card captioned `+ Add a
+   card` inside a column captioned `+ Add a column` is a place to add a card to a
+   place, and the press it invites is answered with a new column. So the slot is
+   blank: no frame, no words, no hit target, and the band's own fill is what shows
+   through. `display: none` rather than `visibility: hidden` so a press in the
+   space is a press on the band, which is what names a column. */
+.ProseMirror .mermaid .mermaid-kanban-bin-slot > rect,
+.ProseMirror .mermaid .mermaid-kanban-bin-slot .label,
+.ProseMirror .mermaid .mermaid-kanban-bin-slot foreignObject {
+  display: none;
+}
+
+/* The menu: right-aligned under its own `⋯`, so it hangs inside the column it
+   belongs to and cannot be mistaken for the next column's. */
+.ProseMirror .mermaid .mermaid-kanban-menu-list {
+  /* Attached to its own `⋯`: placed at the button's bottom edge, so there is no
+     gap between them and nothing of the board shows through one. */
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  pointer-events: auto;
+}
+
+/* Nothing in a menu wraps *out* of it. A column's name is not in any of the items
+   (the dialog that follows a delete says which column), but a name is not the only
+   thing that can be long: a translation, a future item, a label somebody wants
+   spelled out. So the text wraps inside the list's own width instead of deciding
+   the width itself, and the list's height grows to whatever it needed. */
+.ProseMirror .mermaid .mermaid-kanban-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9em;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.ProseMirror .mermaid .mermaid-kanban-menu-item:hover,
+.ProseMirror .mermaid .mermaid-kanban-menu-item:focus-visible {
+  background: var(--surface);
+  color: var(--accent);
+  outline: none;
+}
+
+/* The one item that removes something says so in the same red as the ✕ it
+   replaced, because it is the same decision with a longer way of asking it. */
+.ProseMirror .mermaid .mermaid-kanban-menu-item.is-danger {
+  color: var(--danger);
+}
+
+.ProseMirror .mermaid .mermaid-kanban-menu-item.is-danger:hover,
+.ProseMirror .mermaid .mermaid-kanban-menu-item.is-danger:focus-visible {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+/* A card in flight is not where it was, so a column's `⋯` stands in the gap it
+   left, offering the actions of whatever took its place. Hidden for the length of
+   the drag, and back with the render that follows the drop. */
+.ProseMirror .mermaid-preview.kanban-dragging .mermaid-kanban-menu {
+  visibility: hidden;
+}
+

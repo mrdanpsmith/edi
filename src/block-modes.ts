@@ -1487,7 +1487,7 @@ export function attachBlockControls(
   // always hit-testable — so a pointer travelling from the content to the buttons
   // never leaves the block and its own cluster; the pill inside it is the visible
   // face and is inert until the row is revealed. See `.block-controls` in
-  // `src/styles.css` for why each half is the size it is.
+  // `src/styles/block-controls.css` for why each half is the size it is.
   const dom = document.createElement('div')
   dom.className = BLOCK_CONTROLS_CLASS
   const pill = document.createElement('div')

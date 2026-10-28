@@ -1,0 +1,509 @@
+/* ── Spreadsheet tables ── */
+
+.spreadsheet {
+  position: relative;
+  margin: 1em 0 1em 24px;
+  /* No `padding-right` for the cluster: it sits outside the block now, in the
+     editor's gutter. */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.spreadsheet .ss-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-right: 8px;
+}
+
+.spreadsheet .ss-tool {
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.spreadsheet .ss-tool:hover {
+  background: var(--table-header-bg);
+}
+
+.spreadsheet .ss-tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.spreadsheet .ss-tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 5px;
+}
+
+.spreadsheet .ss-tool-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+/* Align button reflecting the selected column's current alignment. */
+.spreadsheet .ss-tool-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.spreadsheet .ss-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.spreadsheet .ss-tool-view {
+  margin-left: 8px;
+}
+
+.spreadsheet .ss-tool-view:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.spreadsheet .ss-tool-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.spreadsheet .ss-tool-check:hover {
+  background: var(--table-header-bg);
+  color: var(--text-primary);
+}
+
+.spreadsheet .ss-tool-check input {
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.spreadsheet .ss-fxbar {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.spreadsheet .ss-namebox {
+  min-width: 48px;
+  padding: 3px 8px;
+  border-right: 1px solid var(--border);
+  background: var(--table-header-bg);
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spreadsheet .ss-fx-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 3px 8px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.spreadsheet .ss-fx-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.spreadsheet .ss-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: auto;
+  table-layout: fixed;
+  font-size: 13px;
+  outline: none;
+}
+
+.spreadsheet .ss-table-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  position: relative;
+}
+
+.spreadsheet .ss-grid th,
+.spreadsheet .ss-grid td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  box-sizing: border-box;
+}
+
+.spreadsheet .ss-grid thead th {
+  background: var(--table-header-bg);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 8px;
+  position: relative;
+}
+
+.spreadsheet .ss-grid tbody th {
+  background: var(--table-header-bg);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  min-width: 26px;
+  width: 26px;
+  position: relative;
+}
+
+.spreadsheet .ss-grid th.ss-selected {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* Floating insert guide: a blue rule drawn between the hovered rows/columns
+   with a `+` button at its end, sitting over the row/column chrome. */
+.spreadsheet .ss-insert-guide {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.spreadsheet .ss-insert-line {
+  position: absolute;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.spreadsheet .ss-insert-plus {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.spreadsheet .ss-insert-plus:hover {
+  filter: brightness(1.1);
+}
+
+/* Expand the button's hit area beyond its visual circle so it is easy to hit. */
+.spreadsheet .ss-insert-plus::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+}
+
+.spreadsheet.ss-inserting-col .ss-grid thead th.ss-col,
+.spreadsheet.ss-inserting-row .ss-grid tbody th.ss-row {
+  cursor: pointer;
+}
+
+.spreadsheet .ss-grid td {
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+/* The GFM header row (grid row 0) renders like the view-mode `<th>` header
+   rather than a plain data row, so the table's semantics stay visible. */
+.spreadsheet .ss-grid td.ss-header {
+  background: var(--table-header-bg);
+  font-weight: 600;
+}
+
+.spreadsheet .ss-grid td.ss-range {
+  background: var(--selection);
+}
+
+.spreadsheet .ss-grid td.ss-selected {
+  background: var(--selection-strong);
+}
+
+/* Cells referenced by an in-progress formula pick (Excel-style point mode). */
+.spreadsheet .ss-grid td.ss-point {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* While a formula is being edited, every cell is a pick target. */
+.spreadsheet .ss-grid.ss-pointing td {
+  cursor: pointer;
+}
+
+.spreadsheet .ss-grid.ss-pointing .ss-edit-input {
+  cursor: text;
+}
+
+.spreadsheet .ss-grid td.ss-active {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* Cut marquee: dashed outline around the source cells of a pending Ctrl+X. */
+.spreadsheet .ss-grid td.ss-cut {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+/* Excel-style fill handle at the bottom-right corner of the selection. */
+.spreadsheet .ss-grid td .ss-fill-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 1px solid #fff;
+  box-sizing: border-box;
+  cursor: crosshair;
+  z-index: 6;
+}
+
+/* Cells the fill drag would overwrite: tinted like Excel's preview. */
+.spreadsheet .ss-grid td.ss-fill-target {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.spreadsheet.ss-filling .ss-grid,
+.spreadsheet.ss-filling .ss-grid td {
+  cursor: crosshair;
+}
+
+.spreadsheet .ss-fill-tooltip {
+  position: absolute;
+  z-index: 20;
+  background: #1f2937;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 3px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.spreadsheet .ss-tools,
+.spreadsheet .ss-fxbar,
+.spreadsheet .ss-namebox,
+.spreadsheet .ss-status,
+.spreadsheet .ss-grid thead,
+.spreadsheet .ss-grid tbody th {
+  user-select: none;
+}
+
+.spreadsheet .ss-fx-input,
+.spreadsheet .ss-edit-input {
+  user-select: text;
+}
+
+/* Cell content is wrapped so column auto-sizes measure the real content
+   width (max-content) instead of the column's own fixed width. */
+.spreadsheet .ss-grid .ss-cell-content {
+  display: block;
+  width: max-content;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A cell link whose text does not match its href (the clickjacking heuristic)
+   is shown in the danger color, matching the editor's .ml-misleading. */
+.spreadsheet .ss-cell-content a.ml-misleading,
+.ss-plain .ss-plain-table a.ml-misleading {
+  color: var(--danger);
+}
+
+/* Column alignment from the GFM delimiter row (`| :---: | ---: |`). The cell
+   content is a max-content block, so it is placed with auto margins rather
+   than `text-align` (which would not move a block child). */
+.spreadsheet .ss-grid td[data-align='center'] .ss-cell-content {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.spreadsheet .ss-grid td[data-align='right'] .ss-cell-content {
+  margin-left: auto;
+}
+
+.spreadsheet .ss-grid td[data-align='center'] .ss-edit-input {
+  text-align: center;
+}
+
+.spreadsheet .ss-grid td[data-align='right'] .ss-edit-input {
+  text-align: right;
+}
+
+.spreadsheet .ss-grid td.ss-formula {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.spreadsheet .ss-grid td.ss-error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.spreadsheet .ss-edit-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: none;
+  padding: 4px 8px;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  outline: 2px solid var(--accent);
+  z-index: 2;
+}
+
+/* ── Plain (view) tables ── */
+
+.ss-plain {
+  position: relative;
+  margin: 1em 0 1em 24px;
+  /* **A block is a row, and the row is as wide as the column.** A rendered table
+     used to shrink-wrap its grid (`width: max-content`), which was the only way
+     to keep its control cluster beside it — but it made the table the one block
+     whose box was not the row, so its controls sat in the middle of the page.
+     The block is a normal block now, like a paragraph whose text does not reach
+     the edge: **the grid inside is still as wide as its content** (the table is
+     `width: auto` below), and `.ss-plain-scroll` shears a grid wider than the
+     column, exactly as a diagram's `.mermaid-preview` does for a wide drawing. */
+}
+
+.ss-plain .ss-plain-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ss-plain .ss-plain-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.45;
+  width: auto;
+}
+
+.ss-plain .ss-plain-table th,
+.ss-plain .ss-plain-table td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  box-sizing: border-box;
+  text-align: left;
+  vertical-align: top;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+}
+
+.ss-plain .ss-plain-table thead th {
+  background: var(--table-header-bg);
+  font-weight: 600;
+}
+
+.ss-plain .ss-plain-table th[data-align='center'],
+.ss-plain .ss-plain-table td[data-align='center'] {
+  text-align: center;
+}
+
+.ss-plain .ss-plain-table th[data-align='right'],
+.ss-plain .ss-plain-table td[data-align='right'] {
+  text-align: right;
+}
+
+.ss-plain .ss-plain-table td.ss-formula,
+.ss-plain .ss-plain-table th.ss-formula {
+  font-variant-numeric: tabular-nums;
+}
+
+.ss-plain .ss-plain-table td.ss-error,
+.ss-plain .ss-plain-table th.ss-error {
+  color: var(--danger, #dc2626);
+}
+
+/* Table insert grid picker (toolbar popover) */
+
+.toolbar-menu-host {
+  position: relative;
+  display: inline-flex;
+}
+
+.toolbar-menu-host .toolbar-popover {
+  position: fixed;
+  z-index: 1000;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.toolbar-menu-host .toolbar-popover[hidden] {
+  display: none;
+}
+
+.grid-picker-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.grid-picker {
+  display: grid;
+  grid-template-columns: repeat(5, 14px);
+  gap: 2px;
+}
+
+.grid-picker-box {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.grid-picker-box.grid-picker-hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+

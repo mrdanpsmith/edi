@@ -1,0 +1,73 @@
+.encrypted-block {
+  box-sizing: border-box;
+  /* The block's control cluster is absolutely positioned against it — outside it,
+     in the editor's gutter; see `.block-controls`. */
+  position: relative;
+  border: 1px dashed var(--border);
+  /* The band's arithmetic is against this block's *padding* box, so this frame is
+     two pixels it has to be told about; see the band rule's `--edi-band-border`. */
+  --edi-band-border: 2px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  margin: 1em 0;
+  margin-left: 24px;
+  font-size: 13px;
+}
+
+.encrypted-block-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.encrypted-block-label {
+  color: var(--text-muted);
+}
+
+.encrypted-block-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.encrypted-block-reveal {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  /* **The 3px accent bar is gone.** It was standing in for "open", which the
+   * two-mark vocabulary had no slot for — and "open" is now a *working state*, so
+   * the block wears the shared dashed `--accent` outline with it, from the same rule
+   * as a source form, an edited diagram and a sheet. This is no longer a judgement
+   * about how loud a quiet disclosure frame should be: a disclosure is not what this
+   * is. It is editing, and the frame keeps only the part that frames. */
+  background: var(--editor-bg);
+  font-size: 14px;
+  white-space: normal;
+}
+
+/* The reveal editor is a full ProseMirror: strip its outer padding so the
+   plaintext starts right at the reveal frame's own padding. */
+.encrypted-block-reveal .ProseMirror {
+  padding: 0;
+  padding-bottom: 0;
+  /* A second editor inside a block: it has no gutter of its own, and its blocks
+     get no cluster (they are nested), so the band must not read these as page
+     margins. */
+  --edi-gutter-left: 0px;
+  --edi-gutter-right: 0px;
+  font-size: inherit;
+}
+
+/* **A nested editor has no gutter to stand off into.** Its blocks are top-level
+   blocks *of that editor*, so each gets a cluster, but that editor's gutter is 0 —
+   the frame around it is the reveal's own padding — and a strip with no width is
+   no surface at all. A row pushed 8px out into the frame would therefore be
+   unreachable: the pointer crosses the gap over the *frame*, which is not the
+   block, so the reveal is lost and the row goes inert under the hand. It sits on
+   the block's own edge here, which is where the row sat before the standoff
+   existed, and the block itself is the surface that reveals it. */
+.encrypted-block-reveal .block-control-pill {
+  left: 0;
+}

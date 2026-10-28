@@ -54,7 +54,8 @@ bridge methods and preference defaults are declared in
 | `src/contextMenuController.ts` | Document, input, source-editor and block context menus. |
 | `src/zoomController.ts` | Document zoom commands, wheel handling and the status indicator. |
 | `src/editor.ts` | Builds the ProseMirror editor. |
-| `src/styles.css` | Application stylesheet. |
+| `src/styles.css` | Application stylesheet entry; imports the component sheets in cascade order. |
+| `src/styles/` | One stylesheet per component (`tabs`, `toolbar`, `block-controls`, `tables`, `mermaid`, …). |
 | `src/docs/` | Markdown used by the in-app Help guide. |
 | `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, code execution, table import, preferences and theming. |
 | `shared/edi-contract.json` | Single source of truth for menu-command, bridge-method and preference names. |

@@ -1,0 +1,22 @@
+#workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#editor-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Document zoom (see `src/zoom.ts`): the editor content scales, the chrome
+   around it does not. The start screen is a document surface too — there is no
+   editor when it is showing, and zooming it is the only way to make the app
+   legible on a projector before a file is open. */
+#editor-container .ProseMirror,
+#home-screen {
+  zoom: var(--doc-zoom);
+}
+

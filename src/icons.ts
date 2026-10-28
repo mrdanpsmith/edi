@@ -2,7 +2,8 @@
  * **The icon set, and the one way an icon gets into a button.**
  *
  * A block's controls are icons rather than words: they live in the page gutter
- * beside the block (see `.block-controls` in `src/styles.css`), where the room is
+ * beside the block (see `.block-controls` in `src/styles/block-controls.css`),
+ * where the room is
  * a fixed 24px square, and a word there would either wrap or push the row out of
  * the gutter. The words did not go away — they moved into `aria-label` and
  * `title`, which is where a control's name belongs once the face is a picture.

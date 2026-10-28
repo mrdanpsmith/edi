@@ -4,7 +4,7 @@
  * View-menu option, on by default.
  *
  * The band is a stylesheet affordance and nothing else: one `::before` rule in
- * `src/styles.css`, keyed off the control cluster's own block list. So this
+ * `src/styles/block-hover.css`, keyed off the control cluster's own block list. So this
  * module owns the two halves of the option no stylesheet can hold — where the
  * user's answer is kept, and the one class that reports it — and nothing else.
  * Turning the band off puts `edi-hover-band-off` on `documentElement`, and that
