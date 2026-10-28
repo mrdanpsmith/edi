@@ -54,11 +54,18 @@ for every headless Qt run.
 ## Mermaid label probe
 
 `mermaid-probe.yml` is path-filtered to `package.json`, `package-lock.json`,
-`src/mermaid-*.ts`, `src/node/mermaid.ts`, the probe script, its fixtures and
-`tests/mermaid_render.py`. It builds `dist/` and runs the full
-`scripts/mermaid-label-probe.py` in the builder image, so a Mermaid upgrade
-that changes SVG markup or grammar fails before merge instead of in a manual
-regression hunt.
+`src/mermaid-*.ts`, `src/node/mermaid.ts`, the probe script,
+`tests/harness_loader.py`, `tests/mermaid_render.py`,
+`tests/fixtures/mermaid-templates.md` and the workflow itself. It builds
+`dist/` and runs the full `scripts/mermaid-label-probe.py` in the builder
+image, so a Mermaid upgrade that changes SVG markup or grammar fails before
+merge instead of in a manual regression hunt.
+
+`workflow_dispatch` only sees a workflow that exists on the default branch, so
+a change to the probe itself is tested by dispatching the workflow from `main`
+against the feature branch. Because the workflow is path-filtered, it reports
+no check on PRs that touch none of these paths; add it to a branch-protection
+required-check list only alongside an always-run companion.
 
 `mermaid` is pinned exactly in `package.json`; upgrades arrive as a deliberate
 commit that changes the lockfile and therefore triggers this job.
