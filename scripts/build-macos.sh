@@ -135,40 +135,64 @@ if [[ "$MARKDOWN_TYPE" != "net.daringfireball.markdown" || \
 fi
 
 # --- Offscreen smoke test ------------------------------------------------------
-# Headless QtWebEngine (same flags CI uses for the Linux binary; a window does
-# briefly appear on a real desktop and exits via os._exit). macOS GUI bundles
-# keep usable stdout when launched from a shell, so the SELFTEST line + exit
-# code are the gate. The onefile self-extracts to $TMPDIR, so point it at a
-# disk-backed dir under build/.
+# Headless QtWebEngine (same flags CI uses for the Linux binary; the app exits
+# via os._exit). Read the verdict
+# from EDI_SELFTEST_OUT, not stdout: a windowed .app launched by the runner can
+# produce no captured stdout at all, while the app has still exited with a
+# verdict. The log keeps the bootloader/Chromium diagnostics and is printed on
+# failure. The onefile self-extracts to $TMPDIR, so point it at a disk-backed
+# dir under build/.
 print_step "Verifying Edi.app via the offscreen smoke test"
-SMOKE_LOG="$ROOT/build/smoke-tmp-macos/selftest.log"
-mkdir -p "$ROOT/build/smoke-tmp-macos"
+SMOKE_DIR="$ROOT/build/smoke-tmp-macos"
+SMOKE_LOG="$SMOKE_DIR/selftest.log"
+SMOKE_OUT="$SMOKE_DIR/selftest.json"
+rm -rf "$SMOKE_DIR"
+mkdir -p "$SMOKE_DIR"
 # GNU coreutils `timeout` is not on stock macOS, so bound the app ourselves:
 # run in the background, poll up to 120s, then kill. The app os._exits after
-# printing SELFTEST; its exit code is the gate.
-TMPDIR="$ROOT/build/smoke-tmp-macos" \
+# writing SELFTEST; its exit code and the verdict file are the gate.
+TMPDIR="$SMOKE_DIR" \
 QT_QPA_PLATFORM=offscreen \
 QTWEBENGINE_DISABLE_SANDBOX=1 \
 QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage --disable-gpu" \
 EDI_SELFTEST=1 \
+EDI_SELFTEST_OUT="$SMOKE_OUT" \
 "$APP/Contents/MacOS/Edi" >"$SMOKE_LOG" 2>&1 &
 SMOKE_PID=$!
 DEADLINE=$(( $(date +%s) + 120 ))
 while kill -0 "$SMOKE_PID" 2>/dev/null && [ "$(date +%s)" -lt "$DEADLINE" ]; do
   sleep 1
 done
+SMOKE_TIMED_OUT=0
 if kill -0 "$SMOKE_PID" 2>/dev/null; then
-  echo "selftest timed out after 120s" >&2
+  SMOKE_TIMED_OUT=1
   kill "$SMOKE_PID" 2>/dev/null || true
-  wait "$SMOKE_PID" 2>/dev/null || true
+fi
+# A nonzero `wait` must not trip `set -e`: printing the diagnostics below is
+# the point of running the smoke test in the job log.
+SMOKE_STATUS=0
+wait "$SMOKE_PID" 2>/dev/null || SMOKE_STATUS=$?
+if [ -s "$SMOKE_LOG" ]; then
+  echo "--- app output ---"
   cat "$SMOKE_LOG"
+fi
+VERDICT=""
+if [ -s "$SMOKE_OUT" ]; then
+  VERDICT="$(cat "$SMOKE_OUT")"
+  echo "--- selftest verdict ---"
+  echo "$VERDICT"
+fi
+if [ "$SMOKE_TIMED_OUT" -eq 1 ]; then
+  echo "error: selftest timed out after 120s" >&2
   exit 124
 fi
-wait "$SMOKE_PID"
-SMOKE_STATUS=$?
-cat "$SMOKE_LOG"
 if [ "$SMOKE_STATUS" -ne 0 ]; then
+  echo "error: selftest failed (exit $SMOKE_STATUS)" >&2
   exit "$SMOKE_STATUS"
+fi
+if [[ "$VERDICT" != SELFTEST\ * ]]; then
+  echo "error: selftest produced no verdict (got '${VERDICT:-nothing}')" >&2
+  exit 1
 fi
 
 # --- Drag-to-Applications .dmg ---------------------------------------------------

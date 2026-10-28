@@ -261,7 +261,8 @@ def test_run_selftest_passes_and_exits_zero(monkeypatch, capsys):
     monkeypatch.setattr(main_module, "load_app_icon", lambda: object())
 
     main_module._run_selftest(app, _FakeWindow(page))
-    _FakeQTimer.drain()
+    assert page.probed is False  # the probe waits for loadFinished
+
     page.loadFinished.emit(True)
     _FakeQTimer.drain()
 
@@ -271,6 +272,7 @@ def test_run_selftest_passes_and_exits_zero(monkeypatch, capsys):
     assert payload["editor"] is True
     assert payload["mermaid"] is True
     assert payload["icon"] is True
+    assert payload["load"] is True
     assert exits == [0]
 
 
@@ -283,12 +285,13 @@ def test_run_selftest_waits_for_page_load(monkeypatch, capsys):
     main_module._run_selftest(app, _FakeWindow(page))
     _FakeQTimer.drain()
 
-    assert page.probed is True
+    assert page.probed is False
     assert exits == []  # still waiting: loadFinished has not fired
 
     page.loadFinished.emit(True)
     _FakeQTimer.drain()
 
+    assert page.probed is True
     out = capsys.readouterr().out
     assert out.startswith("SELFTEST ")
     assert exits == [0]
@@ -298,6 +301,22 @@ def test_run_selftest_failure_exits_nonzero(monkeypatch, capsys):
     app = _app()
     exits = _patch_selftest_harness(monkeypatch)
     page = _FakePage(snapshot="not json")
+    monkeypatch.setattr(main_module, "load_app_icon", lambda: object())
+
+    main_module._run_selftest(app, _FakeWindow(page))
+    page.loadFinished.emit(True)
+    _FakeQTimer.drain()
+
+    out = capsys.readouterr().out
+    payload = json.loads(out[len("SELFTEST ") :])
+    assert payload.get("editor") is not True
+    assert exits == [1]
+
+
+def test_run_selftest_tolerates_non_object_snapshot(monkeypatch, capsys):
+    app = _app()
+    exits = _patch_selftest_harness(monkeypatch)
+    page = _FakePage(snapshot="null")
     monkeypatch.setattr(main_module, "load_app_icon", lambda: object())
 
     main_module._run_selftest(app, _FakeWindow(page))
@@ -347,6 +366,38 @@ def test_run_selftest_writes_boot_heartbeat(monkeypatch, capsys, tmp_path):
 
     text = out_file.read_text(encoding="utf-8")
     assert text.startswith("SELFTEST ")
+    assert exits == [0]
+
+
+def test_selftest_exit_writes_verdict_without_stdout(monkeypatch, tmp_path):
+    exits = _patch_selftest_harness(monkeypatch)
+    out_file = tmp_path / "selftest.json"
+    monkeypatch.setenv("EDI_SELFTEST_OUT", str(out_file))
+    monkeypatch.setattr(main_module.sys, "stdout", None)
+
+    main_module._selftest_exit("SELFTEST {}", 0)
+
+    assert out_file.read_text(encoding="utf-8") == "SELFTEST {}\n"
+    assert exits == [0]
+
+
+def test_selftest_exit_survives_a_broken_stdout(monkeypatch, tmp_path):
+    exits = _patch_selftest_harness(monkeypatch)
+    out_file = tmp_path / "selftest.json"
+    monkeypatch.setenv("EDI_SELFTEST_OUT", str(out_file))
+
+    class _BrokenStdout:
+        def write(self, _text):
+            raise OSError("broken pipe")
+
+        def flush(self):
+            raise OSError("broken pipe")
+
+    monkeypatch.setattr(main_module.sys, "stdout", _BrokenStdout())
+
+    main_module._selftest_exit("SELFTEST {}", 0)
+
+    assert out_file.read_text(encoding="utf-8") == "SELFTEST {}\n"
     assert exits == [0]
 
 

@@ -88,13 +88,14 @@ class _EdiApplication(QApplication):
 def _selftest_exit(line: str, code: int) -> None:
     """Emit the selftest verdict and exit.
 
-    The verdict goes to stdout (``SELFTEST {...}`` or ``SELFTEST_TIMEOUT``); on
-    Windows GUI builds there is no attached console, so when ``EDI_SELFTEST_OUT``
-    names a file the same line is also written (and flushed) there. All exit
-    paths bypass normal Qt/Python teardown (``os._exit``) so a wedged renderer
-    cannot hang the smoke test or swallow buffered output.
+    The verdict goes to stdout (``SELFTEST {...}`` or ``SELFTEST_TIMEOUT``) when
+    a stream is attached, and is always written (and flushed) to
+    ``EDI_SELFTEST_OUT`` when that names a file. Windowed GUI builds can have no
+    stdout at all, so write the file first and guard the print: the verdict file
+    is the gate that must survive. All exit paths bypass normal Qt/Python
+    teardown (``os._exit``) so a wedged renderer cannot hang the smoke test or
+    swallow buffered output.
     """
-    print(line, flush=True)
     out = os.environ.get("EDI_SELFTEST_OUT")
     if out:
         try:
@@ -104,16 +105,25 @@ def _selftest_exit(line: str, code: int) -> None:
                 os.fsync(fh.fileno())
         except OSError:
             pass
+    if sys.stdout is not None:
+        try:
+            print(line, flush=True)
+        except (OSError, ValueError):
+            pass
     os._exit(code)
 
 
 def _run_selftest(app: QApplication, window: MainWindow) -> None:
     """Smoke-test a packaged build: webview rendered + bridge round-trip.
 
-    Fires the probe after the webview has had time to boot, waits for the page
-    to finish loading (``loadFinished``), then reads the snapshot back.
-    Emits a single ``SELFTEST {...}`` line and exits 0 on success; a short
-    watchdog exits 1 with ``SELFTEST_TIMEOUT`` if the page never loads.
+    The probe is fired from ``loadFinished``, never from a fixed delay: a
+    ``runJavaScript`` issued while the page is still navigating runs in the
+    outgoing document, and its snapshot is discarded when the real page
+    commits. A slow first load (a large bundle on a cold QtWebEngine) made the
+    old fixed-delay probe flaky. After the probe, wait briefly for the bridge
+    round-trip, then read the snapshot back. Emits a single ``SELFTEST {...}``
+    line and exits 0 on success; a 45-second watchdog exits 1 with
+    ``SELFTEST_TIMEOUT`` if the page never loads.
     """
 
     if os.environ.get("EDI_SELFTEST_OUT"):
@@ -129,36 +139,47 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
             pass
 
     page = window._web.page()
-    loaded = {"ok": False}
-    page.loadFinished.connect(lambda ok: loaded.__setitem__("ok", ok))
+    state = {"load_ok": None, "done": False}
 
-    def probe() -> None:
-        page.runJavaScript(_PROBE_JS, lambda _v: None)
+    def finish(v: object) -> None:
+        if state["done"]:
+            return
+        state["done"] = True
+        ok = isinstance(v, str) and '"editor":true' in v and '"mermaid":true' in v
+        icon_ok = load_app_icon() is not None
+        data: dict = {}
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+            except json.JSONDecodeError:
+                pass
+            else:
+                if isinstance(parsed, dict):
+                    data = parsed
+        data["icon"] = icon_ok
+        data["load"] = state["load_ok"]
+        _selftest_exit("SELFTEST " + json.dumps(data), 0 if ok and icon_ok else 1)
 
     def read() -> None:
-        if not loaded["ok"]:
-            QTimer.singleShot(3000, read)
+        if state["done"]:
             return
+        page.runJavaScript("JSON.stringify(window.__selftest)", finish)
 
-        def on_done(v: object) -> None:
-            ok = isinstance(v, str) and '"editor":true' in v and '"mermaid":true' in v
-            icon_ok = load_app_icon() is not None
-            data: dict = {}
-            if isinstance(v, str):
-                try:
-                    data = json.loads(v)
-                except json.JSONDecodeError:
-                    pass
-            data["icon"] = icon_ok
-            _selftest_exit("SELFTEST " + json.dumps(data), 0 if ok and icon_ok else 1)
+    def probe() -> None:
+        if state["done"]:
+            return
+        page.runJavaScript(_PROBE_JS, lambda _v: QTimer.singleShot(1000, read))
 
-        page.runJavaScript("JSON.stringify(window.__selftest)", on_done)
+    def on_load_finished(ok: bool) -> None:
+        state["load_ok"] = ok
+        probe()
 
-    QTimer.singleShot(3000, probe)
-    QTimer.singleShot(5000, read)
+    page.loadFinished.connect(on_load_finished)
     # A plain thread (not a QTimer) so the watchdog still fires even if the Qt
-    # event loop is wedged waiting on the renderer/GPU process.
-    threading.Timer(25.0, lambda: _selftest_exit("SELFTEST_TIMEOUT", 1)).start()
+    # event loop is wedged waiting on the renderer/GPU process. Generous enough
+    # for a cold, loaded CI runner to finish the first page load (the old
+    # failure took ~22s) but still well inside the build scripts' outer bounds.
+    threading.Timer(45.0, lambda: _selftest_exit("SELFTEST_TIMEOUT", 1)).start()
 
 
 def main() -> int:

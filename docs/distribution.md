@@ -253,7 +253,8 @@ gate.
 needed. It mirrors the Linux steps into `dist-app/Edi.app`, ad-hoc code-signs
 the bundle (`codesign --force --deep -s -`; arm64 will not launch unsigned),
 asserts the Markdown document type is in the sealed Info.plist, smoke-tests
-the bundle binary, then produces:
+the bundle binary (the verdict comes from `EDI_SELFTEST_OUT`; the captured app
+log and verdict are printed when it fails), then produces:
 
 - `dist-app/Edi-<ver>-macos-arm64.dmg` with an `Applications` symlink;
 - `dist-app/Edi-<ver>-arm64.zip` and `.sha256`.

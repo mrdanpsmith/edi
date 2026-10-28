@@ -131,23 +131,31 @@ so running it elsewhere breaks `import backend`.
 `runJavaScript` does not await Promises. The packaged-binary smoke test
 (`EDI_SELFTEST=1`, offscreen) therefore probes a synchronous
 `window.__selftest` snapshot, prints one `SELFTEST {...}` line after the page
-loads and exits 0.
+loads and exits 0. The probe is fired from `loadFinished`, never a fixed
+timer: a `runJavaScript` issued while the page is still navigating runs in the
+outgoing document, and its snapshot is discarded when the real page commits.
+A slow first load (a large bundle on a cold QtWebEngine) made the old
+fixed-delay probe flaky.
 
 The app boots a home screen (`#app[data-view='home']`) rather than a welcome
 tab. The smoke loads the page with `?selftest=1` (the backend adds the query
 when `EDI_SELFTEST=1`), and `init` in `src/main.ts` opens the Welcome document
 so `__selftest.title` still reads `Untitled — Edi`.
 
-A 25-second watchdog prints `SELFTEST_TIMEOUT` and exits 1. The smoke uses
+A 45-second watchdog prints `SELFTEST_TIMEOUT` and exits 1. The smoke uses
 `os._exit` to skip Qt teardown (a wedged renderer can otherwise hang the
 process and swallow output) and must not depend on async values or the bridge
 being ready.
 
-When `EDI_SELFTEST_OUT` names a file, the verdict is also written there. This
-is required for the windowed Windows build, where `console=False` makes
-Python's `sys.stdout` `None`. The build scripts poll that file instead of using
-a fixed wait; the budget is three minutes (`EDI_SMOKE_BUDGET_MIN` overrides).
-The Windows build details are in [distribution.md](distribution.md).
+When `EDI_SELFTEST_OUT` names a file, the verdict is always written there
+before any stdout is attempted. The windowed Windows build needs it because
+`console=False` makes Python's `sys.stdout` `None`; the macOS build uses it
+because a windowed `.app` launched by CI is not a reliable stdout gate. The
+Windows script polls that file instead of using a fixed wait (three-minute
+budget, `EDI_SMOKE_BUDGET_MIN` overrides). The macOS script bounds the run,
+prints the captured app log and the verdict on failure, and treats a missing
+`SELFTEST` verdict as an error. The Windows build details are in
+[distribution.md](distribution.md).
 
 ### Onefile temp space
 
