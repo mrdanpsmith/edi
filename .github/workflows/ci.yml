@@ -11,8 +11,8 @@
 #
 # Jobs run in pre-built images pushed to ghcr.io by images.yml:
 #   * <owner>/edi-builder:jammy — Ubuntu 22.04 (glibc 2.35) + Qt runtime libs,
-#     Node 22, venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
-#     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Used by the test job.
+#     Node 22, venv at /opt/edi/venv built from requirements-dev.txt and
+#     requirements-build.txt. Used by the test job.
 # The venv is a read-only image layer — never pip-install at job time; bake
 # changes into the images (images.yml). Nodes: images must exist in ghcr before
 # the first CI run (run images.yml manually once after import).
@@ -99,12 +99,14 @@ jobs:
           path: .
       - name: Link baked venv (read-only image layer)
         run: ln -s /opt/edi/venv .venv
+      - name: Version and dependency-pin check
+        run: ./scripts/version.sh check
       - name: Install frontend deps (for vitest)
         run: npm ci --no-audit --no-fund
       - name: Frontend unit tests + coverage
         run: npm run coverage > /tmp/frontend-cov.txt 2>&1 || { tail -n 200 /tmp/frontend-cov.txt; exit 1; }
       - name: Python type check
-        run: npx pyright
+        run: .venv/bin/pyright
       - name: Bandit (source-security scan)
         run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py scripts/mermaid-label-probe.py run_edi.py -q
       - name: Backend tests + coverage

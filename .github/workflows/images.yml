@@ -4,8 +4,8 @@
 # (glibc 2.35) base so the PyInstaller onefile stays portable to older desktop
 # Linux:
 #   * ghcr.io/<owner>/edi-builder:jammy     — Ubuntu 22.04 + Qt runtime libs,
-#     Node 22, and a venv at /opt/edi/venv (PySide6==6.11.1, pyinstaller==6.22.0,
-#     pytest, pytest-qt, pytest-cov, bandit, pip-audit). Every check/build job.
+#     Node 22, and a venv at /opt/edi/venv built from requirements-dev.txt and
+#     requirements-build.txt. Every check/build job.
 #
 # Building these is the single expensive setup step, cached in the registry
 # (buildx cache): rebuilds only happen when a Dockerfile / requirements file /
@@ -24,7 +24,8 @@ on:
     paths:
       - Dockerfile.ci
       - requirements.txt
-      - requirements-win.txt
+      - requirements-dev.txt
+      - requirements-build.txt
       - .github/workflows/images.yml
   workflow_dispatch: {}
 

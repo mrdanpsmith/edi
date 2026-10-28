@@ -9,9 +9,9 @@ desktop session for running the real app. Tests can run headlessly.
 ./scripts/install-deps.sh
 ```
 
-This creates `.venv/` with PySide6 and the test/static-analysis tools, installs
-the npm dependencies, generates the app icon and installs the versioned git
-hooks.
+This creates `.venv/` from `requirements-dev.txt` and `requirements-build.txt`
+(PySide6, the test/static-analysis tools and PyInstaller), installs the npm
+dependencies, generates the app icon and installs the versioned git hooks.
 
 Build the frontend and start the Python shell:
 
@@ -33,6 +33,7 @@ it is not the app.
 | `npm run dupcheck` | `jscpd .` at the 5% threshold in `.jscpd.json`. It scans Python and scripts too, not just `src/`. |
 | `npm run audit` | `npm audit --audit-level=high` (needs network). Clean; the Vitest toolchain is pinned to patched 4.1.11, so do not drift below it. |
 | `.venv/bin/pytest tests/` | Python tests (needs `dist/`; see below). |
+| `./scripts/version.sh check` | Version agreement plus the Python-pin guard (pins only in `requirements*.txt`). |
 
 ### Static analysis
 
@@ -66,7 +67,7 @@ also reports coverage from `pyproject.toml`'s `addopts`:
 - `coverage-py/cobertura-coverage.xml`;
 - browsable HTML at `coverage-py/html/index.html`.
 
-`tests/test_window.py` is the real-WebEngine suite. It needs `dist/` and fails
+`tests/window/test_window.py` is the real-WebEngine suite. It needs `dist/` and fails
 fast with a clear message if the frontend has not been built. The shared
 WebEngine helpers live in `tests/mermaid_render.py`, which is not named
 `test_*.py` so pytest does not collect it. `QTest` mouse injection never

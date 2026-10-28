@@ -24,7 +24,7 @@ fi
 print_step "Setting up Python virtualenv (.venv)"
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements-dev.txt -r requirements-build.txt
 
 # --- Frontend dependencies ----------------------------------------------------
 print_step "Installing npm dependencies"

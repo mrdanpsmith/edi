@@ -51,7 +51,7 @@ bridge methods and preference defaults are declared in
 | `src/docs/` | Markdown used by the in-app Help guide. |
 | `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, code execution, table import, preferences and theming. |
 | `shared/edi-contract.json` | Single source of truth for menu-command, bridge-method and preference names. |
-| `tests/` | Python tests, including the real-WebEngine tests at the end of `tests/test_window.py` and helpers in `tests/mermaid_render.py`. |
+| `tests/` | Python tests, including the real-WebEngine tests in `tests/window/test_window.py` and helpers in `tests/mermaid_render.py`. |
 | `scripts/` | Developer, build, packaging and release scripts. |
 | `pm/` | Product specification and design history. |
 | `docs/` | These developer documents. |

@@ -113,7 +113,7 @@ column makes.
 
 The bug survived the earlier gates because `_pointer_drag(aim="last")` aims
 just below the middle of the last *real* card, still above the slot.
-`tests/test_window.py::test_kanban_drop_line_stays_above_the_drawn_slot` aims
+`tests/window/test_window.py::test_kanban_drop_line_stays_above_the_drawn_slot` aims
 at the slot's lower half, past the point where a slot-as-a-card would have
 counted.
 
@@ -144,7 +144,7 @@ the card bug and the gesture every drag to the right of the board makes.
 It survived the earlier gates because `_pointer_drag_column(slot=1)` aims past
 the last *real* column's right edge by 24px, which lands 24px into the 200px
 drawn column, comfortably before its middle and so also the gap in front of it.
-`tests/test_window.py::test_kanban_column_line_stays_left_of_the_drawn_column_slot`
+`tests/window/test_window.py::test_kanban_column_line_stays_left_of_the_drawn_column_slot`
 aims at 75% of the drawn column's width instead, past the point where a
 slot-as-a-column would have counted.
 
@@ -369,7 +369,7 @@ no hole to bridge.
 What still stands is not geometry: `menuList` stops `mousedown`, so a `click`
 can never be born out of a press the board ate. The walk down from the button is
 answered by the two boxes themselves.
-`tests/test_window.py::test_kanban_menu_and_drawn_add_and_delete_columns`
+`tests/window/test_window.py::test_kanban_menu_and_drawn_add_and_delete_columns`
 samples every pixel from inside the `⋯` down into the list's first row and
 asserts the whole run of answers is `['its button', 'the menu']` with
 `elementFromPoint`. Anything else painted between them — a gap, a stray
@@ -656,7 +656,7 @@ All three were found by measuring in the real engine rather than by looking.
 read off a **path**, not off the mark. A screenshot of a just-mutated DOM is a
 stale frame that would have been believed instead.
 
-`tests/test_window.py::test_a_card_dropped_on_the_board_s_slot_column_is_deleted`
+`tests/window/test_window.py::test_a_card_dropped_on_the_board_s_slot_column_is_deleted`
 walks the whole gesture in the real engine and pins the paint order
 *structurally*:
 

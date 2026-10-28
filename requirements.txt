@@ -1,8 +1,4 @@
+# Runtime dependencies of the Edi application. Keep pins exact.
 PySide6==6.11.1
 defusedxml==0.7.1
 filelock==3.20.3
-pytest
-pytest-qt
-pytest-cov
-bandit
-pip-audit

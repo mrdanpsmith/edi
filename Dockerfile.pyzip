@@ -71,12 +71,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+COPY requirements.txt requirements-build.txt ./
 RUN python3 -m venv .venv \
     && .venv/bin/pip install --no-cache-dir --upgrade pip \
-    && .venv/bin/pip install --no-cache-dir \
-        "PySide6==6.11.1" \
-        "pyinstaller==6.22.0" \
-        "defusedxml==0.7.1"
+    && .venv/bin/pip install --no-cache-dir -r requirements-build.txt
 
 COPY --from=frontend /build/dist dist/
 COPY backend/ backend/

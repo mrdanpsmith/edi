@@ -108,3 +108,24 @@ def test_refuses_to_bump_before_changing_files_outside_a_git_work_tree(tmp_path:
     assert result.returncode != 0
     assert "not inside a git work tree" in result.stderr
     assert _version(path) == old
+
+
+def test_check_accepts_python_pins_in_the_requirements_files(repo: Path):
+    pin = "PySide6==" + "6.11.1"
+    (repo / "requirements-build.txt").write_text(pin + "\n")
+
+    result = _run(repo, "check")
+
+    assert result.returncode == 0, result.stderr
+    assert "pins live only in requirements*.txt" in result.stdout
+
+
+def test_check_rejects_a_python_pin_in_a_build_script(repo: Path):
+    pin = "PySide6==" + "6.11.1"
+    (repo / "Dockerfile").write_text(f"RUN pip install {pin}\n")
+
+    result = _run(repo, "check")
+
+    assert result.returncode != 0
+    assert "PySide6/PyInstaller pins must live only in requirements*.txt" in result.stderr
+    assert "Dockerfile" in result.stderr

@@ -9,6 +9,8 @@ The workflows live in `.github/workflows/`:
   tags or manual `workflow_dispatch` (`VER` defaults to `0.0.0`) and adds the
   platform builds, packaging and publishing.
 - **`images.yml`** builds the builder images.
+- **`mermaid-probe.yml`** runs `scripts/mermaid-label-probe.py` when Mermaid,
+  its editing layer or the lockfile changes (see below).
 
 The `frontend`/`test` job bodies are **deliberately mirrored** across `ci.yml`
 and `release.yml`, so each pipeline stays self-contained. That is why
@@ -32,6 +34,10 @@ The gate is split over two jobs in both pipelines:
 
 Keep `npm run check` as the local full frontend gate.
 
+`test` also runs `./scripts/version.sh check`, which verifies that the version
+declarations agree and that PySide6/PyInstaller pins appear only in
+`requirements*.txt`.
+
 `test` needs `dist/` because the backend tests load `dist/index.html`. The
 `frontend` job builds it and `test` downloads the artifact.
 
@@ -44,6 +50,18 @@ QTWEBENGINE_DISABLE_SANDBOX=1
 ```
 
 for every headless Qt run.
+
+## Mermaid label probe
+
+`mermaid-probe.yml` is path-filtered to `package.json`, `package-lock.json`,
+`src/mermaid-*.ts`, `src/node/mermaid.ts`, the probe script, its fixtures and
+`tests/mermaid_render.py`. It builds `dist/` and runs the full
+`scripts/mermaid-label-probe.py` in the builder image, so a Mermaid upgrade
+that changes SVG markup or grammar fails before merge instead of in a manual
+regression hunt.
+
+`mermaid` is pinned exactly in `package.json`; upgrades arrive as a deliberate
+commit that changes the lockfile and therefore triggers this job.
 
 ## Coverage reports
 
@@ -152,16 +170,16 @@ contradict the README's "GPLv3 (or later)".
 
 Most jobs run inside a prebuilt builder image,
 `ghcr.io/<owner>/edi-builder:jammy`, built from `Dockerfile.ci` by
-`images.yml`. It is rebuilt on `main` when `Dockerfile.ci`, `requirements.txt`
-or `.github/workflows/images.yml` change, never on tags, and manually via
-`workflow_dispatch`. Run it once manually after a fresh import so ghcr has the
-images.
+`images.yml`. It is rebuilt on `main` when `Dockerfile.ci`, a
+`requirements*.txt` file or `.github/workflows/images.yml` changes, never on
+tags, and manually via `workflow_dispatch`. Run it once manually after a fresh
+import so ghcr has the images.
 
 The image bakes the Qt runtime libraries, Node 22 and a venv at
-`/opt/edi/venv` with PySide6, PyInstaller, pytest, pytest-qt, pytest-cov,
-`defusedxml`, bandit and pip-audit. Jobs use it as a `container:` and link the
-venv with `ln -s /opt/edi/venv .venv` (`package-linux.sh` hardcodes
-`$ROOT/.venv`), and run `npm ci` where needed.
+`/opt/edi/venv` built from `requirements-dev.txt` and
+`requirements-build.txt`. Jobs use it as a `container:` and link the venv with
+`ln -s /opt/edi/venv .venv` (`package-linux.sh` hardcodes `$ROOT/.venv`), and
+run `npm ci` where needed.
 
 The `build-windows` job uses none of this: it runs on a GitHub-hosted
 `windows-2025` runner and installs its own venv, so it needs neither image.

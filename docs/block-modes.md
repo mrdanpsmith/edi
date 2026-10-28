@@ -41,7 +41,7 @@ nothing.
 
 `BLOCK_MODE_CLASS` is therefore `…-visual` / `…-source` plus `…-editing`. This
 is the accent rule doing the load-bearing half as well as the legible one.
-`tests/test_window.py::test_source_from_a_board_s_own_cluster_while_it_is_being_edited`
+`tests/window/test_window.py::test_source_from_a_board_s_own_cluster_while_it_is_being_edited`
 pins the gesture that found it.
 
 The one exception is a table's text ⇄ sheet **form**. It is per-block, not
@@ -103,7 +103,7 @@ A code block's language bar then grew to 29px to hold the controls it now
 carries, because the row is the block's and shrinking the buttons is the one
 thing the reader presses.
 
-`tests/test_window.py::test_a_code_blocks_copy_lives_in_its_control_cluster`
+`tests/window/test_window.py::test_a_code_blocks_copy_lives_in_its_control_cluster`
 asks:
 
 - the computed style (`1px` on all four sides, no fill, one height across the
@@ -181,7 +181,7 @@ same reason: it exists to keep the caret out of a control's own label, and
 swallowing the strip would leave a press in the margin with no caret anywhere.
 
 The gate is
-`tests/test_window.py::test_a_blocks_controls_can_be_reached_with_the_pointer`:
+`tests/window/test_window.py::test_a_blocks_controls_can_be_reached_with_the_pointer`:
 
 - the strip starts at the block's right edge, is as wide as the gutter and as
   tall as the block;
@@ -209,7 +209,7 @@ segment. It was reported as *the tools overlap the editing border*.
 reachability *because* the strip is behind the gap, which is the two-box rule.
 
 The gate is
-`tests/test_window.py::test_a_blocks_controls_clear_its_own_editing_outline`.
+`tests/window/test_window.py::test_a_blocks_controls_clear_its_own_editing_outline`.
 It reads the outline's **computed** width and offset rather than a number from
 the stylesheet. A diagram in its edit mode is the fixture; whether the dashed
 or solid outline is on screen does not change the answer.
@@ -251,7 +251,7 @@ border. Two facts, one decision: a bordered block that forgets it pushes its
 band two pixels past the page edge, which is a horizontal scrollbar for as long
 as the pointer is on the block.
 
-`tests/test_window.py::test_the_hover_band_reaches_the_page_edges` is the drift
+`tests/window/test_window.py::test_the_hover_band_reaches_the_page_edges` is the drift
 detector. It uses one document with a paragraph, a quote, a list, a code block,
 a table and a diagram, measures every row's band left and right against the
 editor's own box, and reads `#editor-container.scrollWidth` while the probe's
@@ -298,7 +298,7 @@ specificity, and sits directly after it. That tie is how the override wins the
 cascade. The hr margin rule (`margin: 1.5em 0`) is the fact both controls
 restate; if it moves, both move.
 
-`tests/test_window.py::test_a_rules_hover_band_covers_the_row_the_strip_covers`
+`tests/window/test_window.py::test_a_rules_hover_band_covers_the_row_the_strip_covers`
 re-injects the override's own declarations with `:hover` swapped for a class
 (plus `position`/`content` from the band it overrides, which the override does
 not carry). It asserts the band's computed top/bottom reach the margins and

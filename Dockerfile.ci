@@ -5,14 +5,14 @@
 # portable to older desktop Linux. Built+published by `.github/workflows/images.yml`
 # and referenced as `ghcr.io/<owner>/edi-builder:jammy`.
 #
-# Baked in: PySide6, pyinstaller, pytest, pytest-qt, pytest-cov, defusedxml,
-# bandit, pip-audit, Node 22, and the Qt runtime libs.
+# Baked in: the pins from requirements-dev.txt and requirements-build.txt,
+# Node 22, and the Qt runtime libs.
 #
 #   docker build -f Dockerfile.ci -t edi-builder:jammy .
 #
 # Jobs link the baked venv into the checkout with `ln -s /opt/edi/venv .venv`.
 # The venv is a read-only image layer: job scripts must NOT pip-install into it
-# (rebuild the image instead, e.g. when requirements.txt changes).
+# (rebuild the image instead, e.g. when a requirements file changes).
 #
 # The runtime binary is built from this SAME glibc 2.35 base via Dockerfile.pyzip
 # (an ubuntu:22.04 container), so the image does not itself produce artifacts.
@@ -42,22 +42,13 @@ ARG NODE_VERSION=22.22.1
 RUN curl -fsS "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
         | tar -xJ -C /usr/local --strip-components=1
 
-# Python venv with everything the jobs need, pinned. Keep in sync with
-# requirements.txt + the pyinstaller pin used by the old `build` job.
-ARG PYSIDE6_VERSION=6.11.1
-ARG PYINSTALLER_VERSION=6.22.0
+# Python venv with everything the jobs need, pinned in the requirements files.
+COPY requirements.txt requirements-dev.txt requirements-build.txt ./
 RUN python3 -m venv /opt/edi/venv \
     && /opt/edi/venv/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/edi/venv/bin/pip install --no-cache-dir \
-        "PySide6==${PYSIDE6_VERSION}" \
-        "pyinstaller==${PYINSTALLER_VERSION}" \
-        pytest \
-        pytest-qt \
-        pytest-cov \
-        defusedxml==0.7.1 \
-        bandit \
-        pip-audit \
-        pyright
+        -r requirements-dev.txt \
+        -r requirements-build.txt
 
 # Sanity: the whole point is that imports resolve at job time.
 RUN /opt/edi/venv/bin/python -c \

@@ -51,6 +51,7 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-dev-shm-usage --d
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from backend.window import DIST_DIR, MainWindow  # noqa: E402
+from tests.harness_loader import harness_js  # noqa: E402
 from tests.mermaid_render import (  # noqa: E402
     LABEL_INVENTORY,
     LABEL_STATE,
@@ -260,6 +261,16 @@ def wait_for_bridge(win, timeout: float = 90) -> None:
         fail("the webview bridge never became ready (a flaky boot, not a label bug) -- retry")
 
 
+def load_harness(win, timeout: float = 10) -> None:
+    """Inject the built test harness; the probe drives the page through it."""
+    loaded = {"value": False}
+    win._web.page().runJavaScript(
+        harness_js(), lambda _value: loaded.__setitem__("value", True)
+    )
+    if not _pump_until(lambda: loaded["value"], timeout=timeout):
+        fail("the test harness did not load (window.ediDump missing)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -288,6 +299,7 @@ def main() -> int:
     win.resize(1400, 900)
     win.show()
     wait_for_bridge(win)
+    load_harness(win)
 
     report = [probe_type(win, kind, source, args.first) for kind, source in sources.items()]
 

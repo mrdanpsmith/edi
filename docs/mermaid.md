@@ -169,7 +169,7 @@ document pixels for the same reason: they are layout numbers. Mixing them with
 viewport measurements leaves every control drifting and every field short by
 the zoom factor at each level but 100%.
 
-`tests/test_window.py::test_kanban_editors_sit_on_their_slots_when_the_document_is_magnified`
+`tests/window/test_window.py::test_kanban_editors_sit_on_their_slots_when_the_document_is_magnified`
 is the real-engine gate. The jsdom placement cases in
 `src/mermaid-edit.test.ts` are the cheap one.
 
@@ -206,7 +206,7 @@ behind.
 
 Without that, magnifying a sequence diagram would magnify its bitmap, which is
 the exact softness the bake exists to avoid.
-`tests/test_window.py::test_magnifying_the_document_redraws_a_baked_diagram`
+`tests/window/test_window.py::test_magnifying_the_document_redraws_a_baked_diagram`
 pins it by reading the raster's own `naturalWidth`.
 
 ### Leaving edit mode resolves the layer before the mode changes
@@ -267,7 +267,7 @@ document name in the status bar.
 It is the scroller and not `document`, so a click in a dialog sitting on top of
 the editor cannot reach through it.
 
-`tests/test_window.py::test_alt_click_below_a_lone_board_ends_its_edit_session`
+`tests/window/test_window.py::test_alt_click_below_a_lone_board_ends_its_edit_session`
 pins it with the real gesture at real coordinates, asserting the point is
 outside `.ProseMirror` first.
 
@@ -299,7 +299,7 @@ instead.
 there was no break opportunity. A label that fits, or that already breaks at a
 space, is laid out exactly as before.
 
-`tests/test_window.py::test_unbreakable_kanban_titles_stay_inside_their_cards`
+`tests/window/test_window.py::test_unbreakable_kanban_titles_stay_inside_their_cards`
 pins it with a 68-character run in both a card and a column name.
 
 ### Only mappable labels are offered
@@ -345,7 +345,7 @@ rewritten. A typed value alone would leave the mapper nothing to find.
 
 ### Two gates, two costs
 
-`tests/test_window.py::test_every_offered_label_rename_resolves` is the cheap
+`tests/window/test_window.py::test_every_offered_label_rename_resolves` is the cheap
 gate. It does one rename per diagram, one case per distinct patch strategy
 (text, tspan-wrapped, entity-all-refs, value-only row, sankey first line,
 implicit git branch, withheld total), about 3 seconds for the whole set, inside
@@ -365,6 +365,10 @@ It needs its own WebEngine page, so it stays out of pytest. Run it after
 touching mappers, mappers' regexes or the `GENERATED_BY_FAMILY` lists. It is the
 only thing that can see mermaid's real DOM shape; it found the `diagramFamily`
 case bug and the ER substring bug, which no jsdom test could.
+
+`mermaid` is pinned exactly in `package.json`, and the path-filtered
+`mermaid-probe.yml` CI workflow runs this probe when the package, lockfile or
+Mermaid editing layer changes (see [ci.md](ci.md)).
 
 ### Read mermaid's SVG defensively
 
@@ -423,7 +427,7 @@ A card's title is `editCardTitle()`, which differs in two ways:
 
 ## Real-engine tests
 
-The real-engine tests live at the end of `tests/test_window.py`. The shared
+The real-engine tests live in `tests/window/test_window.py`. The shared
 WebEngine helpers are in `tests/mermaid_render.py`, which is not named
 `test_*.py` so pytest does not collect it.
 

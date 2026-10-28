@@ -131,8 +131,8 @@ desktop Windows machine. It requires `dist/index.html` and
 
 The script:
 
-1. creates a venv and installs `requirements-win.txt` (PySide6, PyInstaller,
-   `defusedxml`);
+1. creates a venv and installs `requirements-build.txt` (runtime, PyInstaller
+   and the marker-gated Windows wheels);
 2. probes that `QtWebEngineCore` can be imported;
 3. builds both the windowed app and a console twin (`Edi-selftest.exe`);
 4. runs the frozen smoke test of the console twin;
@@ -329,14 +329,23 @@ match it.
 
 ## Version pins
 
-`PySide6==6.11.1` and the other pins live in `requirements.txt`. Keep PySide6
-pinned; Qt releases break the WebEngine hooks. The Windows build mirrors them
-in `requirements-win.txt` (`PySide6==6.11.1`, `pyinstaller==6.22.0`,
-`defusedxml`).
+Python pins live in exactly three files:
+
+- `requirements.txt` — runtime dependencies of the application;
+- `requirements-dev.txt` — pytest, coverage, bandit, pip-audit and pyright
+  (it starts with `-r requirements.txt`);
+- `requirements-build.txt` — PyInstaller plus the Windows-only wheels, marked
+  with `sys_platform == "win32"` so Linux and macOS skip them (it also starts
+  with `-r requirements.txt`).
+
+Keep PySide6 pinned; Qt releases break the WebEngine hooks. The Dockerfiles
+and platform build scripts install these files instead of repeating versions,
+and `./scripts/version.sh check` fails if a PySide6 or PyInstaller pin appears
+outside `requirements*.txt`.
 
 `backend/tables.py` parses ODS/XLSX XML with **`defusedxml`** as a drop-in for
 `xml.etree.ElementTree`. Plain ElementTree is XML-bomb vulnerable on
 user-opened files, and bandit flags it. `defusedxml` is a runtime import, so
-every PyInstaller build venv must install it, not just the dev/CI venv:
+every PyInstaller build venv gets it through `requirements-build.txt`:
 `Dockerfile.pyzip`, `scripts/build-windows.ps1` and
-`scripts/build-macos.sh` each pin it alongside PySide6.
+`scripts/build-macos.sh` all install that file.

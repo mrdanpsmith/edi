@@ -8,7 +8,7 @@
 # It detects a supported Python (3.10–3.14) on PATH (installs 3.12 via Chocolatey
 # when none is present),
 # then:
-#   1. python venv with PySide6==6.11.1 + pyinstaller==6.22.0 (same pins as Linux)
+#   1. python venv from requirements-build.txt (same pins as Linux)
 #   2. pyinstaller - edi.spec  ->  dist-app\Edi.exe
 #   3. smoke test it offscreen (EDI_SELFTEST=1, verdict via EDI_SELFTEST_OUT)
 #   4. copy to dist-app\Edi-<ver>-win64.exe
@@ -114,7 +114,7 @@ Invoke-Py -m venv '.venv-win'
 $PyVenv = Join-Path $PWD '.venv-win\Scripts\python.exe'
 & $PyVenv -m pip install --upgrade pip --quiet
 Assert-ExitCode 'pip upgrade'
-& $PyVenv -m pip install 'PySide6==6.11.1' 'pyinstaller==6.22.0' 'pefile==2024.8.26' 'pywin32-ctypes==0.2.3' 'defusedxml==0.7.1' --quiet
+& $PyVenv -m pip install -r requirements-build.txt --quiet
 Assert-ExitCode 'pip install PySide6/pyinstaller'
 
 # --- Bundle Windows' system ICU next to Qt6Core.dll --------------------------

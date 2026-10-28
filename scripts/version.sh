@@ -172,6 +172,27 @@ cmd_bump() {
   finish_bump "$old" "$new"
 }
 
+check_python_pins() {
+  # PySide6 and PyInstaller pins belong in the requirements files only: a
+  # literal version copied into a Dockerfile or build script drifts silently.
+  # `pm/` and MAINTENANCE.md are historical records, not live instructions.
+  local hits
+  hits="$(grep -RIniE '(PySide6|pyinstaller)==[0-9]' . \
+    --exclude-dir=.git \
+    --exclude-dir=.venv --exclude-dir=.venv-macos --exclude-dir=.venv-win \
+    --exclude-dir=.npm --exclude-dir=.pytest_cache --exclude-dir=.qttest \
+    --exclude-dir=build --exclude-dir=dist --exclude-dir=dist-app \
+    --exclude-dir=coverage --exclude-dir=coverage-py \
+    --exclude-dir=node_modules --exclude-dir=__pycache__ \
+    --exclude-dir=lost+found --exclude-dir=pm \
+    --exclude='requirements*.txt' --exclude='MAINTENANCE.md' || true)"
+  if [ -n "$hits" ]; then
+    echo "error: PySide6/PyInstaller pins must live only in requirements*.txt:" >&2
+    echo "$hits" >&2
+    return 1
+  fi
+}
+
 cmd_check() {
   local pkg lock init bad=0
   pkg="$(get_version)"
@@ -191,7 +212,9 @@ cmd_check() {
     echo "  backend/__init__.py: $init" >&2
     return 1
   fi
+  check_python_pins || return 1
   echo "OK: version $pkg agrees across ${VERSION_FILES[*]}"
+  echo "OK: Python build pins live only in requirements*.txt"
 }
 
 cmd_tag() {

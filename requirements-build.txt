@@ -1,0 +1,6 @@
+# PyInstaller build dependencies for every platform. The Windows wheels are
+# marker-gated: native Windows installs them, Linux and macOS skip them.
+-r requirements.txt
+pyinstaller==6.22.0
+pefile==2024.8.26 ; sys_platform == "win32"
+pywin32-ctypes==0.2.3 ; sys_platform == "win32"
