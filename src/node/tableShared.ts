@@ -3,7 +3,8 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView } from 'prosemirror-view'
 import { blockFormMode, blockModeFor, setBlockForm } from '../block-modes'
 import { listMaskedTokens, DELIMITER_CELL } from '../spreadsheet-util'
-import { formulaParts, SPREADSHEET_PREFIX, type CellSolution } from '../spreadsheet'
+import { formulaParts, SPREADSHEET_PREFIX, type CellSolution, isFormula } from '../spreadsheet'
+import { fillTextValues, shiftFormulaRefs } from '../series'
 import { getSearchState, searchMatchesInText } from '../search'
 import {
   setActiveCellHost,
@@ -48,11 +49,119 @@ export interface PointInsert {
 
 export const cellKey = (row: number, col: number): string => `${row}:${col}`
 
-/** Live spreadsheet node views, keyed by their `.spreadsheet` block element.
- *  The app-level right-click menu reaches the grid's (otherwise private)
- *  editing commands through this, so it needs the node view behind a
- *  right-clicked cell; a weak map keeps it free of teardown bookkeeping. */
+/**
+ * Value for one cell inside a fill's target rectangle but outside its source
+ * rectangle. Vertical strips extend each source column downward (or upward)
+ * along a detected series; horizontal strips do the same per row. Formula
+ * seeds copy with their references shifted by the drag distance from whichever
+ * seed cell produces them.
+ */
+export function fillCellValue(rows: string[][], drag: FillRect, r: number, c: number): string {
+  const inRows = r >= drag.sr1 && r <= drag.sr2
+  const inCols = c >= drag.sc1 && c <= drag.sc2
+  if (inCols && !inRows) return fillColumnCell(rows, drag, r, c)
+  if (inRows && !inCols) return fillRowCell(rows, drag, r, c)
+  // Corner cells of a two-axis drag: duplicate the nearest source corner.
+  const rr = r < drag.sr1 ? drag.sr1 : drag.sr2
+  const cc = c < drag.sc1 ? drag.sc1 : drag.sc2
+  return rows[rr]?.[cc] ?? ''
+}
 
+function fillColumnCell(rows: string[][], drag: FillRect, r: number, c: number): string {
+  const blockH = drag.sr2 - drag.sr1 + 1
+  const down = r > drag.sr2
+  const producer = down
+    ? drag.sr1 + ((r - drag.sr1) % blockH)
+    : drag.sr1 + ((drag.sr1 - r - 1) % blockH)
+  const seed = rows[producer]?.[c] ?? ''
+  if (isFormula(seed)) return shiftFormulaRefs(seed, r - producer, 0)
+  const seeds: string[] = []
+  for (let rr = drag.sr1; rr <= drag.sr2; rr++) seeds.push(rows[rr]?.[c] ?? '')
+  if (!down) seeds.reverse()
+  const count = down ? drag.r2 - drag.sr2 : drag.sr1 - drag.r1
+  const values = fillTextValues(seeds, count)
+  const index = down ? r - drag.sr2 - 1 : r - drag.r1
+  return values[index] ?? ''
+}
+
+function fillRowCell(rows: string[][], drag: FillRect, r: number, c: number): string {
+  const blockW = drag.sc2 - drag.sc1 + 1
+  const right = c > drag.sc2
+  const producer = right
+    ? drag.sc1 + ((c - drag.sc1) % blockW)
+    : drag.sc1 + ((drag.sc1 - c - 1) % blockW)
+  const seed = rows[r]?.[producer] ?? ''
+  if (isFormula(seed)) return shiftFormulaRefs(seed, 0, c - producer)
+  const seeds: string[] = []
+  for (let cc = drag.sc1; cc <= drag.sc2; cc++) seeds.push(rows[r]?.[cc] ?? '')
+  if (!right) seeds.reverse()
+  const count = right ? drag.c2 - drag.sc2 : drag.sc1 - drag.c1
+  const values = fillTextValues(seeds, count)
+  const index = right ? c - drag.sc2 - 1 : c - drag.c1
+  return values[index] ?? ''
+}
+
+/** One-line preview of what a handle drag would produce, shown in the
+ * floating tooltip. Blank or formula seeds yield no preview. */
+export function fillPreviewText(rows: string[][], drag: FillRect): string {
+  const newRows = drag.r2 - drag.sr2 + (drag.sr1 - drag.r1)
+  const newCols = drag.c2 - drag.sc2 + (drag.sc1 - drag.c1)
+  if (newRows <= 0 && newCols <= 0) return ''
+  const seeds: string[] = []
+  let reversed = false
+  if (newRows >= newCols) {
+    for (let rr = drag.sr1; rr <= drag.sr2; rr++) seeds.push(rows[rr]?.[drag.sc1] ?? '')
+    reversed = drag.sr1 - drag.r1 > 0
+  } else {
+    for (let cc = drag.sc1; cc <= drag.sc2; cc++) seeds.push(rows[drag.sr1]?.[cc] ?? '')
+    reversed = drag.sc1 - drag.c1 > 0
+  }
+  if (reversed) seeds.reverse()
+  if (seeds.some((s) => isFormula(s))) return ''
+  const values = fillTextValues(seeds, 3).filter((v) => v !== '')
+  return values.length === 0 ? '' : values.join(' \u2192 ')
+}
+
+/** Ctrl/Cmd+D: copy the selection's top row down through the rectangle. */
+export function fillSelectionDown(rows: string[][], rect: { r1: number; c1: number; r2: number; c2: number }): string[][] {
+  const next = rows.map((row) => [...row])
+  for (let c = rect.c1; c <= rect.c2; c++) {
+    for (let r = rect.r1 + 1; r <= rect.r2; r++) {
+      const seed = rows[rect.r1]?.[c] ?? ''
+      next[r]![c] = isFormula(seed) ? shiftFormulaRefs(seed, r - rect.r1, 0) : seed
+    }
+  }
+  return next
+}
+
+/** Ctrl/Cmd+R: copy the selection's left column right across the rectangle. */
+export function fillSelectionRight(rows: string[][], rect: { r1: number; c1: number; r2: number; c2: number }): string[][] {
+  const next = rows.map((row) => [...row])
+  for (let r = rect.r1; r <= rect.r2; r++) {
+    for (let c = rect.c1 + 1; c <= rect.c2; c++) {
+      const seed = rows[r]?.[rect.c1] ?? ''
+      next[r]![c] = isFormula(seed) ? shiftFormulaRefs(seed, 0, c - rect.c1) : seed
+    }
+  }
+  return next
+}
+
+/** Last row a double-click autofill should extend to: the contiguous data in
+ * the adjacent column, or the grid's last row when there is no adjacent data. */
+export function autofillLastRow(
+  rows: string[][],
+  rect: { r1: number; c1: number; r2: number; c2: number },
+): number {
+  const cols = rows[0]?.length ?? 0
+  const refCol = rect.c1 > 0 ? rect.c1 - 1 : rect.c2 + 1 < cols ? rect.c2 + 1 : -1
+  if (refCol < 0 || refCol >= cols) return rows.length - 1
+  let last = rect.r2
+  for (let r = rect.r2 + 1; r < rows.length; r++) {
+    if ((rows[r]?.[refCol] ?? '').trim() !== '') last = r
+    else break
+  }
+  return last
+}
 
 export const MIN_COL_WIDTH = 48
 export const MAX_COL_WIDTH = 480

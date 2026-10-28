@@ -1,17 +1,12 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
-import { parsePipes, tableToPipes, parsePipesAlign, inlineMarkdownToHtml, type TableAlign } from '../spreadsheet-util'
-import { cellCarriesMark, setCellMark } from '../inline-md'
-import { colToLetters } from '../cellRef'
+import { parsePipes, tableToPipes, parsePipesAlign, type TableAlign } from '../spreadsheet-util'
 import { solve, isFormula, type SpreadsheetSolution } from '../spreadsheet'
 import { BUILTIN_FORMULAS, type FormulaFunction } from '../formulas'
 import { documentFunctionsFor, formulaEnvFor, subscribeFormulaEnv } from '../formulaDefs'
 import { subscribeSearchChanges } from '../search'
-import { FormulaAutocomplete } from '../formulaAutocomplete'
-import { EmojiAutocomplete } from '../emojiPlugin'
-import { emojiTokenAt } from '../emojiToken'
 import { undoNoScroll, redoNoScroll, undoDepth, redoDepth } from 'prosemirror-history'
-import { deleteFormulaRefs, fillTextValues, insertFormulaRefs, remapFormulaRefs, shiftFormulaRefs } from '../series'
+import { deleteFormulaRefs, insertFormulaRefs, remapFormulaRefs } from '../series'
 import { copyText, readText } from '../clipboard'
 import { showsSource } from '../blockview'
 import {
@@ -26,35 +21,29 @@ import {
 } from '../inline-format'
 import { maskedFieldToMarkdown, primeMaskedFieldReveal, promptForNewSecret } from './masked'
 import { ContextMenu, type ContextMenuEntry } from '../contextmenu'
+import { TableSelection } from './tableSelection'
+import { CellEditingController, type CellEditingHost } from './tableEditing'
+import { TableRenderer, type TableRenderHost } from './tableRender'
 export { tableFormOf, TABLE_TYPE } from './tableShared'
 import {
-  COL_PAD,
   CellRef,
-  EDIT_INPUT_PAD,
   FillRect,
-  INSERT_CORRIDOR,
-  INSERT_EDGE,
-  MAX_COL_WIDTH,
-  MIN_COL_WIDTH,
-  PendingCellLink,
-  PointDrag,
-  PointInsert,
-  ROW_GUTTER_WIDTH,
-  bindMaskedPillsIn,
+  autofillLastRow,
   TABLE_TYPE,
-  cellKey,
-  cellTitle,
+  fillCellValue as computeFillCell,
+  fillPreviewText as previewFill,
+  fillSelectionDown as fillRowsDown,
+  fillSelectionRight as fillRowsRight,
   ensureInlineFocusListeners,
   formControl,
-  highlightTableCell,
-  linkHrefIn,
-  linkSpans,
   searchActiveCell,
-  setLink,
   tableFormAt,
-  wholeCellLinkHref,
 } from './tableShared'
 
+/** Live spreadsheet node views, keyed by their `.spreadsheet` block element.
+ *  The app-level right-click menu reaches the grid's (otherwise private)
+ *  editing commands through this, so it needs the node view behind a
+ *  right-clicked cell; a weak map keeps it free of teardown bookkeeping. */
 export const spreadsheetViews = new WeakMap<HTMLElement, TableNodeView>()
 export class TableNodeView implements NodeView, InlineCellHost {
   dom: HTMLElement
@@ -64,51 +53,49 @@ export class TableNodeView implements NodeView, InlineCellHost {
 
   private rows: string[][] = []
   private align: TableAlign[] = []
-  private grid: HTMLElement | null = null
-  private gridWrap: HTMLElement | null = null
-  private colEls: HTMLTableColElement[] = []
-  private cornerEl: HTMLElement | null = null
-  private headCells: HTMLElement[] = []
-  private rowGutters: HTMLElement[] = []
-  private cells: HTMLElement[][] = []
 
-  private anchor: CellRef | null = null
-  private active: CellRef | null = null
-  private extra = new Set<string>()
-  private editing: { row: number; col: number } | null = null
-  private editOverlay: HTMLInputElement | null = null
-  private fxInput: HTMLInputElement | null = null
-  private nameBox: HTMLElement | null = null
-  private statusEl: HTMLElement | null = null
-  private resolveInput: HTMLInputElement | null = null
-  private valuesButton: HTMLButtonElement | null = null
-  /** The solution backing what's currently rendered (set by
-   * `fillCellContents`). Tools that should freeze what the user sees — `Use
-   * values` — read from here instead of re-solving, so a volatile cell's value
-   * can't change between the screen and the commit. */
-  private renderedSolution: SpreadsheetSolution | null = null
+  private readonly selection = new TableSelection()
+  private get anchor(): CellRef | null {
+    return this.selection.anchor
+  }
+  private get active(): CellRef | null {
+    return this.selection.active
+  }
+  private readonly editor: CellEditingController
+  private readonly renderer: TableRenderer
+  private get editing(): { row: number; col: number } | null {
+    return this.editor.editing
+  }
+  private get fxInput(): HTMLInputElement | null {
+    return this.renderer.fxInput
+  }
+  private get resolveInput(): HTMLInputElement | null {
+    return this.renderer.resolveInput
+  }
+  private get grid(): HTMLElement | null {
+    return this.renderer.grid
+  }
+  private get cells(): HTMLElement[][] {
+    return this.renderer.cells
+  }
+  private get colEls(): HTMLTableColElement[] {
+    return this.renderer.colEls
+  }
+  /** The solution backing what's currently rendered. Tools that should freeze
+   * what the user sees — `Use values` — read from here instead of re-solving,
+   * so a volatile cell's value can't change between the screen and the commit. */
+  private get renderedSolution(): SpreadsheetSolution | null {
+    return this.renderer.lastSolution
+  }
   private dragging = false
   private menu: ContextMenu | null = null
   private cutSource: { r1: number; c1: number; r2: number; c2: number } | null = null
   private fillDrag: FillRect | null = null
-  private fillHandleEl: HTMLElement | null = null
-  private fillTooltipEl: HTMLElement | null = null
-  private alignButtons: Array<{ align: TableAlign; el: HTMLElement }> = []
-  private pointDrag: PointDrag | null = null
-  private pointInsert: PointInsert | null = null
-  private pointRange: { r1: number; c1: number; r2: number; c2: number } | null = null
-  private pendingLink: PendingCellLink | null = null
-  private insertGuide: HTMLElement | null = null
-  private insertGuideLine: HTMLElement | null = null
-  private insertGuidePlus: HTMLElement | null = null
-  private insertGuideTarget: { axis: 'col' | 'row'; index: number; x: number; y: number } | null = null
   private readonly onFillMove = (event: MouseEvent): void => this.handleFillMove(event)
   private readonly onFillUp = (event: MouseEvent): void => this.handleFillUp(event)
   private readonly onDocCopy = (event: Event): void => this.onClipboardCopy(event as ClipboardEvent)
   private readonly onDocCut = (event: Event): void => this.onClipboardCut(event as ClipboardEvent)
   private readonly onDocPaste = (event: Event): void => this.onClipboardPaste(event as ClipboardEvent)
-  private readonly autocomplete = new FormulaAutocomplete(() => this.formulaFunctions())
-  private readonly emojiAutocomplete = new EmojiAutocomplete()
   private unsubscribeFormulaEnv: (() => void) | null = null
   private unsubscribeSearchChanges: (() => void) | null = null
 
@@ -121,6 +108,57 @@ export class TableNodeView implements NodeView, InlineCellHost {
     this.dom = document.createElement('div')
     this.dom.className = 'spreadsheet'
     spreadsheetViews.set(this.dom, this)
+    const host: CellEditingHost = {
+      view: this.view,
+      dom: this.dom,
+      rows: () => this.rows,
+      selection: () => this.selection,
+      grid: () => this.grid,
+      colEls: () => this.colEls,
+      fxInput: () => this.fxInput,
+      formulaFunctions: () => this.formulaFunctions(),
+      cellEl: (row, col) => this.cellEl(row, col),
+      resolveTarget: (target) => this.resolveTarget(target),
+      commitRows: (next, anchor, active) => this.commitRows(next, anchor, active),
+      renderSelection: () => this.renderSelection(),
+      renderFillHandle: () => this.renderFillHandle(),
+      moveInGrid: (row, col, wrap) => this.moveInGrid(row, col, wrap),
+      insertSecret: () => this.insertSecret(),
+    }
+    this.editor = new CellEditingController(host)
+    const renderHost: TableRenderHost = {
+      dom: this.dom,
+      view: this.view,
+      rows: () => this.rows,
+      align: () => this.align,
+      selection: () => this.selection,
+      node: () => this.node,
+      position: () => this.getPos(),
+      editing: () => this.editor.editing,
+      editOverlay: () => this.editor.editOverlay,
+      pointRange: () => this.editor.pointRange,
+      cutSource: () => this.cutSource,
+      fillDrag: () => this.fillDrag,
+      fillPreview: (drag) => previewFill(this.rows, drag),
+      wireFxInput: (input) => this.editor.wireFxInput(input),
+      commitFxEdit: () => this.commitFxEdit(),
+      commitRows: (next, anchor, active) => this.commitRows(next, anchor, active),
+      onGridMouseDown: (event) => this.onGridMouseDown(event),
+      onGridKeydown: (event) => this.onGridKeydown(event),
+      onDblClick: (event) => this.onDblClick(event),
+      onGridFocus: () => setActiveCellHost(this.editor),
+      updatePointCursor: () => this.editor.updatePointCursor(),
+      onStartFill: (event) => this.startFill(event),
+      onAutofill: () => this.autofillFromHandle(),
+      alignColumns: (align) => this.alignColumns(align),
+      useValues: () => this.useValues(),
+      setResolved: (resolved) => this.setResolved(resolved),
+      insertAt: (axis, index) => {
+        if (axis === 'col') this.insertColumnAt(index)
+        else this.insertRowAt(index)
+      },
+    }
+    this.renderer = new TableRenderer(renderHost)
 
     // One cluster for the block, in the same place every other block's is: its
     // mode buttons, generated from the descriptor, then the block's own actions —
@@ -138,12 +176,8 @@ export class TableNodeView implements NodeView, InlineCellHost {
       event.stopPropagation()
     })
     this.dom.addEventListener('contextmenu', (event) => this.onGridContextMenu(event))
-    this.dom.appendChild(this.buildTools())
-    this.buildFxBar()
-    this.buildGrid()
-    this.buildInsertGuide()
-    this.anchor = { row: 0, col: 0 }
-    this.active = { row: 0, col: 0 }
+    this.renderer.build()
+    this.selection.collapse({ row: 0, col: 0 })
     this.renderSelection()
     ensureInlineFocusListeners()
     this.unsubscribeFormulaEnv = subscribeFormulaEnv(view, () => this.refreshFormulaValues())
@@ -154,153 +188,19 @@ export class TableNodeView implements NodeView, InlineCellHost {
     document.addEventListener('paste', this.onDocPaste)
   }
 
-  /**
-   * Apply an inline formatting change to every selected cell (or, with the fx
-   * bar / edit overlay active, the active cell), so the toolbar's
-   * bold/italic/strike/code/link buttons work across a multi-cell selection.
-   * Marker kinds (bold/italic/strike/code) wrap the selection unless every cell
-   * is already wrapped (then they unwrap); links are set to the URL on all
-   * selected cells.
-   */
+  /** Format the selection through the cell-editing controller. */
   applyInline(kind: InlineCellKind, url?: string): boolean {
-    if (kind === 'secret') {
-      if (this.active === null) return false
-      void this.insertSecret()
-      return true
-    }
-    const cells = this.collectSelected()
-    if (cells.length === 0) return false
-    const rawOf = (row: number, col: number): string => {
-      if (this.editing && this.editOverlay && this.editing.row === row && this.editing.col === col) {
-        return this.editOverlay.value
-      }
-      if (
-        this.fxInput &&
-        document.activeElement === this.fxInput &&
-        this.active &&
-        this.active.row === row &&
-        this.active.col === col
-      ) {
-        return this.fxInput.value
-      }
-      return this.rows[row]?.[col] ?? ''
-    }
-    const next = this.rows.map((r) => [...r])
-    let changed = false
-    if (kind === 'link') {
-      for (const { row, col } of cells) {
-        const raw = rawOf(row, col)
-        const result = setLink(raw, url)
-        if (result !== raw) changed = true
-        next[row]![col] = result
-      }
-    } else {
-      // Marker kinds apply uniformly to the whole selection: add unless every
-      // selected cell already carries the mark fully (then remove them all).
-      // Marks are tracked on the parsed inline runs so effects compose
-      // (`**hello**` + italic → `***hello***`, not a mangles literal).
-      const on = !cells.every(({ row, col }) => cellCarriesMark(rawOf(row, col), kind))
-      for (const { row, col } of cells) {
-        const raw = rawOf(row, col)
-        const result = setCellMark(raw, kind, on)
-        if (result !== raw) changed = true
-        next[row]![col] = result
-      }
-    }
-    if (!changed) return false
-    // If the fx bar is the live edit source, sync it to the new raw so the
-    // blur commit triggered by the `grid.focus()` below is a no-op — otherwise
-    // it would write the stale unformatted value back over the cell.
-    if (this.active && this.fxInput && document.activeElement === this.fxInput) {
-      this.fxInput.value = next[this.active.row]?.[this.active.col] ?? ''
-    }
-    if (this.editing) this.teardownEdit()
-    const anchor = this.anchor ?? cells[0]!
-    const active = this.active ?? cells[cells.length - 1]!
-    this.commitRows(next, anchor, active)
-    this.grid?.focus()
-    return true
+    return this.editor.applyInline(kind, url)
   }
 
-  /**
-   * Capture the live edit's text and selection before the dialog opens. The
-   * toolbar calls this on mousedown (ahead of the focus change that blurs and
-   * commits the in-cell editor), so a link can be applied to exactly the
-   * selected text rather than the whole cell.
-   */
+  /** Snapshot the live link context before the URL dialog opens. */
   beginCellLink(): CellLinkContext {
-    const target = this.linkEditTarget()
-    const row = target?.row ?? this.active?.row ?? 0
-    const col = target?.col ?? this.active?.col ?? 0
-    const value = target ? target.input.value : (this.rows[row]?.[col] ?? '')
-    const start = target ? (target.input.selectionStart ?? value.length) : value.length
-    const end = target ? (target.input.selectionEnd ?? start) : start
-    this.pendingLink = { row, col, value, start, end, editing: target !== null }
-    if (target) {
-      return {
-        text: start === end ? '' : value.slice(start, end),
-        url: linkHrefIn(value, start, end),
-      }
-    }
-    return { text: value, url: wholeCellLinkHref(value) }
+    return this.editor.beginCellLink()
   }
 
-  /** Apply (or, with an empty URL, remove) a link using the snapshot captured
-   * by `beginCellLink`, honoring the dialog's link text when nothing was
-   * selected. */
+  /** Apply the link dialog's answer to the snapshot from `beginCellLink`. */
   applyCellLink(text: string, url: string): boolean {
-    const pending = this.pendingLink
-    this.pendingLink = null
-    if (!pending) return false
-    const current = this.rows[pending.row]?.[pending.col] ?? ''
-    const href = url.trim()
-    let raw: string
-    if (pending.editing) {
-      // A selection or caret inside a link's visible text edits that link.
-      const span = linkSpans(pending.value).find(
-        (s) => pending.start >= s.from && pending.end <= s.to,
-      )
-      if (span) {
-        const spanText = pending.value.slice(span.from, span.to)
-        const linked = href ? `[${spanText}](${href})` : spanText
-        raw = pending.value.slice(0, span.rawFrom) + linked + pending.value.slice(span.rawTo)
-      } else if (pending.start !== pending.end) {
-        const selected = pending.value.slice(pending.start, pending.end)
-        const linked = href ? `[${selected}](${href})` : selected
-        raw = pending.value.slice(0, pending.start) + linked + pending.value.slice(pending.end)
-      } else if (href) {
-        const label = text.trim() || href
-        raw = pending.value.slice(0, pending.start) + `[${label}](${href})` + pending.value.slice(pending.end)
-      } else {
-        raw = pending.value
-      }
-    } else if (href) {
-      raw = pending.value.trim() ? setLink(pending.value, href) : `[${text.trim() || href}](${href})`
-    } else {
-      raw = setLink(pending.value, undefined)
-    }
-    if (raw === current) return false
-    const next = this.rows.map((r) => [...r])
-    next[pending.row]![pending.col] = raw
-    this.commitRows(
-      next,
-      { row: pending.row, col: pending.col },
-      { row: pending.row, col: pending.col },
-    )
-    this.grid?.focus()
-    return true
-  }
-
-  /** The currently focused cell text editor (in-cell overlay or fx bar), if
-   * any, with its cell coordinates. */
-  private linkEditTarget(): { input: HTMLInputElement; row: number; col: number } | null {
-    if (this.editing && this.editOverlay) {
-      return { input: this.editOverlay, row: this.editing.row, col: this.editing.col }
-    }
-    if (this.fxInput && document.activeElement === this.fxInput && this.active) {
-      return { input: this.fxInput, row: this.active.row, col: this.active.col }
-    }
-    return null
+    return this.editor.applyCellLink(text, url)
   }
 
   update(node: ProseNode): boolean {
@@ -354,452 +254,16 @@ export class TableNodeView implements NodeView, InlineCellHost {
    * has nothing to do with either. The cluster keeps the mode controls, which are
    * about the block, and nothing else.
    */
-  private buildTools(): HTMLElement {
-    const tools = document.createElement('div')
-    tools.className = 'ss-tools'
-    for (const [align, title, markup] of [
-      ['left', 'Align selected column left (click again to clear)', '<path d="M2 4h12M2 8h8M2 12h12"/>'],
-      ['center', 'Align selected column center (click again to clear)', '<path d="M2 4h12M4 8h8M2 12h12"/>'],
-      ['right', 'Align selected column right (click again to clear)', '<path d="M2 4h12M6 8h8M2 12h12"/>'],
-    ] as const) {
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = 'ss-tool ss-tool-icon'
-      button.dataset.align = align
-      button.title = title
-      button.setAttribute('aria-label', title)
-      button.innerHTML =
-        '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
-        `stroke-linecap="round" aria-hidden="true">${markup}</svg>`
-      button.addEventListener('click', () => {
-        this.commitFxEdit()
-        this.alignColumns(align)
-      })
-      tools.appendChild(button)
-      this.alignButtons.push({ align, el: button })
-    }
-    const valuesBtn = document.createElement('button')
-    valuesBtn.type = 'button'
-    valuesBtn.className = 'ss-tool ss-tool-view'
-    valuesBtn.textContent = 'Use values'
-    valuesBtn.title =
-      'Replace the selected cells’ formulas with their current computed values (they stop recalculating — undo with Ctrl+Z)'
-    valuesBtn.addEventListener('click', () => {
-      this.useValues()
-    })
-    this.valuesButton = valuesBtn
-    // **Before** the status, not after it. `.ss-status` is `margin-left: auto`, so
-    // it takes the slack in the row and shoves everything after it to the far
-    // right — which put "Use values" 970px from the alignment buttons it belongs
-    // beside. The controls are the left of the row; the readout alone takes the
-    // right, and the label of the group next to it is what says so.
-    tools.appendChild(valuesBtn)
-    const resolveLabel = document.createElement('label')
-    resolveLabel.className = 'ss-tool ss-tool-check'
-    resolveLabel.title =
-      'Save this table’s computed values to markdown instead of its formulas (the formulas stay in a comment and are restored when the file is opened)'
-    const resolveInput = document.createElement('input')
-    resolveInput.type = 'checkbox'
-    resolveInput.checked = Boolean(this.node.attrs._resolved)
-    resolveInput.addEventListener('change', () => {
-      this.commitFxEdit()
-      this.setResolved(resolveInput.checked)
-    })
-    this.resolveInput = resolveInput
-    const resolveText = document.createElement('span')
-    resolveText.textContent = 'Resolve formulas?'
-    resolveLabel.appendChild(resolveInput)
-    resolveLabel.appendChild(resolveText)
-    // Also **before** the status, and for the same reason: it is a control about
-    // the values in this sheet — the same question "Use values" answers, for the
-    // whole sheet rather than the selection — so it belongs beside that button,
-    // not stranded at the far right of the row with the readout.
-    tools.appendChild(resolveLabel)
-    const status = document.createElement('span')
-    status.className = 'ss-status'
-    tools.appendChild(status)
-    this.statusEl = status
-    return tools
-  }
-
-  private buildFxBar(): void {
-    const fxbar = document.createElement('div')
-    fxbar.className = 'ss-fxbar'
-    const nameBox = document.createElement('span')
-    nameBox.className = 'ss-namebox'
-    fxbar.appendChild(nameBox)
-    this.nameBox = nameBox
-    const fxInput = document.createElement('input')
-    fxInput.type = 'text'
-    fxInput.className = 'ss-fx-input'
-    fxInput.spellcheck = false
-    fxInput.placeholder = 'fx'
-    fxInput.addEventListener('keydown', (event) => this.onFxInputKeydown(event))
-    fxInput.addEventListener('blur', () => {
-      this.autocomplete.close()
-      this.emojiAutocomplete.close()
-      this.commitFxEdit()
-    })
-    fxInput.addEventListener('focus', () => {
-      setActiveCellHost(this)
-      this.updatePointCursor()
-    })
-    fxInput.addEventListener('input', () => {
-      this.updatePointCursor()
-      this.refreshAutocomplete(fxInput)
-    })
-    fxbar.appendChild(fxInput)
-    this.fxInput = fxInput
-
-    this.dom.appendChild(fxbar)
-  }
-
-  /** Functions offered by formula autocomplete: builtins first, then any
-   * functions defined in the current document. */
-  private formulaFunctions(): readonly FormulaFunction[] {
+  formulaFunctions(): readonly FormulaFunction[] {
     return [...BUILTIN_FORMULAS, ...documentFunctionsFor(this.view.state)]
-  }
-
-  /**
-   * The fx bar and the in-cell editor share one suggestion slot. A `=` draft is
-   * a formula, so the formula list owns it; a `:name` token is emoji, so the
-   * emoji card takes over; otherwise both close. `emojiTokenAt` already refuses
-   * formula drafts and cell-range references, so the two never both want it.
-   */
-  private refreshAutocomplete(input: HTMLInputElement): void {
-    const caret = input.selectionStart ?? input.value.length
-    const token = emojiTokenAt(input.value.slice(0, caret), caret)
-    if (token) {
-      this.autocomplete.close()
-      this.emojiAutocomplete.refresh(input)
-    } else {
-      this.emojiAutocomplete.close()
-      this.autocomplete.refresh(input)
-    }
   }
 
   // --- Grid ---
 
-  private buildGrid(): void {
-    // Rebuilding replaces the grid element; keep keyboard focus on it so typing
-    // still starts an edit after a structural change (e.g. Delete clearing a cell).
-    const refocus =
-      this.grid !== null &&
-      (document.activeElement === this.grid || this.grid.contains(document.activeElement))
-    const oldWrap = this.gridWrap
-    const wrap = document.createElement('div')
-    wrap.className = 'ss-table-scroll'
-    const grid = document.createElement('table')
-    grid.className = 'ss-grid'
-    grid.tabIndex = 0
-    this.grid = grid
-    this.gridWrap = wrap
-
-    const cols = this.rows[0]?.length ?? 0
-
-    const colgroup = document.createElement('colgroup')
-    const gutterCol = document.createElement('col')
-    gutterCol.className = 'ss-gutter'
-    gutterCol.style.width = `${ROW_GUTTER_WIDTH}px`
-    colgroup.appendChild(gutterCol)
-    this.colEls = []
-    for (let c = 0; c < cols; c++) {
-      const col = document.createElement('col')
-      colgroup.appendChild(col)
-      this.colEls.push(col)
-    }
-    grid.appendChild(colgroup)
-
-    const head = document.createElement('thead')
-    const headRow = document.createElement('tr')
-    const corner = document.createElement('th')
-    corner.className = 'ss-corner'
-    headRow.appendChild(corner)
-    this.cornerEl = corner
-    this.headCells = []
-    for (let c = 0; c < cols; c++) {
-      const th = document.createElement('th')
-      th.className = 'ss-col'
-      th.dataset.col = String(c)
-      const label = document.createElement('span')
-      label.className = 'ss-cell-content'
-      label.textContent = colToLetters(c + 1)
-      th.appendChild(label)
-      headRow.appendChild(th)
-      this.headCells.push(th)
-    }
-    head.appendChild(headRow)
-
-    const body = document.createElement('tbody')
-    this.rowGutters = []
-    this.cells = []
-    for (let r = 0; r < this.rows.length; r++) {
-      const tr = document.createElement('tr')
-      const gutter = document.createElement('th')
-      gutter.className = 'ss-row'
-      gutter.dataset.row = String(r)
-      const gutterLabel = document.createElement('span')
-      gutterLabel.className = 'ss-gutter-label'
-      gutterLabel.textContent = String(r + 1)
-      gutter.appendChild(gutterLabel)
-      tr.appendChild(gutter)
-      this.rowGutters.push(gutter)
-      const rowCells: HTMLElement[] = []
-      for (let c = 0; c < cols; c++) {
-        const td = document.createElement('td')
-        td.className = r === 0 ? 'ss-cell ss-header' : 'ss-cell'
-        td.dataset.row = String(r)
-        td.dataset.col = String(c)
-        td.dataset.align = this.align[c] ?? 'none'
-        tr.appendChild(td)
-        rowCells.push(td)
-      }
-      this.cells.push(rowCells)
-      body.appendChild(tr)
-    }
-
-    grid.appendChild(head)
-    grid.appendChild(body)
-    wrap.appendChild(grid)
-
-    if (oldWrap && oldWrap.parentNode === this.dom) this.dom.replaceChild(wrap, oldWrap)
-    else this.dom.appendChild(wrap)
-
-    // Measure against real layout so defaults follow the cell content
-    this.fillCellContents()
-    this.applySizing(cols)
-
-    grid.addEventListener('mousedown', (event) => this.onGridMouseDown(event))
-    grid.addEventListener('focus', () => setActiveCellHost(this))
-    grid.addEventListener('keydown', (event) => this.onGridKeydown(event))
-    grid.addEventListener('dblclick', (event) => this.onDblClick(event))
-    wrap.addEventListener('scroll', () => this.hideInsertGuide())
-    if (refocus) grid.focus()
+  fillCellContents(): void {
+    this.renderer.fillCellContents()
   }
 
-  /** A floating overlay showing where a hover insert would land: a blue rule
-   * between the target rows/columns with a `+` button at its end. */
-  private buildInsertGuide(): void {
-    const guide = document.createElement('div')
-    guide.className = 'ss-insert-guide'
-    guide.hidden = true
-    const line = document.createElement('div')
-    line.className = 'ss-insert-line'
-    guide.appendChild(line)
-    const plus = document.createElement('button')
-    plus.type = 'button'
-    plus.className = 'ss-insert-plus'
-    plus.textContent = '+'
-    plus.setAttribute('aria-label', 'Insert here')
-    plus.addEventListener('mousedown', (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-    })
-    plus.addEventListener('click', (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-      this.commitInsertGuide()
-    })
-    guide.appendChild(plus)
-    this.insertGuide = guide
-    this.insertGuideLine = line
-    this.insertGuidePlus = plus
-    this.dom.appendChild(guide)
-    this.dom.addEventListener('mousemove', (event) => this.onInsertHover(event))
-    this.dom.addEventListener('mouseleave', () => this.hideInsertGuide())
-  }
-
-  private onInsertHover(event: MouseEvent): void {
-    if (!this.grid || !this.insertGuide) return
-    const target = event.target
-    // Moving onto the floating button keeps the guide put so it stays clickable.
-    if (target instanceof Element && target.closest('.ss-insert-plus')) return
-    // Forgive slight excursions: keep a shown guide while the pointer stays in
-    // the corridor around its boundary (e.g. the short trip up to the button).
-    if (this.insertGuideTarget && this.pointInInsertCorridor(event.clientX, event.clientY)) return
-    if (!(target instanceof Element)) {
-      this.hideInsertGuide()
-      return
-    }
-    // The guide lives on the boundary between two chrome cells, so only the
-    // lead/trail edge of a header/gutter — not its middle — triggers it.
-    const col = target.closest('th.ss-col')
-    if (col) {
-      const index = Number((col as HTMLElement).dataset.col)
-      const rect = col.getBoundingClientRect()
-      if (event.clientX - rect.left <= INSERT_EDGE) {
-        this.showInsertGuide('col', index, rect.left, rect.top)
-        return
-      }
-      if (rect.right - event.clientX <= INSERT_EDGE) {
-        this.showInsertGuide('col', index + 1, rect.right, rect.top)
-        return
-      }
-      this.hideInsertGuide()
-      return
-    }
-    const row = target.closest('th.ss-row')
-    if (row) {
-      const index = Number((row as HTMLElement).dataset.row)
-      const rect = row.getBoundingClientRect()
-      if (event.clientY - rect.top <= INSERT_EDGE && index > 0) {
-        this.showInsertGuide('row', index, rect.left, rect.top)
-        return
-      }
-      if (rect.bottom - event.clientY <= INSERT_EDGE) {
-        this.showInsertGuide('row', index + 1, rect.left, rect.bottom)
-        return
-      }
-      this.hideInsertGuide()
-      return
-    }
-    this.hideInsertGuide()
-  }
-
-  /** True while the pointer sits within the forgiving band around the shown
-   * guide's boundary, including the space its floating button occupies. */
-  private pointInInsertCorridor(clientX: number, clientY: number): boolean {
-    const grid = this.grid
-    const target = this.insertGuideTarget
-    if (!grid || !target) return false
-    const base = this.dom.getBoundingClientRect()
-    const gridRect = grid.getBoundingClientRect()
-    const px = clientX - base.left
-    const py = clientY - base.top
-    const size = this.insertGuidePlus?.offsetWidth || 16
-    if (target.axis === 'col') {
-      const top = gridRect.top - base.top - size - INSERT_CORRIDOR
-      const bottom = gridRect.bottom - base.top
-      return Math.abs(px - target.x) <= INSERT_CORRIDOR && py >= top && py <= bottom
-    }
-    const left = gridRect.left - base.left - size - INSERT_CORRIDOR
-    const right = gridRect.right - base.left
-    return Math.abs(py - target.y) <= INSERT_CORRIDOR && px >= left && px <= right
-  }
-
-  private showInsertGuide(axis: 'col' | 'row', index: number, clientX: number, clientY: number): void {
-    const grid = this.grid
-    const guide = this.insertGuide
-    const line = this.insertGuideLine
-    const plus = this.insertGuidePlus
-    const cols = this.rows[0]?.length ?? 0
-    const max = axis === 'col' ? cols : this.rows.length
-    if (!grid || !guide || !line || !plus || !Number.isFinite(index) || index < 0 || index > max) return
-    const base = this.dom.getBoundingClientRect()
-    const gridRect = grid.getBoundingClientRect()
-    const tableTop = gridRect.top - base.top
-    const tableBottom = gridRect.bottom - base.top
-    const tableLeft = gridRect.left - base.left
-    const tableRight = gridRect.right - base.left
-    const x = clientX - base.left
-    const y = clientY - base.top
-    const size = plus.offsetWidth || 16
-    const atEnd = axis === 'col' ? index >= cols : index >= this.rows.length
-    this.insertGuideTarget = { axis, index, x, y }
-    this.dom.classList.toggle('ss-inserting-col', axis === 'col')
-    this.dom.classList.toggle('ss-inserting-row', axis === 'row')
-    guide.hidden = false
-    if (axis === 'col') {
-      plus.style.left = `${x - size / 2}px`
-      plus.style.top = `${tableTop - size}px`
-      line.style.left = `${x - 1}px`
-      line.style.top = `${tableTop}px`
-      line.style.width = '2px'
-      line.style.height = `${tableBottom - tableTop}px`
-    } else {
-      plus.style.left = `${tableLeft - size}px`
-      plus.style.top = `${y - size / 2}px`
-      line.style.left = `${tableLeft}px`
-      line.style.top = `${y - 1}px`
-      line.style.width = `${tableRight - tableLeft}px`
-      line.style.height = '2px'
-    }
-    plus.title =
-      axis === 'col'
-        ? atEnd
-          ? 'Append column at the end'
-          : `Insert column before ${colToLetters(index + 1)}`
-        : atEnd
-          ? 'Append row at the end'
-          : `Insert row above ${index + 1}`
-  }
-
-  private hideInsertGuide(): void {
-    if (!this.insertGuide) return
-    this.insertGuide.hidden = true
-    this.insertGuideTarget = null
-    this.dom.classList.remove('ss-inserting-col', 'ss-inserting-row')
-  }
-
-  /** Insert at the guide currently shown. Shared by the `+` click and a
-   * double-click on the row/column chrome while the guide is open. */
-  private commitInsertGuide(): void {
-    const target = this.insertGuideTarget
-    this.hideInsertGuide()
-    if (!target) return
-    if (target.axis === 'col') this.insertColumnAt(target.index)
-    else this.insertRowAt(target.index)
-  }
-
-  /** Fit each column to its content. Widths are never persisted to markdown,
-   * so they are recomputed from the cells on every rebuild. */
-  private applySizing(cols: number): void {
-    for (let c = 0; c < cols; c++) {
-      const colEl = this.colEls[c]
-      if (!colEl) continue
-      colEl.style.width = `${this.measureColDefault(c)}px`
-    }
-  }
-
-  private measureColDefault(col: number): number {
-    let max = 0
-    for (let r = 0; r < this.rows.length; r++) {
-      const inner = this.cells[r]?.[col]?.querySelector<HTMLElement>('.ss-cell-content')
-      if (inner) max = Math.max(max, inner.offsetWidth)
-    }
-    const head = this.headCells[col]?.querySelector<HTMLElement>('.ss-cell-content')
-    if (head) max = Math.max(max, head.offsetWidth)
-    return Math.max(MIN_COL_WIDTH, Math.ceil(max) + COL_PAD)
-  }
-
-  private fillCellContents(): void {
-    const solution = solve(this.rows, formulaEnvFor(this.view.state))
-    this.renderedSolution = solution
-    const active = searchActiveCell(this.view, this.node, this.getPos)
-    for (let r = 0; r < this.rows.length; r++) {
-      for (let c = 0; c < (this.rows[0]?.length ?? 0); c++) {
-        const td = this.cells[r]?.[c]
-        if (!td) continue
-        const cellSol = solution.cells[r]?.[c]
-        td.classList.remove('ss-formula', 'ss-error')
-        td.removeAttribute('title')
-        td.textContent = ''
-        const inner = document.createElement('span')
-        inner.className = 'ss-cell-content'
-        if (cellSol && (cellSol.kind === 'formula' || cellSol.kind === 'error')) {
-          if (cellSol.styled || cellSol.rendersMarkdown) {
-            inner.innerHTML = inlineMarkdownToHtml(cellSol.display, { indexedMasked: true, markMisleading: true })
-          } else {
-            inner.textContent = cellSol.display
-          }
-          td.classList.add(cellSol.kind === 'error' ? 'ss-error' : 'ss-formula')
-        } else {
-          const display = cellSol?.display ?? ''
-          if (display) inner.innerHTML = inlineMarkdownToHtml(display, { indexedMasked: true, markMisleading: true })
-        }
-        td.appendChild(inner)
-        if (!cellSol || (cellSol.kind !== 'formula' && cellSol.kind !== 'error')) {
-          this.bindMaskedPills(td, r, c)
-        }
-        highlightTableCell(this.view, td, r, c, active)
-        const raw = this.rows[r]?.[c] ?? ''
-        if (raw) td.title = cellTitle(raw, cellSol)
-      }
-    }
-  }
-
-  /** Recompute cells after an `edi-formula` block changed the available
-   * functions. Skipped mid-edit so it never clobbers the open editor. */
   private refreshFormulaValues(): void {
     if (this.editing) return
     this.fillCellContents()
@@ -823,71 +287,12 @@ export class TableNodeView implements NodeView, InlineCellHost {
     requestAnimationFrame(() => td.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }))
   }
 
-  /** Wire ``.masked-field`` pills rendered into a cell to their real token, so
-   * they get the show/copy/edit actions of a body masked field. */
-  private bindMaskedPills(td: HTMLElement, row: number, col: number): void {
-    bindMaskedPillsIn(td, this.rows, row, col, (next, anchor, active) =>
-      this.commitRows(next, anchor, active),
-    )
+  renderSelection(): void {
+    this.renderer.renderSelection()
   }
 
-  private renderSelection(): void {
-    this.updateNameBox()
-    this.updateStatus()
-    this.updateFxSync()
-    this.updatePointCursor()
-    if (!this.grid) return
-    const has = this.selectedHas()
-    const rows = this.rows.length
-    const cols = this.rows[0]?.length ?? 0
-    const selCols = this.selectedCols()
-    const selRows = this.selectedRows()
-
-    for (let r = 0; r < rows; r++) {
-      this.rowGutters[r]?.classList.toggle('ss-selected', selRows.has(r))
-      for (let c = 0; c < cols; c++) {
-        const td = this.cells[r]?.[c]
-        if (!td) continue
-        td.classList.toggle('ss-range', has(r, c))
-        td.classList.toggle('ss-selected', this.extra.has(cellKey(r, c)))
-        td.classList.toggle(
-          'ss-active',
-          this.active !== null && this.active.row === r && this.active.col === c,
-        )
-        const cut = this.cutSource
-        td.classList.toggle(
-          'ss-cut',
-          cut !== null && r >= cut.r1 && r <= cut.r2 && c >= cut.c1 && c <= cut.c2,
-        )
-        const point = this.pointRange
-        td.classList.toggle(
-          'ss-point',
-          point !== null && r >= point.r1 && r <= point.r2 && c >= point.c1 && c <= point.c2,
-        )
-      }
-    }
-    for (let c = 0; c < cols; c++) {
-      this.headCells[c]?.classList.toggle('ss-selected', selCols.has(c))
-    }
-    this.cornerEl?.classList.toggle('ss-selected', selRows.size === rows && selCols.size === cols)
-    this.renderFillHandle()
-    this.updateAlignButtons()
-    this.updateValuesButton()
-  }
-
-  /** Columns the align buttons act on: the selected columns, or the active
-   * cell's column when nothing is explicitly selected. */
-  private alignTargetCols(): Set<number> {
-    const cols = this.selectedCols()
-    if (cols.size === 0 && this.active) cols.add(this.active.col)
-    return cols
-  }
-
-  /** Apply a column alignment to the selected columns (active column when
-   * nothing is selected), re-emitting the delimiter row with its colons.
-   * Clicking the alignment the selection already has clears it back to none. */
   private alignColumns(align: TableAlign): void {
-    const cols = this.alignTargetCols()
+    const cols = this.renderer.alignTargetCols()
     if (cols.size === 0) return
     const next: TableAlign = [...cols].every((c) => (this.align[c] ?? 'none') === align)
       ? 'none'
@@ -901,7 +306,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
       }
     }
     if (!changed) {
-      this.updateAlignButtons()
+      this.renderer.updateAlignButtons()
       this.grid?.focus()
       return
     }
@@ -911,57 +316,12 @@ export class TableNodeView implements NodeView, InlineCellHost {
     this.grid?.focus()
   }
 
-  private updateAlignButtons(): void {
-    if (this.alignButtons.length === 0) return
-    const cols = this.alignTargetCols()
-    const alignments = new Set([...cols].map((c) => this.align[c] ?? 'none'))
-    const current = alignments.size === 1 ? [...alignments][0]! : null
-    for (const { align, el } of this.alignButtons) {
-      el.classList.toggle('ss-tool-active', current === align)
-    }
+  renderFillHandle(): void {
+    this.renderer.renderFillHandle()
   }
-
-  /** Draw (or clear) the Excel-style fill handle at the bottom-right corner of
-   * the current selection. Hidden while editing, cutting, or during a drag. */
-  private renderFillHandle(): void {
-    const old = this.fillHandleEl
-    if (old) {
-      old.remove()
-      this.fillHandleEl = null
-    }
-    if (this.editing || this.cutSource || this.fillDrag) return
-    if (!this.anchor || !this.active || this.extra.size > 0) return
-    const rows = this.rows.length
-    const cols = this.rows[0]?.length ?? 0
-    if (rows === 0 || cols === 0) return
-    const corner = this.cellEl(
-      Math.min(Math.max(this.anchor.row, this.active.row), rows - 1),
-      Math.min(Math.max(this.anchor.col, this.active.col), cols - 1),
-    )
-    if (!corner) return
-    const handle = document.createElement('div')
-    handle.className = 'ss-fill-handle'
-    handle.title = 'Drag to fill cells, double-click to autofill'
-    handle.addEventListener('mousedown', (event) => this.startFill(event))
-    handle.addEventListener('dblclick', (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-      this.autofillFromHandle()
-    })
-    corner.appendChild(handle)
-    this.fillHandleEl = handle
-  }
-
-  // --- Excel-style fill handle ---
 
   private currentRect(): { r1: number; c1: number; r2: number; c2: number } | null {
-    if (!this.anchor || !this.active) return null
-    return {
-      r1: Math.min(this.anchor.row, this.active.row),
-      c1: Math.min(this.anchor.col, this.active.col),
-      r2: Math.max(this.anchor.row, this.active.row),
-      c2: Math.max(this.anchor.col, this.active.col),
-    }
+    return this.selection.rect()
   }
 
   private startFill(event: MouseEvent): void {
@@ -972,9 +332,9 @@ export class TableNodeView implements NodeView, InlineCellHost {
     if (this.editing) this.commitCellEdit()
     else this.commitFxEdit()
     grid.focus()
-    setActiveCellHost(this)
+    setActiveCellHost(this.editor)
     const rect = this.currentRect()
-    if (!rect || this.extra.size > 0) return
+    if (!rect || this.selection.extra.size > 0) return
     this.fillDrag = {
       sr1: rect.r1,
       sc1: rect.c1,
@@ -1003,65 +363,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     drag.c1 = Math.min(drag.sc1, col)
     drag.r2 = Math.max(drag.sr2, row)
     drag.c2 = Math.max(drag.sc2, col)
-    this.updateFillGhost()
-  }
-
-  private updateFillGhost(): void {
-    const drag = this.fillDrag
-    if (!drag) return
-    const rows = this.rows.length
-    const cols = this.rows[0]?.length ?? 0
-    for (let r = drag.r1; r <= drag.r2; r++) {
-      for (let c = drag.c1; c <= drag.c2; c++) {
-        if (r < 0 || c < 0 || r >= rows || c >= cols) continue
-        if (r >= drag.sr1 && r <= drag.sr2 && c >= drag.sc1 && c <= drag.sc2) continue
-        this.cells[r]?.[c]?.classList.add('ss-fill-target')
-      }
-    }
-    const text = this.fillPreviewText(drag)
-    let tooltip = this.fillTooltipEl
-    if (text === '') {
-      if (tooltip) {
-        tooltip.remove()
-        this.fillTooltipEl = null
-      }
-      return
-    }
-    if (!tooltip) {
-      tooltip = document.createElement('div')
-      tooltip.className = 'ss-fill-tooltip'
-      this.gridWrap?.appendChild(tooltip)
-      this.fillTooltipEl = tooltip
-    }
-    tooltip.textContent = text
-    this.positionFillTooltip()
-  }
-
-  private positionFillTooltip(): void {
-    const tooltip = this.fillTooltipEl
-    const wrap = this.gridWrap
-    const drag = this.fillDrag
-    if (!tooltip || !wrap || !drag) return
-    const corner = this.cellEl(drag.r2, drag.c2)
-    if (!corner) return
-    const wrapRect = wrap.getBoundingClientRect()
-    const cellRect = corner.getBoundingClientRect()
-    tooltip.style.left = `${Math.min(
-      wrap.clientWidth - tooltip.offsetWidth - 8,
-      cellRect.right - wrapRect.left + 6,
-    )}px`
-    tooltip.style.top = `${Math.max(2, cellRect.top - wrapRect.top - 26)}px`
-  }
-
-  private clearFillGhost(): void {
-    this.dom.classList.remove('ss-filling')
-    if (this.fillTooltipEl) {
-      this.fillTooltipEl.remove()
-      this.fillTooltipEl = null
-    }
-    for (const row of this.cells) {
-      for (const td of row) td?.classList.remove('ss-fill-target')
-    }
+    this.renderer.updateFillGhost()
   }
 
   private handleFillUp(_event: MouseEvent): void {
@@ -1069,7 +371,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     document.removeEventListener('mousemove', this.onFillMove)
     document.removeEventListener('mouseup', this.onFillUp)
     this.fillDrag = null
-    this.clearFillGhost()
+    this.renderer.clearFillGhost()
     if (!drag) return
     const rows = this.rows.length
     const cols = this.rows[0]?.length ?? 0
@@ -1084,94 +386,11 @@ export class TableNodeView implements NodeView, InlineCellHost {
       for (let c = drag.c1; c <= drag.c2; c++) {
         if (r < 0 || c < 0 || r >= rows || c >= cols) continue
         if (r >= drag.sr1 && r <= drag.sr2 && c >= drag.sc1 && c <= drag.sc2) continue
-        next[r]![c] = this.fillCellValue(drag, r, c)
+        next[r]![c] = computeFillCell(this.rows, drag, r, c)
       }
     }
     this.commitRows(next, { row: drag.sr1, col: drag.sc1 }, { row: drag.r2, col: drag.c2 })
     this.grid?.focus()
-  }
-
-  /** Value for one cell inside the target fill rectangle but outside the
-   * source rectangle. Vertical strips extend each source column downward (or
-   * upward) along a detected series; horizontal strips do the same per row.
-   * Formula seeds copy with their references shifted by the drag distance
-   * from whichever seed cell produces them. */
-  private fillCellValue(
-    drag: FillRect,
-    r: number,
-    c: number,
-  ): string {
-    const inRows = r >= drag.sr1 && r <= drag.sr2
-    const inCols = c >= drag.sc1 && c <= drag.sc2
-    if (inCols && !inRows) return this.fillColumnCell(drag, r, c)
-    if (inRows && !inCols) return this.fillRowCell(drag, r, c)
-    // Corner cells of a two-axis drag: duplicate the nearest source corner.
-    const rr = r < drag.sr1 ? drag.sr1 : drag.sr2
-    const cc = c < drag.sc1 ? drag.sc1 : drag.sc2
-    return this.rows[rr]?.[cc] ?? ''
-  }
-
-  private fillColumnCell(
-    drag: FillRect,
-    r: number,
-    c: number,
-  ): string {
-    const blockH = drag.sr2 - drag.sr1 + 1
-    const down = r > drag.sr2
-    const producer = down
-      ? drag.sr1 + ((r - drag.sr1) % blockH)
-      : drag.sr1 + ((drag.sr1 - r - 1) % blockH)
-    const seed = this.rows[producer]?.[c] ?? ''
-    if (isFormula(seed)) return shiftFormulaRefs(seed, r - producer, 0)
-    const seeds: string[] = []
-    for (let rr = drag.sr1; rr <= drag.sr2; rr++) seeds.push(this.rows[rr]?.[c] ?? '')
-    if (!down) seeds.reverse()
-    const count = down ? drag.r2 - drag.sr2 : drag.sr1 - drag.r1
-    const values = fillTextValues(seeds, count)
-    const index = down ? r - drag.sr2 - 1 : r - drag.r1
-    return values[index] ?? ''
-  }
-
-  private fillRowCell(
-    drag: FillRect,
-    r: number,
-    c: number,
-  ): string {
-    const blockW = drag.sc2 - drag.sc1 + 1
-    const right = c > drag.sc2
-    const producer = right
-      ? drag.sc1 + ((c - drag.sc1) % blockW)
-      : drag.sc1 + ((drag.sc1 - c - 1) % blockW)
-    const seed = this.rows[r]?.[producer] ?? ''
-    if (isFormula(seed)) return shiftFormulaRefs(seed, 0, c - producer)
-    const seeds: string[] = []
-    for (let cc = drag.sc1; cc <= drag.sc2; cc++) seeds.push(this.rows[r]?.[cc] ?? '')
-    if (!right) seeds.reverse()
-    const count = right ? drag.c2 - drag.sc2 : drag.sc1 - drag.c1
-    const values = fillTextValues(seeds, count)
-    const index = right ? c - drag.sc2 - 1 : c - drag.c1
-    return values[index] ?? ''
-  }
-
-  /** One-line preview of what the handle drag would produce, shown in the
-   * floating tooltip. Blank or formula seeds yield no preview. */
-  private fillPreviewText(drag: FillRect): string {
-    const newRows = drag.r2 - drag.sr2 + (drag.sr1 - drag.r1)
-    const newCols = drag.c2 - drag.sc2 + (drag.sc1 - drag.c1)
-    if (newRows <= 0 && newCols <= 0) return ''
-    const seeds: string[] = []
-    let reversed = false
-    if (newRows >= newCols) {
-      for (let rr = drag.sr1; rr <= drag.sr2; rr++) seeds.push(this.rows[rr]?.[drag.sc1] ?? '')
-      reversed = drag.sr1 - drag.r1 > 0
-    } else {
-      for (let cc = drag.sc1; cc <= drag.sc2; cc++) seeds.push(this.rows[drag.sr1]?.[cc] ?? '')
-      reversed = drag.sc1 - drag.c1 > 0
-    }
-    if (reversed) seeds.reverse()
-    if (seeds.some((s) => isFormula(s))) return ''
-    const values = fillTextValues(seeds, 3).filter((v) => v !== '')
-    return values.length === 0 ? '' : values.join(' \u2192 ')
   }
 
   /** Double-clicking the fill handle fills the selected column(s) down the
@@ -1182,16 +401,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     const rows = this.rows.length
     const cols = this.rows[0]?.length ?? 0
     if (rows === 0 || cols === 0) return
-    const refCol = rect.c1 > 0 ? rect.c1 - 1 : rect.c2 + 1 < cols ? rect.c2 + 1 : -1
-    let last = rect.r2
-    if (refCol >= 0 && refCol < cols) {
-      for (let r = rect.r2 + 1; r < rows; r++) {
-        if ((this.rows[r]?.[refCol] ?? '').trim() !== '') last = r
-        else break
-      }
-    } else {
-      last = rows - 1
-    }
+    const last = autofillLastRow(this.rows, rect)
     if (last <= rect.r2) return
     const drag = {
       sr1: rect.r1,
@@ -1206,7 +416,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     const next = this.rows.map((row) => [...row])
     for (let r = rect.r2 + 1; r <= last; r++) {
       for (let c = rect.c1; c <= rect.c2; c++) {
-        next[r]![c] = this.fillCellValue(drag, r, c)
+        next[r]![c] = computeFillCell(this.rows, drag, r, c)
       }
     }
     this.commitRows(next, { row: rect.r1, col: rect.c1 }, { row: last, col: rect.c2 })
@@ -1220,14 +430,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     const rows = this.rows.length
     const cols = this.rows[0]?.length ?? 0
     if (!rect || rect.r2 - rect.r1 < 1 || rows === 0 || cols === 0) return
-    const next = this.rows.map((row) => [...row])
-    for (let c = rect.c1; c <= rect.c2; c++) {
-      for (let r = rect.r1 + 1; r <= rect.r2; r++) {
-        const seed = this.rows[rect.r1]?.[c] ?? ''
-        next[r]![c] = isFormula(seed) ? shiftFormulaRefs(seed, r - rect.r1, 0) : seed
-      }
-    }
-    this.commitRows(next, { row: rect.r1, col: rect.c1 }, { row: rect.r2, col: rect.c2 })
+    this.commitRows(fillRowsDown(this.rows, rect), { row: rect.r1, col: rect.c1 }, { row: rect.r2, col: rect.c2 })
     this.grid?.focus()
   }
 
@@ -1237,113 +440,25 @@ export class TableNodeView implements NodeView, InlineCellHost {
     const rows = this.rows.length
     const cols = this.rows[0]?.length ?? 0
     if (!rect || rect.c2 - rect.c1 < 1 || rows === 0 || cols === 0) return
-    const next = this.rows.map((row) => [...row])
-    for (let r = rect.r1; r <= rect.r2; r++) {
-      for (let c = rect.c1 + 1; c <= rect.c2; c++) {
-        const seed = this.rows[r]?.[rect.c1] ?? ''
-        next[r]![c] = isFormula(seed) ? shiftFormulaRefs(seed, 0, c - rect.c1) : seed
-      }
-    }
-    this.commitRows(next, { row: rect.r1, col: rect.c1 }, { row: rect.r2, col: rect.c2 })
+    this.commitRows(fillRowsRight(this.rows, rect), { row: rect.r1, col: rect.c1 }, { row: rect.r2, col: rect.c2 })
     this.grid?.focus()
   }
 
   private selectedHas(): (row: number, col: number) => boolean {
-    const { anchor, active } = this
-    if (!anchor || !active) {
-      return (row, col) => this.extra.has(cellKey(row, col))
-    }
-    const minR = Math.min(anchor.row, active.row)
-    const maxR = Math.max(anchor.row, active.row)
-    const minC = Math.min(anchor.col, active.col)
-    const maxC = Math.max(anchor.col, active.col)
-    return (row, col) => {
-      if (row >= minR && row <= maxR && col >= minC && col <= maxC) return true
-      return this.extra.has(cellKey(row, col))
-    }
+    return (row, col) => this.selection.contains(row, col)
   }
 
   private collectSelected(): CellRef[] {
-    const has = this.selectedHas()
-    const out: CellRef[] = []
-    for (let r = 0; r < this.rows.length; r++) {
-      for (let c = 0; c < (this.rows[0]?.length ?? 0); c++) {
-        if (has(r, c)) out.push({ row: r, col: c })
-      }
-    }
-    return out
+    return this.selection.collect(this.rows.length, this.rows[0]?.length ?? 0)
   }
 
   private selectedCols(): Set<number> {
-    const rows = this.rows.length
-    const cols = this.rows[0]?.length ?? 0
-    const has = this.selectedHas()
-    const out = new Set<number>()
-    for (let c = 0; c < cols; c++) {
-      let full = true
-      for (let r = 0; r < rows; r++) {
-        if (!has(r, c)) {
-          full = false
-          break
-        }
-      }
-      if (full) out.add(c)
-    }
-    return out
+    return this.selection.selectedCols(this.rows.length, this.rows[0]?.length ?? 0)
   }
 
   private selectedRows(): Set<number> {
-    const rows = this.rows.length
-    const cols = this.rows[0]?.length ?? 0
-    const has = this.selectedHas()
-    const out = new Set<number>()
-    for (let r = 0; r < rows; r++) {
-      let full = true
-      for (let c = 0; c < cols; c++) {
-        if (!has(r, c)) {
-          full = false
-          break
-        }
-      }
-      if (full) out.add(r)
-    }
-    return out
+    return this.selection.selectedRows(this.rows.length, this.rows[0]?.length ?? 0)
   }
-
-  private updateNameBox(): void {
-    if (!this.nameBox || !this.active) return
-    this.nameBox.textContent = `${colToLetters(this.active.col + 1)}${this.active.row + 1}`
-  }
-
-  private updateFxSync(): void {
-    if (!this.fxInput || !this.active) return
-    if (document.activeElement === this.fxInput || document.activeElement === this.editOverlay) return
-    this.fxInput.value = this.rows[this.active.row]?.[this.active.col] ?? ''
-  }
-
-  private updateStatus(): void {
-    if (!this.statusEl) return
-    const cells = this.collectSelected()
-    let sum = 0
-    let count = 0
-    const solution = this.renderedSolution ?? solve(this.rows, formulaEnvFor(this.view.state))
-    for (const { row, col } of cells) {
-      const value = solution.cells[row]?.[col]?.value
-      if (typeof value === 'number') {
-        sum += value
-        count++
-      }
-    }
-    if (count === 0) {
-      this.statusEl.textContent = ''
-      return
-    }
-    const avg = sum / count
-    const fmt = (v: number): string => String(Math.round(v * 10000) / 10000)
-    this.statusEl.textContent = `Σ ${fmt(sum)}  avg ${fmt(avg)}  count ${count}`
-  }
-
-  // --- Pointer interaction ---
 
   private resolveTarget(
     target: EventTarget | null,
@@ -1384,9 +499,8 @@ export class TableNodeView implements NodeView, InlineCellHost {
       // Make the clicked chrome the selection first so the delete acts on
       // exactly that column (Excel's habit of selecting the whole row/column
       // you right-click).
-      this.anchor = { row: 0, col: c }
-      this.active = { row: rows - 1, col: c }
-      this.extra.clear()
+      this.selection.set({ row: 0, col: c }, { row: rows - 1, col: c })
+      this.selection.extra.clear()
       this.renderSelection()
       entries.push({
         type: 'item',
@@ -1396,9 +510,8 @@ export class TableNodeView implements NodeView, InlineCellHost {
       })
     } else if (gutter) {
       const r = Math.max(0, Math.min(Number(gutter.dataset.row), rows - 1))
-      this.anchor = { row: r, col: 0 }
-      this.active = { row: r, col: cols - 1 }
-      this.extra.clear()
+      this.selection.set({ row: r, col: 0 }, { row: r, col: cols - 1 })
+      this.selection.extra.clear()
       this.renderSelection()
       entries.push({
         type: 'item',
@@ -1471,12 +584,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private selectAllCells(): void {
-    this.anchor = { row: 0, col: 0 }
-    this.active = {
-      row: Math.max(0, this.rows.length - 1),
-      col: Math.max(0, (this.rows[0]?.length ?? 1) - 1),
-    }
-    this.extra.clear()
+    this.selection.selectAll(this.rows.length, this.rows[0]?.length ?? 0)
     this.renderSelection()
     this.grid?.focus()
   }
@@ -1504,7 +612,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     event.preventDefault()
     event.stopPropagation()
     grid.focus()
-    setActiveCellHost(this)
+    setActiveCellHost(this.editor)
 
     if (this.editing) this.commitCellEdit()
     else this.commitFxEdit()
@@ -1544,13 +652,9 @@ export class TableNodeView implements NodeView, InlineCellHost {
       const r = Math.max(0, Math.min(target.row, rows - 1))
       const c = Math.max(0, Math.min(target.col, cols - 1))
       if (event.metaKey || event.ctrlKey) {
-        const key = cellKey(r, c)
-        const next = new Set(this.extra)
-        if (next.has(key)) next.delete(key)
-        else next.add(key)
+        this.selection.toggleExtra({ row: r, col: c })
         anchor = this.anchor ?? { row: r, col: c }
         active = this.active ?? { row: r, col: c }
-        this.extra = next
         keepExtra = true
       } else if (event.button === 2 && this.anchor && this.active && this.selectedHas()(r, c)) {
         // A right-click inside the current selection keeps it, so the
@@ -1567,9 +671,8 @@ export class TableNodeView implements NodeView, InlineCellHost {
         active = { row: r, col: c }
       }
     }
-    this.anchor = anchor
-    this.active = active
-    if (!keepExtra) this.extra.clear()
+    this.selection.set(anchor, active)
+    if (!keepExtra) this.selection.extra.clear()
     this.renderSelection()
 
     if (target.kind === 'cell') {
@@ -1578,11 +681,10 @@ export class TableNodeView implements NodeView, InlineCellHost {
         if (!this.dragging) return
         const hover = this.resolveTarget(moveEvent.target)
         if (hover && hover.kind === 'cell') {
-          this.active = {
+          this.selection.extendTo({
             row: Math.max(0, Math.min(hover.row, rows - 1)),
             col: Math.max(0, Math.min(hover.col, cols - 1)),
-          }
-          this.extra.clear()
+          })
           this.renderSelection()
         }
       }
@@ -1603,10 +705,10 @@ export class TableNodeView implements NodeView, InlineCellHost {
     // to the button.
     const chrome =
       event.target instanceof Element ? event.target.closest('th.ss-col, th.ss-row') : null
-    if (chrome && this.insertGuideTarget) {
+    if (chrome && this.renderer.insertGuideTarget) {
       event.preventDefault()
       event.stopPropagation()
-      this.commitInsertGuide()
+      this.renderer.commitInsertGuide()
       return
     }
     const target = this.resolveTarget(event.target)
@@ -1622,7 +724,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
       this.moveInGrid(target.row, target.col, false)
       return
     }
-    this.startCellEdit(target.row, target.col)
+    this.editor.startEditAt(target.row, target.col)
   }
 
   private onGridKeydown(event: KeyboardEvent): void {
@@ -1735,7 +837,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     if (key === 'Enter' || key === 'F2') {
       event.preventDefault()
       event.stopPropagation()
-      if (this.active) this.startCellEdit(this.active.row, this.active.col)
+      if (this.active) this.editor.startEditAt(this.active.row, this.active.col)
       return
     }
     if (key === 'Tab') {
@@ -1764,238 +866,38 @@ export class TableNodeView implements NodeView, InlineCellHost {
       const [dr, dc] = deltas[key]!
       const row = Math.max(0, Math.min(rows - 1, this.active.row + dr))
       const col = Math.max(0, Math.min(cols - 1, this.active.col + dc))
-      if (event.shiftKey && this.anchor) {
-        this.active = { row, col }
-      } else {
-        this.anchor = this.active = { row, col }
-      }
-      this.extra.clear()
+      this.selection.moveTo({ row, col }, event.shiftKey)
       this.renderSelection()
       return
     }
     if (key.length === 1 && !mod && !event.altKey) {
       event.preventDefault()
       event.stopPropagation()
-      if (this.active) this.startCellEdit(this.active.row, this.active.col, key)
+      if (this.active) this.editor.startEditAt(this.active.row, this.active.col, key)
     }
   }
 
   // --- Point mode (Excel-style reference picking) ---
 
-  /** The input currently holding a formula being edited, if any: the inline
-   * edit overlay, or the fx bar input while it is focused. */
-  private formulaEditor(): { input: HTMLInputElement } | null {
-    if (this.editing && this.editOverlay && isFormula(this.editOverlay.value.trim())) {
-      return { input: this.editOverlay }
-    }
-    if (
-      this.fxInput &&
-      document.activeElement === this.fxInput &&
-      isFormula(this.fxInput.value.trim())
-    ) {
-      return { input: this.fxInput }
-    }
-    return null
+  formulaPointInput(): { input: HTMLInputElement } | null {
+    return this.editor.formulaPointInput()
   }
 
-  /** The formula editor a click should drop a reference into. */
-  private formulaPointInput(): { input: HTMLInputElement } | null {
-    return this.formulaEditor()
+  updatePointCursor(): void {
+    this.editor.updatePointCursor()
   }
 
-  /** While a formula editor is live, grid cells act as pick targets. */
-  private updatePointCursor(): void {
-    this.grid?.classList.toggle('ss-pointing', this.formulaPointInput() !== null)
-  }
-
-  /** A1-style reference for a 0-based grid cell (grid row 0 is the GFM header,
-   * so both row and column are 1-based in the reference). */
-  private cellRefAt(row: number, col: number): string {
-    return `${colToLetters(col + 1)}${row + 1}`
-  }
-
-  private refRange(r1: number, c1: number, r2: number, c2: number): string {
-    const start = this.cellRefAt(Math.min(r1, r2), Math.min(c1, c2))
-    const end = this.cellRefAt(Math.max(r1, r2), Math.max(c1, c2))
-    return start === end ? start : `${start}:${end}`
-  }
-
-  /** Insert a clicked cell's reference at the editor caret and, if the pointer
-   * is dragged, turn it into a range (`A1:B3`) live. A pick that immediately
-   * follows another pick replaces it, so clicking A1 then B1 yields `=B1`. */
-  private startPointInsert(input: HTMLInputElement, row: number, col: number, withDrag = true): void {
-    const prev = this.pointInsert
-    const replace = prev && prev.input === input && prev.snapshot === input.value
-    let start: number
-    let end: number
-    if (replace) {
-      start = prev.start
-      end = prev.end
-    } else {
-      const selStart = input.selectionStart ?? input.value.length
-      const selEnd = input.selectionEnd ?? selStart
-      start = Math.min(selStart, selEnd)
-      end = Math.max(selStart, selEnd)
-    }
-    const ref = this.cellRefAt(row, col)
-    input.value = input.value.slice(0, start) + ref + input.value.slice(end)
-    const caret = start + ref.length
-    input.setSelectionRange(caret, caret)
-    this.autocomplete.close()
-    this.emojiAutocomplete.close()
-    if (input === this.editOverlay) this.fitEditColumn(input)
-    this.pointInsert = { input, start, end: caret, snapshot: input.value }
-    this.mirrorToFx(input)
-    if (!withDrag) {
-      this.pointRange = { r1: row, c1: col, r2: row, c2: col }
-      this.renderSelection()
-      return
-    }
-
-    const drag: PointDrag = {
-      input,
-      start: { row, col },
-      replaceStart: start,
-      replaceEnd: caret,
-      move: (moveEvent) => this.updatePointRange(drag, moveEvent),
-      up: () => this.endPointDrag(drag),
-    }
-    this.pointDrag = drag
-    this.pointRange = { r1: row, c1: col, r2: row, c2: col }
-    this.renderSelection()
-    document.addEventListener('mousemove', drag.move)
-    document.addEventListener('mouseup', drag.up)
-  }
-
-  private updatePointRange(drag: PointDrag, moveEvent: MouseEvent): void {
-    if (this.pointDrag !== drag) return
-    const hover = this.resolveTarget(moveEvent.target)
-    if (!hover || hover.kind !== 'cell') return
-    const r1 = Math.min(drag.start.row, hover.row)
-    const c1 = Math.min(drag.start.col, hover.col)
-    const r2 = Math.max(drag.start.row, hover.row)
-    const c2 = Math.max(drag.start.col, hover.col)
-    const ref = this.refRange(r1, c1, r2, c2)
-    const value = drag.input.value
-    drag.input.value = value.slice(0, drag.replaceStart) + ref + value.slice(drag.replaceEnd)
-    drag.replaceEnd = drag.replaceStart + ref.length
-    drag.input.setSelectionRange(drag.replaceEnd, drag.replaceEnd)
-    this.autocomplete.close()
-    this.emojiAutocomplete.close()
-    if (drag.input === this.editOverlay) this.fitEditColumn(drag.input)
-    this.pointInsert = {
-      input: drag.input,
-      start: drag.replaceStart,
-      end: drag.replaceEnd,
-      snapshot: drag.input.value,
-    }
-    this.mirrorToFx(drag.input)
-    this.pointRange = { r1, c1, r2, c2 }
-    this.renderSelection()
-  }
-
-  private endPointDrag(drag: PointDrag): void {
-    if (this.pointDrag !== drag) return
-    document.removeEventListener('mousemove', drag.move)
-    document.removeEventListener('mouseup', drag.up)
-    this.pointDrag = null
-    drag.input.focus()
+  startPointInsert(input: HTMLInputElement, row: number, col: number, withDrag = true): void {
+    this.editor.startPointInsert(input, row, col, withDrag)
   }
 
   /** Commit whichever editor is open (inline overlay or fx bar). */
-  private commitPointEdit(): void {
-    if (this.editing) this.commitCellEdit()
-    else this.commitFxEdit()
-  }
-
-  // --- Cell editing ---
-
-  private startCellEdit(row: number, col: number, replaceText?: string): void {
-    if (this.editOverlay) this.commitCellEdit()
-    const cell = this.cellEl(row, col)
-    if (!cell) return
-    this.editing = { row, col }
-    const input = document.createElement('input')
-    input.className = 'ss-edit-input'
-    input.type = 'text'
-    input.spellcheck = false
-    input.value =
-      replaceText !== undefined ? replaceText : (this.rows[row]?.[col] ?? '')
-    input.addEventListener('keydown', (event) => this.onEditKeydown(event))
-    input.addEventListener('blur', () => {
-      if (this.editOverlay === input) this.commitCellEdit()
-    })
-    input.addEventListener('input', () => {
-      this.fitEditColumn(input)
-      this.mirrorToFx(input)
-      this.updatePointCursor()
-      this.refreshAutocomplete(input)
-    })
-    cell.appendChild(input)
-    this.editOverlay = input
-    this.pointInsert = null
-    this.mirrorToFx(input)
-    this.updatePointCursor()
-    input.focus()
-    input.setSelectionRange(input.value.length, input.value.length)
-    this.renderFillHandle()
-  }
-
-  /** Mirror the in-cell edit into the fx bar, like Excel's formula bar. */
-  private mirrorToFx(input: HTMLInputElement): void {
-    if (this.fxInput && input === this.editOverlay) this.fxInput.value = input.value
+  commitPointEdit(): void {
+    this.editor.commitPointEdit()
   }
 
   private cellEl(row: number, col: number): HTMLElement | null {
     return this.cells[row]?.[col] ?? null
-  }
-
-  /**
-   * As the user types in an empty (or any) cell, widen its column to keep the
-   * input usable without a manual resize. Only the live element width changes;
-   * the next rebuild re-fits the column to the committed content.
-   */
-  private fitEditColumn(input: HTMLInputElement): void {
-    if (!this.editing) return
-    const colEl = this.colEls[this.editing.col]
-    if (!colEl) return
-    const width = Math.max(
-      MIN_COL_WIDTH,
-      Math.min(MAX_COL_WIDTH, Math.ceil(this.measureTextWidth(input)) + EDIT_INPUT_PAD),
-    )
-    colEl.style.width = `${width}px`
-  }
-
-  /** Measure the actual text width of the edit input's value at the table
-   * font, independent of the input's forced 100% width. */
-  private measureTextWidth(input: HTMLInputElement): number {
-    const probe = document.createElement('span')
-    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:0;left:0;font:inherit;'
-    probe.textContent = input.value || ' '
-    this.dom.appendChild(probe)
-    const width = probe.getBoundingClientRect().width
-    probe.remove()
-    return width
-  }
-
-  private onEditKeydown(event: KeyboardEvent): void {
-    if (this.emojiAutocomplete.handleKeydown(event)) return
-    if (this.autocomplete.handleKeydown(event)) return
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      event.stopPropagation()
-      this.commitCellEdit()
-      if (this.active) this.moveInGrid(this.active.row + 1, this.active.col, false)
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      this.cancelCellEdit()
-    } else if (event.key === 'Tab') {
-      event.preventDefault()
-      event.stopPropagation()
-      this.commitCellEdit()
-      if (this.active) this.moveInGrid(this.active.row, this.active.col + (event.shiftKey ? -1 : 1), true)
-    }
   }
 
   /**
@@ -2017,44 +919,23 @@ export class TableNodeView implements NodeView, InlineCellHost {
       if (row < 0) row = rows - 1
       else if (row >= rows) row = 0
     }
-    this.anchor = this.active = {
+    this.selection.collapse({
       row: Math.max(0, Math.min(rows - 1, row)),
       col: Math.max(0, Math.min(cols - 1, col)),
-    }
-    this.extra.clear()
+    })
     this.renderSelection()
   }
 
-  private commitCellEdit(): void {
-    const input = this.editOverlay
-    if (!input || !this.editing) return
-    const { row, col } = this.editing
-    this.teardownEdit()
-    const raw = input.value
-    if (raw !== (this.rows[row]?.[col] ?? '')) {
-      const next = this.rows.map((r) => [...r])
-      next[row]![col] = raw
-      this.commitRows(next, { row, col }, { row, col })
-    } else {
-      this.renderSelection()
-    }
-    this.grid?.focus()
+  commitCellEdit(): void {
+    this.editor.commitCellEdit()
   }
 
-  private cancelCellEdit(): void {
-    this.teardownEdit()
-    this.renderSelection()
-    this.grid?.focus()
+  teardownEdit(): void {
+    this.editor.teardownEdit()
   }
 
-  private teardownEdit(): void {
-    const overlay = this.editOverlay
-    this.editOverlay = null
-    this.editing = null
-    overlay?.remove()
-    this.autocomplete.close()
-    this.emojiAutocomplete.close()
-    this.clearPointRange()
+  commitFxEdit(): void {
+    this.editor.commitFxEdit()
   }
 
   /** The `Use values` tool: replace every formula cell in the selection with
@@ -2091,80 +972,6 @@ export class TableNodeView implements NodeView, InlineCellHost {
   }
 
   /** Enable `Use values` whenever any selected cell holds a formula. */
-  private updateValuesButton(): void {
-    if (!this.valuesButton) return
-    let any = false
-    for (const { row, col } of this.collectSelected()) {
-      if (isFormula(this.rows[row]?.[col] ?? '')) {
-        any = true
-        break
-      }
-    }
-    this.valuesButton.disabled = !any
-  }
-
-  /** Drop any in-flight reference pick and its `ss-point` highlight. */
-  private clearPointRange(): void {
-    const drag = this.pointDrag
-    if (drag) {
-      document.removeEventListener('mousemove', drag.move)
-      document.removeEventListener('mouseup', drag.up)
-      this.pointDrag = null
-    }
-    this.pointInsert = null
-    this.pointRange = null
-  }
-
-  private onFxInputKeydown(event: KeyboardEvent): void {
-    if (this.emojiAutocomplete.handleKeydown(event)) return
-    if (this.autocomplete.handleKeydown(event)) return
-    const mod = event.metaKey || event.ctrlKey
-    if (mod && (event.key === 'b' || event.key === 'i')) {
-      event.preventDefault()
-      event.stopPropagation()
-      this.applyInline(event.key === 'b' ? 'bold' : 'italic')
-      return
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      event.stopPropagation()
-      this.commitFxEdit()
-      this.grid?.focus()
-    } else if (event.key === 'Tab') {
-      event.preventDefault()
-      event.stopPropagation()
-      this.commitFxEdit()
-      if (this.active) this.moveInGrid(this.active.row, this.active.col + (event.shiftKey ? -1 : 1), true)
-      this.grid?.focus()
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      if (this.active && this.fxInput) {
-        this.fxInput.value = this.rows[this.active.row]?.[this.active.col] ?? ''
-      }
-      this.clearPointRange()
-      this.renderSelection()
-      this.grid?.focus()
-    }
-  }
-
-  private commitFxEdit(): void {
-    const input = this.fxInput
-    if (!input || !this.active) return
-    const { row, col } = this.active
-    const raw = input.value
-    this.clearPointRange()
-    if (raw !== (this.rows[row]?.[col] ?? '')) {
-      const next = this.rows.map((r) => [...r])
-      next[row]![col] = raw
-      this.commitRows(next, { row, col }, { row, col })
-    } else {
-      this.renderSelection()
-    }
-  }
-
-  // --- Structural ops ---
-
   private setResolved(resolved: boolean): void {
     const pos = this.getPos()
     if (pos === undefined) return
@@ -2197,11 +1004,10 @@ export class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private rebuildForCommit(rows: number, cols: number, anchor: CellRef, active: CellRef): void {
-    this.anchor = { row: Math.min(anchor.row, rows - 1), col: Math.max(0, Math.min(anchor.col, cols - 1)) }
-    this.active = { row: Math.min(active.row, rows - 1), col: Math.max(0, Math.min(active.col, cols - 1)) }
-    this.extra.clear()
+    this.selection.set(anchor, active)
+    this.selection.clamp(rows, cols)
     this.teardownEdit()
-    this.buildGrid()
+    this.renderer.buildGrid()
     this.renderSelection()
   }
 
@@ -2332,12 +1138,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
   }
 
   private selectionBounds(): { r1: number; c1: number; r2: number; c2: number } {
-    const cells = this.collectSelected()
-    const r1 = Math.min(...cells.map((c) => c.row))
-    const c1 = Math.min(...cells.map((c) => c.col))
-    const r2 = Math.max(...cells.map((c) => c.row))
-    const c2 = Math.max(...cells.map((c) => c.col))
-    return { r1, c1, r2, c2 }
+    return this.selection.bounds() ?? { r1: 0, c1: 0, r2: 0, c2: 0 }
   }
 
   private cancelCut(): void {
@@ -2484,7 +1285,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
       document.removeEventListener('mouseup', this.onFillUp)
       this.fillDrag = null
     }
-    this.clearFillGhost()
+    this.renderer.clearFillGhost()
     document.removeEventListener('copy', this.onDocCopy)
     document.removeEventListener('cut', this.onDocCut)
     document.removeEventListener('paste', this.onDocPaste)
@@ -2492,7 +1293,6 @@ export class TableNodeView implements NodeView, InlineCellHost {
     this.unsubscribeFormulaEnv = null
     this.unsubscribeSearchChanges?.()
     this.unsubscribeSearchChanges = null
-    this.autocomplete.close()
-    this.emojiAutocomplete.close()
+    this.editor.closeSuggestions()
   }
 }

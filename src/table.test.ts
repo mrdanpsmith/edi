@@ -2553,6 +2553,21 @@ describe('TableNodeView formula point mode', () => {
     view.destroy()
   })
 
+  it('drops the pointer cursor when Escape abandons an fx-bar formula', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 1 | 2 |')
+    const grid = tableGrid(view)
+    const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
+    mousedown(cell(view, 1, 0))
+    fx.focus()
+    fx.value = '='
+    fx.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(grid.classList.contains('ss-pointing')).toBe(true)
+    fx.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(fx.value).toBe('1')
+    expect(grid.classList.contains('ss-pointing')).toBe(false)
+    view.destroy()
+  })
+
   it('mirrors the in-cell editor into the fx bar', () => {
     const view = createEditor('| A | B |\n| --- | --- |\n| 5 | 6 |')
     const fx = view.dom.querySelector('.ss-fx-input') as HTMLInputElement
