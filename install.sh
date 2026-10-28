@@ -22,6 +22,18 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 die() { echo "error: $*" >&2; exit 1; }
 log() { echo "==> $*"; }
 
+# The app zip is large enough that a silent download looks hung. On a terminal
+# use curl's progress bar; when stderr is captured, keep curl's numeric meter so
+# a redirected log still shows progress. The checksum file is tiny and quiet.
+download_asset() {
+  local url="$1" out="$2"
+  if [[ -t 2 ]]; then
+    curl -fL --progress-bar --proto '=https' --tlsv1.2 -o "$out" "$url"
+  else
+    curl -fL --proto '=https' --tlsv1.2 -o "$out" "$url"
+  fi
+}
+
 # --- Launch Services -------------------------------------------------------
 # osascript's JavaScript bridge reaches the same API Finder uses, without
 # needing duti or a compiler. A literal "-" means "no handler", so an empty
@@ -111,21 +123,24 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 log "Downloading ${APP_NAME} ${VERSION}"
-curl -fsSL --proto '=https' --tlsv1.2 -o "$TMP/$ASSET" "$BASE_URL/$ASSET"
+download_asset "$BASE_URL/$ASSET" "$TMP/$ASSET" || die "could not download ${ASSET}"
 curl -fsSL --proto '=https' --tlsv1.2 -o "$TMP/$ASSET.sha256" "$BASE_URL/$ASSET.sha256"
 
+log "Verifying download"
 EXPECTED="$(awk 'NF {print $1; exit}' "$TMP/$ASSET.sha256")"
 ACTUAL="$(shasum -a 256 "$TMP/$ASSET" | awk '{print $1}')"
 [[ -n "$EXPECTED" && "$EXPECTED" == "$ACTUAL" ]] \
   || die "checksum mismatch (expected ${EXPECTED:-none}, got $ACTUAL)"
 
 # --- unpack + validate -----------------------------------------------------
+log "Unpacking ${APP_NAME}.app"
 ditto -x -k "$TMP/$ASSET" "$TMP/unpacked"
 NEW_APP="$TMP/unpacked/${APP_NAME}.app"
 [[ -d "$NEW_APP" ]] || die "archive does not contain ${APP_NAME}.app"
 
 GOT_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$NEW_APP/Contents/Info.plist")"
 [[ "$GOT_ID" == "$BUNDLE_ID" ]] || die "unexpected bundle id: $GOT_ID"
+log "Verifying code signature"
 codesign --verify --deep --strict "$NEW_APP" || die "code signature invalid"
 
 # --- default Markdown app --------------------------------------------------
@@ -178,6 +193,7 @@ if pgrep -xq "$APP_NAME"; then
 fi
 
 # --- swap in new version (with rollback) -----------------------------------
+log "Installing ${APP_NAME} ${VERSION} to ${DEST_DIR}"
 BACKUP=""
 if [[ -d "$DEST" ]]; then
   BACKUP="$TMP/${APP_NAME}.app.previous"

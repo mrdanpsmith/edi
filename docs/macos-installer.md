@@ -21,6 +21,11 @@ rollback, clears any quarantine xattr, and re-registers the bundle with Launch
 Services. The app is installed into `/Applications` when writable, otherwise
 `~/Applications`.
 
+The zip download shows curl's progress bar on a terminal; when stderr is
+redirected, curl's numeric meter is kept so a captured log still shows
+progress. Each phase (download, verify, unpack, signature, install) also prints
+an `==> ...` line, so a slow unpack or swap is not silent.
+
 If the requested version is already installed and `EDI_FORCE` is unset, the
 installer exits before the association step, so no prompt appears. Use
 `EDI_FORCE=1` to run the full install and the prompt again.
