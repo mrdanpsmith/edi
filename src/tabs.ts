@@ -72,6 +72,7 @@ export class Tabs {
   private readonly leftButton: HTMLButtonElement
   private readonly rightButton: HTMLButtonElement
   private readonly resizeObserver?: ResizeObserver
+  private readonly unsubscribe: () => void
 
   constructor(
     private readonly tabbar: HTMLElement,
@@ -110,7 +111,13 @@ export class Tabs {
       this.resizeObserver.observe(this.scroll)
     }
 
-    subscribe(() => this.render())
+    this.unsubscribe = subscribe(() => this.render())
+  }
+
+  /** Stop listening to state changes and to tab-strip resizes. */
+  destroy(): void {
+    this.unsubscribe()
+    this.resizeObserver?.disconnect()
   }
 
   get activeId(): string {

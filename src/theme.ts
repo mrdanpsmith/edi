@@ -25,7 +25,7 @@ function onNotify(payload: string): void {
   }
 }
 
-export function initTheme(bridge: BridgeObject | undefined): void {
+export function initTheme(bridge: BridgeObject | undefined): () => void {
   const media = window.matchMedia('(prefers-color-scheme: dark)')
   const sync = (): void => applyColorScheme(media.matches)
   sync()
@@ -37,8 +37,22 @@ export function initTheme(bridge: BridgeObject | undefined): void {
   // stomp a correct backend push (the packaged binary reports stale light).
   media.addEventListener('change', sync)
   bridge?.notify?.connect(onNotify)
+  return () => {
+    media.removeEventListener('change', sync)
+    bridge?.notify?.disconnect?.(onNotify)
+  }
 }
 
-export function startThemeWatcher(): void {
-  onBridgeReady(initTheme)
+export function startThemeWatcher(): () => void {
+  let stop: (() => void) | undefined
+  let stopped = false
+  onBridgeReady((bridge) => {
+    const cleanup = initTheme(bridge)
+    if (stopped) cleanup()
+    else stop = cleanup
+  })
+  return () => {
+    stopped = true
+    stop?.()
+  }
 }

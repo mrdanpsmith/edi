@@ -15,6 +15,7 @@ export interface BridgeObject {
   }
   notify?: {
     connect: (callback: (payload: string) => void) => void
+    disconnect?: (callback: (payload: string) => void) => void
   }
 }
 

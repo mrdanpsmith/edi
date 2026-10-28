@@ -11,6 +11,9 @@ import { encryptField } from './crypto'
 import { type ContextMenuEntry } from './contextmenu'
 import type { BlockMode } from './block-modes'
 import { clipboardTextPlugin } from './selectionExpand'
+import { resetPreferences } from './preferences'
+import { resetState } from './state'
+import { rootsFromDocument } from './appContext'
 
 
 const zeroRect = {
@@ -193,13 +196,12 @@ vi.mock('./mermaid', () => ({
   bakeDiagram: vi.fn(),
 }))
 
-// `./node/mermaid` is deliberately *not* mocked. It registers how a diagram's
-// interaction axis is entered and left into the mode registry, and a
-// `vi.mock(..., importOriginal)` factory is cached across `resetModules` — so a
-// mocked copy would register into the registry of an earlier evaluation than the
-// one `main` resolves, and every interaction item in the context menu would be
-// silently inert. The real module is cheap here: `rethemeMermaid` only walks the
-// (empty) set of rendered diagrams when the theme changes.
+// `./node/mermaid` is deliberately *not* mocked: it registers how a diagram's
+// interaction axis is entered and left into the mode registry, and a mocked copy
+// would register into a different registry than the one `main` resolves, leaving
+// every interaction item in the context menu silently inert. The real module is
+// cheap here: `rethemeMermaid` only walks the (empty) set of rendered diagrams
+// when the theme changes.
 
 // The grid's editing commands come from the live node view; the menu itself
 // stays owned by main so the block actions can be appended below them.
@@ -293,42 +295,21 @@ async function flushAsync(): Promise<void> {
   }
 }
 
+let disposeApp: (() => void) | null = null
+
 async function loadMain(): Promise<void> {
-  vi.resetModules()
-  // `vi.resetModules()` starts a new module generation, and the node views below
-  // are only usable alongside the `blockModePlugin` of *their own* generation —
-  // a mode is identified by its `PluginKey`, so a `BLOCK_MODE_KEY` from an older
-  // one writes a meta no state in this generation is listening for. Caching them
-  // across a reset is what made a sheet silently fail to open. Clearing it here
-  // makes the invariant true by construction rather than at four call sites that
-  // each had to remember.
+  disposeApp?.()
+  disposeApp = null
+  resetState()
+  resetPreferences()
   nodeViews = null
-  await import('./main')
+  const { init } = await import('./main')
+  disposeApp = init(rootsFromDocument())
   await flushAsync()
 }
 
 async function stateModule(): Promise<typeof import('./state')> {
   return import('./state')
-}
-
-/**
- * The `block-modes` module *as `main` itself resolved it*.
- *
- * `loadMain` calls `vi.resetModules()` and then imports `./main`, which
- * re-evaluates `main` and its non-mocked dependencies — `./block-modes` among
- * them, since it is not in this file's mock list. A view built from the copy
- * imported at the top of this file therefore holds a different `blockModePlugin`
- * from the one `main`'s own `toggleSourceMode` writes to, and the two can never
- * meet: the meta lands on a key nothing is listening for. Importing after
- * `loadMain` picks up the instance in `main`'s registry instead.
- *
- * Only `main`'s own entry points need this. The `./node/mermaid` mock is cached
- * across `resetModules`, so anything routed through the diagram module still
- * shares the statically imported copy, and a view built from *that* works for
- * the menu items that call it.
- */
-async function mainSideBlockModes(): Promise<typeof import('./block-modes')> {
-  return import('./block-modes')
 }
 
 /**
@@ -338,12 +319,9 @@ async function mainSideBlockModes(): Promise<typeof import('./block-modes')> {
  * The context menu and the block-mode gestures both ask the *DOM* which block the
  * pointer is over (§6.4), and the node views ask the mode record which form they
  * are drawing — so neither a fake document nor a hand-made `<div class="spreadsheet">`
- * can stand in for one any more.
- *
- * The mode plugin and the node views come from one batch of dynamic imports,
- * after `loadMain` has re-evaluated every non-mocked module. A mode is
- * identified by its `PluginKey`, so a node view from a different evaluation than
- * the plugin would ask a record no view carries.
+ * can stand in for one any more. Everything here comes from the same module
+ * graph `main` uses; only the modules whose factories this file replaces are
+ * re-read with `importActual`.
  */
 type MainSideNodeViews = {
   modes: typeof import('./block-modes')
@@ -355,24 +333,18 @@ let nodeViews: MainSideNodeViews | null = null
 
 async function mainSideNodeViews(): Promise<MainSideNodeViews> {
   if (nodeViews !== null) return nodeViews
-  // `importActual` for the two node-view modules the mock list covers: a
-  // `vi.mock(..., importOriginal)` factory is cached across `resetModules`, so the
-  // mocked copy is built from a module evaluated in an *earlier* generation — and
-  // its node views ask the mode record through the `BLOCK_MODE_KEY` of that
-  // generation, which is a different key from the `blockModePlugin` in the view
-  // below. A form therefore never reached the DOM. This wants the real node views
-  // anyway (see above), and `main` keeps seeing the mock, which is all the mock is
-  // for.
+  // `importActual` for the node-view modules the mock list covers: this file
+  // wants the real views while `main` keeps seeing the mock, which is all the
+  // mock is for.
   const [modes, blockview, mermaid, table, execblock, encryptedblock] = await Promise.all([
-    mainSideBlockModes(),
+    import('./block-modes'),
     vi.importActual<typeof import('./blockview')>('./blockview'),
     import('./node/mermaid'),
     vi.importActual<typeof import('./node/table')>('./node/table'),
     vi.importActual<typeof import('./node/execblock')>('./node/execblock'),
-    // `importActual` for the same generation reason as the two above, and because
-    // this is the module that registers `encrypted_block`'s **own vocabulary** into
-    // `BLOCK_MODE_HANDLERS` — so the copy the menu and the chip read from here is
-    // the copy whose words the node view's own cluster is painted with.
+    // `importActual` because this is the module that registers
+    // `encrypted_block`'s **own vocabulary** into `BLOCK_MODE_HANDLERS`, so the
+    // menu and the chip read the same words the node view's cluster paints.
     vi.importActual<typeof import('./node/encryptedblock')>('./node/encryptedblock'),
   ])
   nodeViews = {
@@ -472,9 +444,16 @@ const FILE_MOCKS = [
 ]
 
 beforeEach(() => {
+  disposeApp?.()
+  disposeApp = null
+  resetState()
   document.body.innerHTML = DOM_TEMPLATE
+  document.title = ''
+  document.documentElement.className = ''
+  delete document.documentElement.dataset.colorScheme
   window.history.replaceState(null, '', '/')
   delete window.ediPreferences
+  resetPreferences()
   window.matchMedia = matchMediaStub()
   mainState.hasBridge.mockReturnValue(false)
   mainState.invoke.mockReset().mockResolvedValue(undefined)
@@ -2021,7 +2000,7 @@ describe('context menu', () => {
   it('offers Visual, and not Source, on a block in its source form', async () => {
     await boot()
     const view = await mountDoc('# Hello')
-    const modes = await mainSideBlockModes()
+    const modes = await import('./block-modes')
     modes.enterSourceMode(view, 0)
     await flushAsync()
     const sourceMode = view.dom.querySelector<HTMLElement>('.block-source-mode')!
@@ -2038,7 +2017,7 @@ describe('context menu', () => {
   it('enters source mode from the block menu on a diagram', async () => {
     await boot()
     const view = await mountDoc('```mermaid\ngraph TD\n  A[Alpha]\n```')
-    const modes = await mainSideBlockModes()
+    const modes = await import('./block-modes')
     const block = view.nodeDOM(0) as HTMLElement
 
     block.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
@@ -2053,7 +2032,7 @@ describe('context menu', () => {
   it('enters and leaves the interaction axis from the block menu', async () => {
     await boot()
     const view = await mountDoc('```mermaid\ngraph TD\n  A[Alpha]\n```')
-    const modes = await mainSideBlockModes()
+    const modes = await import('./block-modes')
 
     const openMenu = (): HTMLButtonElement[] => {
       const block = view.nodeDOM(0) as HTMLElement
@@ -2087,7 +2066,7 @@ describe('context menu', () => {
     const view = await mountDoc(
       '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```',
     )
-    const modes = await mainSideBlockModes()
+    const modes = await import('./block-modes')
     const block = view.nodeDOM(0) as HTMLElement
     const menuLabels = (): string[] => {
       block.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
@@ -2154,14 +2133,10 @@ describe('context menu', () => {
     const view = await mountDoc('| A |\n| --- |\n| 1 |')
     // A table opens as text; the grid is one click away.
     //
-    // Taken through `modes`, not through the mocked `./node/table`: a
-    // `vi.mock(..., importOriginal)` factory is cached across `resetModules`, so
-    // that copy's `enterSpreadsheetMode` closes over the `BLOCK_MODE_KEY` of an
-    // *earlier* module generation than the one whose `blockModePlugin` is in this
-    // view — and a mode is identified by its key, so the write goes to a plugin
-    // nobody is listening for. This is the same trap §5.2's own note records for
-    // `./node/mermaid`, which is why that one is deliberately not mocked; a form
-    // only stayed invisible here while it was an attribute, which is immune to it.
+    // Taken through `modes`, not through the mocked `./node/table`: the real
+    // `enterSpreadsheetMode` has to write to the same `blockModePlugin` this view
+    // carries, because a mode is identified by its key. The mocked table module
+    // is only there to stub the grid's own menu entries.
     const tr = view.state.tr
     nodeViews!.modes.setBlockModeAt(view.state, tr, 0, { form: 'sheet' })
     view.dispatch(tr)
@@ -2314,7 +2289,7 @@ describe('the status chip', () => {
 
   it('names the mode and the block it is about, and empties when it closes', async () => {
     await loadMain()
-    const modes = await mainSideBlockModes()
+    const modes = await import('./block-modes')
     expect(chip()).toEqual({ text: '', hidden: true })
 
     const view = await mountDoc('## The heading text')
@@ -2337,7 +2312,7 @@ describe('the status chip', () => {
 
   it('names a diagram by its first line, and truncates a long one', async () => {
     await loadMain()
-    const modes = await mainSideBlockModes()
+    const modes = await import('./block-modes')
     const view = await mountDoc('```mermaid\nflowchart LR\n  A[Alpha]\n```')
     modes.enterBlockMode(view, 0, { interaction: 'editing' })
     mainState.editorOptions?.onModeChange?.(modes.currentBlockMode(view.state))

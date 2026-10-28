@@ -82,6 +82,6 @@ groups already exclude their own character.
 `Ctrl+Alt+C` (`Alt-Mod-c` in `formattingKeymap`) is the only keyboard shortcut
 for inline code. `formattingKeymap` also has `Mod-b`/`Mod-i`.
 
-`Mod-Shift-C` is **copy selection as Markdown** in `src/main.ts`, not a
-formatting toggle. Copy file path is `Ctrl+Alt+Shift+C`. Do not reach for
+`Mod-Shift-C` is **copy selection as Markdown** in `src/editController.ts`,
+not a formatting toggle. Copy file path is `Ctrl+Alt+Shift+C`. Do not reach for
 either when adding an inline-mark shortcut.

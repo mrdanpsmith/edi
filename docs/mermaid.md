@@ -15,7 +15,7 @@
 `enterDiagramEditMode()`, `exitDiagramEditMode()` and
 `toggleDiagramEditMode()`. They are registered into `BLOCK_MODE_HANDLERS`, so
 they are wired to the cluster's Edit/Done button, Alt+click, and the Edit/Done
-context-menu items in `src/main.ts`.
+context-menu items in `src/contextMenuController.ts`.
 
 **A diagram has no zoom of its own.** It is drawn at its natural width
 (`responsifySvg`) and the document's one zoom (`src/zoom.ts`,

@@ -30,7 +30,9 @@ all operate on the document, not on a separate model that could drift from it.
 1. `backend/main.py` creates the QApplication and `MainWindow`.
 2. `backend/window.py` creates the `QWebEngineView`, loads `dist/index.html`
    and builds the native menubar.
-3. `src/main.ts` boots the page, creates the editor and binds menu commands.
+3. `src/entry.ts` resolves the root elements and calls `init` in `src/main.ts`,
+   which creates the editor and binds menu commands. Importing `main.ts` has no
+   side effects; its controllers receive one `AppContext`.
 4. Page → Python calls go through `src/bridge.ts`; Python answers through
    `Bridge._handlers` in `backend/bridge.py`.
 5. Python → page notifications go over the bridge's `notify` channel, and
@@ -45,7 +47,12 @@ bridge methods and preference defaults are declared in
 
 | Path | Contents |
 | --- | --- |
-| `src/` | TypeScript frontend. `main.ts` is the page entry point; `node/` holds node views. |
+| `src/` | TypeScript frontend. `entry.ts` is the page entry point; `main.ts` boots from `init(roots)`; `node/` holds node views. |
+| `src/appContext.ts` | The shared `AppContext`, roots and app-chrome updates (title, status, menu state). |
+| `src/fileController.ts` | File lifecycle: open, save, rename, revert, import and export. |
+| `src/editController.ts` | Clipboard, paste, select-all and menu undo/redo. |
+| `src/contextMenuController.ts` | Document, input, source-editor and block context menus. |
+| `src/zoomController.ts` | Document zoom commands, wheel handling and the status indicator. |
 | `src/editor.ts` | Builds the ProseMirror editor. |
 | `src/styles.css` | Application stylesheet. |
 | `src/docs/` | Markdown used by the in-app Help guide. |

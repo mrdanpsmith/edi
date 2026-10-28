@@ -135,8 +135,8 @@ loads and exits 0.
 
 The app boots a home screen (`#app[data-view='home']`) rather than a welcome
 tab. The smoke loads the page with `?selftest=1` (the backend adds the query
-when `EDI_SELFTEST=1`), and `src/main.ts` opens the Welcome document so
-`__selftest.title` still reads `Untitled — Edi`.
+when `EDI_SELFTEST=1`), and `init` in `src/main.ts` opens the Welcome document
+so `__selftest.title` still reads `Untitled — Edi`.
 
 A 25-second watchdog prints `SELFTEST_TIMEOUT` and exits 1. The smoke uses
 `os._exit` to skip Qt teardown (a wedged renderer can otherwise hang the

@@ -270,7 +270,7 @@ export function createBlockEditor(
         // handler only filters on `button == 0` for the drag/selection paths,
         // not before calling us), so a right-click has to be turned away here
         // or it opens the link *and* offers the context menu. The context menu
-        // is where a link is edited (`main.ts`), and it is a right-click.
+        // is where a link is edited (`contextMenuController.ts`), on right-click.
         if (event.button !== 0) return false
         const link = linkRangeAt(view.state.doc, pos)
         if (!link) return false

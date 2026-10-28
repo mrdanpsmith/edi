@@ -1,395 +1,61 @@
-import 'prosemirror-view/style/prosemirror.css'
-import 'prosemirror-gapcursor/style/gapcursor.css'
-import './styles.css'
-
-import { confirmAction, hasBridge, invoke, onBridgeReady, showError } from './bridge'
+import { confirmAction, hasBridge, invoke, onBridgeReady } from './bridge'
 import { startThemeWatcher } from './theme'
 
-import { buildExportHtml, serializeDocToHtml } from './export'
-import { mermaidPngSnapshots, snapshotMermaidHtml } from './mermaid-export'
-import { computeSpreadsheet } from './spreadsheet'
-import { redoDepth, redoNoScroll, undoDepth, undoNoScroll } from 'prosemirror-history'
-import { selectAll } from 'prosemirror-commands'
-import { TextSelection } from 'prosemirror-state'
-import {
-  dirname,
-  fileName,
-  getPendingFiles,
-  imageReference,
-  isAbsolutePath,
-  isSupportedFile,
-  openUrl,
-  pickExportPath,
-  pickImageImportPath,
-  pickImportPath,
-  pickOpenPath,
-  pickSavePath,
-  pickTextImportPath,
-  readAnyTextFile,
-  readTextFile,
-  renameTextFile,
-  UNTITLED,
-  writeTextFile,
-} from './files'
-import { parseTableFile, toMarkdownTable } from './import'
-import { insertPastedText, pasteAsMarkdown } from './paste'
-import { EditorView } from '@codemirror/view'
-import type { Node as ProseNode } from 'prosemirror-model'
-import type { EditorView as ProseEditorView } from 'prosemirror-view'
-import { EditorSelection } from '@codemirror/state'
-import { undo as cmUndo, redo as cmRedo } from '@codemirror/commands'
-import { copyText, readText, writeClipboard } from './clipboard'
-import { plainTableSelectionText } from './tableTextSelection'
-import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
-import { ContextMenu, type ContextMenuEntry, type ContextMenuItem } from './contextmenu'
-import {
-  blockModeFor,
-  modeFor,
-  blockFormMode,
-  interactionLabels,
-  setBlockForm,
-  toggleBlockMode,
-  type BlockMode,
-} from './block-modes'
-import { pressTarget } from './press'
-import { isMisleadingLink } from './linkSecurity'
-import { applyLink, NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
+import { dirname, isAbsolutePath, isSupportedFile, openUrl } from './files'
+import { headingSlug } from './schema'
+import { insertTable as insertSpreadsheetTable } from './node/table'
+import { insertKanbanBoard } from './node/mermaid'
+import { setEncryptedBlockImageResolver } from './node/encryptedblock'
+import { createBlockEditor } from './editor'
+import { NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
-import {
-  applyZoom,
-  canZoomIn,
-  canZoomOut,
-  clampZoom,
-  DEFAULT_ZOOM,
-  formatZoom,
-  isDefaultZoom,
-  zoomIn,
-  zoomOut,
-} from './zoom'
-import { currentPreferences, savePreference } from './preferences'
+import { applyZoom, clampZoom, DEFAULT_ZOOM, zoomIn, zoomOut } from './zoom'
+import { currentPreferences } from './preferences'
 import { applyHoverBand, isHoverBandEnabled, setHoverBand } from './hoverBand'
-import { documentFunctionsFor, formulaEnvFor } from './formulaDefs'
-import { serializeBlock } from './markdown'
-import { promptForEncryptedBlockLabel, promptForNewPassword } from './crypto-dialog'
-import { encryptFieldVerified } from './crypto'
+import { documentFunctionsFor } from './formulaDefs'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import { buildWelcomeMarkdown } from './welcomeDoc'
-import { createBlockEditor, type BlockEditor, linkRangeAt, type LinkRange, selectionMarkdownFor } from './editor'
-import { setEncryptedBlockImageResolver, unlockEncryptedBlockAt, getActiveEncryptedBlockView } from './node/encryptedblock'
 import { SearchPanel } from './searchPanel'
-import { insertTable as insertSpreadsheetTable, spreadsheetMenuEntries } from './node/table'
-import { insertKanbanBoard } from './node/mermaid'
-import { findSessionByPath, getActive, getState, isAnyDirty, setActiveDirty, setActivePath, subscribe } from './state'
-import { headingSlug } from './schema'
+import { getActive, getState, setActiveDirty, subscribe } from './state'
 import { HomeScreen } from './home'
-import { addRecentFile, getRecentFiles } from './recents'
-import { promptForLink, promptForRename } from './urlDialog'
 import { Tabs } from './tabs'
+import { isMisleadingLink } from './linkSecurity'
+import { ContextMenu } from './contextmenu'
+import { createAppContext, type AppContext, type AppRoots } from './appContext'
+import { createContextMenuController } from './contextMenuController'
+import { createEditController, type EditController } from './editController'
+import { createFileController, type FileController } from './fileController'
+import { createZoomController, type ZoomController } from './zoomController'
 
-const IS_SELFTEST = new URLSearchParams(window.location.search).has('selftest')
-
-const editorContainer = document.querySelector<HTMLElement>('#editor-container')!
-const toolbarEl = document.querySelector<HTMLElement>('#toolbar')!
-const statusLeft = document.querySelector<HTMLElement>('#status-left')!
-const statusMode = document.querySelector<HTMLElement>('#status-mode')!
-const statusRight = document.querySelector<HTMLElement>('#status-right')!
-const statusZoom = document.querySelector<HTMLButtonElement>('#status-zoom')!
-const tabbar = document.querySelector<HTMLElement>('#tabbar')!
-
-const lastNativeTitle = { value: '' }
-
-/** The current document zoom (see `src/zoom.ts`). */
-const documentZoom = { value: DEFAULT_ZOOM }
-
-const blockEditor: { value: BlockEditor | null } = { value: null }
-const toolbar: { value: Toolbar | null } = { value: null }
-const homeScreen: { value: HomeScreen | null } = { value: null }
-const contextMenu: { value: ContextMenu | null } = { value: null }
-const searchPanel: { value: SearchPanel | null } = { value: null }
-
-const tabs = new Tabs(tabbar, {
-  getMarkdown(): string {
-    blockEditor.value?.commitSource()
-    return blockEditor.value?.getMarkdown() ?? ''
-  },
-  setMarkdown(value: string): void | Promise<void> {
-    return blockEditor.value?.setMarkdown(value)
-  },
-  createState(markdown: string): unknown {
-    return blockEditor.value?.createState(markdown)
-  },
-  getState(): unknown {
-    // Same tab boundary as getMarkdown: commit any in-progress source-mode
-    // content into the document before capturing the live editor state.
-    blockEditor.value?.commitSource()
-    return blockEditor.value?.getState()
-  },
-  setState(state: unknown): void | Promise<void> {
-    return blockEditor.value?.applyState(state as import('prosemirror-state').EditorState)
-  },
-  // Read at the snapshot boundary, not at the swap: see `TabContent.flush`.
-  flush(): void | Promise<void> {
-    return blockEditor.value?.flushReveals()
-  },
-  // A document replaced from outside is not a tab being left: see `discardPending`.
-  discardPending(): void {
-    blockEditor.value?.discardPending()
-  },
-  getScroll(): number {
-    return editorContainer.scrollTop
-  },
-  setScroll(value: number): void {
-    editorContainer.scrollTop = value
-  },
-}, {
-  onNewTab: () => openNewTab(),
-  onCloseTab: (id) => void closeTab(id),
-  onActivate: () => afterActivate(),
-})
-
-function updateView(): void {
-  const app = document.querySelector<HTMLElement>('#app')
-  if (!app) return
-  app.dataset.view = getState().sessions.length === 0 ? 'home' : 'editor'
+function openNewTab(ctx: AppContext): void {
+  ctx.tabs.addSession()
 }
 
-function updateTitle(): void {
-  const active = getActive()
-  if (!active) {
-    document.title = 'Edi'
-    if (document.title !== lastNativeTitle.value) {
-      lastNativeTitle.value = document.title
-      void invoke('setTitle', { title: 'Edi' }).catch(() => undefined)
-    }
-    return
-  }
-  const name = active.path ? active.path.split('/').pop()! : UNTITLED
-  const title = `${active.dirty ? '* ' : ''}${name} — Edi`
-  document.title = title
-  if (document.title !== lastNativeTitle.value) {
-    lastNativeTitle.value = document.title
-    void invoke('setTitle', { title }).catch(() => undefined)
-  }
+function openWelcome(ctx: AppContext): void {
+  ctx.tabs.addSession(buildWelcomeMarkdown())
 }
 
-function updateStatus(): void {
-  const active = getActive()
-  if (!active) {
-    statusLeft.textContent = ''
-    statusRight.textContent = ''
-    return
-  }
-  statusLeft.textContent = active.path ?? UNTITLED
-  const text = blockEditor.value?.getMarkdown() ?? ''
-  const words = text.trim() ? text.trim().split(/\s+/).length : 0
-  statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
+function openFunctionReference(ctx: AppContext): void {
+  const state = ctx.blockEditor?.getState()
+  ctx.tabs.addSession(buildFunctionReferenceMarkdown(state ? documentFunctionsFor(state) : []))
 }
 
-/**
- * The status chip: which block is in a mode, and what that mode is called.
- *
- * It needs an element of its own because `#status-left` is the transient flash
- * slot — `flashStatus` overwrites it and `updateStatus` clears it after three
- * seconds — so a chip living there would flash away. It is written only from the
- * plugin's own state changes (`onModeChange`), never from a flash, and it says
- * *what* is in a mode; the accent rule on the block itself is the in-document
- * half that says *where* (§7.2).
- */
-function renderModeChip(mode: BlockMode | null): void {
-  if (!statusMode) return
-  const view = mode !== null ? blockEditor.value?.getView() : undefined
-  const node = mode !== null && view !== undefined ? view.state.doc.nodeAt(mode.pos) : null
-  if (mode === null || node === null || node === undefined) {
-    statusMode.textContent = ''
-    statusMode.hidden = true
-    return
-  }
-  const source = mode.representation === 'source'
-  const words = modeChipWords(node)
-  statusMode.hidden = false
-  // The record's *name*, in the record's own vocabulary (§5.1). Which of the three
-  // it is has to be asked rather than assumed, because a table held open as a
-  // sheet is `visual` and `viewing` — the two axes alone would call it "Edit",
-  // which is a different block's mode entirely. The label comes from the
-  // descriptor so the chip, the cluster button and the context menu cannot drift
-  // into three spellings of the same word.
-  //
-  // **A block's own axis says which state that is.** A diagram's engaged state is
-  // `Edit`, which is why one word served both jobs; an encrypted block's is
-  // `Unlocked`, and the word on its button is `Lock` — so the chip reads the
-  // `engaged` word rather than either control's, and `Edit` here would be the
-  // diagram's vocabulary again.
-  const form = mode.form === undefined
-    ? undefined
-    : blockModeFor(node).forms?.find((entry) => entry.id === mode.form)?.label
-  const name = source ? 'Source' : form ?? interactionLabels(node.type.name).engaged
-  statusMode.textContent = words === ''
-    ? name
-    : `${name} — “${words}”${source ? ' · Esc for visual' : ''}`
+function openHelpGuide(ctx: AppContext): void {
+  ctx.tabs.addSession(buildHelpGuideMarkdown())
 }
 
-/** A few words of the block itself, so the chip names *which* block it is about. */
-function modeChipWords(node: ProseNode): string {
-  const text = node.type.name === 'mermaid_block'
-    ? String(node.attrs.value ?? '').split('\n', 1)[0] ?? ''
-    : node.textContent
-  const trimmed = text.replace(/\s+/g, ' ').trim()
-  if (trimmed === '') return ''
-  return trimmed.length > 40 ? `${trimmed.slice(0, 39)}…` : trimmed
-}
-
-function updateZoomIndicator(): void {
-  statusZoom.textContent = formatZoom(documentZoom.value)
-  statusZoom.hidden = isDefaultZoom(documentZoom.value)
-}
-
-function setZoom(factor: number): void {
-  documentZoom.value = clampZoom(factor)
-  applyZoom(documentZoom.value)
-  savePreference('zoomFactor', documentZoom.value)
-  updateZoomIndicator()
-  syncMenuState()
-}
-
-function zoomTo(level?: string): void {
-  const factor = Number(level)
-  if (Number.isFinite(factor)) setZoom(factor)
-}
-
-const lastZoomWheel = { value: 0 }
-
-/**
- * Ctrl+wheel / trackpad pinch zooms the document. It is throttled so a single
- * gesture is a step, not a burst, and `preventDefault` keeps Chromium's
- * whole-page zoom (which would scale the tab bar too) from firing.
- */
-function onZoomWheel(event: WheelEvent): void {
-  if (!(event.ctrlKey || event.metaKey)) return
-  event.preventDefault()
-  const now = Date.now()
-  if (now - lastZoomWheel.value < 100) return
-  lastZoomWheel.value = now
-  if (event.deltaY < 0) setZoom(zoomIn(documentZoom.value))
-  else if (event.deltaY > 0) setZoom(zoomOut(documentZoom.value))
-}
-
-function afterActivate(): void {
-  updateTitle()
-  updateStatus()
-  syncDirty()
-  syncMenuState()
-}
-
-function syncDirty(): void {
-  void invoke('setDirty', { dirty: isAnyDirty() }).catch(() => undefined)
-}
-
-function syncMenuState(): void {
-  const active = getActive()
-  void invoke('setMenuState', {
-    canRevert: Boolean(active?.path),
-    canCopyPath: Boolean(active?.path),
-    canRename: Boolean(active?.path),
-    toolbarVisible: toolbar.value?.isVisible() ?? true,
-    hoverBand: isHoverBandEnabled(),
-    zoomFactor: documentZoom.value,
-    canZoomIn: canZoomIn(documentZoom.value),
-    canZoomOut: canZoomOut(documentZoom.value),
-  }).catch(() => undefined)
-}
-
-function insertMarkdown(markdown: string): void {
-  blockEditor.value?.insertMarkdown(markdown)
-}
-
-function insertTable(markdown: string): void {
-  insertMarkdown(`\n${markdown}\n`)
-}
-
-function insertTableDefault(): void {
-  const view = blockEditor.value?.getView()
-  if (!view) return
-  insertSpreadsheetTable(view, 3, 3)
-  setActiveDirty(true)
-}
-
-async function insertKanban(): Promise<void> {
-  const view = blockEditor.value?.getView()
-  if (!view) return
-  if (await insertKanbanBoard(view)) setActiveDirty(true)
-}
-
-function flashStatus(message: string): void {
-  statusLeft.textContent = message
-  window.setTimeout(() => updateStatus(), 3000)
-}
-
-async function exportHtml(): Promise<void> {
-  if (!getActive()) return
-  const base = getActive()!.path ? fileName(getActive()!.path!) : UNTITLED
-  const path = await pickExportPath(base)
-  if (!path) {
-    return
-  }
-  try {
-    const state = blockEditor.value?.getView().state
-    if (!state) {
-      return
-    }
-    const snapshots = await mermaidPngSnapshots(state.doc)
-    const bodyHtml = serializeDocToHtml(state.doc, formulaEnvFor(state), snapshots)
-    await writeTextFile(path, buildExportHtml(fileName(path), bodyHtml))
-    flashStatus(`Exported ${path}`)
-  } catch (error) {
-    reportError(`Failed to export ${path}`, error)
-  }
-}
-
-function openNewTab(): void {
-  tabs.addSession()
-}
-
-function openWelcome(): void {
-  tabs.addSession(buildWelcomeMarkdown())
-}
-
-function openFunctionReference(): void {
-  const state = blockEditor.value?.getState()
-  tabs.addSession(buildFunctionReferenceMarkdown(state ? documentFunctionsFor(state) : []))
-}
-
-function openHelpGuide(): void {
-  tabs.addSession(buildHelpGuideMarkdown())
-}
-
-function buildHomeScreen(): HomeScreen {
-  const root = document.querySelector<HTMLElement>('#home-screen')!
-  return new HomeScreen(root, {
-    onNew: () => openNewTab(),
-    onOpen: () => void openFile(),
-    onOpenWelcome: () => openWelcome(),
+function buildHomeScreen(ctx: AppContext, files: FileController): HomeScreen {
+  return new HomeScreen(ctx.roots.homeScreen, {
+    onNew: () => openNewTab(ctx),
+    onOpen: () => void files.openFile(),
+    onOpenWelcome: () => openWelcome(ctx),
     onExit: () => requestQuit(),
-    onOpenRecent: (path) => void openDocument(path),
+    onOpenRecent: (path) => void files.openDocument(path),
   })
 }
 
-function refreshRecents(): void {
-  getRecentFiles()
-    .then((paths) => homeScreen.value?.setRecents(paths))
-    .catch(() => undefined)
-}
-
-async function rememberRecent(path: string): Promise<void> {
-  try {
-    await addRecentFile(path)
-  } catch {
-    // Recent-files persistence is best-effort (e.g. no native bridge).
-  }
-  refreshRecents()
-}
-
-async function closeTab(id: string): Promise<void> {
+async function closeTab(ctx: AppContext, id: string): Promise<void> {
   const session = getState().sessions.find((entry) => entry.id === id)
   if (
     session?.dirty &&
@@ -397,94 +63,7 @@ async function closeTab(id: string): Promise<void> {
   ) {
     return
   }
-  tabs.close(id)
-}
-
-async function openFile(): Promise<void> {
-  const paths = await pickOpenPath()
-  if (!paths || paths.length === 0) {
-    return
-  }
-  for (const path of paths) {
-    await openDocument(path)
-  }
-}
-
-/**
- * Open files Edi was launched with (e.g. a .md double-clicked in the file
- * manager, delivered as command-line arguments and surfaced via the bridge).
- * Runs after the bridge is up; unsupported extensions are ignored so a stray
- * argument never pops an error dialog on an otherwise clean launch.
- */
-async function openPendingFiles(): Promise<void> {
-  const paths = await getPendingFiles().catch(() => undefined)
-  if (!paths || paths.length === 0) return
-  await openPaths(paths)
-}
-
-/** Open the supported paths in `paths`, in order, as tabs. */
-async function openPaths(paths: string[]): Promise<void> {
-  for (const path of paths) {
-    if (isSupportedFile(path)) {
-      await openDocument(path)
-    }
-  }
-}
-
-interface NativeEvent {
-  type?: unknown
-  paths?: unknown
-}
-
-/**
- * Events the native shell pushes outside a request/response pair.
- *
- * macOS delivers a double-clicked file to a *running* app as an open-document
- * Apple Event, not as an argument to a new process (`QFileOpenEvent` in
- * `backend/main.py`). The shell forwards it here so the file opens as a tab in
- * this window instead of launching a second Edi.
- */
-function onNativeEvent(payload: string): void {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(payload)
-  } catch {
-    return
-  }
-  if (typeof parsed !== 'object' || parsed === null) return
-  const event = parsed as NativeEvent
-  if (event.type !== 'openFiles' || !Array.isArray(event.paths)) return
-  const paths = event.paths.filter((path): path is string => typeof path === 'string')
-  void openPaths(paths)
-}
-
-const openingPaths = new Set<string>()
-
-async function openDocument(path: string): Promise<void> {
-  const existing = findSessionByPath(path)
-  if (existing) {
-    // Already-open *and* already-active is not a swap, so there is no settle
-    // to be called from — the one case the caller speaks for itself.
-    if (existing.id === tabs.activeId) afterActivate()
-    else tabs.activate(existing.id)
-    return
-  }
-  // A path can be asked for twice before its read finishes: a cold-launch
-  // event is in the pending list and a warm one arrives while that list is
-  // still being opened. One document is the answer to both.
-  if (openingPaths.has(path)) return
-  openingPaths.add(path)
-  try {
-    const content = await readTextFile(path)
-    // The path is set before the content is rendered so that relative image
-    // references in opened documents resolve against the document's directory.
-    tabs.addSession(content, path)
-    void rememberRecent(path)
-  } catch (error) {
-    reportError(`Failed to open ${path}`, error)
-  } finally {
-    openingPaths.delete(path)
-  }
+  ctx.tabs.close(id)
 }
 
 function isExternalUrl(href: string): boolean {
@@ -541,7 +120,11 @@ function scrollToFragment(fragment: string): void {
   }
 }
 
-async function openLink(href: string, text: string): Promise<void> {
+async function openLink(
+  files: FileController,
+  href: string,
+  text: string,
+): Promise<void> {
   if (isMisleadingLink(href, text)) {
     const go = await confirmAction(
       `The link text "${text}" does not match its destination (${href}). Open it anyway?`,
@@ -562,7 +145,7 @@ async function openLink(href: string, text: string): Promise<void> {
   const target = resolveInternalPath(href)
   if (!target) return
   if (isSupportedFile(target)) {
-    await openDocument(target)
+    await files.openDocument(target)
     if (fragment) {
       // Wait for the swapped-in document to render before scrolling.
       requestAnimationFrame(() => requestAnimationFrame(() => scrollToFragment(fragment)))
@@ -572,297 +155,17 @@ async function openLink(href: string, text: string): Promise<void> {
   }
 }
 
-async function saveFile(): Promise<void> {
-  if (!getActive()) return
-  const active = getActive()!
-  let path = active.path ?? null
-  if (!path) {
-    path = await pickSavePath(UNTITLED)
-    if (!path) {
-      return
-    }
-  }
-  await saveTo(path)
+function insertTableDefault(ctx: AppContext): void {
+  const view = ctx.blockEditor?.getView()
+  if (!view) return
+  insertSpreadsheetTable(view, 3, 3)
+  setActiveDirty(true)
 }
 
-async function saveFileAs(): Promise<void> {
-  if (!getActive()) return
-  const defaultName = getActive()!.path?.split('/').pop() ?? UNTITLED
-  const path = await pickSavePath(defaultName)
-  if (!path) {
-    return
-  }
-  await saveTo(path)
-}
-
-async function saveTo(path: string): Promise<void> {
-  if (!isSupportedFile(path)) {
-    await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`)
-  }
-  try {
-    const md = blockEditor.value?.getMarkdown() ?? ''
-    await writeTextFile(path, md)
-    afterSave(path)
-  } catch (error) {
-    reportError(`Failed to save ${path}`, error)
-  }
-}
-
-/** The document is on disk under `path` and clean: everything that follows. */
-function afterSave(path: string): void {
-  setActivePath(path)
-  setActiveDirty(false)
-  updateTitle()
-  updateStatus()
-  syncDirty()
-  syncMenuState()
-  void rememberRecent(path)
-}
-
-/**
- * Rename the document in place: the same folder, a new name, and the old file
- * gone. The write and the delete are one backend call, so the document is never
- * left on disk under both names or under neither — a rename is not a Save As
- * plus a delete the page can fail between.
- */
-async function renameFile(): Promise<void> {
-  const oldPath = getActive()?.path
-  if (!oldPath) return
-  const currentName = oldPath.split('/').pop() ?? oldPath
-  const name = await promptForRename(currentName)
-  if (name === null) return
-  const newPath = oldPath.includes('/') ? `${dirname(oldPath)}/${name}` : name
-  if (!isSupportedFile(newPath)) {
-    await confirmAction(`"${name}" does not have a supported extension.\n\nContinue anyway?`)
-  }
-  try {
-    const md = blockEditor.value?.getMarkdown() ?? ''
-    await renameTextFile(oldPath, newPath, md)
-    afterSave(newPath)
-    flashStatus(`Renamed to ${name}`)
-  } catch (error) {
-    reportError(`Failed to rename ${oldPath}`, error)
-  }
-}
-
-async function revertFile(): Promise<void> {
-  if (!getActive()) return
-  const active = getActive()!
-  const path = active.path ?? null
-  if (!path) {
-    return
-  }
-  if (
-    active?.dirty &&
-    !(await confirmAction('Discard unsaved changes and revert to the saved version?'))
-  ) {
-    return
-  }
-  try {
-    const content = await readTextFile(path)
-    tabs.setActiveContent(content)
-    setActiveDirty(false)
-    tabs.snapshotActive()
-  } catch (error) {
-    reportError(`Failed to revert ${path}`, error)
-  }
-}
-
-/** Copy the path of the document in view; a no-op for an unsaved one. */
-function copyFilePath(): void {
-  const path = getActive()?.path
-  if (path) void copyText(path)
-}
-
-async function importTable(): Promise<void> {
-  const path = await pickImportPath()
-  if (!path) {
-    return
-  }
-  try {
-    const table = await parseTableFile(path)
-    insertTable(toMarkdownTable(table.rows))
-    flashStatus(`Imported ${table.name}`)
-  } catch (error) {
-    reportError(`Failed to import ${path}`, error)
-  }
-}
-
-async function importTextFile(): Promise<void> {
-  const path = await pickTextImportPath()
-  if (!path) {
-    return
-  }
-  try {
-    const content = await readAnyTextFile(path)
-    insertMarkdown(`\n${content}\n`)
-    flashStatus(`Inserted ${fileName(path)}`)
-  } catch (error) {
-    reportError(`Failed to insert ${path}`, error)
-  }
-}
-
-async function insertImage(): Promise<void> {
-  const path = await pickImageImportPath()
-  if (!path) {
-    return
-  }
-  const reference = imageReference(getActive()?.path ?? null, path)
-  const destination = /[ ()]/u.test(reference) ? `<${reference}>` : reference
-  insertMarkdown(`\n![${fileName(path)}](${destination})\n`)
-  flashStatus(`Inserted ${fileName(path)}`)
-}
-
-function reportError(message: string, error: unknown): void {
-  const detail = error instanceof Error ? `\n\n${error.message}` : ''
-  void showError(`${message}${detail}`)
-}
-
-/**
- * Is a dialog, a CodeMirror buffer or a form field holding the caret?
- *
- * Clipboard shortcuts must not be taken from any of them. Each has its own: a
- * masked field's revealed input, a spreadsheet cell editor, the raw-markdown editor
- * in a block's Source form — and a document-level Copy in the middle of one would
- * either copy the wrong thing or nothing.
- *
- * **A revealed encrypted block is deliberately *not* on this list**, even though it
- * is a whole second editor holding a selection of its own, and its comment is the
- * failure this function exists to prevent. Standing down here is the obvious
- * reading of "let the innermost editor keep the key" and it is wrong: the reveal's
- * DOM selection spans a block boundary happily — a drag from the outer prose into
- * the reveal puts the plaintext in `getSelection().toString()` while nothing on
- * screen paints it — so a native copy that runs from here can put a decrypted
- * secret on the clipboard with nothing to say so. The block is an *object* and the
- * clipboard has to agree with the paint.
- *
- * So the key is not declined, it is **routed**: `focusedEditor()` resolves the
- * editor the caret is really in and the command acts on that editor's own
- * selection, which is inside the block by construction. That is the rule this
- * function's docstring used to imply and now states — every document command
- * resolves to the editor that has focus, and the *hosts that are not documents*
- * are the ones it stays out of the way of.
- */
-function focusIsForeign(): boolean {
-  const active = document.activeElement
-  return (
-    active instanceof HTMLElement &&
-    !!active.closest('.edi-dialog-overlay, .cm-editor, input, textarea')
-  )
-}
-
-/**
- * The editor a document command belongs to: **the one that has the caret.**
- *
- * A revealed encrypted block is a whole second `EditorView` — the document's own
- * `createBlockEditor`, with the whole plugin stack — nested inside this one. The
- * document commands were bound to *one* editor (`blockEditor.value?.getView()`), and
- * nothing in that path could ask which editor has focus, so a command run from
- * inside a reveal acted on a document the reader is not in: `Ctrl+C` read the
- * outer (always empty) selection and did nothing at all, and `Ctrl+X` would
- * additionally have yanked the caret out of the block the reader was standing in.
- *
- * **The toolbar.value already did this** — `getActiveEncryptedBlockView() ?? getView()` —
- * and it is why find and the clipboard were the inconsistencies rather than the
- * other way round. This function is that composition, named, so there is one
- * answer to "which editor is this command about" instead of three call sites
- * spelling it.
- *
- * It is read at the moment the command runs, not cached: focus is a per-interaction
- * fact, so where the reader is working has to be asked fresh. (What should *recede*
- * is the other question, and it is a per-page fact answered from the record — see
- * the working-state dimming.)
- */
-function focusedEditor(): ProseEditorView | null {
-  return getActiveEncryptedBlockView() ?? blockEditor.value?.getView() ?? null
-}
-
-function registerShortcuts(): void {
-  window.addEventListener('keydown', (event) => {
-    if (!(event.ctrlKey || event.metaKey)) {
-      return
-    }
-    const key = event.key.toLowerCase()
-    if (key === 'n') {
-      event.preventDefault()
-      openNewTab()
-    } else if (key === 'w') {
-      event.preventDefault()
-      void closeTab(tabs.activeId)
-    } else if (key === 'o') {
-      event.preventDefault()
-      void openFile()
-    } else if (key === 's' && event.shiftKey) {
-      event.preventDefault()
-      void saveFileAs()
-    } else if (key === 's') {
-      event.preventDefault()
-      void saveFile()
-    } else if (key === 'q') {
-      event.preventDefault()
-      void requestQuit()
-    } else if (key === '=' || key === '+') {
-      event.preventDefault()
-      setZoom(zoomIn(documentZoom.value))
-    } else if (key === '-' || key === '_') {
-      event.preventDefault()
-      setZoom(zoomOut(documentZoom.value))
-    } else if (key === '0') {
-      event.preventDefault()
-      setZoom(DEFAULT_ZOOM)
-    } else if (key === 'c' && event.shiftKey && event.altKey) {
-      event.preventDefault()
-      copyFilePath()
-    } else if (key === 'c' && event.shiftKey) {
-      event.preventDefault()
-      copyAsMarkdown()
-    } else if (key === 'a' && !event.defaultPrevented) {
-      // Focus the editor and select all. When the editor already had focus,
-      // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
-      // this only kicks in when focus is elsewhere (e.g. the toolbar.value)
-      // where the browser would otherwise select the whole window.
-      if (!(document.activeElement instanceof HTMLInputElement) &&
-          !(document.activeElement instanceof HTMLTextAreaElement)) {
-        event.preventDefault()
-        editSelectAll()
-      }
-    } else if (key === 'f') {
-      event.preventDefault()
-      openSearch()
-    } else if (key === 'h') {
-      event.preventDefault()
-      openSearch(true)
-    } else if (key === 'v' && event.shiftKey) {
-      if (!focusIsForeign()) {
-        event.preventDefault()
-        void pasteAsMarkdownCommand()
-      }
-    } else if (key === 'c' || key === 'x' || key === 'v') {
-      /* Cut, Copy and Paste are handled *here* rather than left to the browser, and
-       * they have to be: the page has no other route for them.
-       *
-       * The shell's Edit menu items for these called the same functions, so a click
-       * worked and the keyboard did nothing at all — which is not a shortcut that is
-       * bound to the wrong thing, it is a shortcut that is bound to *nothing*. Qt
-       * never claimed it (a `\t` in a QAction label gives the action no shortcut at
-       * all), and ProseMirror has no `Mod-c` binding: it answers a native `copy`
-       * DOM event, which a webview whose selection is managed in JavaScript does not
-       * reliably produce. Nothing was handling it.
-       *
-       * So these three route to `editCut`/`editCopy`/`editPaste`, which is what the
-       * menu items call — **including the rich-text payload**. `editCopy` sends
-       * `serializeForClipboard`'s HTML *and* its text through the bridge, so
-       * `Ctrl+C` carries the document as rich text the way the menu always has, and
-       * `Ctrl+Shift+C` stays plain Markdown, which is the difference between the
-       * two keys and the reason both exist.
-       */
-      if (event.defaultPrevented || focusIsForeign()) return
-      event.preventDefault()
-      if (key === 'c') editCopy()
-      else if (key === 'x') editCut()
-      else void editPaste()
-    }
-  })
+async function insertKanban(ctx: AppContext): Promise<void> {
+  const view = ctx.blockEditor?.getView()
+  if (!view) return
+  if (await insertKanbanBoard(view)) setActiveDirty(true)
 }
 
 interface CloseRequestEvent {
@@ -878,653 +181,138 @@ function requestQuit(event?: CloseRequestEvent): void {
   window.close()
 }
 
-function toggleToolbar(): void {
-  toolbar.value?.toggle()
-  syncMenuState()
+function toggleToolbar(ctx: AppContext): void {
+  ctx.toolbar?.toggle()
+  ctx.syncMenuState()
 }
 
-function toggleHoverBand(): void {
+function toggleHoverBand(ctx: AppContext): void {
   setHoverBand(!isHoverBandEnabled())
-  syncMenuState()
+  ctx.syncMenuState()
 }
 
-function openSearch(replace = false): void {
+function openSearch(ctx: AppContext, replace = false): void {
   if (getState().sessions.length === 0) return
   // Resolve **now**, while the caret still says which document the reader is in:
   // opening the bar takes the focus away from it, and the panel holds it from then
   // on. See `SearchPanel.open`.
-  searchPanel.value?.open({ replace })
+  ctx.searchPanel?.open({ replace })
 }
 
-// Menu-triggered undo/redo must not scroll: the transaction is dispatched with
-// scrollIntoView=false so the viewport stays put (undoNoScroll/redoNoScroll).
-// Reaching for the menu (or a context menu) means the pointer is away from the
-// content, so yanking the viewport to the restored selection is disorienting;
-// keyboard undo keeps its scroll-to-change behavior via the editor keymap.
-function editUndoNoScroll(): void {
-  const view = blockEditor.value?.getView()
-  if (view) {
-    view.focus()
-    undoNoScroll(view.state, view.dispatch, view)
-  }
-}
-
-function editRedoNoScroll(): void {
-  const view = blockEditor.value?.getView()
-  if (view) {
-    view.focus()
-    redoNoScroll(view.state, view.dispatch, view)
-  }
-}
-
-/**
- * Cut / Copy / Paste, and the two Markdown-flavoured neighbours, all resolve the
- * same way: **the editor that has the caret** (`focusedEditor`).
- *
- * Every one of these opens with `if (!view || view.state.selection.empty) return`,
- * so an empty selection turns the document commands into a no-op and whatever
- * genuinely owns the selection — a spreadsheet grid, a nested reveal — gets the
- * key. That is why `Ctrl+C` after clicking a cell copies TSV of the cells with
- * nothing here knowing anything about sheets: the sheet collapsed the document
- * selection on entry and has not let it grow back.
- */
-/**
- * Cut, copy and paste: the three keys the app owns itself.
- *
- * **`editCopy` has one route that does not go through the editor, and it is the one a
- * Visual table's cells answer.** A `table` node is an atom with no content, so the
- * document selection cannot hold "three characters of that cell" — but the browser's
- * range can, and it is what the reader is looking at when they press the key.
- * `plainTableSelectionText()` asks whether that is the selection in question and returns
- * the text a normal editor would have put on the clipboard; see
- * `src/tableTextSelection.ts` for the measurement behind it, which is also why the text
- * comes from the range rather than from `Selection.toString()`.
- *
- * It is deliberately **text, not the table's markdown**: what is selected is what was
- * drawn, and a fragment of a cell is not a table. `Ctrl+Shift+C` is the key that copies
- * markdown, and it still copies the editor's own selection.
- */
-let richClipboardTicket = 0
-
-function editCut(): void {
-  const view = focusedEditor()
-  if (!view) return
-  // **A cut of selected table text does nothing, rather than cutting something else.**
-  // The document selection is not what the reader has selected — it cannot be — so the
-  // deletion below would take out whatever was selected *before* the drag, somewhere
-  // else in the document. Refusing is the only answer that cannot delete a selection
-  // nobody made.
-  if (plainTableSelectionText() !== null) return
-  if (view.state.selection.empty) return
-  view.focus()
-  const { dom, text } = richSelectionHtml(view)
-  const markdown = selectionMarkdownFor(view)
-  view.dispatch(view.state.tr.deleteSelection())
-  void writeRichClipboard(dom, text, markdown)
-}
-
-function editCopy(): void {
-  const view = focusedEditor()
-  if (!view) return
-  const tableText = plainTableSelectionText()
-  if (tableText !== null) {
-    void copyText(tableText)
-    return
-  }
-  if (view.state.selection.empty) return
-  view.focus()
-  const { dom, text } = richSelectionHtml(view)
-  void writeRichClipboard(dom, text, selectionMarkdownFor(view))
-}
-
-function writeRichClipboard(
-  dom: HTMLElement,
-  text: string,
-  markdown: string,
-): void {
-  const ticket = ++richClipboardTicket
-  if (!dom.querySelector('[data-mermaid-block]')) {
-    void writeClipboard({ html: dom.innerHTML, text, markdown })
-    return
-  }
-  void (async () => {
-    await snapshotMermaidHtml(dom)
-    if (ticket !== richClipboardTicket) return
-    await writeClipboard({ html: dom.innerHTML, text, markdown })
-  })()
-}
-
-/**
- * The selection as the **rich** clipboard copy carries it: ProseMirror's own
- * `serializeForClipboard` output — which is the schema's `toDOM`, where a table
- * is a real grid carrying its pipes on an attribute (`richTableDom`) — with the
- * formulas a copied table's cells would show on screen solved into view values.
- *
- * The solve does not touch the document and cannot lose a formula: it repaints
- * cells *inside the detached serialization*, while the raw pipes sit untouched
- * on the `data-edi-table` attribute it renders them from, which is exactly where
- * this app's paste parser reads a copied table back from. Confluence and Docs
- * take the resolved grid; this app takes the formulas it was written with.
- */
-function richSelectionHtml(
-  view: ProseEditorView,
-): { dom: HTMLElement; text: string } {
-  const { dom, text } = view.serializeForClipboard(view.state.selection.content())
-  computeSpreadsheet(dom, formulaEnvFor(view.state))
-  return { dom, text }
-}
-
-function copyAsMarkdown(): void {
-  const view = focusedEditor()
-  if (!view || view.state.selection.empty) return
-  view.focus()
-  void copyText(selectionMarkdownFor(view))
-}
-
-async function editPaste(): Promise<void> {
-  const view = focusedEditor()
-  if (!view) return
-  let html: string | null = null
-  let text: string | null = null
-  let markdown: string | null = null
-  if (hasBridge()) {
-    const data = await invoke<{ text: string; html: string; markdown?: string }>('readClipboardText')
-    html = data?.html || null
-    text = data?.text || null
-    markdown = data?.markdown || null
-  } else {
-    try {
-      const items = await navigator.clipboard.read()
-      for (const item of items) {
-        if (item.types.includes('text/html')) {
-          html = await item.getType('text/html').then((b) => b.text())
-        }
-        if (item.types.includes('text/plain')) {
-          text = await item.getType('text/plain').then((b) => b.text())
-        }
-        if (item.types.includes('text/markdown')) {
-          markdown = await item.getType('text/markdown').then((b) => b.text())
-        }
-      }
-    } catch {
+function registerShortcuts(
+  ctx: AppContext,
+  edit: EditController,
+  files: FileController,
+  zoom: ZoomController,
+): () => void {
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (!(event.ctrlKey || event.metaKey)) {
       return
     }
-  }
-  view.focus()
-  // **An Edi-to-Edi copy carries its selection as markdown, and that is the leg
-  // this app reads.** The HTML leg is for other apps (a mermaid block is a PNG
-  // there), so parsing it back would turn the diagram into a picture; the
-  // markdown leg is the document's own words, mermaid source included.
-  if (markdown && markdown.trim() !== '' && pasteAsMarkdown(view, markdown)) {
-    return
-  }
-  // Rich media first: pasteHTML runs ProseMirror's full clipboard parser, which
-  // preserves formatting (bold, links, code) and turns block HTML (our own
-  // serializeForClipboard output) into real paragraphs. Only fall back to plain
-  // text when no HTML is available (insertPastedText handles line breaks and
-  // linkifies bare URLs).
-  if (html && html.trim() !== '') {
-    view.pasteHTML(html, pasteEvent())
-  } else if (text && text.trim() !== '') {
-    insertPastedText(view, text)
-  }
-}
-
-async function pasteAsMarkdownCommand(): Promise<void> {
-  const view = focusedEditor()
-  if (!view) return
-  view.focus()
-  const text = await readText()
-  if (!pasteAsMarkdown(view, text)) await editPaste()
-}
-
-function pasteEvent(): ClipboardEvent {
-  return typeof ClipboardEvent === 'function'
-    ? new ClipboardEvent('paste')
-    : ({ clipboardData: null } as unknown as ClipboardEvent)
-}
-
-/**
- * Select all — in **the editor the reader is in**, and without taking the caret out of
- * a grid that has it.
- *
- * The first half is the same rule as the clipboard: a command bound to one editor is
- * wrong the moment there is a second one, and `Ctrl+A` inside an open encrypted block
- * used to select the document around it rather than the block the reader was standing
- * in. The second half is the part that is only right because of it: routing through the
- * focus resolver means a spreadsheet grid now resolves to the editor *containing* it,
- * and the old unconditional `view.focus()` would have pulled the caret out of a grid
- * the reader had a cell selected in — the two-selections state in reverse.
- */
-function editSelectAll(): void {
-  const view = focusedEditor()
-  if (!view) return
-  // A grid owns its own selection and has no "select all" of its own, so the document
-  // command is not the reader's while one has the caret. Doing nothing is the only
-  // honest answer: selecting the whole document around a live sheet would put a
-  // second selection on screen while the reader is working inside one.
-  if (document.activeElement?.closest('.spreadsheet, .ss-plain')) return
-  const scrollTop = editorContainer.scrollTop
-  view.focus()
-  selectAll(view.state, view.dispatch)
-  // selectAll scrolls the full-document selection into view (the bottom),
-  // which jump-scrolls the editor. Restore the prior scroll position on the
-  // next frame once ProseMirror has performed its scrollIntoView.
-  requestAnimationFrame(() => {
-    editorContainer.scrollTop = scrollTop
-  })
-}
-
-/**
- * Is there a selection to copy or cut?
- *
- * **Or one the editor cannot see.** A Visual table's cells are selected by the browser,
- * because the document model cannot hold that at all (`src/tableTextSelection.ts`), so
- * asking the editor alone leaves Edit → Copy greyed out at the exact moment the reader
- * has something selected — and it would be *enabled* by the stale selection a drag like
- * that leaves behind, which is worse.
- */
-function hasEditorSelection(): boolean {
-  if (plainTableSelectionText() !== null) return true
-  const selection = focusedEditor()?.state.selection
-  return !!selection && !selection.empty
-}
-
-/**
- * Build the right-click menu for a point in the document. Spreadsheet text
- * inputs get editing commands scoped to the cell; other spreadsheet targets
- * (a selected cell, the chrome) get only the spreadsheet actions, since the
- * generic document commands would silently act on the whole table block.
- * Everything else gets the standard editing commands plus any block-specific
- * actions for the element under the pointer.
- */
-function buildContextMenu(event: MouseEvent): ContextMenuEntry[] {
-  const target = event.target instanceof Element ? event.target : null
-  const input = target?.closest<HTMLInputElement | HTMLTextAreaElement>('.ss-edit-input, .ss-fx-input, .masked-field-input, .mermaid-edit-input') ?? null
-  let entries: ContextMenuEntry[]
-  if (input) {
-    entries = buildInputMenu(input)
-  } else if (target?.closest('.cm-editor')) {
-    entries = buildSourceEditorMenu(target)
-  } else if (target?.closest('.spreadsheet, .ss-plain')) {
-    // The node view owns the grid's editing commands; the plain/read-only
-    // view has none, so it falls through to the block actions alone.
-    entries = spreadsheetMenuEntries(target) ?? []
-  } else {
-    entries = buildDocumentMenu(target)
-  }
-  if (target) {
-    const blockEntries = buildBlockMenuItems(target, event)
-    if (blockEntries.length > 0) {
-      if (entries.length > 0) entries.push({ type: 'separator' })
-      entries.push(...blockEntries)
+    const key = event.key.toLowerCase()
+    if (key === 'n') {
+      event.preventDefault()
+      openNewTab(ctx)
+    } else if (key === 'w') {
+      event.preventDefault()
+      void closeTab(ctx, ctx.tabs.activeId)
+    } else if (key === 'o') {
+      event.preventDefault()
+      void files.openFile()
+    } else if (key === 's' && event.shiftKey) {
+      event.preventDefault()
+      void files.saveFileAs()
+    } else if (key === 's') {
+      event.preventDefault()
+      void files.saveFile()
+    } else if (key === 'q') {
+      event.preventDefault()
+      void requestQuit()
+    } else if (key === '=' || key === '+') {
+      event.preventDefault()
+      zoom.set(zoomIn(ctx.documentZoom))
+    } else if (key === '-' || key === '_') {
+      event.preventDefault()
+      zoom.set(zoomOut(ctx.documentZoom))
+    } else if (key === '0') {
+      event.preventDefault()
+      zoom.set(DEFAULT_ZOOM)
+    } else if (key === 'c' && event.shiftKey && event.altKey) {
+      event.preventDefault()
+      files.copyFilePath()
+    } else if (key === 'c' && event.shiftKey) {
+      event.preventDefault()
+      edit.copyAsMarkdown()
+    } else if (key === 'a' && !event.defaultPrevented) {
+      // Focus the editor and select all. When the editor already had focus,
+      // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
+      // this only kicks in when focus is elsewhere (e.g. the toolbar)
+      // where the browser would otherwise select the whole window.
+      if (!(document.activeElement instanceof HTMLInputElement) &&
+          !(document.activeElement instanceof HTMLTextAreaElement)) {
+        event.preventDefault()
+        edit.selectAll()
+      }
+    } else if (key === 'f') {
+      event.preventDefault()
+      openSearch(ctx)
+    } else if (key === 'h') {
+      event.preventDefault()
+      openSearch(ctx, true)
+    } else if (key === 'v' && event.shiftKey) {
+      if (!edit.focusIsForeign()) {
+        event.preventDefault()
+        void edit.pasteAsMarkdown()
+      }
+    } else if (key === 'c' || key === 'x' || key === 'v') {
+      /* Cut, Copy and Paste are handled *here* rather than left to the browser, and
+       * they have to be: the page has no other route for them.
+       *
+       * The shell's Edit menu items for these called the same functions, so a click
+       * worked and the keyboard did nothing at all — which is not a shortcut that is
+       * bound to the wrong thing, it is a shortcut that is bound to *nothing*. Qt
+       * never claimed it (a `\t` in a QAction label gives the action no shortcut at
+       * all), and ProseMirror has no `Mod-c` binding: it answers a native `copy`
+       * DOM event, which a webview whose selection is managed in JavaScript does not
+       * reliably produce. Nothing was handling it.
+       *
+       * So these three route to `edit.cut`/`edit.copy`/`edit.paste`, which is what the
+       * menu items call — **including the rich-text payload**. `edit.copy` sends
+       * `serializeForClipboard`'s HTML *and* its text through the bridge, so
+       * `Ctrl+C` carries the document as rich text the way the menu always has, and
+       * `Ctrl+Shift+C` stays plain Markdown, which is the difference between the
+       * two keys and the reason both exist.
+       */
+      if (event.defaultPrevented || edit.focusIsForeign()) return
+      event.preventDefault()
+      if (key === 'c') edit.copy()
+      else if (key === 'x') edit.cut()
+      else void edit.paste()
     }
   }
-  return entries
-}
-
-/** Standard editing commands scoped to the focused spreadsheet input. */
-function buildInputMenu(input: HTMLInputElement | HTMLTextAreaElement): ContextMenuEntry[] {
-  const hasSelection = input.selectionStart !== input.selectionEnd
-  const canUndo = typeof document.execCommand === 'function'
-  return [
-    {
-      type: 'item',
-      label: 'Undo',
-      disabled: !canUndo,
-      onSelect: () => runInputHistory(input, 'undo'),
-    },
-    {
-      type: 'item',
-      label: 'Redo',
-      disabled: !canUndo,
-      onSelect: () => runInputHistory(input, 'redo'),
-    },
-    { type: 'separator' },
-    {
-      type: 'item',
-      label: 'Cut',
-      disabled: !hasSelection,
-      onSelect: () => cutInput(input),
-    },
-    {
-      type: 'item',
-      label: 'Copy',
-      disabled: !hasSelection,
-      onSelect: () => copyInput(input),
-    },
-    { type: 'item', label: 'Paste', onSelect: () => void pasteIntoInput(input) },
-    { type: 'item', label: 'Select all', onSelect: () => input.select() },
-  ]
-}
-
-function inputSelection(input: HTMLInputElement | HTMLTextAreaElement): { text: string; start: number; end: number } {
-  const start = input.selectionStart ?? 0
-  const end = input.selectionEnd ?? start
-  return { text: input.value.slice(start, end), start, end }
-}
-
-function runInputHistory(input: HTMLInputElement | HTMLTextAreaElement, command: 'undo' | 'redo'): void {
-  input.focus()
-  if (typeof document.execCommand === 'function') document.execCommand(command)
-}
-
-function copyInput(input: HTMLInputElement | HTMLTextAreaElement): void {
-  const { text } = inputSelection(input)
-  if (text) void copyText(text)
-}
-
-function cutInput(input: HTMLInputElement | HTMLTextAreaElement): void {
-  const { text, start, end } = inputSelection(input)
-  if (!text) return
-  void copyText(text)
-  input.setRangeText('', start, end, 'start')
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-  input.focus()
-}
-
-/** Standard editing commands scoped to the right-clicked CodeMirror source editor. */
-function buildSourceEditorMenu(target: Element): ContextMenuEntry[] {
-  const el = target.closest<HTMLElement>('.cm-editor')
-  const cmView = el ? EditorView.findFromDOM(el) : null
-  const sel = cmView?.state.selection.main
-  const hasSelection = !!sel && !sel.empty
-  return [
-    { type: 'item', label: 'Undo', onSelect: () => { if (cmView) cmUndo(cmView) } },
-    { type: 'item', label: 'Redo', onSelect: () => { if (cmView) cmRedo(cmView) } },
-    { type: 'separator' },
-    {
-      type: 'item',
-      label: 'Cut',
-      disabled: !hasSelection,
-      onSelect: () => {
-        if (!cmView || !sel || sel.empty) return
-        void copyText(cmView.state.sliceDoc(sel.from, sel.to))
-        cmView.dispatch({ changes: { from: sel.from, to: sel.to, insert: '' } })
-        cmView.focus()
-      },
-    },
-    {
-      type: 'item',
-      label: 'Copy',
-      disabled: !hasSelection,
-      onSelect: () => {
-        if (!cmView || !sel || sel.empty) return
-        void copyText(cmView.state.sliceDoc(sel.from, sel.to))
-        cmView.focus()
-      },
-    },
-    {
-      type: 'item',
-      label: 'Paste',
-      onSelect: () => {
-        if (!cmView) return
-        void readText().then((text) => {
-          if (text === null) return
-          const range = cmView.state.selection.main
-          cmView.dispatch({ changes: { from: range.from, to: range.to, insert: text } })
-          cmView.focus()
-        })
-      },
-    },
-    { type: 'item', label: 'Select all', onSelect: () => cmView?.dispatch({ selection: EditorSelection.single(0, cmView.state.doc.length) }) },
-  ]
-}
-
-async function pasteIntoInput(input: HTMLInputElement | HTMLTextAreaElement): Promise<void> {
-  const text = await readText()
-  if (text === null || text === '') return
-  const { start, end } = inputSelection(input)
-  input.setRangeText(text, start, end, 'end')
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-  input.focus()
-}
-
-function buildDocumentMenu(target: Element | null = null): ContextMenuEntry[] {
-  const view = blockEditor.value?.getView()
-  // Only offer undo/redo when there is actually history to traverse; a
-  // enabled-but-no-op Redo just looks broken.
-  const undoable = !!view && undoDepth(view.state) > 0
-  const redoable = !!view && redoDepth(view.state) > 0
-  const entries: ContextMenuEntry[] = [
-    { type: 'item', label: 'Undo', disabled: !undoable, onSelect: () => editUndoNoScroll() },
-    { type: 'item', label: 'Redo', disabled: !redoable, onSelect: () => editRedoNoScroll() },
-    { type: 'separator' },
-    {
-      type: 'item',
-      label: 'Cut',
-      disabled: !hasEditorSelection(),
-      onSelect: () => editCut(),
-    },
-    {
-      type: 'item',
-      label: 'Copy',
-      disabled: !hasEditorSelection(),
-      onSelect: () => editCopy(),
-    },
-    {
-      type: 'item',
-      label: 'Copy as Markdown',
-      disabled: !hasEditorSelection(),
-      onSelect: () => copyAsMarkdown(),
-    },
-    { type: 'item', label: 'Paste', onSelect: () => void editPaste() },
-    { type: 'item', label: 'Paste as Markdown', onSelect: () => void pasteAsMarkdownCommand() },
-    { type: 'item', label: 'Select all', onSelect: () => editSelectAll() },
-  ]
-  // A right-click on a link is how it is edited: a left-click opens it, and
-  // the click plugin ignores every other button (see `createBlockEditor`), so
-  // the context menu is the only place left to change one.
-  const link = linkRangeForTarget(target)
-  if (link) {
-    entries.push(
-      { type: 'item', label: 'Copy link', onSelect: () => void copyLink(link) },
-      { type: 'separator' },
-      { type: 'item', label: 'Edit link…', onSelect: () => editLink(link) },
-    )
-  }
-  return entries
-}
-
-/** The link the right-click landed on, as its document range. */
-function linkRangeForTarget(target: Element | null): LinkRange | null {
-  const view = blockEditor.value?.getView()
-  const anchor = target?.closest('a[href]')
-  if (!view || !anchor || !view.dom.contains(anchor)) return null
-  // The <a> ProseMirror drew *is* the mark's range, so the position at its
-  // first child is a position inside the link -- which is all `linkRangeAt`
-  // needs to walk out to the rest of the linked text, however many text nodes
-  // emphasis in the label split it into.
-  return linkRangeAt(view.state.doc, view.posAtDOM(anchor, 0))
+  window.addEventListener('keydown', onKeyDown)
+  return () => window.removeEventListener('keydown', onKeyDown)
 }
 
 /**
- * Copy the link covering `link`, the context menu's "Copy link".
+ * Boot the page.
  *
- * The href is the one in the document (a relative markdown target stays
- * relative), so what lands on the clipboard is what the source says, not a
- * URL resolved against the app. The range is read at menu-build time for the
- * same reason `editLink` does: that is the only moment the right-click's
- * target is around, and copying cannot move it anyway.
+ * Importing this module has no side effects: the roots are passed in, so tests
+ * can build the DOM first, dispose one boot and attach another to the same
+ * document. The thin `entry.ts` resolves the roots from the page.
  */
-async function copyLink(link: LinkRange): Promise<void> {
-  if (await copyText(link.href)) flashStatus(`Copied ${link.href}`)
-}
+export function init(roots: AppRoots): () => void {
+  const ctx = createAppContext(
+    roots,
+    new URLSearchParams(window.location.search).has('selftest'),
+  )
+  const files = createFileController(ctx)
+  const edit = createEditController(ctx)
+  const menus = createContextMenuController(ctx, edit)
+  const zoom = createZoomController(ctx)
+  let disposed = false
+  let nativeBridge: typeof window.bridge = undefined
 
-/**
- * Edit the link covering `link`, the context menu's "Edit link…".
- *
- * The range is resolved when the menu is built, because that is the only
- * moment the right-click's target element is around. The dialog's overlay
- * covers the editor, so nothing can move the link while it is up; it is
- * re-checked against the document once the dialog settles regardless, so a
- * range that no longer holds a link marks nothing at all.
- */
-function editLink(link: LinkRange): void {
-  const view = blockEditor.value?.getView()
-  if (!view) return
-  void promptForLink(link.text, link.href, { editing: true }).then((entered) => {
-    if (entered === null) return
-    const current = linkRangeAt(view.state.doc, link.from)
-    if (!current) return
-    // `applyLink` writes over the selection, so the range is selected first.
-    // It also leaves the linked text selected, which is where the toolbar.value's
-    // Link button picks the same link up from.
-    view.dispatch(
-      view.state.tr.setSelection(TextSelection.create(view.state.doc, current.from, current.to)),
-    )
-    view.focus()
-    applyLink(view, entered.url, entered.text)
-  })
-}
-
-/**
- * The block items of the context menu, generated from the block's own descriptor
- * rather than from a chain on its wrapper class names.
- *
- * Three names existed for source mode and two each for a diagram's edit mode and
- * a table's rendered form, all of them spelled per call site; and the block was
- * identified by a `data-block-pos` written into its dot grid when that grid was
- * built. Both problems have the same fix: ask `blockModeFor` what the block
- * supports, and ask the DOM for where the block is now. A right-click inside a
- * list item or a blockquote reaches this too, and works precisely because it no
- * longer needs a handle to identify the block it is in (§6.7).
- */
-function buildBlockMenuItems(target: Element, event: MouseEvent): ContextMenuEntry[] {
-  const view = blockEditor.value?.getView()
-  if (!view) return []
-  const entries: ContextMenuEntry[] = []
-  const addItem = (
-    label: string,
-    onSelect: () => void,
-    extra: Partial<Pick<ContextMenuItem, 'disabled' | 'danger'>> = {},
-  ): void => {
-    entries.push({ type: 'item', label, onSelect, ...extra })
-  }
-
-  // **The press is classified, not sniffed** (`src/press.ts`): the menu is offered for the block
-  // the press names, and for nothing else.
-  const press = pressTarget(view, event)
-  if (press.kind !== 'content' && press.kind !== 'margin') return entries
-  const pos = press.pos
-  const node = view.state.doc.nodeAt(pos)
-  if (node === null) return entries
-  // The wrapper is still needed for two things that are about the *rendering*,
-  // not the mode: a diagram's image to copy, and a runnable block's own controls.
-  const wrapper = blockWrapperFor(view, target)
-
-  const img = wrapper?.querySelector<HTMLImageElement>('.mermaid-img') ?? null
-  const svg = wrapper?.querySelector<SVGSVGElement>('.mermaid svg[id]') ?? null
-  if (img ?? svg) {
-    addItem('Copy image', () => {
-      void copyMermaidAsImage(img ?? (svg as SVGSVGElement)).then((result) => {
-        if (!result.ok) showError(result.error ?? 'Could not copy image')
-      })
-    })
-    addItem('Save image…', () => {
-      const active = getActive()
-      const base = active?.path ? fileName(active.path) : UNTITLED
-      void saveMermaidAsImage(img ?? (svg as SVGSVGElement), base).then((result) => {
-        if (!result.ok) {
-          showError(result.error ?? 'Could not save image')
-        } else if (result.path) {
-          flashStatus(`Saved ${result.path}`)
-        }
-      })
-    })
-  }
-
-  const runnable = wrapper?.closest('.runnable-block') ?? null
-  if (runnable) {
-    const runButton = runnable.querySelector<HTMLButtonElement>('.exec-run')
-    if (runButton) {
-      const running = runButton.classList.contains('exec-stop')
-      addItem(running ? 'Stop' : 'Run', () => runButton.click())
-    }
-    const source = runnable.querySelector<HTMLElement>('.runnable-source')
-    if (source?.textContent !== null && source?.textContent !== undefined) {
-      const text = source.textContent
-      addItem('Copy source', () => {
-        void copyText(text)
-      })
-    }
-  }
-
-  const descriptor = blockModeFor(node)
-
-  // A table's rendered form, labelled from the descriptor's own form list.
-  if (descriptor.forms) {
-    // The record, not the table node view: a form is plugin state now, so asking
-    // `block-modes` for it is the direction the dependency should run — and it is
-    // the only one that works from the mocked module boundary anyway.
-    const current = blockFormMode(view.state, pos) ?? 'text'
-    const other = descriptor.forms.find((form) => form.id !== current)
-    if (other) addItem(other.label, () => setBlockForm(view, pos, other.id))
-  }
-
-  if (descriptor.interaction === 'toggle') {
-    // The axis's own words, from the one declaration the cluster button reads too —
-    // so a block whose edit step is unlocking is not also `Edit` in its menu.
-    const labels = interactionLabels(node.type.name)
-    const editing = modeFor(view.state, pos)?.interaction === 'editing'
-    addItem(editing ? labels.active : labels.idle, () => {
-      toggleBlockMode(view, pos, 'interaction')
-    })
-  }
-  if (descriptor.representation) {
-    const source = modeFor(view.state, pos)?.representation === 'source'
-    addItem(source ? 'Visual' : 'Source', () => {
-      toggleBlockMode(view, pos, 'representation')
-    })
-  }
-  if (node.type.name !== 'encrypted_block') {
-    addItem('Encrypt block…', () => { void encryptBlockAt(view, pos) })
-  }
-  return entries
-}
-
-/** The top-level block's own wrapper element, for the items about its rendering. */
-function blockWrapperFor(view: ProseEditorView, target: Element): HTMLElement | null {
-  let el: Element | null = target
-  while (el && el !== view.dom && el.parentElement !== view.dom) {
-    el = el.parentElement
-  }
-  return el instanceof HTMLElement && el !== view.dom ? el : null
-}
-
-function encryptBlockCommand(): void {
-  const view = blockEditor.value?.getView()
-  if (!view) return
-  const selPos = view.state.selection.from
-  let blockPos = -1
-  view.state.doc.forEach((node, offset) => {
-    if (blockPos >= 0) return
-    if (selPos >= offset && selPos <= offset + node.nodeSize) blockPos = offset
-  })
-  if (blockPos < 0) return
-  void encryptBlockAt(view, blockPos)
-}
-
-async function encryptBlockAt(view: ReturnType<BlockEditor['getView']>, pos: number): Promise<void> {
-  const node = view.state.doc.nodeAt(pos)
-  if (!node) return
-  const labelResult = await promptForEncryptedBlockLabel(node.type.name)
-  if (labelResult === null) return
-  const label = labelResult.label
-  const lockImmediately = labelResult.lockImmediately
-  const password = await promptForNewPassword(label || node.type.name, { okText: 'Encrypt', title: 'Set password' })
-  if (password === null) return
-  const markdown = serializeBlock(node, formulaEnvFor(view.state))
-  const envelope = await encryptFieldVerified(markdown, password)
-  const encrypted = view.state.schema.nodes.encrypted_block.create({ type: node.type.name, label, content: envelope })
-  view.dispatch(view.state.tr.replaceWith(pos, pos + node.nodeSize, encrypted))
-  view.focus()
-  // Unless "Lock immediately" was chosen, freshly encrypted blocks arrive
-  // unlocked (no second lock).
-  if (!lockImmediately) unlockEncryptedBlockAt(view, pos, password)
-}
-
-function init(): void {
   // Document zoom is global and applied before the first paint of the editor.
   // The saved level comes from the shell, which injected it before this bundle
   // ran — so this read is synchronous, which is the only way an apply-here can
@@ -1532,139 +320,200 @@ function init(): void {
   // can edit. (It is not `localStorage`: the page's web profile is
   // off-the-record, so nothing stored there outlives the process. See
   // `src/preferences.ts`.)
-  documentZoom.value = clampZoom(currentPreferences().zoomFactor)
-  applyZoom(documentZoom.value)
-  updateZoomIndicator()
+  ctx.documentZoom = clampZoom(currentPreferences().zoomFactor)
+  applyZoom(ctx.documentZoom)
+  zoom.updateIndicator()
   // The hover band is on by default and read from the same place, before the
   // first paint for the same reason: the answer decides a pseudo-element's
   // existence, and a class added after the first hover would leave the first
   // hover band drawn for a reader who has already turned the band off.
   applyHoverBand(isHoverBandEnabled())
   setEncryptedBlockImageResolver(resolveImageFileUrl)
-  blockEditor.value = createBlockEditor(editorContainer, '', {
-    onOpenLink: openLink,
+  ctx.blockEditor = createBlockEditor(roots.editorContainer, '', {
+    onOpenLink: (href, text) => openLink(files, href, text),
     onChange: () => setActiveDirty(true),
-    onModeChange: renderModeChip,
+    onModeChange: (mode) => ctx.renderModeChip(mode),
     resolveImageSrc: resolveImageFileUrl,
   })
-  toolbar.value = new Toolbar(toolbarEl, { getView: () => focusedEditor() ?? blockEditor.value!.getView() }, [
-    { label: 'New', title: 'New (Ctrl+N)', markup: NEW_ICON, action: openNewTab },
-    { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => void openFile() },
-    { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => void saveFile() },
-    { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => void saveFileAs() },
+  ctx.tabs = new Tabs(roots.tabbar, {
+    getMarkdown(): string {
+      ctx.blockEditor?.commitSource()
+      return ctx.blockEditor?.getMarkdown() ?? ''
+    },
+    setMarkdown(value: string): void | Promise<void> {
+      return ctx.blockEditor?.setMarkdown(value)
+    },
+    createState(markdown: string): unknown {
+      return ctx.blockEditor?.createState(markdown)
+    },
+    getState(): unknown {
+      // Same tab boundary as getMarkdown: commit any in-progress source-mode
+      // content into the document before capturing the live editor state.
+      ctx.blockEditor?.commitSource()
+      return ctx.blockEditor?.getState()
+    },
+    setState(state: unknown): void | Promise<void> {
+      return ctx.blockEditor?.applyState(state as import('prosemirror-state').EditorState)
+    },
+    // Read at the snapshot boundary, not at the swap: see `TabContent.flush`.
+    flush(): void | Promise<void> {
+      return ctx.blockEditor?.flushReveals()
+    },
+    // A document replaced from outside is not a tab being left: see `discardPending`.
+    discardPending(): void {
+      ctx.blockEditor?.discardPending()
+    },
+    getScroll(): number {
+      return roots.editorContainer.scrollTop
+    },
+    setScroll(value: number): void {
+      roots.editorContainer.scrollTop = value
+    },
+  }, {
+    onNewTab: () => openNewTab(ctx),
+    onCloseTab: (id) => void closeTab(ctx, id),
+    onActivate: () => ctx.afterActivate(),
+  })
+  ctx.toolbar = new Toolbar(roots.toolbar, { getView: () => edit.focusedEditor() ?? ctx.blockEditor!.getView() }, [
+    { label: 'New', title: 'New (Ctrl+N)', markup: NEW_ICON, action: () => openNewTab(ctx) },
+    { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => void files.openFile() },
+    { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => void files.saveFile() },
+    { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => void files.saveFileAs() },
   ])
-  homeScreen.value = buildHomeScreen()
-  searchPanel.value = new SearchPanel({ getView: () => focusedEditor() })
-  registerShortcuts()
+  ctx.homeScreen = buildHomeScreen(ctx, files)
+  ctx.searchPanel = new SearchPanel({ getView: () => edit.focusedEditor() })
+  const removeShortcuts = registerShortcuts(ctx, edit, files, zoom)
   // On `window`, not `#editor-container`: the start screen has no editor and
   // must zoom too, and a wheel that reached neither would fall through to
   // Chromium's whole-page zoom (which scales the status bar with it).
-  window.addEventListener('wheel', onZoomWheel, { passive: false })
-  statusZoom.addEventListener('click', () => setZoom(DEFAULT_ZOOM))
+  const onWheel = (event: WheelEvent): void => zoom.onWheel(event)
+  window.addEventListener('wheel', onWheel, { passive: false })
+  const resetZoom = (): void => zoom.set(DEFAULT_ZOOM)
+  roots.statusZoom.addEventListener('click', resetZoom)
   // Right-click opens a custom menu (the browser's native one is suppressed by
   // the desktop shell). On the home screen there is no document to act on.
-  editorContainer.addEventListener('contextmenu', (event) => {
+  const onContextMenu = (event: MouseEvent): void => {
     if (getState().sessions.length === 0) return
     event.preventDefault()
-    const entries = buildContextMenu(event)
+    const entries = menus.buildContextMenu(event)
     if (entries.length === 0) return
     const target = event.target instanceof Element ? event.target : null
     const preserveFocus =
       target !== null && target.closest('.ss-edit-input, .ss-fx-input') !== null
-    contextMenu.value ??= new ContextMenu()
-    contextMenu.value.show(entries, event.clientX, event.clientY, { preserveFocus })
-  })
+    ctx.contextMenu ??= new ContextMenu()
+    ctx.contextMenu.show(entries, event.clientX, event.clientY, { preserveFocus })
+  }
+  roots.editorContainer.addEventListener('contextmenu', onContextMenu)
   // Drive content from the native shell (QWebChannel): the desktop shell loads
   // documents and the smoke/selftest harness drives headless runs via this hook.
-  window.ediSetContent = (markdown: string) => {
+  const setContent = (markdown: string): void => {
     if (getState().sessions.length === 0) {
       // A document arrived on the home screen: create a tab for it.
-      tabs.addSession(markdown)
+      ctx.tabs.addSession(markdown)
     } else {
       // Loads the document into the current tab, scrolled to the top. The
       // scroll is `setActiveContent`'s to apply: it settles the scroll on the
       // document that has *arrived*, and a swap that had to wait would
       // otherwise leave the reader at the top of the one being left.
-      tabs.setActiveContent(markdown)
+      ctx.tabs.setActiveContent(markdown)
     }
-    tabs.snapshotActive()
+    ctx.tabs.snapshotActive()
   }
+  window.ediSetContent = setContent
   bindMenuCommands({
-    new: () => openNewTab(),
-    open: () => void openFile(),
-    save: () => void saveFile(),
-    saveAs: () => void saveFileAs(),
-    rename: () => void renameFile(),
-    revert: () => void revertFile(),
-    importTable: () => void importTable(),
-    importText: () => void importTextFile(),
-    insertImage: () => void insertImage(),
-    insertTableDefault: () => void insertTableDefault(),
-    insertKanban: () => void insertKanban(),
-    export: () => void exportHtml(),
-    toggleToolbar: () => toggleToolbar(),
-    toggleHoverBand: () => toggleHoverBand(),
-    zoomIn: () => setZoom(zoomIn(documentZoom.value)),
-    zoomOut: () => setZoom(zoomOut(documentZoom.value)),
-    zoomReset: () => setZoom(DEFAULT_ZOOM),
-    zoomTo: (level) => zoomTo(level),
-    formulaReference: () => openFunctionReference(),
-    helpGuide: () => openHelpGuide(),
-    undo: () => editUndoNoScroll(),
-    redo: () => editRedoNoScroll(),
-    cut: () => editCut(),
-    copy: () => editCopy(),
-    copyAsMarkdown: () => copyAsMarkdown(),
-    paste: () => void editPaste(),
-    pasteAsMarkdown: () => void pasteAsMarkdownCommand(),
-    selectAll: () => editSelectAll(),
-    encryptBlock: () => void encryptBlockCommand(),
-    find: () => openSearch(),
-    replace: () => openSearch(true),
+    new: () => openNewTab(ctx),
+    open: () => void files.openFile(),
+    save: () => void files.saveFile(),
+    saveAs: () => void files.saveFileAs(),
+    rename: () => void files.renameFile(),
+    revert: () => void files.revertFile(),
+    importTable: () => void files.importTable(),
+    importText: () => void files.importTextFile(),
+    insertImage: () => void files.insertImage(),
+    insertTableDefault: () => void insertTableDefault(ctx),
+    insertKanban: () => void insertKanban(ctx),
+    export: () => void files.exportHtml(),
+    toggleToolbar: () => toggleToolbar(ctx),
+    toggleHoverBand: () => toggleHoverBand(ctx),
+    zoomIn: () => zoom.set(zoomIn(ctx.documentZoom)),
+    zoomOut: () => zoom.set(zoomOut(ctx.documentZoom)),
+    zoomReset: () => zoom.set(DEFAULT_ZOOM),
+    zoomTo: (level) => zoom.setFromLevel(level),
+    formulaReference: () => openFunctionReference(ctx),
+    helpGuide: () => openHelpGuide(ctx),
+    undo: () => edit.undo(),
+    redo: () => edit.redo(),
+    cut: () => edit.cut(),
+    copy: () => edit.copy(),
+    copyAsMarkdown: () => edit.copyAsMarkdown(),
+    paste: () => void edit.paste(),
+    pasteAsMarkdown: () => void edit.pasteAsMarkdown(),
+    selectAll: () => edit.selectAll(),
+    encryptBlock: () => void menus.encryptBlockCommand(),
+    find: () => openSearch(ctx),
+    replace: () => openSearch(ctx, true),
     openRecent: (path) => {
-      if (path) void openDocument(path)
+      if (path) void files.openDocument(path)
     },
-    copyFilePath: () => copyFilePath(),
+    copyFilePath: () => files.copyFilePath(),
   })
-  startThemeWatcher()
-  subscribe(() => {
-    updateView()
-    updateTitle()
-    updateStatus()
-    syncDirty()
-    syncMenuState()
+  const stopTheme = startThemeWatcher()
+  const unsubscribeState = subscribe(() => {
+    ctx.updateView()
+    ctx.updateTitle()
+    ctx.updateStatus()
+    ctx.syncDirty()
+    ctx.syncMenuState()
     // Re-base an open search on the newly activated/swapped document.
-    searchPanel.value?.refresh()
+    ctx.searchPanel?.refresh()
   })
   // Re-resolve relative image references when the active document's path
   // changes (e.g. Save As into a different directory) so they keep pointing at
   // the current document's directory.
   let lastImagePath: string | null = getActive()?.path ?? null
-  subscribe(() => {
+  const unsubscribeImages = subscribe(() => {
     const path = getActive()?.path ?? null
     if (path !== lastImagePath) {
       lastImagePath = path
-      blockEditor.value?.resolveImages()
+      ctx.blockEditor?.resolveImages()
     }
   })
-  if (IS_SELFTEST) {
+  if (ctx.selftest) {
     // The packaged smoke test probes the rendered editor + mermaid diagram, so
     // boot the welcome document into a tab instead of the home screen.
-    openWelcome()
+    openWelcome(ctx)
   }
-  refreshRecents()
+  files.refreshRecents()
   // Register the shell-event listener *before* asking for pending files: an
   // open event that arrives during boot is queued by the shell until the first
   // getPendingFiles call marks this page ready, so neither path can lose it.
-  onBridgeReady((bridge) => bridge?.notify?.connect(onNativeEvent))
+  onBridgeReady((bridge) => {
+    if (disposed) return
+    nativeBridge = bridge
+    bridge?.notify?.connect(files.onNativeEvent)
+  })
   // Open any document Edi was launched with (silently ignored when there is
   // no native shell, e.g. plain `vite dev` in a browser).
-  void openPendingFiles()
+  void files.openPendingFiles()
   // The subscribe() below only runs on state transitions; boot has none, so
   // render the initial view (home) explicitly.
-  updateView()
-  syncDirty()
-  afterActivate()
-}
+  ctx.updateView()
+  ctx.syncDirty()
+  ctx.afterActivate()
 
-init()
+  return () => {
+    disposed = true
+    removeShortcuts()
+    window.removeEventListener('wheel', onWheel)
+    roots.statusZoom.removeEventListener('click', resetZoom)
+    roots.editorContainer.removeEventListener('contextmenu', onContextMenu)
+    unsubscribeState()
+    unsubscribeImages()
+    nativeBridge?.notify?.disconnect?.(files.onNativeEvent)
+    stopTheme()
+    ctx.contextMenu?.hide()
+    ctx.blockEditor?.destroy()
+    ctx.tabs.destroy()
+    if (window.ediSetContent === setContent) delete window.ediSetContent
+  }
+}

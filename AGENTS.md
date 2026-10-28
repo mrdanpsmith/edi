@@ -124,7 +124,7 @@ the container-specific quirks are in [docs/development.md](docs/development.md).
 
 | Path | Contents |
 | --- | --- |
-| `src/` | TypeScript frontend; `main.ts` is the page entry point. |
+| `src/` | TypeScript frontend; `entry.ts` is the page entry point and `main.ts` owns `init` plus the app shell. |
 | `backend/` | Python shell, bridge, menus, file IO, execution and preferences. |
 | `shared/edi-contract.json` | Cross-language names and preference defaults. |
 | `tests/` | Python tests, including real-WebEngine tests in `test_window.py`. |

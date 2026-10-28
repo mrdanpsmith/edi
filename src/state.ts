@@ -96,3 +96,13 @@ function emit(): void {
     listener(snapshot)
   }
 }
+
+/**
+ * Remove every session and reset the id sequence. Tests boot the app more than
+ * once in a process; production boots it once and never calls this.
+ */
+export function resetState(): void {
+  sessions.length = 0
+  activeId.value = ''
+  nextId.value = 1
+}

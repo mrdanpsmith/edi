@@ -112,7 +112,7 @@ ready, then pushes:
 {"type": "openFiles", "paths": ["…"]}
 ```
 
-over `notify`. `src/main.ts` opens them as tabs in the existing window.
+over `notify`. `src/fileController.ts` opens them as tabs in the existing window.
 
 ## Release plumbing
 

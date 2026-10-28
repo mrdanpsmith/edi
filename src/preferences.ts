@@ -81,3 +81,11 @@ export function savePreference<K extends keyof Preferences>(name: K, value: Pref
   current[name] = value
   void invoke('setPreference', { name, value }).catch(() => undefined)
 }
+
+/**
+ * Re-read the injected snapshot. Tests that boot a page with different
+ * preferences use this; production reads it once at module load.
+ */
+export function resetPreferences(): void {
+  Object.assign(current, injected())
+}
