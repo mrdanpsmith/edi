@@ -1,0 +1,71 @@
+# Runs the real-Mermaid label probe when Mermaid itself or its editing layer
+# changes. Mermaid's SVG output and grammar are undocumented dependencies; the
+# probe renames every label the UI offers and fails if one no longer resolves.
+#
+# Path-filtered so an ordinary change does not pay for a WebEngine build. A
+# package-lock.json change triggers it too: that is how a Mermaid upgrade
+# arrives, and the exact `mermaid` pin in package.json makes the upgrade a
+# deliberate commit rather than a floating minor.
+
+name: Mermaid label probe
+
+on:
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - src/mermaid-*.ts
+      - src/node/mermaid.ts
+      - scripts/mermaid-label-probe.py
+      - tests/harness_loader.py
+      - tests/mermaid_render.py
+      - tests/fixtures/mermaid-templates.md
+      - .github/workflows/mermaid-probe.yml
+  push:
+    branches:
+      - main
+      - 'release/**'
+    paths:
+      - package.json
+      - package-lock.json
+      - src/mermaid-*.ts
+      - src/node/mermaid.ts
+      - scripts/mermaid-label-probe.py
+      - tests/harness_loader.py
+      - tests/mermaid_render.py
+      - tests/fixtures/mermaid-templates.md
+      - .github/workflows/mermaid-probe.yml
+  workflow_dispatch: {}
+
+concurrency:
+  group: mermaid-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  QTWEBENGINE_DISABLE_SANDBOX: "1"
+  QTWEBENGINE_CHROMIUM_FLAGS: "--disable-dev-shm-usage --disable-gpu"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash --noprofile --norc -e -o pipefail {0}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Link baked venv (read-only image layer)
+        run: ln -s /opt/edi/venv .venv
+      - name: Install frontend deps
+        run: npm ci --no-audit --no-fund
+      - name: Build frontend
+        run: npm run build
+      - name: Probe every offered Mermaid label
+        run: .venv/bin/python scripts/mermaid-label-probe.py
