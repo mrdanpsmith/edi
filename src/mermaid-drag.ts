@@ -1,6 +1,8 @@
 import type { DiagramSession, RenderScope } from './mermaid-session'
 import {
+  findKanbanItem,
   isKanbanCardSlot,
+  kanbanItemKey,
   moveKanbanCard,
   moveKanbanColumn,
   removeKanbanCard,
@@ -434,12 +436,17 @@ function kanbanTrash(drag: ArmedDrag): KanbanTrash {
       const column = card === undefined ? 'this column' : doc.lines[doc.columns[card.column]]?.label ?? 'this column'
       // Asked first and patched after: the prompt is up long enough for an undo
       // to have happened under it, so the patch is a function of the source read
-      // once the answer is in rather than a string computed before the question.
+      // once the answer is in rather than a string computed before the question —
+      // and the card is found in it by what it is, not by where it was drawn.
+      const key = kanbanItemKey(doc, 'card', from)
       void confirmThen(
         session,
         `“${title}”`,
         `It is removed from the ${column} column.`,
-        (source) => removeKanbanCard(source, from),
+        (source) => {
+          const at = findKanbanItem(source, key)
+          return at < 0 ? null : removeKanbanCard(source, at)
+        },
       )
     },
   }
@@ -750,7 +757,15 @@ function armCardDrag(drag: ArmedDrag, trash: KanbanTrash): void {
         const from = drag.from
         const { siblings } = dropColumn(doc, cards, column, from)
         const at = dropIndex(event, siblings)
-        session.patch((source) => moveKanbanCard(source, from, column, at))
+        // Read off this drawing, applied to the source as it is now (a previous
+        // drop may not have re-rendered yet): both ends are found again by key.
+        const card = kanbanItemKey(doc, 'card', from)
+        const into = kanbanItemKey(doc, 'column', column)
+        session.patch((source) => {
+          const cardNow = findKanbanItem(source, card)
+          const columnNow = findKanbanItem(source, into)
+          return cardNow < 0 || columnNow < 0 ? null : moveKanbanCard(source, cardNow, columnNow, at)
+        })
       },
     },
     { before: itemLayer(svg) },
@@ -793,7 +808,11 @@ function armColumnDrag(drag: ArmedDrag): void {
         if (!moved) return
         const { rest } = dropSections(sections, from, scope.slots?.column ?? -1)
         const at = columnSlotAt(event, rest)
-        session.patch((source) => moveKanbanColumn(source, from, at))
+        const key = kanbanItemKey(doc, 'column', from)
+        session.patch((source) => {
+          const now = findKanbanItem(source, key)
+          return now < 0 ? null : moveKanbanColumn(source, now, at)
+        })
       },
     },
     // Carried, not grown, and held in a group of its own: the frame and its cards

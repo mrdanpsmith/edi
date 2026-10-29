@@ -1375,6 +1375,15 @@ function sourceCaret(state: EditorState, tr: Transaction, blockPos: number): num
 export function enterSourceMode(view: EditorView, pos: number): void {
   const mode = currentBlockMode(view.state)
   if (mode !== null && mode.pos === pos && mode.representation === 'source') return
+  // A block switched to its source *from its own editing layer* — a diagram's
+  // Source control pressed with a label field open — leaves that layer first,
+  // through the subsystem: the control cancels the press, so the field is never
+  // blurred, and the mode change would otherwise be dispatched with the field
+  // still open and its commit arriving from inside the next render. The block's
+  // own edit cannot move where the block starts, so `pos` still names it.
+  if (mode !== null && mode.pos === pos && mode.interaction === 'editing') {
+    BLOCK_MODE_HANDLERS[mode.type]?.exit?.(view, pos)
+  }
   const at = releaseSourceBlock(view, pos)
 
   const tr = view.state.tr

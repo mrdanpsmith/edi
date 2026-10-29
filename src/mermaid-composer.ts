@@ -9,7 +9,7 @@ import {
   detectDiagramType,
 } from './kanban-model'
 import type { KanbanDoc } from './kanban-model'
-import { patchLabel, diagramFamily, type LabelTarget, type LabelRef, type DiagramFamily, labelElementIn } from './mermaid-patch'
+import { patchLabel, diagramFamily, graphLabelRefusal, type LabelTarget, type LabelRef, type DiagramFamily, labelElementIn } from './mermaid-patch'
 import { cardPieces, sectionGroupOf } from './mermaid-dom'
 import { effectiveZoom } from './zoom'
 
@@ -346,6 +346,8 @@ function commitRename(session: DiagramSession, index: number, value: string): bo
   // board would sit on its last good render with the title the user just typed
   // on no screen anywhere.
   if (family === 'kanban' && !usableKanbanLabel(value)) return kanbanLabelRefusal(value)
+  const refusal = family === 'graph' ? graphLabelRefusal(value) : null
+  if (refusal !== null) return refusal
   const outcome = patchLabel(session.source, family, target.text, value, target)
   if (outcome.status !== 'ok') return outcome.status === 'ambiguous'
   session.patch(() => outcome.text)

@@ -349,6 +349,24 @@ The same holds wherever mermaid drew the source's text inside something else:
 So `sourceText` is the source's spelling of whatever the mapper's span covers,
 and the input holds exactly what a commit replaces.
 
+A repeated label is told apart by *which copy it is*: `pickCopy` pairs the k-th
+drawn copy with the k-th span in the source. That only works if the targets are
+listed in source order, so kanban targets are sorted by source line: drawn, a
+board lists every header before every card, and a column and a card sharing a
+name would each rename the other.
+
+What a rename writes has to parse:
+
+- **Flowchart** labels are written by `graphLabel`. A label with shape or edge
+  syntax is quoted (`A["Fix (bug)"]`), a `"` inside quotes is `#quot;`, a label
+  the source already quotes keeps its quotes, and an empty label is refused
+  (`graphLabelRefusal`).
+- **Kanban** titles go through `kanbanInnerLabel`/`kanbanQuotedLabel`, and a
+  styled title (`[**Bold**]`) is edited inside its markers but written back
+  whole, so quoting wraps the markers too: `["**Fix (bug)**"]`.
+
+Other families write the typed text as it is.
+
 That is also why the editor resolves from `target.text` and not from the edited
 text: a row is *found* by the row mermaid drew, and only its value is
 rewritten. A typed value alone would leave the mapper nothing to find.
@@ -434,6 +452,20 @@ A card's title is `editCardTitle()`, which differs in two ways:
 - the commit is `addKanbanCard` rather than `patchLabel`, with the slot found
   again by its **reserved id** in the source as it is at commit time, rather
   than by an index read off a drawing that may be a render behind the document.
+
+The same rule holds for deleting and moving cards and columns. The press is read
+off the drawing, but the edit lands after a confirmation or behind a drop whose
+render has not arrived, so the item is captured as a `KanbanItemKey` (its source
+line, and which copy of that line) and found again with `findKanbanItem` in the
+source the patch is handed. An item that is gone by then makes the patch a
+no-op.
+
+A field that **refuses** its value (an empty kanban title) stays open and keeps
+the session's phase. Leaving edit mode or ending the session offers it its
+commit, and discards it if it refuses again. `enterSourceMode` on a block in its
+own editing layer calls the block's `exit` handler first, so a field the Source
+control did not blur is resolved before the mode moves. A render that lands
+mid-drag cancels the drag, because the elements it holds are gone.
 
 ## Real-engine tests
 

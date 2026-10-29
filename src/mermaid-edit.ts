@@ -295,6 +295,10 @@ function attachEditingLayer(session: DiagramSession, svg: SVGSVGElement, source:
   const container = session.preview
   const family = diagramFamily(detectDiagramType(source))
   const scope = buildScope(svg, source, family)
+  // A drag holds the previous drawing's own elements and its window listeners
+  // go on moving them, so a render that replaced them ends it (as a cancel).
+  // A field is the one interaction that outlives a render: it re-anchors.
+  if (session.phase === 'drag') session.finish(false)
   session.reset()
   session.adopt(scope)
   session.setEditing(true)

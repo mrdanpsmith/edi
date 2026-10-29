@@ -644,6 +644,50 @@ function columnBlock(doc: KanbanDoc, column: number): { start: number; end: numb
 }
 
 /**
+ * What a card or column *is*, independent of where it is drawn: its source line,
+ * and which copy of that line it is when the board repeats one.
+ *
+ * A press is read off the board on screen, but its edit is applied to the source
+ * as it is when the edit lands — after a confirmation, an undo under the prompt,
+ * or a previous drag whose re-render has not arrived. An index from the drawing
+ * would by then name a different card. A key is looked up again in that source,
+ * and finds nothing (so the edit is dropped) when the item is gone.
+ */
+export interface KanbanItemKey {
+  kind: 'card' | 'column'
+  text: string
+  copy: number
+}
+
+function itemLines(doc: KanbanDoc, kind: KanbanItemKey['kind']): number[] {
+  return kind === 'card' ? doc.cards.map((card) => card.line) : doc.columns
+}
+
+/** The key of the `index`-th card or column of `doc`, or null if there is none. */
+export function kanbanItemKey(doc: KanbanDoc, kind: KanbanItemKey['kind'], index: number): KanbanItemKey | null {
+  const lines = itemLines(doc, kind)
+  const line = lines[index]
+  if (line === undefined) return null
+  const text = doc.lines[line]!.text.trim()
+  const copy = lines.slice(0, index).filter((other) => doc.lines[other]!.text.trim() === text).length
+  return { kind, text, copy }
+}
+
+/** Where the item `key` names is in `source` now, or -1 when it is gone. */
+export function findKanbanItem(source: string, key: KanbanItemKey | null): number {
+  if (key === null) return -1
+  const doc = parseKanban(source)
+  let seen = 0
+  const lines = itemLines(doc, key.kind)
+  for (let index = 0; index < lines.length; index++) {
+    if (doc.lines[lines[index]!]!.text.trim() !== key.text) continue
+    if (seen === key.copy) return index
+    seen++
+  }
+  return -1
+}
+
+/**
  * Remove a card, or `null` when there is no such card or the removal would not
  * change the source. Like every other edit here it drops a whole line, so a
  * comment or a blank line the user wrote around the card is left where it was,

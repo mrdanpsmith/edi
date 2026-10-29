@@ -23,6 +23,14 @@ export { cardElements, labelElementIn, sectionElements }
 interface Span {
   start: number
   end: number
+  /**
+   * For a label drawn inside emphasis markers (`[**Bold**]`): the span above is
+   * the text the user edits, `marks` the markers kept around it, and `outer` the
+   * whole label they are written back over — quoted as one, so a title that
+   * needs quotes becomes `["**Fix (bug)**"]`, not `[**"Fix (bug)"**]`.
+   */
+  marks?: string
+  outer?: { start: number; end: number }
 }
 
 export function diagramFamily(type: string): DiagramFamily {
@@ -113,16 +121,29 @@ export function labelTargets(svg: SVGSVGElement, family: DiagramFamily, source: 
   if (family === 'kanban') {
     // Kanban renders three label slots per card (title, spacer, assignee) and
     // only the first is the card's own text; a section's label is its header.
-    for (const section of sectionElements(svg)) {
+    //
+    // The targets are put in **source line order**, not drawing order (all
+    // headers, then all cards): `pickCopy` pairs the k-th drawn copy of a text
+    // with the k-th in the source, so a column and a card sharing a label
+    // would otherwise each rename the other.
+    const doc = parseKanban(source)
+    const ordered: Array<{ line: number; target: LabelTarget }> = []
+    sectionElements(svg).forEach((section, index) => {
       const label = labelElementIn(bandHeaderIn(section) ?? section)
       const text = label && labelTextOf(label)
-      if (label && text) targets.push({ el: label, text, role: 'text', occurrence: 0, count: 1 })
-    }
-    for (const card of cardElements(svg)) {
+      if (label && text) {
+        ordered.push({ line: doc.columns[index] ?? Infinity, target: { el: label, text, role: 'text', occurrence: 0, count: 1 } })
+      }
+    })
+    cardElements(svg).forEach((card, index) => {
       const label = labelElementIn(card)
       const text = label && labelTextOf(label)
-      if (label && text) targets.push({ el: label, text, role: 'text', occurrence: 0, count: 1 })
-    }
+      if (label && text) {
+        ordered.push({ line: doc.cards[index]?.line ?? Infinity, target: { el: label, text, role: 'text', occurrence: 0, count: 1 } })
+      }
+    })
+    ordered.sort((a, b) => a.line - b.line)
+    targets.push(...ordered.map((entry) => entry.target))
     return editable(indexTargets(targets), family, source)
   }
 
@@ -228,12 +249,13 @@ function escapeRe(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function replaceSpans(source: string, spans: Span[], next: string): string {
+function replaceSpans(source: string, spans: Span[], next: (span: Span) => string): string {
   let out = ''
   let cursor = 0
   for (const span of spans) {
-    out += source.slice(cursor, span.start) + next
-    cursor = span.end
+    const range = span.outer ?? span
+    out += source.slice(cursor, range.start) + next(span)
+    cursor = range.end
   }
   return out + source.slice(cursor)
 }
@@ -253,7 +275,7 @@ interface MapperResult {
    * the source as `verifymethod: test`, so the key is part of the label on
    * screen and none of it is part of the text being replaced.
    */
-  render?: (newLabel: string) => string
+  render?: (newLabel: string, span: Span) => string
 }
 
 /**
@@ -272,6 +294,26 @@ function graphNodeSpans(source: string, label: string): MapperResult {
     spans.push({ start, end: start + match[2].length })
   }
   return { spans }
+}
+
+/** Characters that end or reshape a bare flowchart label (`A[x]`, `-->|x|`). */
+const GRAPH_LABEL_SYNTAX = /[[\](){}<>|"#;]/
+
+/**
+ * A flowchart label as source. A label already written in quotes keeps them;
+ * a bare one is quoted only when it holds shape or edge syntax, so `Fix (bug)`
+ * becomes `"Fix (bug)"` rather than closing its own node. Inside quotes a `"`
+ * is mermaid's `#quot;` entity.
+ */
+function graphLabel(label: string, quoted: boolean): string {
+  const escaped = label.replace(/"/g, '#quot;')
+  if (quoted) return escaped
+  return GRAPH_LABEL_SYNTAX.test(label) || label !== label.trim() ? `"${escaped}"` : label
+}
+
+/** A rename the flowchart grammar cannot write: an empty label (`A[]`). */
+export function graphLabelRefusal(value: string): string | null {
+  return value.trim() === '' ? 'A label cannot be empty' : null
 }
 
 /** Span of an edge label: `A -->|Old| B`, `A -- Old --> B`, `A-. Old .-> B`, `A == Old ==> B`. */
@@ -428,7 +470,12 @@ function kanbanSpans(source: string, label: string): MapperResult {
       // The markers are drawn as elements, so when the user edits the inner
       // text they stay in the source and the emphasis survives the rename.
       const innerOffset = (isQuoted ? 1 : 0) + marks[1].length
-      spans.push({ start: line.labelStart + innerOffset, end: line.labelEnd - innerOffset })
+      spans.push({
+        start: line.labelStart + innerOffset,
+        end: line.labelEnd - innerOffset,
+        marks: marks[1],
+        outer: { start: line.labelStart, end: line.labelEnd },
+      })
     } else {
       spans.push({ start: line.labelStart, end: line.labelEnd })
     }
@@ -681,7 +728,10 @@ function familyMapper(
 ): MapperResult | null {
   switch (family) {
     case 'graph':
-      return mergeSpans(graphNodeSpans(source, ref.text), graphEdgeSpans(source, ref.text))
+      return {
+        ...mergeSpans(graphNodeSpans(source, ref.text), graphEdgeSpans(source, ref.text)),
+        render: (label, span) => graphLabel(label, source[span.start - 1] === '"' && source[span.end] === '"'),
+      }
     case 'sequence':
       return sequenceSpans(source, ref.text)
     case 'kanban':
@@ -835,7 +885,10 @@ export function patchLabel(
   })
   if (resolved === 'ambiguous') return { status: 'ambiguous' }
   if (resolved === null) return { status: 'unmapped' }
-  const next = resolved.render?.(newLabel) ?? newLabel
+  const next = (span: Span): string => {
+    const label = span.marks ? `${span.marks}${newLabel}${span.marks}` : newLabel
+    return resolved.render?.(label, span) ?? label
+  }
   return { status: 'ok', text: replaceSpans(source, resolved.spans, next) }
 }
 

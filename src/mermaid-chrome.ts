@@ -26,8 +26,10 @@ import {
 } from './mermaid-edit'
 import type { ChromeBox } from './mermaid-edit'
 import {
+  findKanbanItem,
   isKanbanCardSlot,
   kanbanColumnCount,
+  kanbanItemKey,
   removeKanbanColumn,
 } from './kanban-model'
 import type { KanbanDoc } from './kanban-model'
@@ -217,6 +219,7 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
     // board is drawn with is not one of them.
     if (kanbanColumnCount(session.source) > 1) {
       const taken = cardsIn(column)
+      const columnKey = kanbanItemKey(doc, 'column', column)
       actions.push({
         // The name is the *dialog's* to say, not the item's: the prompt is where a
         // delete is confirmed, so that is where "which one" has to be answered,
@@ -231,7 +234,12 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
             taken === 0
               ? 'The column is removed from the board.'
               : `Its ${taken} card${taken === 1 ? '' : 's'} go with it.`,
-            (source) => removeKanbanColumn(source, column),
+            // Found again by key in the source the answer lands on: an undo
+            // under the prompt can have moved the columns.
+            (source) => {
+              const now = findKanbanItem(source, columnKey)
+              return now < 0 ? null : removeKanbanColumn(source, now)
+            },
           ),
       })
     }

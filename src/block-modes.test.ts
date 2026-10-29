@@ -16,6 +16,7 @@ import {
   BLOCK_MODE_CLASS,
   BLOCK_MODE_EDITING_CLASS,
   BLOCK_MODE_FORM_CLASS,
+  BLOCK_MODE_HANDLERS,
   BLOCK_MODE_KEY,
   BLOCK_MODE_SOURCE_CLASS,
   BLOCK_MODE_VISUAL_CLASS,
@@ -938,6 +939,25 @@ it('still hands an Alt+click on a real control to that control', () => {
     altClick(view.dom.querySelector<HTMLElement>('.mermaid')!)
     expect(modeFor(view.state, board)).toBeNull()
     view.destroy()
+  })
+
+  it('leaves a diagram editing layer through its handler before opening its source', () => {
+    // The Source control cancels its press, so an open label field is never
+    // blurred: the subsystem has to resolve it before the mode moves.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    const [board] = allBlockPositions(view)
+    enterDiagramEditMode(view, board)
+    const handlers = BLOCK_MODE_HANDLERS.mermaid_block!
+    const exit = vi.spyOn(handlers, 'exit')
+    try {
+      enterSourceMode(view, board)
+      expect(exit).toHaveBeenCalledWith(view, board)
+      expect(modeFor(view.state, board)?.representation).toBe('source')
+      expect(modeFor(view.state, board)?.interaction).not.toBe('editing')
+    } finally {
+      exit.mockRestore()
+      view.destroy()
+    }
   })
 
   it('does nothing for a press on a block with no modes of its own', () => {

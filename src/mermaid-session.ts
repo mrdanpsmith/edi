@@ -385,7 +385,7 @@ export class DiagramSession {
       this.editingOn = true
       return
     }
-    this.finish(accept)
+    this.finishAndCloseField(accept)
     this.reset()
     this.editingOn = false
   }
@@ -413,8 +413,24 @@ export class DiagramSession {
   finish(accept: boolean): void {
     const open = this.interaction
     if (open === null) return
+    const field = this.field
     this.interaction = null
     open.finish(accept)
+    // A field that refused its value stays open with it (see `openField`), so it
+    // still holds the phase: otherwise the block reads as idle with a field on
+    // it, and a drag or a second field would arm over the first.
+    if (field !== null && this.field === field && this.interaction === null) this.interaction = open
+  }
+
+  /**
+   * Finish what is open and make sure no field survives it. Leaving edit mode
+   * offers an open field its commit first; a value the field then refuses (an
+   * empty kanban title) cannot stay on a board that is no longer being edited,
+   * so it is discarded — its refusal notice has said why.
+   */
+  private finishAndCloseField(accept: boolean): void {
+    this.finish(accept)
+    this.field?.close()
   }
 
   /** Whether a field is open, which is what a drag asks before it arms. */
@@ -456,7 +472,7 @@ export class DiagramSession {
     if (this.ended) return
     // Finished *before* the block is marked as over, so a field accepted on the
     // way out can still commit.
-    this.finish(accept)
+    this.finishAndCloseField(accept)
     this.ended = true
     this.reset()
     if (this.frame) cancelAnimationFrame(this.frame)

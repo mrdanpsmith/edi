@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fireResizeCallbacks, flushFrames } from './test-setup'
+import { graphLabelRefusal, labelTargets } from './mermaid-patch'
 import {
   addKanbanCard,
   attachMermaidEditing,
   buildKanbanSource,
   detectDiagramType,
+  findKanbanItem,
   finishMermaidLabelEditing,
+  kanbanItemKey,
   KANBAN_CARD_SLOT,
   KANBAN_COLUMN_SLOT,
   kanbanAuthoringSource,
@@ -169,6 +172,24 @@ describe('patchLabel: flowchart', () => {
       ok('graph TD\n  A -- go --> Beta\n  Beta[Gamma]'),
     )
   })
+
+  it('quotes a new label that holds shape syntax, so the source still parses', () => {
+    expect(patchLabel('graph TD\n  A[Old]', family, 'Old', 'Fix (bug) "q" ]')).toEqual(
+      ok('graph TD\n  A["Fix (bug) #quot;q#quot; ]"]'),
+    )
+    expect(patchLabel('graph TD\n  A -->|Yes| B', family, 'Yes', 'a|b')).toEqual(
+      ok('graph TD\n  A -->|"a|b"| B'),
+    )
+    // Already quoted: the quotes stay, and only a `"` needs escaping.
+    expect(patchLabel('graph TD\n  A["Old"]', family, 'Old', 'say "hi"')).toEqual(
+      ok('graph TD\n  A["say #quot;hi#quot;"]'),
+    )
+  })
+
+  it('refuses an empty label, which no flowchart shape can hold', () => {
+    expect(graphLabelRefusal('  ')).not.toBeNull()
+    expect(graphLabelRefusal('x')).toBeNull()
+  })
 })
 
 describe('patchLabel: sequence', () => {
@@ -266,6 +287,36 @@ describe('patchLabel: kanban', () => {
     const quoted = 'kanban\n  Todo\n    id1["He said &quot;hi&quot;"]'
     expect(patchLabel(quoted, family, 'He said "hi"', 'Bye "now"')).toEqual(
       ok('kanban\n  Todo\n    id1["Bye &quot;now&quot;"]'),
+    )
+  })
+
+  it('quotes a styled label around its markers, not inside them', () => {
+    expect(patchLabel('kanban\n  Todo\n    id1[**Bold**]', family, 'Bold', 'Fix (bug)')).toEqual(
+      ok('kanban\n  Todo\n    id1["**Fix (bug)**"]'),
+    )
+    expect(patchLabel('kanban\n  Todo\n    id1["**B (x)**"]', family, 'B (x)', 'New')).toEqual(
+      ok('kanban\n  Todo\n    id1["**New**"]'),
+    )
+    expect(patchLabel('kanban\n  Todo\n    id1[*Plain*]', family, 'Plain', 'Other')).toEqual(
+      ok('kanban\n  Todo\n    id1[*Other*]'),
+    )
+  })
+
+  it('renames the column, not a card above it with the same text', () => {
+    // Drawn: both headers, then the card. In the source the card sits between
+    // the headers, so pairing copies in drawing order swapped the two.
+    const board = 'kanban\n  a[Todo]\n    c1[Done]\n  b[Done]'
+    const host = document.createElement('div')
+    host.innerHTML = boardSvg(['Todo', 'Done'], ['Done'])
+    const svg = host.querySelector('svg') as SVGSVGElement
+    const targets = labelTargets(svg, family, board)
+    const column = targets.find((t) => t.text === 'Done' && t.el.closest('.cluster'))!
+    const card = targets.find((t) => t.text === 'Done' && !t.el.closest('.cluster'))!
+    expect(patchLabel(board, family, 'Done', 'Shipped', column)).toEqual(
+      ok('kanban\n  a[Todo]\n    c1[Done]\n  b[Shipped]'),
+    )
+    expect(patchLabel(board, family, 'Done', 'Shipped', card)).toEqual(
+      ok('kanban\n  a[Todo]\n    c1[Shipped]\n  b[Done]'),
     )
   })
 
@@ -580,6 +631,32 @@ describe('parseKanban', () => {
     const doc = parseKanban('kanban\nTodo\nid1[Card]')
     expect(doc.lines.map((line) => line.kind)).toEqual(['header', 'column', 'column'])
     expect(doc.cards).toEqual([])
+  })
+})
+
+describe('kanban item keys', () => {
+  const drawn = 'kanban\n  Todo\n    a[One]\n    b[Two]\n  Done\n    c[Two]'
+
+  it('finds a card again after the source moved under it', () => {
+    const key = kanbanItemKey(parseKanban(drawn), 'card', 1)
+    // An undo put a card above it: the drawn index 1 now names `a[One]`'s
+    // neighbour, but the key still finds `b[Two]`.
+    const now = 'kanban\n  Todo\n    z[New]\n    a[One]\n    b[Two]\n  Done\n    c[Two]'
+    expect(findKanbanItem(now, key)).toBe(2)
+    expect(parseKanban(now).cards[2]!.label).toBe('Two')
+  })
+
+  it('tells repeated lines apart by which copy they are', () => {
+    const doc = parseKanban('kanban\n  Todo\n    [Same]\n  Done\n    [Same]')
+    const second = kanbanItemKey(doc, 'card', 1)
+    expect(second).toEqual({ kind: 'card', text: '[Same]', copy: 1 })
+    expect(findKanbanItem('kanban\n  Todo\n    [Same]\n  Done\n    [Same]', second)).toBe(1)
+  })
+
+  it('finds nothing once the item is gone, so the edit is dropped', () => {
+    const key = kanbanItemKey(parseKanban(drawn), 'column', 1)
+    expect(findKanbanItem('kanban\n  Todo\n    a[One]', key)).toBe(-1)
+    expect(findKanbanItem(drawn, null)).toBe(-1)
   })
 })
 
@@ -2272,6 +2349,20 @@ describe('kanban drawn slots', () => {
     expect(inPlaceField().value).toBe('one\ntwo')
   })
 
+  it('does not leave a refused title open once editing is finished', async () => {
+    const commit = vi.fn()
+    const { host, svg } = await renderKanbanBoard(commit)
+    clickAt(cardSlots(svg)[0]!)
+    typeAndConfirmInPlace('one\ntwo')
+    expect(inPlaceField()).not.toBeNull()
+
+    // Leaving edit mode offers the field its commit, which it refuses again;
+    // the board is no longer being edited, so the field has to go with it.
+    finishMermaidLabelEditing(host)
+    expect(commit).not.toHaveBeenCalled()
+    expect(document.querySelector('.mermaid-edit-field')).toBeNull()
+  })
+
   it('is not a label, so a card slot is never offered for renaming', async () => {
     const { svg } = await renderKanbanBoard(vi.fn())
     // A card slot is a place to add a card rather than a card to re-title, so it
@@ -2460,6 +2551,26 @@ describe('kanban bin', () => {
     svg.querySelectorAll<SVGElement>('.items > g.node')[0]!.dispatchEvent(pointer('pointerdown', 20, 45))
     window.dispatchEvent(pointer('pointermove', 650, 60))
   }
+
+  it('ends a drag when a render replaces the drawing it is holding', async () => {
+    const commit = vi.fn()
+    const { preview, svg } = await renderKanbanBoard(commit)
+    dragToTheBin(svg)
+    expect(document.querySelector('.mermaid-kanban-bin-mark')).not.toBeNull()
+
+    // A render lands mid-drag (an undo from the menu, say): the held elements
+    // are gone, so the drag is over — the release that follows is no drop.
+    const host = document.createElement('div')
+    host.innerHTML = BOARD_SVG
+    const fresh = host.querySelector('svg')!
+    preview.replaceChildren(fresh)
+    attachMermaidEditing(preview, fresh, kanbanAuthoringSource(BOARD_SOURCE), (next) => commit(next))
+    window.dispatchEvent(pointer('pointerup', 650, 60))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(document.querySelector('.edi-dialog')).toBeNull()
+    expect(commit).not.toHaveBeenCalled()
+  })
 
   it("is the board's own card slot for the length of a card drag", async () => {
     const commit = vi.fn()
