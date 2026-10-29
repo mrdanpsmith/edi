@@ -18,6 +18,18 @@ SPAWNS_GRANDCHILD = "sleep 60 &\necho $!\nwait\n"
 
 
 def _alive(pid: int) -> bool:
+    """Whether `pid` is still running. A zombie is not: it is dead and only
+    waiting to be reaped, and the orphaned grandchild is reaped by PID 1 — which
+    in a CI container (`tail -f /dev/null`) never does, so `kill(pid, 0)` keeps
+    succeeding for a process that has long been killed."""
+    if os.path.isdir("/proc/self"):
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+                # The state is the field after the parenthesised command name.
+                return handle.read().rsplit(")", 1)[1].split()[0] != "Z"
+        except FileNotFoundError:
+            return False
+    # No /proc (macOS), where the orphan is reaped promptly: the signal probe.
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
