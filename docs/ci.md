@@ -9,8 +9,6 @@ The workflows live in `.github/workflows/`:
   tags or manual `workflow_dispatch` (`VER` defaults to `0.0.0`) and adds the
   platform builds, packaging and publishing.
 - **`images.yml`** builds the builder images.
-- **`mermaid-probe.yml`** runs `scripts/mermaid-label-probe.py` when Mermaid,
-  its editing layer or the lockfile changes (see below).
 
 The `frontend`/`test` job bodies are **deliberately mirrored** across `ci.yml`
 and `release.yml`, so each pipeline stays self-contained. That is why
@@ -51,24 +49,18 @@ QTWEBENGINE_DISABLE_SANDBOX=1
 
 for every headless Qt run.
 
-## Mermaid label probe
+## Mermaid label walk
 
-`mermaid-probe.yml` is path-filtered to `package.json`, `package-lock.json`,
-`src/mermaid-*.ts`, `src/node/mermaid.ts`, the probe script,
-`tests/harness_loader.py`, `tests/mermaid_render.py`,
-`tests/fixtures/mermaid-templates.md` and the workflow itself. It builds
-`dist/` and runs the full `scripts/mermaid-label-probe.py` in the builder
-image, so a Mermaid upgrade that changes SVG markup or grammar fails before
-merge instead of in a manual regression hunt.
+The exhaustive label walk
+(`tests/test_mermaid_templates.py::test_every_offered_label_renames`) is an
+ordinary part of `pytest tests/`, so it runs in the `test` job on every commit
+with no path filter or job of its own. It renames every offered label of every
+template against real Mermaid, so a Mermaid upgrade that changes SVG markup or
+grammar fails before merge instead of in a manual regression hunt. It is the
+slowest part of the suite, about three minutes.
 
-`workflow_dispatch` only sees a workflow that exists on the default branch, so
-a change to the probe itself is tested by dispatching the workflow from `main`
-against the feature branch. Because the workflow is path-filtered, it reports
-no check on PRs that touch none of these paths; add it to a branch-protection
-required-check list only alongside an always-run companion.
-
-`mermaid` is pinned exactly in `package.json`; upgrades arrive as a deliberate
-commit that changes the lockfile and therefore triggers this job.
+`mermaid` is pinned exactly in `package.json`, so an upgrade arrives as a
+deliberate commit that changes the lockfile.
 
 ## Coverage reports
 

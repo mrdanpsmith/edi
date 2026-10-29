@@ -383,20 +383,19 @@ It asserts the one thing that is never acceptable — the editor closed and the
 source never changed — and that either mermaid drew the value or the notice
 said it would not.
 
-`scripts/mermaid-label-probe.py` is the exhaustive one. It walks *every*
-offered label of *every* template through the real gesture path, prints the
-offered/withheld split, and exits non-zero on any silent no-op or render
-failure. `--type` narrows it, `--first` is a smoke pass, and the report goes
-into `build/`.
+`tests/test_mermaid_templates.py::test_every_offered_label_renames` is the
+exhaustive one, one case per template. It walks *every* offered label through
+the real gesture path in the template sweep's own window and fails on any
+silent no-op or render failure, listing each label that failed. A rename
+mermaid re-reads under its own grammar is a warning, not a failure. It runs in
+the normal suite (about three minutes); `-k "label_renames and Kanban"` narrows
+it while working on mappers, mappers' regexes or the `GENERATED_BY_FAMILY`
+lists. It is the only thing that can see mermaid's real DOM shape; it found the
+`diagramFamily` case bug and the ER substring bug, which no jsdom test could.
 
-It needs its own WebEngine page, so it stays out of pytest. Run it after
-touching mappers, mappers' regexes or the `GENERATED_BY_FAMILY` lists. It is the
-only thing that can see mermaid's real DOM shape; it found the `diagramFamily`
-case bug and the ER substring bug, which no jsdom test could.
-
-`mermaid` is pinned exactly in `package.json`, and the path-filtered
-`mermaid-probe.yml` CI workflow runs this probe when the package, lockfile or
-Mermaid editing layer changes (see [ci.md](ci.md)).
+`mermaid` is pinned exactly in `package.json`, so an upgrade is a deliberate
+commit, and the normal CI run walks every label against it (see
+[ci.md](ci.md)).
 
 ### Read mermaid's SVG defensively
 

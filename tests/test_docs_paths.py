@@ -47,7 +47,7 @@ def repo_paths(text: str) -> set[str]:
     for match in BACKTICK.finditer(text):
         token = match.group(1).strip()
         if " " in token:
-            # A command such as ``scripts/mermaid-label-probe.py --type er``;
+            # A command such as ``scripts/simulate-ci-test.sh --pytest-only``;
             # keep its leading path and drop the arguments.
             token = token.split()[0]
         token = token.split("::", 1)[0].rstrip("/")

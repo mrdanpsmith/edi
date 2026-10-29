@@ -4186,11 +4186,12 @@ def test_sequence_participant_wrapped_in_a_tspan_is_editable(window):
 
 
 # One case per distinct patch strategy, so a regression in any of them names
-# itself. The probe (scripts/mermaid-label-probe.py) walks every label of every
-# template; this is the cheap slice that runs on every commit, and it can only
-# afford one rename per diagram. `expect` is which of the app's two documented
-# outcomes the rename must take: "drawn" (mermaid rendered it) or "refused" (it
-# refused the rewritten source and the editor said so, last good diagram up).
+# itself. The exhaustive walk in tests/test_mermaid_templates.py renames every
+# label of every template but accepts either outcome; these pin which outcome
+# each strategy must take, in the session window. `expect` is which of the
+# app's two documented outcomes the rename must take: "drawn" (mermaid
+# rendered it) or "refused" (it refused the rewritten source and the editor
+# said so, last good diagram up).
 LABEL_CASES = [
     pytest.param(FLOW, "Alpha", "drawn", id="flowchart-text"),
     pytest.param(SEQUENCE, "Alice", "drawn", id="sequence-tspan"),

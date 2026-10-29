@@ -114,7 +114,7 @@ npm run build
 echo "[sim] python type check (pyright)"
 /opt/edi/venv/bin/pyright
 echo "[sim] bandit (backend security, all findings)"
-/opt/edi/venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py scripts/mermaid-label-probe.py run_edi.py -q
+/opt/edi/venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py run_edi.py -q
 echo "[sim] pytest tests/"
 /opt/edi/venv/bin/pytest tests/
 echo "[sim] npm audit (network)"

@@ -891,8 +891,9 @@ docs.
 
 `src/mermaid-kanban-escaping.test.ts` renders every case through **real**
 mermaid; every other test here mocks `mermaid.render`, which is how the wrong
-belief survived. `scripts/mermaid-label-probe.py --type kanban` walks the
-escaped spellings through the real gesture, and its `spelled_out` check decodes
+belief survived. The label walk in `tests/test_mermaid_templates.py`
+(`-k "label_renames and Kanban"`) walks the escaped spellings through the real
+gesture, and its `spelled_out` check decodes
 `&quot;`/`&amp;` first because a successful rename legitimately leaves entities
 in the source.
 

@@ -42,7 +42,7 @@ Both checks run in the CI `test` job and locally:
 ```sh
 .venv/bin/bandit -c pyproject.toml -r backend \
   scripts/color-scheme-probe.py scripts/dark-mode-forensics.py \
-  scripts/mermaid-label-probe.py run_edi.py -q
+  run_edi.py -q
 
 .venv/bin/pip-audit -r requirements.txt
 ```
