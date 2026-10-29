@@ -11,12 +11,13 @@
 # make Edi the system default handler for those types.
 #
 # Usage:  ./scripts/install-desktop.sh [--set-default] [path/to/edi]
-#         (path defaults to ./dist-app/edi)
+#         (path defaults to ./dist-app/edi/edi; a bundle directory means the
+#         edi executable inside it)
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/dist-app/edi"
+BIN="$ROOT/dist-app/edi/edi"
 SET_DEFAULT=0
 for arg in "$@"; do
   case "$arg" in
@@ -24,7 +25,8 @@ for arg in "$@"; do
     *) BIN="$arg" ;;
   esac
 done
-if [ ! -x "$BIN" ]; then
+[ -d "$BIN" ] && BIN="$BIN/edi"
+if [ ! -f "$BIN" ] || [ ! -x "$BIN" ]; then
   echo "error: executable not found: $BIN" >&2
   echo "usage: $0 [--set-default] [path/to/edi]" >&2
   exit 1

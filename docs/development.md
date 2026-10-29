@@ -157,11 +157,12 @@ prints the captured app log and the verdict on failure, and treats a missing
 `SELFTEST` verdict as an error. The Windows build details are in
 [distribution.md](distribution.md).
 
-### Onefile temp space
+### Onefile temp space (Windows)
 
-The onefile binary self-extracts roughly 450 MB to `$TMPDIR` on every launch.
-`/tmp` is often a small tmpfs, so the smoke tests point `TMPDIR` at the
-disk-backed `build/tmp`. A full temp filesystem surfaces as:
+Only the Windows build is a onefile; Linux and macOS are onedir bundles and
+extract nothing (see [distribution.md](distribution.md)). The onefile
+self-extracts roughly 450 MB to the temp directory on every launch. A full
+temp filesystem surfaces as:
 
 ```text
 Failed to extract ...: decompression resulted in return code -1
@@ -172,7 +173,6 @@ while unpacking. It means temp space ran out, not that the archive is corrupt
 (a corrupt archive would report `-2`/`-3`/`-4`).
 
 The selftest exits without Qt teardown, so a QtWebEngine subprocess can outlive
-the parent and relaunch the onefile bootloader. `scripts/build-pyzip.sh`
-therefore waits for `dist-app/edi` processes to exit before removing the smoke
-temp directory; otherwise a late process fails with `Could not create temporary
+the parent and relaunch the onefile bootloader. If the extraction directory is
+removed under it, that late process fails with `Could not create temporary
 directory!`.

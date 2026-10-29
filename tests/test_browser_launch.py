@@ -1,6 +1,6 @@
 """Tests for the external-URL opener (link handling).
 
-The pyzip onefile bootloader exports ``LD_LIBRARY_PATH`` pointing at a bundle
+The PyInstaller bootloader exports ``LD_LIBRARY_PATH`` pointing at a bundle
 dir of Ubuntu 22.04 libraries; a browser child that inherits it loads those
 older libs and breaks (e.g. Waterfox: "Couldn't load XPCOM"). These tests pin
 the behaviour that ``xdg-open`` children get a clean environment.

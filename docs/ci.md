@@ -236,15 +236,16 @@ The release DAG:
    three consume the one `edi-web` artifact and none recompiles the frontend.
    The `.deb`/`.rpm`/`.AppImage`/`.exe`/`.app` all ship the same `dist/` that
    `test` validated.
-3. `package-linux` (`needs: build-linux`) wraps the onefile and never
-   recompiles.
+3. `package-linux` (`needs: build-linux`) wraps the onedir bundle and never
+   recompiles. `build-linux` uploads the bundle as `edi-linux.tar`, because
+   artifacts drop POSIX modes and symlinks; `package-linux` unpacks it.
 4. `release` (`needs: [test, package-linux, build-windows, build-macos]`).
    `test` is in that list because a gate nothing waits on is not a gate; it
    used to run beside the builds with its result discarded, so a red pytest
    still published binaries.
 
 Artifact downloads are scoped by name to exactly what each job consumes. Each
-build job pulls only the small `edi-web` artifact, never the onefile. `release`
+build job pulls only the small `edi-web` artifact, never the Linux bundle. `release`
 pulls only the packaged files, the `.exe`, the `.dmg` and the arm64
 `.zip`/`.sha256`, and stages `install.sh` from the checkout.
 

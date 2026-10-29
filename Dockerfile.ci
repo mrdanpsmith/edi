@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
 # CI builder image: everything the check/test/build/package jobs need,
-# preinstalled on Ubuntu 22.04 (glibc 2.35) so the PyInstaller onefile stays
+# preinstalled on Ubuntu 22.04 (glibc 2.35) so the PyInstaller bundle stays
 # portable to older desktop Linux. Built+published by `.github/workflows/images.yml`
 # and referenced as `ghcr.io/<owner>/edi-builder:jammy`.
 #

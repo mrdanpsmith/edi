@@ -25,9 +25,10 @@
 # Excluding them keeps the bundle to what WebEngine actually needs (roughly
 # -120 MB smaller).
 #
-# The onefile CArchive packs at zlib level 1 instead of the default 9 (see
-# PYINSTALLER_ZLIB_COMPRESSION_LEVEL in Dockerfile.pyzip / CI). Build time for
-# the pack step is ~3x lower for a negligible size change.
+# The Windows onefile CArchive packs at zlib level 1 instead of the default 9
+# (see PYINSTALLER_ZLIB_COMPRESSION_LEVEL in build-windows.ps1 / CI). Build
+# time for the pack step is ~3x lower for a negligible size change. Linux and
+# macOS are onedir and have no CArchive to pack.
 
 import re
 import sys
@@ -304,23 +305,34 @@ elif sys.platform == 'darwin':
     )
 
 else:
+    # Linux is onedir (dist-app/edi/edi + dist-app/edi/_internal) for the same
+    # reason as macOS: a onefile inflates ~430 MB into $TMPDIR on every launch,
+    # which measured ~1.3 s before any Python ran (and a RAM-backed /tmp holds
+    # that copy per running instance). The packages install the directory.
     exe = EXE(
         pyz,
         a.scripts,
-        a.binaries,
-        a.datas,
         [],
+        exclude_binaries=True,
         name='edi',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
         upx=False,
-        upx_exclude=[],
-        runtime_tmpdir=None,
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
+    )
+
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='edi',
     )

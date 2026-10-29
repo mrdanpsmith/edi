@@ -16,7 +16,7 @@
 # changes into the images (images.yml). Nodes: images must exist in ghcr before
 # any CI run (run images.yml manually once after import).
 #
-# The Linux onefile is built inside the SAME glibc 2.35 base, so the packaged
+# The Linux onedir bundle is built inside the SAME glibc 2.35 base, so the packaged
 # binary runs on older desktop Linux (Ubuntu 22.04 pin; glibc compatibility is
 # guaranteed by construction). macOS is built natively on macos-15 (arm64) by
 # scripts/build-macos.sh. Windows is built natively on a windows-2025 runner
@@ -130,7 +130,7 @@ jobs:
           printf '\n## Backend coverage (pytest-cov)\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 25 /tmp/backend-cov.txt >> "$GITHUB_STEP_SUMMARY"
 
-  # PyInstaller onefile; only matters for releases (tag + manual validation).
+  # PyInstaller onedir bundle; only matters for releases (tag + manual validation).
   build-linux:
     needs: frontend
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
@@ -138,10 +138,6 @@ jobs:
     container:
       image: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
     timeout-minutes: 45
-    env:
-      # PKG archive at zlib level 1 (default is 9): ~3x faster pack step; the
-      # binary grows ~18 MiB but every release wrapper recompresses it anyway.
-      PYINSTALLER_ZLIB_COMPRESSION_LEVEL: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -150,21 +146,19 @@ jobs:
           path: .
       - name: Link baked venv (read-only image layer)
         run: ln -s /opt/edi/venv .venv
-      - name: Build onefile binary
+      - name: Build onedir bundle
         run: .venv/bin/pyinstaller --clean --distpath dist-app --workpath build edi.spec
       - name: Offscreen smoke test
         # EDI_SELFTEST=1 makes the binary print "SELFTEST {...}" and exit 0/1;
-        # rely on the exit code. The onefile unpack (~450 MB) goes to $TMPDIR;
-        # point it at the runner's disk since a small tmpfs makes the bootloader
-        # fail with "decompression resulted in return code -1".
-        run: |
-          mkdir -p build/tmp
-          TMPDIR="$GITHUB_WORKSPACE/build/tmp" EDI_SELFTEST=1 timeout 60 ./dist-app/edi
-      - name: Upload onefile
+        # rely on the exit code.
+        run: EDI_SELFTEST=1 timeout 60 ./dist-app/edi/edi
+      - name: Tar the bundle (GH artifacts drop POSIX modes and symlinks)
+        run: tar -C dist-app -cf dist-app/edi-linux.tar edi
+      - name: Upload bundle
         uses: actions/upload-artifact@v7
         with:
           name: edi
-          path: dist-app/edi
+          path: dist-app/edi-linux.tar
           if-no-files-found: error
           retention-days: 30
 
@@ -311,12 +305,12 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  # Wraps the onefile into versioned .deb/.rpm/.tar.gz/.AppImage.
+  # Wraps the onedir bundle into versioned .deb/.rpm/.tar.gz/.AppImage.
   # Named for the platform it packages, matching `build-<platform>` and the
   # script it calls (scripts/package-linux.sh): its output is 100% Linux
   # formats, and a bare `package` read as platform-agnostic in a DAG whose
   # other three jobs all name theirs. Kept separate from `build-linux` on
-  # purpose — the onefile is built and smoke-tested once, then wrapped.
+  # purpose — the bundle is built and smoke-tested once, then wrapped.
   package-linux:
     needs: build-linux
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
@@ -332,15 +326,15 @@ jobs:
           path: .
       - name: Link baked venv (read-only image layer)
         run: ln -s /opt/edi/venv .venv
-      - name: Locate onefile + restore exec bit (GH artifacts flatten a single-file path and drop POSIX modes)
+      - name: Unpack the bundle (GH artifacts flatten a single-file path)
         run: |
-          BIN="dist-app/edi"
-          [ -f "$BIN" ] || BIN="edi"
-          [ -f "$BIN" ] || { echo "error: onefile not found (looked for dist-app/edi and edi)" >&2; ls -la; exit 1; }
-          chmod +x "$BIN"
-          echo "EDI_BIN=$BIN" >> "$GITHUB_ENV"
-      - name: Wrap onefile into deb/rpm/tar.gz/AppImage
-        run: ./scripts/package-linux.sh "$EDI_BIN" "${VER#v}"
+          TAR="dist-app/edi-linux.tar"
+          [ -f "$TAR" ] || TAR="edi-linux.tar"
+          [ -f "$TAR" ] || { echo "error: edi-linux.tar not found (looked in dist-app/ and .)" >&2; ls -la; exit 1; }
+          mkdir -p dist-app
+          tar -C dist-app -xf "$TAR"
+      - name: Wrap the bundle into deb/rpm/tar.gz/AppImage
+        run: ./scripts/package-linux.sh dist-app/edi "${VER#v}"
       - name: Upload packages
         uses: actions/upload-artifact@v7
         with:

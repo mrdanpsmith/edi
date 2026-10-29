@@ -106,8 +106,8 @@ class _AppWebView(QWebEngineView):
 def _child_env() -> dict[str, str]:
     """Environment for spawned children, minus the PyInstaller bundle path.
 
-    The onefile bootloader exports ``LD_LIBRARY_PATH`` pointing at the
-    extraction dir full of Ubuntu 22.04 libraries. A browser child inherits it
+    The PyInstaller bootloader exports ``LD_LIBRARY_PATH`` pointing at the
+    bundle's ``_internal`` dir full of Ubuntu 22.04 libraries. A browser child inherits it
     and loads those older libs instead of the host's system ones, breaking
     e.g. Waterfox with ``Couldn't load XPCOM``. Strip it so children behave
     like a plain terminal launch.
@@ -123,7 +123,7 @@ def _xdg_open(url: str) -> bool:
     """Spawn the system ``xdg-open`` handler for ``url``; True if it started.
 
     ``QDesktopServices.openUrl`` cannot be given a custom environment, and the
-    PyInstaller onefile bootloader exports ``LD_LIBRARY_PATH`` pointing at the
+    PyInstaller bootloader exports ``LD_LIBRARY_PATH`` pointing at the
     bundled Ubuntu 22.04 libraries — a browser spawned with that inherited
     path breaks (e.g. Waterfox's "Couldn't load XPCOM"). ``xdg-open`` is the
     same handler QDesktopServices uses on Linux, but it can be run with a

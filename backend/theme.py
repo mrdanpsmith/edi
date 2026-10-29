@@ -151,7 +151,7 @@ def _gnome_session() -> bool:
 def _read_gsettings_key(key: str) -> object | None:
     """Run one ``gsettings get`` with the bundle env scrubbed.
 
-    The onefile sets ``LD_LIBRARY_PATH`` to its extraction dir; if the bundle
+    The bootloader sets ``LD_LIBRARY_PATH`` to the bundle's ``_internal`` dir; if it
     ships its own glib, the spawned ``gsettings`` loads it, its GIO module
     path is wrong, the dconf backend fails to load and gsettings silently
     falls back to defaults — which reads ``default``/light during dark.
@@ -282,10 +282,13 @@ def watch_color_scheme(app, window):
 
     def on_poll():
         resolved = probe_scheme(app)
-        _log(
-            f"trigger poll resolved={resolved.name} "
-            f"gs-cli={_probe_gsettings_cli()!r} hints={hints.colorScheme().name}"
-        )
+        # Only build the message when it is printed: the gs-cli probe spawns
+        # two gsettings processes on the GUI thread, every 2 s.
+        if os.environ.get("EDI_THEME_DEBUG"):
+            _log(
+                f"trigger poll resolved={resolved.name} "
+                f"gs-cli={_probe_gsettings_cli()!r} hints={hints.colorScheme().name}"
+            )
         watcher.apply(resolved)
 
     watcher = _ColorSchemeWatcher(window)

@@ -8,9 +8,15 @@ URL:            https://gitlab.com/mrdanpsmith/edi
 BuildArch:      x86_64
 Requires:       @REQUIRES@
 
-# The shipped binary is prebuilt (PyInstaller); rpmbuild must not try to
-# generate or strip debug info from it.
+# The shipped bundle is prebuilt (PyInstaller); rpmbuild must not try to
+# generate or strip debug info from it, nor post-process it.
 %global _debug_package 0
+%global __os_install_post %{nil}
+%global _build_id_links none
+# The bundle carries its own Qt/PySide6 libraries. Automatic requires would
+# turn every bundled soname into a dependency no repository provides; the
+# real system dependencies are the explicit Requires above.
+AutoReqProv:    no
 
 %description
 Edi is a markdown editor with a live preview, syntax-highlighted code
@@ -21,10 +27,10 @@ formulas. It runs QtWebEngine in a native PySide6 window.
 rm -rf %{buildroot}
 mkdir -p %{buildroot}
 cp -a %{_sourcedir}/usr %{buildroot}/
-chmod 0755 %{buildroot}/usr/bin/edi
 
 %files
 /usr/bin/edi
+/usr/lib/edi
 /usr/share/applications/edi.desktop
 /usr/share/icons/hicolor/*/apps/edi.png
 /usr/share/doc/edi/copyright

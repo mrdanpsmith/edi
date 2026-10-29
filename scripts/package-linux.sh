@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 #
-# Wraps an existing Edi onefile binary into standard Linux packages:
+# Wraps an existing Edi onedir bundle into standard Linux packages:
 #   .deb (Debian/Ubuntu), .rpm (Fedora/RHEL/openSUSE),
 #   .tar.gz (portable archive), .AppImage (self-contained desktop app).
 #
-# The binary is never rebuilt here — only wrapped — so the packages inherit
+# The bundle is never rebuilt here — only wrapped — so the packages inherit
 # the glibc 2.35 build from Dockerfile.pyzip (see scripts/build-pyzip.sh).
+# The .deb/.rpm install it as /usr/lib/edi with a /usr/bin/edi symlink; the
+# bootloader resolves the symlink to find its _internal/ directory.
 #
-# Usage: ./scripts/package-linux.sh [path/to/edi] [version]
+# Usage: ./scripts/package-linux.sh [path/to/bundle] [version]
 #
-#   path    the onefile executable to wrap      (default: ./dist-app/edi)
+#   path    the onedir bundle (holds edi + _internal/)  (default: ./dist-app/edi)
 #   version x.y.z used in names and metadata    (default: scripts/version.sh current)
 #
 # Output (into ./dist-app):
@@ -39,19 +41,23 @@ if ! command -v file >/dev/null 2>&1; then
   exit 1
 fi
 
-BIN="${1:-$ROOT/dist-app/edi}"
-if [ ! -f "$BIN" ]; then
-  echo "error: binary not found: $BIN" >&2
-  echo "usage: $0 [path/to/edi] [version]" >&2
+BUNDLE="${1:-$ROOT/dist-app/edi}"
+if [ ! -f "$BUNDLE/edi" ] || [ ! -d "$BUNDLE/_internal" ]; then
+  echo "error: not an Edi onedir bundle (need edi and _internal/): $BUNDLE" >&2
+  echo "usage: $0 [path/to/bundle] [version]" >&2
   exit 1
 fi
-if [ ! -x "$BIN" ]; then
-  # GitHub Actions artifacts do not preserve POSIX modes, so a downloaded binary
-  # comes back 0644; the packages must carry the exec bit.
-  echo "warning: $BIN is not executable; chmod +x" >&2
-  chmod +x "$BIN"
+if [ ! -x "$BUNDLE/edi" ]; then
+  echo "error: $BUNDLE/edi is not executable (was the bundle unpacked from its tar?)" >&2
+  exit 1
 fi
-BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
+BUNDLE="$(cd "$BUNDLE" && pwd)"
+
+# Copy the bundle to $1 (created), keeping symlinks and modes.
+install_bundle() {
+  mkdir -p "$1"
+  cp -a "$BUNDLE/." "$1/"
+}
 
 if [ $# -ge 2 ]; then
   VER="$2"
@@ -66,7 +72,7 @@ fi
 DEB_ARCH="amd64"
 RPM_ARCH="x86_64"
 
-# Runtime libraries the onefile bundle does not include but QtWebEngine needs.
+# Runtime libraries the bundle does not include but QtWebEngine needs.
 # Debian package names (checked against Ubuntu 22.04, the build target).
 DEB_DEPENDS=(
   libnss3 libnspr4
@@ -121,7 +127,8 @@ TREE="$STAGE/tree"
 mkdir -p "$TREE/usr/bin" \
   "$TREE/usr/share/applications" \
   "$TREE/usr/share/doc/edi"
-install -m 0755 "$BIN" "$TREE/usr/bin/edi"
+install_bundle "$TREE/usr/lib/edi"
+ln -s ../lib/edi/edi "$TREE/usr/bin/edi"
 install -m 0644 "$ROOT/packaging/edi.desktop" "$TREE/usr/share/applications/edi.desktop"
 
 # hicolor icon set scaled from the 1024x1024 source with PySide6 (headless).
@@ -188,8 +195,8 @@ install -m 0644 "$RPM_FILE" "$OUT/$RPM_NAME"
 # --- 4. .tar.gz ---------------------------------------------------------------
 print_step "Building portable .tar.gz"
 TAR_DIR="$STAGE/tgz/edi-${VER}-linux-${RPM_ARCH}"
-mkdir -p "$TAR_DIR"
-install -m 0755 "$BIN" "$TAR_DIR/edi"
+# The bundle sits at the archive root, so ./edi still runs it in place.
+install_bundle "$TAR_DIR"
 install -m 0644 "$ROOT/scripts/assets/edi.desktop" "$TAR_DIR/edi.desktop"
 install -m 0644 "$TREE/usr/share/icons/hicolor/512x512/apps/edi.png" "$TAR_DIR/edi.png"
 install -m 0755 "$ROOT/scripts/assets/install-tarball.sh" "$TAR_DIR/install.sh"
@@ -207,8 +214,7 @@ tar -C "$STAGE/tgz" -czf "$OUT/edi-${VER}-linux-${RPM_ARCH}.tar.gz" "edi-${VER}-
 # --- 5. .AppImage ---------------------------------------------------------------
 print_step "Building .AppImage"
 APPDIR="$STAGE/AppDir"
-mkdir -p "$APPDIR/usr/bin"
-install -m 0755 "$BIN" "$APPDIR/usr/bin/edi"
+install_bundle "$APPDIR/usr/lib/edi"
 install -m 0644 "$ROOT/packaging/edi.desktop" "$APPDIR/edi.desktop"
 install -m 0644 "$TREE/usr/share/icons/hicolor/512x512/apps/edi.png" "$APPDIR/edi.png"
 install -m 0755 "$ROOT/packaging/AppDir/AppRun" "$APPDIR/AppRun"
@@ -223,7 +229,7 @@ if [ ! -x "$TOOL" ]; then
 fi
 (
   cd "$STAGE"
-  # zstd level 15 (mksquashfs default) is slow on the ~180 MB payload; level 1
+  # zstd level 15 (mksquashfs default) is slow on the ~430 MB payload; level 1
   # is a few percent larger but several times faster to pack.
   APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$RPM_ARCH" VERSION="$VER" "$TOOL" \
     --mksquashfs-opt -Xcompression-level --mksquashfs-opt 1 "$APPDIR"

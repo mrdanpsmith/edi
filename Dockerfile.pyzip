@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1
 #
-# Builds a portable single-file Edi executable (PyInstaller onefile) on
-# Ubuntu 22.04 (glibc 2.35) so the bundle also runs on older desktop Linux.
-# Building on newer distros (e.g. Ubuntu 26.04, glibc 2.43) produces binaries
-# that fail with "GLIBC_2.43 not found" on those machines.
+# Builds the portable Edi bundle (a PyInstaller onedir: edi/edi plus
+# edi/_internal) on Ubuntu 22.04 (glibc 2.35) so it also runs on older desktop
+# Linux. Building on newer distros (e.g. Ubuntu 26.04, glibc 2.43) produces
+# binaries that fail with "GLIBC_2.43 not found" on those machines.
 #
 #   docker build -f Dockerfile.pyzip -t edi-pyzip:jammy .
-#   docker run --rm -v "$PWD/dist-app:/out" edi-pyzip:jammy
+#   docker run --rm edi-pyzip:jammy | tar -C dist-app -x
+#
+# The bundle leaves the container as a tar stream, not through a bind mount,
+# so the extracted tree belongs to the host user rather than root.
 #
 # The frontend is built in a pinned Node stage, so the host Node version is
 # irrelevant.
@@ -28,7 +31,7 @@ COPY tests/harness/ tests/harness/
 RUN npm run build
 # dist/ is now at /build/dist
 
-# ---- Builder stage: PyInstaller onefile on glibc 2.35 ----
+# ---- Builder stage: PyInstaller onedir on glibc 2.35 ----
 FROM ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -82,9 +85,9 @@ COPY run_edi.py .
 COPY edi.spec .
 COPY scripts/assets/ scripts/assets/
 
-RUN PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1 .venv/bin/pyinstaller --clean \
+RUN .venv/bin/pyinstaller --clean \
     --distpath dist-app \
     --workpath build \
     edi.spec
 
-CMD ["cp", "/app/dist-app/edi", "/out/edi"]
+CMD ["tar", "-C", "/app/dist-app", "-c", "edi"]

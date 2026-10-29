@@ -201,7 +201,7 @@ shortcut would shadow exactly that.
 
 Each `vX.Y.Z` tag publishes the artifacts below.
 
-**Linux** — the `package-linux` job wraps the onefile binary (it never rebuilds it, so
+**Linux** — the `package-linux` job wraps the onedir bundle (it never rebuilds it, so
 the portability guarantee is inherited):
 
 | Artifact | Install |
@@ -216,7 +216,7 @@ the bare binary instead? The dock/taskbar icon on Linux comes from a
 `.desktop` file rather than the window icon, so install one for the current user:
 
 ```sh
-./scripts/install-desktop.sh [path/to/edi]   # defaults to ./dist-app/edi
+./scripts/install-desktop.sh [path/to/edi]   # defaults to ./dist-app/edi/edi
 ```
 
 That writes `edi.png` into `~/.local/share/icons/hicolor` and an `edi.desktop`

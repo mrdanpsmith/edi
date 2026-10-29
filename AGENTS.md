@@ -117,7 +117,7 @@ npm run coverage                               # frontend coverage
 ./scripts/simulate-ci-test.sh                  # local CI test job
 ```
 
-Bandit and pip-audit commands, the pre-push hook, the onefile smoke test and
+Bandit and pip-audit commands, the pre-push hook, the packaged-build smoke test and
 the container-specific quirks are in [docs/development.md](docs/development.md).
 
 ## Repository map

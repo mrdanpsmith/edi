@@ -45,11 +45,11 @@ and with the smoke test.
 
 ### PyInstaller compression
 
-The CArchive (PKG) step defaults to zlib level 9, which makes onefile packing
-dominate build time. Build with `PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1`
-(`Dockerfile.pyzip` and the CI `build-linux` job do), which packs about three
-times faster. The binary grows by roughly 18 MiB, but every release wrapper
-(.deb/.rpm/.tar.gz/.AppImage) recompresses it anyway.
+This only applies to the Windows onefile; the Linux and macOS onedir bundles
+have no CArchive to pack. The CArchive (PKG) step defaults to zlib level 9,
+which makes onefile packing dominate build time. `build-windows.ps1` builds
+with `PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1`, which packs about three times
+faster for roughly 18 MiB more binary.
 
 ### One JS bundle, no runtime imports
 
@@ -90,8 +90,8 @@ separate logo file.
 ## Build commands
 
 ```sh
-./scripts/build-pyzip.sh                  # Linux onefile -> dist-app/edi
-./scripts/package-linux.sh [binary] [ver] # .deb / .rpm / .tar.gz / .AppImage
+./scripts/build-pyzip.sh                  # Linux onedir -> dist-app/edi/ (run dist-app/edi/edi)
+./scripts/package-linux.sh [bundle] [ver] # .deb / .rpm / .tar.gz / .AppImage
 
 pwsh -File scripts/build-windows.ps1 -Version <ver>  # on Windows
 ./scripts/build-macos.sh [x.y.z]                     # on macOS
@@ -260,8 +260,8 @@ signature, then produces:
 - `dist-app/Edi-<ver>-macos-arm64.dmg` with an `Applications` symlink;
 - `dist-app/Edi-<ver>-arm64.zip` and `.sha256`.
 
-The `.app` is **onedir** (`COLLECT` + `BUNDLE`), unlike the Linux and Windows
-onefiles. A onefile `.app` unpacked ~400 MB to a new `$TMPDIR` directory on
+The `.app` is **onedir** (`COLLECT` + `BUNDLE`), like Linux and unlike the
+Windows onefile. A onefile `.app` unpacked ~400 MB to a new `$TMPDIR` directory on
 every launch, and macOS re-validated those freshly written dylibs at their new
 path each time: 8–12 s before any Python ran, against well under a second for
 onedir. Do not switch it back.
@@ -289,16 +289,31 @@ a green build of something else. The frontend and icons are built once, in the
 
 ## Linux packaging
 
-`scripts/package-linux.sh` wraps the already-built onefile. It never
+`scripts/package-linux.sh` wraps the already-built onedir bundle
+(`dist-app/edi/`: the `edi` executable plus `_internal/`). It never
 recompiles, so it inherits the glibc 2.35 build. It needs `dpkg-deb`,
 `rpmbuild` and `curl`.
 
+The bundle is **onedir**, not onefile. A onefile inflated ~430 MB into
+`$TMPDIR` on every launch, about 1.3 s before any Python ran (measured
+against ~0.15 s onedir), and on a RAM-backed `/tmp` every running instance
+held its own copy. Do not switch it back.
+
 It produces:
 
-- `edi_<v>_amd64.deb`
-- `edi-<v>-1.x86_64.rpm`
-- `edi-<v>-linux-x86_64.tar.gz`
-- `Edi-<v>-x86_64.AppImage`
+- `edi_<v>_amd64.deb` and `edi-<v>-1.x86_64.rpm`: the bundle at
+  `/usr/lib/edi`, with `/usr/bin/edi` a relative symlink to
+  `/usr/lib/edi/edi`. The bootloader resolves the symlink to find
+  `_internal/`, so the link must stay a symlink, never a copy.
+- `edi-<v>-linux-x86_64.tar.gz`: the bundle at the archive root, so the
+  extracted `edi` executable runs in place. Its `install.sh` copies the bundle to `~/.local/lib/edi`
+  (replacing only a directory that holds an Edi bundle) and links
+  `$XDG_DATA_HOME/bin/edi` to it, replacing an older single-file install.
+- `Edi-<v>-x86_64.AppImage`: the bundle at `usr/lib/edi` in the AppDir;
+  `packaging/AppDir/AppRun` executes it.
+
+The bundle is a few hundred files, and modes and symlinks matter, so CI moves
+it between jobs as `edi-linux.tar` (see [ci.md](ci.md)).
 
 Runtime dependency names differ between Debian and RPM and live in
 `scripts/package-linux.sh` as `DEB_DEPENDS` and `RPM_REQUIRES`. Examples:
@@ -311,7 +326,11 @@ test needs a Fedora/Rocky host; the development sandbox cannot reach
 `mirrors.fedoraproject.org`.
 
 `packaging/edi.spec.in` sets `%global _debug_package 0` so rpmbuild's
-find-debuginfo does not choke on the prebuilt binary. `rpmbuild` needs
+find-debuginfo does not choke on the prebuilt binary, and disables
+`__os_install_post` (no stripping or other post-processing of the bundle).
+It also sets `AutoReqProv: no`: automatic requires would turn every bundled
+Qt/PySide6 soname into a dependency no repository provides, so `RPM_REQUIRES`
+is the whole dependency list. `rpmbuild` needs
 `--define "_dbpath <dir>"` when building as a non-root user.
 
 `packaging/control.in` forces `dpkg-deb -Zxz` output so old apt can read it.
@@ -322,7 +341,7 @@ The AppImage uses `appimagetool` pinned to `1.9.1` (falling back to
 `continuous`) with `APPIMAGE_EXTRACT_AND_RUN=1` because CI has no FUSE. It
 runs from the stage directory so the output lands there. Its squashfs zstd
 level is lowered to 1 with `--mksquashfs-opt -Xcompression-level 1`;
-mksquashfs's default level 15 is slow on the ~180 MB payload for a few percent
+mksquashfs's default level 15 is slow on the ~430 MB payload for a few percent
 less size.
 
 `rpm` and `file` are baked into the builder image because appimagetool and

@@ -98,7 +98,7 @@ PY_VENV="$ROOT/.venv-macos/bin/python"
 
 # --- PyInstaller .app ---------------------------------------------------------
 rm -rf dist-app
-PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1 "$PY_VENV" -m PyInstaller --clean \
+"$PY_VENV" -m PyInstaller --clean \
   --distpath dist-app \
   --workpath build \
   edi.spec

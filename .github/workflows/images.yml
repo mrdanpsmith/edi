@@ -1,7 +1,7 @@
 # Builds and publishes the CI builder images to ghcr.io.
 #
 # Mirrors the old GitLab `build-image` job. Both images keep the Ubuntu 22.04
-# (glibc 2.35) base so the PyInstaller onefile stays portable to older desktop
+# (glibc 2.35) base so the PyInstaller bundle stays portable to older desktop
 # Linux:
 #   * ghcr.io/<owner>/edi-builder:jammy     — Ubuntu 22.04 + Qt runtime libs,
 #     Node 22, and a venv at /opt/edi/venv built from requirements-dev.txt and
