@@ -264,6 +264,7 @@ function applyToTable(table: HTMLTableElement, env: FormulaEnv): void {
 class SpreadsheetGrid {
   private readonly cells = new Map<string, TableCell>()
   private readonly formulas: TableCell[] = []
+  private readonly results = new Map<string, CellValue>()
   private maxRow = 0
   private maxCol = 0
 
@@ -291,6 +292,15 @@ class SpreadsheetGrid {
 
   formulaCells(): readonly TableCell[] {
     return this.formulas
+  }
+
+  /** A formula cell's value, once it has been evaluated against this grid. */
+  result(key: string): CellValue | undefined {
+    return this.results.get(key)
+  }
+
+  remember(key: string, value: CellValue): void {
+    this.results.set(key, value)
   }
 }
 
@@ -460,10 +470,9 @@ class FormulaParser extends FormulaScanner {
     this.match('(')
     this.skipWs()
     // Only lazy functions receive `() => CellValue` thunks; eager ones get the
-    // already-evaluated values, so an argument is never parsed twice. Arguments
-    // are still parsed eagerly for a lazy call (to advance past them and
-    // validate the commas/close) but the values are dropped; the branch is
-    // re-evaluated from its source slice only when the function forces it.
+    // already-evaluated values. A lazy argument is only stepped over here
+    // (`skipArgument`): its thunk, run when the function forces the branch, is
+    // the one place it is evaluated.
     const fn = this.env.functions.get(name.toUpperCase())
     const lazy = fn?.lazy === true
     if (this.peek() === ')') {
@@ -474,12 +483,12 @@ class FormulaParser extends FormulaScanner {
     const argThunks: CellValueThunk[] = []
     for (;;) {
       const start = this.pos
-      const value = this.comparison()
       if (lazy) {
+        if (!this.skipArgument()) return err('#ERROR!')
         const slice = this.source.slice(start, this.pos)
         argThunks.push(() => new FormulaParser(slice, this.grid, this.visiting, this.env).parse())
       } else {
-        args.push(value)
+        args.push(this.comparison())
       }
       this.skipWs()
       if (this.match(',')) {
@@ -499,12 +508,20 @@ class FormulaParser extends FormulaScanner {
     }
     if (cell.formula) {
       const key = cellKey(row, col)
+      // Each formula cell is evaluated once per grid. Without this a column of
+      // `=A{n-1}+A{n-1}` re-evaluated the whole chain at every reference and
+      // took seconds at twenty rows. A result is the same wherever it is asked
+      // for: a cell evaluated while another is mid-evaluation is only affected
+      // by that if it depends on it — and then it is in the cycle too.
+      const cached = this.grid.result(key)
+      if (cached) return cached
       if (this.visiting.has(key)) {
         return err('#CYCLE!')
       }
       this.visiting.add(key)
       const result = evaluateFormula(cell.formula, this.grid, this.visiting, this.env)
       this.visiting.delete(key)
+      this.grid.remember(key, result)
       return result
     }
     return parseCellValue(cell.raw)

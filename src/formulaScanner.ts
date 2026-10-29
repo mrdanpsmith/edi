@@ -77,6 +77,30 @@ export abstract class FormulaScanner {
     return closed ? out : null
   }
 
+  /**
+   * Step over one function argument without evaluating it: up to the `,` or
+   * `)` that ends it, past nested parentheses and string literals. A lazy
+   * function (`IF`, `IFERROR`, …) evaluates its arguments itself, from their
+   * source, only when it needs them; evaluating them here as well doubled the
+   * work at every level of nesting. False on an unterminated string or a
+   * missing `)`.
+   */
+  protected skipArgument(): boolean {
+    let depth = 0
+    while (this.pos < this.source.length) {
+      const ch = this.source[this.pos]!
+      if (ch === '"') {
+        if (this.readString() === null) return false
+        continue
+      }
+      if (depth === 0 && (ch === ',' || ch === ')')) return true
+      if (ch === '(') depth++
+      else if (ch === ')') depth--
+      this.pos++
+    }
+    return false
+  }
+
   /** The six comparison operators, two-character forms first so `<=` is not
    * read as `<` followed by a stray `=`. */
   protected matchComparisonOp(): CompareOp | null {

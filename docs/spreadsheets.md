@@ -63,7 +63,32 @@ a cell. What they share is the **lexing**, in `src/formulaScanner.ts`:
 - `readNumber`;
 - `readString` (a doubled `""` is an escaped quote);
 - `matchComparisonOp` (two-character forms first, so `<=` is not read as `<`
-  then a stray `=`).
+  then a stray `=`);
+- `skipArgument`, which steps over a lazy function's argument (`IF`,
+  `IFERROR`, …) without evaluating it. The argument's thunk is the only place it
+  is evaluated; evaluating it while parsing as well doubled the work at every
+  level of nesting.
+
+## Evaluation cost
+
+Within one solve, each formula cell is evaluated once: `SpreadsheetGrid` keeps
+its result, and every later reference reads that. This is safe with cycle
+detection, because a cell evaluated while another is mid-evaluation can only see
+that one by depending on it, and then it is part of the cycle too.
+
+## Rewriting references
+
+`series.ts` rewrites A1 references when cells are filled, cut and pasted, or
+when rows and columns are inserted or deleted. It works on the formula text, so
+`referenceGuard` decides what a match is: never text inside a string literal,
+and never part of a longer name (`B64ENCODE`, a document function `VAT2(`).
+
+- A fill past row or column 1 becomes `#REF!`; it does not clamp to another cell.
+- An insert grows a range only along an axis the range spans. A range one cell
+  thick along that axis, such as a row total `SUM(B2:D2)`, moves like a single
+  reference.
+- A cut and paste repoints references to the moved cells everywhere, the pasted
+  block included; references to cells outside the cut stay where they were.
 
 What they do **not** share is what a token means. The cell parser resolves `B2`
 against a grid; the body parser resolves a name against its parameter scope and

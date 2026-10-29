@@ -139,6 +139,28 @@ function namedCycle(seeds: readonly string[], count: number): string[] | null {
 const REF_TOKEN = /(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)/g
 
 /**
+ * Whether a token the reference pattern matched at `offset` is a reference.
+ * The patterns run over raw formula text, so they also match inside a string
+ * literal (`"A1"`) and inside a longer name (`B64ENCODE`, a document function
+ * `VAT2(`): neither is a cell, and rewriting one changes the formula's meaning.
+ */
+function referenceGuard(formula: string): (match: string, offset: number) => boolean {
+  const inString: boolean[] = []
+  let quoted = false
+  for (let i = 0; i < formula.length; i++) {
+    // A doubled `""` inside a literal toggles twice, so it stays quoted.
+    if (formula[i] === '"') quoted = !quoted
+    inString[i] = quoted || formula[i] === '"'
+  }
+  return (match, offset) => {
+    if (inString[offset]) return false
+    if (offset > 0 && /[A-Za-z0-9_.$]/.test(formula[offset - 1] ?? '')) return false
+    const after = formula[offset + match.length]
+    return after === undefined || !/[A-Za-z0-9_.(]/.test(after)
+  }
+}
+
+/**
  * Shift the A1-style references in a formula by `dr` rows and `dc` columns so
  * a formula cell copied by the fill handle keeps pointing at the same
  * relative span. `$A$1`-style absolute markers (or a `$` on just one axis)
@@ -146,13 +168,17 @@ const REF_TOKEN = /(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)/g
  * exist here, but `ROUND`, `MIN`, …) are never treated as references.
  */
 export function shiftFormulaRefs(formula: string, dr: number, dc: number): string {
+  const isReference = referenceGuard(formula)
   return formula.replace(REF_TOKEN, (match, colAbs: string, letters: string, rowAbs: string, digits: string, offset: number) => {
     if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
-    if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+    if (!isReference(match, offset)) return match
     const col = lettersToCol(letters)
     const row = Number(digits)
-    const newCol = colAbs === '$' ? col : Math.max(1, col + dc)
-    const newRow = rowAbs === '$' ? row : Math.max(1, row + dr)
+    const newCol = colAbs === '$' ? col : col + dc
+    const newRow = rowAbs === '$' ? row : row + dr
+    // Filled past the table's edge: there is no cell to point at, as in a
+    // spreadsheet (clamping to row 1 silently pointed at a different cell).
+    if (newCol < 1 || newRow < 1) return '#REF!'
     return `${colAbs}${colToLetters(newCol)}${rowAbs}${newRow}`
   })
 }
@@ -179,9 +205,10 @@ export interface SourceRect {
  * because the referenced cell itself moved.
  */
 export function remapFormulaRefs(formula: string, src: SourceRect, dr: number, dc: number): string {
+  const isReference = referenceGuard(formula)
   return formula.replace(REF_TOKEN, (match, colAbs: string, letters: string, rowAbs: string, digits: string, offset: number) => {
     if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
-    if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+    if (!isReference(match, offset)) return match
     const col = lettersToCol(letters)
     const row = Number(digits)
     if (row < src.r1 || row > src.r2 || col < src.c1 || col > src.c2) return match
@@ -200,9 +227,12 @@ const REF_RANGE_TOKEN =
  * ones, because the cell itself moved. A range behaves like the block of
  * cells it covers: an insertion within it, or immediately before/after it,
  * grows the range to take the new row/column in, so a `SUM(C2:C9)` above a
- * total keeps covering the data as rows are added to the block.
+ * total keeps covering the data as rows are added to the block. A range one
+ * cell thick along the axis has no block to extend there — a row total
+ * `SUM(B2:D2)` is not a column of data — so it moves like a single reference.
  */
 export function insertFormulaRefs(formula: string, axis: 'row' | 'col', at: number): string {
+  const isReference = referenceGuard(formula)
   return formula.replace(
     REF_RANGE_TOKEN,
     (
@@ -218,7 +248,7 @@ export function insertFormulaRefs(formula: string, axis: 'row' | 'col', at: numb
       offset: number,
     ) => {
       if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
-      if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+      if (!isReference(match, offset)) return match
       const single = digits2 === undefined
       const r1 = Number(digits)
       const c1 = lettersToCol(letters)
@@ -233,6 +263,7 @@ export function insertFormulaRefs(formula: string, axis: 'row' | 'col', at: numb
       // Inserting before the range shifts it; inserting within it or directly
       // against an end grows it instead.
       const grow = (low: number, high: number): [number, number] => {
+        if (low === high) return at <= low ? [low + 1, high + 1] : [low, high]
         if (at < low) return [low + 1, high + 1]
         if (at <= high + 1) return [low, high + 1]
         return [low, high]
@@ -283,6 +314,7 @@ export function deleteFormulaRefs(
     if (role === 'single') return null
     return role === 'start' ? shifted : shifted - 1
   }
+  const isReference = referenceGuard(formula)
   return formula.replace(
     REF_RANGE_TOKEN,
     (
@@ -298,7 +330,7 @@ export function deleteFormulaRefs(
       offset: number,
     ) => {
       if (FORMULA_FUNCTIONS.has(letters.toUpperCase())) return match
-      if (offset > 0 && /[A-Za-z0-9_.]/.test(formula[offset - 1] ?? '')) return match
+      if (!isReference(match, offset)) return match
       const single = digits2 === undefined
       const r1 = Number(digits)
       const c1 = lettersToCol(letters)

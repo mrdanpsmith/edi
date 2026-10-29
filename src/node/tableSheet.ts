@@ -1224,16 +1224,16 @@ export class TableNodeView implements NodeView, InlineCellHost {
           if (!overwritten) next[r]![c] = ''
         }
       }
-      // Repoint formulas at the moved cells, skipping the pasted block itself:
-      // its formulas travelled with the data and keep their own references.
+      // Repoint every formula's references to the moved cells — the pasted
+      // block's own included: in a cut A2:B2 → A5:B5, B2's `=A2*2` has to become
+      // `=A5*2`, or it reads the now-empty A2. References to cells outside the
+      // cut stay where they were, as in a spreadsheet.
       const dr = r1 - cut.r1
       const dc = c1 - cut.c1
       if (dr !== 0 || dc !== 0) {
         const src = { r1: cut.r1 + 1, c1: cut.c1 + 1, r2: cut.r2 + 1, c2: cut.c2 + 1 }
         for (let r = 0; r < maxRows; r++) {
           for (let c = 0; c < maxCols; c++) {
-            const inDest = r >= r1 && r < r1 + height && c >= c1 && c < c1 + width
-            if (inDest) continue
             const value = next[r]![c]!
             if (isFormula(value)) next[r]![c] = remapFormulaRefs(value, src, dr, dc)
           }

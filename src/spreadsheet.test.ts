@@ -72,6 +72,32 @@ describe('solve', () => {
     return solution.cells.map((row) => row.map((cell) => cell.kind))
   }
 
+  it('solves a long running balance quickly', () => {
+    // IF evaluated its branches twice and cell results were not reused: 12 rows
+    // of this took ~10 s and 13 froze the editor.
+    const rows = [['Amount', 'Balance'], ['1', '=A2']]
+    for (let n = 3; n <= 60; n++) rows.push(['1', `=IF(B${n - 1}>100, B${n - 1}, B${n - 1}+A${n})`])
+    const started = performance.now()
+    const solution = solve(rows)
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(solution.cells[59]![1]!.display).toBe('59')
+  })
+
+  it('reuses a cell result referenced many times', () => {
+    const rows = [['A'], ['1']]
+    for (let n = 3; n <= 50; n++) rows.push([`=A${n - 1}+A${n - 1}`])
+    const started = performance.now()
+    const solution = solve(rows)
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(solution.cells[49]![0]!.value).toBe(2 ** 48)
+  })
+
+  it('still reports every cell of a cycle', () => {
+    const out = cells('| A | B |\n| --- | --- |\n| =B2 | =A2 |\n| =A2+1 | 5 |')
+    expect(out[1]).toEqual(['#CYCLE!', '#CYCLE!'])
+    expect(out[2]![0]).toBe('#CYCLE!')
+  })
+
   it('solves a horizontal sum', () => {
     const out = cells('| Item | Q1 | Q2 | Total |\n| --- | --- | --- | --- |\n| A | 10 | 20 | =SUM(B2:C2) |')
     expect(out[1]![3]).toBe('30')

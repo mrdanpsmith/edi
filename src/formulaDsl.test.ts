@@ -32,6 +32,26 @@ function byName(functions: readonly FormulaFunction[], name: string): FormulaFun
   return fn
 }
 
+describe('lazy arguments in a definition body', () => {
+  it('evaluates each nested IF branch once', () => {
+    // Every level used to evaluate its branches while stepping over them and
+    // again when forced: 2^24 evaluations here, which never finished.
+    const depth = 24
+    const body = 'IF(x > 0, '.repeat(depth) + 'x' + ', 0)'.repeat(depth)
+    const { functions, issues } = buildDocumentFunctions([`DEEP(x) = ${body}`])
+    expect(issues).toEqual([])
+    const started = performance.now()
+    expect(call(byName(functions, 'DEEP'), [num(7)], envFor(functions))).toEqual(num(7))
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
+  it('never evaluates a branch that is not taken', () => {
+    const { functions } = buildDocumentFunctions(['SAFE(x) = IF(x = 0, 0, 1 / x)'])
+    expect(call(byName(functions, 'SAFE'), [num(0)], envFor(functions))).toEqual(num(0))
+    expect(call(byName(functions, 'SAFE'), [num(4)], envFor(functions))).toEqual(num(0.25))
+  })
+})
+
 describe('buildDocumentFunctions', () => {
   it('compiles a definition and evaluates its parameters', () => {
     const { functions, issues } = buildDocumentFunctions(['MYAVG(a, b) = (a + b) / 2'])

@@ -465,9 +465,8 @@ class BodyParser extends FormulaScanner {
     this.match('(')
     this.skipWs()
     // Only lazy functions receive `() => CellValue` thunks; eager ones get the
-    // already-evaluated values, so a cell range or comparison is never parsed
-    // twice. Arguments are still parsed eagerly (to walk `pos` past them and
-    // validate the commas/close) even for lazy calls; the values are dropped.
+    // already-evaluated values. A lazy argument is only stepped over here
+    // (`skipArgument`): its thunk is the one place it is evaluated.
     const fn = this.env.functions.get(name.toUpperCase())
     const lazy = fn?.lazy === true
     if (this.peek() === ')') {
@@ -482,14 +481,12 @@ class BodyParser extends FormulaScanner {
       if (this.validateOnly) {
         const value = this.comparison()
         if (value.kind === 'error') return value
+      } else if (lazy) {
+        if (!this.skipArgument()) return err('#ERROR!', 'Missing ")" in a function body')
+        const slice = this.source.slice(start, this.pos)
+        argThunks.push(() => new BodyParser(slice, this.scope, this.env).parse())
       } else {
-        const value = this.comparison()
-        if (lazy) {
-          const slice = this.source.slice(start, this.pos)
-          argThunks.push(() => new BodyParser(slice, this.scope, this.env).parse())
-        } else {
-          args.push(value)
-        }
+        args.push(this.comparison())
       }
       this.skipWs()
       if (this.match(',')) {

@@ -782,6 +782,29 @@ describe('TableNodeView grid', () => {
     view.destroy()
   })
 
+  it('moves references inside the cut block with it', () => {
+    const view = createEditor('| A | B |\n| --- | --- |\n| 5 | =A2*2 |\n|  |  |')
+    mousedown(cell(view, 1, 0))
+    cell(view, 1, 1).dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    const cutEvent = new Event('cut', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(cutEvent, 'clipboardData', {
+      value: { setData: () => {}, getData: () => '' },
+    })
+    tableGrid(view).dispatchEvent(cutEvent)
+    mousedown(cell(view, 2, 0))
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: { getData: (t: string) => (t === 'text/plain' ? '5\t=A2*2' : ''), setData: () => {} },
+    })
+    tableGrid(view).dispatchEvent(pasteEvent)
+    expect(parsePipes(docValue(view)).slice(1)).toEqual([
+      ['', ''],
+      ['5', '=A3*2'],
+    ])
+    view.destroy()
+  })
+
   it('leaves references unchanged when the cell is copied and pasted', () => {
     const view = createEditor('| A | B | C |\n| --- | --- | --- |\n| 5 | =A2 |  |')
     mousedown(cell(view, 1, 0))

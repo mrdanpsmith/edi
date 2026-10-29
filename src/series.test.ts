@@ -66,13 +66,22 @@ describe('shiftFormulaRefs', () => {
     expect(shiftFormulaRefs('=A$1+$B1', 2, 3)).toBe('=D$1+$B3')
   })
 
-  it('clamps at row/column 1', () => {
-    expect(shiftFormulaRefs('=B2', -3, -5)).toBe('=A1')
+  it('becomes #REF! past row/column 1, as a spreadsheet does', () => {
+    // Clamping pointed the filled formula at a different cell without a word.
+    expect(shiftFormulaRefs('=B2', -3, -5)).toBe('=#REF!')
+    expect(shiftFormulaRefs('=B2+C5', -3, 0)).toBe('=#REF!+C2')
   })
 
   it('never treats function names as references', () => {
     expect(shiftFormulaRefs('=ROUND(A1,2)', 1, 0)).toBe('=ROUND(A2,2)')
     expect(shiftFormulaRefs('=SUM(A1:A2)', 0, 1)).toBe('=SUM(B1:B2)')
+  })
+
+  it('leaves string literals and names that contain digits alone', () => {
+    expect(shiftFormulaRefs('=CONCAT("A1", B1)', 1, 0)).toBe('=CONCAT("A1", B2)')
+    expect(shiftFormulaRefs('=CONCAT("say ""A1""", A1)', 1, 0)).toBe('=CONCAT("say ""A1""", A2)')
+    expect(shiftFormulaRefs('=B64ENCODE(A1)', 1, 0)).toBe('=B64ENCODE(A2)')
+    expect(shiftFormulaRefs('=VAT2(A1)', 1, 0)).toBe('=VAT2(A2)')
   })
 })
 
@@ -128,6 +137,19 @@ describe('insertFormulaRefs', () => {
     expect(insertFormulaRefs('=SUM(B1:C1)', 'col', 4)).toBe('=SUM(B1:D1)')
     expect(insertFormulaRefs('=SUM(B1:C1)', 'col', 5)).toBe('=SUM(B1:C1)')
     expect(insertFormulaRefs('=SUM(B1:C1)', 'col', 1)).toBe('=SUM(C1:D1)')
+  })
+
+  it('moves a range one cell thick along the axis instead of growing it', () => {
+    // A row total is not a column of data: a row inserted below it is not in it.
+    expect(insertFormulaRefs('=SUM(B2:D2)', 'row', 3)).toBe('=SUM(B2:D2)')
+    expect(insertFormulaRefs('=SUM(B2:D2)', 'row', 2)).toBe('=SUM(B3:D3)')
+    expect(insertFormulaRefs('=SUM(A2:A9)', 'col', 2)).toBe('=SUM(A2:A9)')
+    expect(insertFormulaRefs('=SUM(A2:A9)', 'col', 1)).toBe('=SUM(B2:B9)')
+  })
+
+  it('leaves string literals alone on insert and delete', () => {
+    expect(insertFormulaRefs('=IF(A3>0,"A3",B3)', 'row', 2)).toBe('=IF(A4>0,"A3",B4)')
+    expect(deleteFormulaRefs('=CONCAT("C5",C5)', 'row', new Set([1]))).toBe('=CONCAT("C5",C4)')
   })
 
   it('shifts absolute references too, since the cell moved', () => {
