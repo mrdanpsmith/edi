@@ -1,5 +1,6 @@
 import { EditorState, Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
+import { Slice } from 'prosemirror-model'
 import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap, toggleMark } from 'prosemirror-commands'
@@ -21,7 +22,6 @@ import {
   exitBlockMode,
   leaveBlockMode,
   releaseDisplacedBlock,
-  setBlockMode,
 } from './block-modes'
 import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { blockDragPlugin } from './blockDrag'
@@ -502,12 +502,14 @@ export function createBlockEditor(
       })
     },
     insertMarkdown(markdown: string) {
-      view.dispatch(view.state.tr.insertText(markdown))
-      const newDoc = markdownToProse(proseToMarkdown(view.state.doc), view.state.schema)
-      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content)
-      setBlockMode(tr, null)
-      tr.setMeta('addToHistory', false)
-      view.dispatch(tr)
+      // Only the inserted markdown is parsed; the rest of the document is not
+      // re-read, and the insert is one ordinary, undoable step. A single
+      // paragraph goes in at the caret as inline content, anything else as blocks.
+      commitSourceMode(view)
+      const parsed = markdownToProse(markdown, view.state.schema)
+      const inline = parsed.childCount === 1 && parsed.firstChild!.type.name === 'paragraph'
+      const slice = inline ? new Slice(parsed.content, 1, 1) : new Slice(parsed.content, 0, 0)
+      view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
       view.focus()
     },
     commitSource(): boolean {

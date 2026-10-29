@@ -71,14 +71,55 @@ function isMarkType(type: string): boolean {
   return MARK_TYPES.has(type)
 }
 
+/** What a parse needs beyond the tree: the source text (for constructs kept
+ * verbatim) and the document's link definitions (to resolve references). */
+interface ParseContext {
+  source: string
+  definitions: Map<string, { url: string; title: string | null }>
+}
+
+function collectDefinitions(node: MdastNode, into: ParseContext['definitions']): void {
+  if (node.type === 'definition' && node.identifier && !into.has(node.identifier)) {
+    into.set(node.identifier, { url: node.url ?? '', title: node.title ?? null })
+  }
+  for (const child of node.children ?? []) collectDefinitions(child, into)
+}
+
+/**
+ * The markdown a node was parsed from, with its container's indent taken off
+ * every line after the first (the first line starts at the node itself). The
+ * container prefix is whatever precedes the node on its first line — spaces for
+ * a list item, `> ` for a quote — and is stripped where a later line repeats it.
+ */
+function sourceOf(node: MdastNode, ctx: ParseContext): string | null {
+  const start = node.position?.start
+  const end = node.position?.end
+  if (start?.offset == null || end?.offset == null) return null
+  const text = ctx.source.slice(start.offset, end.offset)
+  const lineStart = ctx.source.lastIndexOf('\n', start.offset - 1) + 1
+  const lead = ctx.source.slice(lineStart, start.offset)
+  if (lead === '') return text
+  const blank = lead.replace(/[^\t]/g, ' ')
+  return text
+    .split('\n')
+    .map((line, i) => {
+      if (i === 0) return line
+      if (line.startsWith(lead)) return line.slice(lead.length)
+      if (line.startsWith(blank)) return line.slice(blank.length)
+      return line.replace(/^[ \t]+/, '')
+    })
+    .join('\n')
+}
+
 /** Extract the cell grid and delimiter-row alignment from a mdast table. */
 function tableRowsAndAlign(
   node: MdastNode,
   schema: Schema,
+  ctx: ParseContext,
 ): { rows: string[][]; align: TableAlign[] } {
   const rows = (node.children ?? []).map((row) =>
     (row.children ?? []).map((cell) =>
-      serializeCellText(cell.children ?? [], schema),
+      serializeCellText(cell.children ?? [], schema, ctx),
     ),
   )
   const align = (node.align ?? []).map((value) =>
@@ -89,7 +130,7 @@ function tableRowsAndAlign(
 
 /** Map mdast children to prose nodes, folding any table's immediately
  * following carrier comment back into that table's formulas. */
-function mapChildrenWithCarriers(children: MdastNode[], schema: Schema): ProseNode[] {
+function mapChildrenWithCarriers(children: MdastNode[], schema: Schema, ctx: ParseContext): ProseNode[] {
   const out: ProseNode[] = []
   let i = 0
   while (i < children.length) {
@@ -98,7 +139,7 @@ function mapChildrenWithCarriers(children: MdastNode[], schema: Schema): ProseNo
       const next = children[i + 1]
       const carrier = next?.type === 'html' ? parseTableCarrier(next.value ?? '') : null
       if (carrier !== null) {
-        const { rows, align } = tableRowsAndAlign(child, schema)
+        const { rows, align } = tableRowsAndAlign(child, schema, ctx)
         out.push(
           schema.node('table', {
             value: hydrateResolvedTable(rows, align, carrier),
@@ -109,7 +150,7 @@ function mapChildrenWithCarriers(children: MdastNode[], schema: Schema): ProseNo
         continue
       }
     }
-    out.push(mdastToProse(child, schema))
+    out.push(mdastToProse(child, schema, ctx))
     i++
   }
   return out
@@ -153,22 +194,29 @@ interface MdastNode {
   align?: (string | null)[]
   // GFM task list
   checked?: boolean | null
+  // references and definitions
+  identifier?: string
+  referenceType?: 'shortcut' | 'collapsed' | 'full'
+  position?: {
+    start: { offset?: number }
+    end: { offset?: number }
+  }
 }
 
-function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
+function mdastToProse(node: MdastNode, schema: Schema, ctx: ParseContext): ProseNode {
   switch (node.type) {
     case 'root': {
-      const children = mapChildrenWithCarriers(node.children ?? [], schema)
+      const children = mapChildrenWithCarriers(node.children ?? [], schema, ctx)
       if (children.length === 0) children.push(schema.node('paragraph'))
       return schema.node('doc', {}, children)
     }
 
     case 'paragraph':
-      return schema.node('paragraph', {}, parseInline(node.children ?? [], schema))
+      return schema.node('paragraph', {}, parseInline(node.children ?? [], schema, ctx))
 
     case 'heading': {
       const attrs: Record<string, unknown> = { level: node.depth ?? 1 }
-      const children = parseInline(node.children ?? [], schema)
+      const children = parseInline(node.children ?? [], schema, ctx)
       // Pandoc-style explicit id: {#custom-id} at the end of the heading text.
       const last = children[children.length - 1]
       if (last && last.isText) {
@@ -189,7 +237,9 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
     }
 
     case 'blockquote': {
-      const children = mapChildrenWithCarriers(node.children ?? [], schema)
+      const children = mapChildrenWithCarriers(node.children ?? [], schema, ctx)
+      // A bare `>` is an empty quote, and `blockquote` is `block+`.
+      if (children.length === 0) children.push(schema.node('paragraph'))
       return schema.node('blockquote', {}, children)
     }
 
@@ -199,12 +249,12 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       if (node.ordered && node.start != null && node.start !== 1) {
         attrs.order = node.start
       }
-      const children = (node.children ?? []).map((c) => mdastToProse(c, schema))
+      const children = (node.children ?? []).map((c) => mdastToProse(c, schema, ctx))
       return schema.node(type, attrs, children)
     }
 
     case 'listItem': {
-      const children = mapChildrenWithCarriers(node.children ?? [], schema)
+      const children = mapChildrenWithCarriers(node.children ?? [], schema, ctx)
       const attrs: Record<string, unknown> = {}
       if (node.checked != null) attrs.checked = node.checked
       // GFM only reads a checkbox as a task marker when the item has *inline*
@@ -266,7 +316,11 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       // An empty fence (``` + `` with nothing between) yields empty content;
       // schema.text('') is invalid, so emit the block without children instead
       // of crashing the whole parse.
-      return schema.node('code_block', { language: lang }, value ? [schema.text(value)] : [])
+      return schema.node(
+        'code_block',
+        { language: lang, meta: node.meta ?? '' },
+        value ? [schema.text(value)] : [],
+      )
     }
 
     case 'thematicBreak':
@@ -278,19 +332,20 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       // markdown text (the strong/code/etc. marks survive the round trip).
       // When the table carries a resolving comment, that comment restores any
       // formulas the cells were resolved from.
-      const { rows, align } = tableRowsAndAlign(node, schema)
+      const { rows, align } = tableRowsAndAlign(node, schema, ctx)
       return schema.node('table', { value: tableToPipes(rows, align) })
     }
 
     case 'html':
-      return schema.node('paragraph', {}, [schema.text(node.value ?? '')])
+      // Raw HTML is kept as written: as paragraph text it would be escaped on
+      // save and stop being HTML.
+      return schema.node('source_block', { markdown: node.value ?? '' })
 
     case 'break':
       return schema.node('hard_break')
 
     case 'image':
-      // mdast exposes the image destination on `url`, not `src`.
-      return schema.node('image', { src: node.url ?? node.src ?? '', alt: node.alt ?? '' })
+      return imageNode(node, schema)
 
     case MERMAID_TYPE:
       return schema.node(MERMAID_TYPE, { value: node.value ?? '' })
@@ -302,6 +357,10 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
       })
 
     default: {
+      // A block the editor has no model for (a link or footnote definition, …)
+      // is kept as the markdown it was written as.
+      const source = sourceOf(node, ctx)
+      if (source) return schema.node('source_block', { markdown: source })
       const text = node.value ?? ''
       if (text) return schema.node('paragraph', {}, [schema.text(text)])
       return schema.node('paragraph')
@@ -309,25 +368,53 @@ function mdastToProse(node: MdastNode, schema: Schema): ProseNode {
   }
 }
 
+/** An image from an `image` node, or an `imageReference` resolved through its
+ * definition. mdast exposes the destination on `url`, not `src`. */
+function imageNode(node: MdastNode, schema: Schema, ctx?: ParseContext, marks: readonly Mark[] = []): ProseNode {
+  const target =
+    node.type === 'imageReference' && node.identifier
+      ? ctx?.definitions.get(node.identifier)
+      : { url: node.url ?? node.src ?? '', title: node.title ?? null }
+  return schema.node(
+    'image',
+    { src: target?.url ?? '', alt: node.alt ?? '', title: target?.title ?? null },
+    undefined,
+    marks,
+  )
+}
+
 function parseInline(
   children: MdastNode[],
   schema: Schema,
+  ctx: ParseContext,
   marks: Mark[] = [],
 ): ProseNode[] {
   const result: ProseNode[] = []
   for (const child of children) {
     if (child.type === 'text') {
-      result.push(schema.text(child.value ?? '', marks))
+      // `schema.text('')` throws; an empty run is nothing to keep.
+      if (child.value) result.push(schema.text(child.value, marks))
     } else if (child.type === 'inlineCode') {
       const codeMark = schema.marks.code.create()
-      result.push(schema.text(child.value ?? '', [...marks, codeMark]))
+      if (child.value) result.push(schema.text(child.value, [...marks, codeMark]))
     } else if (child.type === 'break') {
-      result.push(schema.node('hard_break', {}, marks.length ? undefined : undefined))
-    } else if (child.type === 'image') {
-      // mdast exposes the image destination on `url`, not `src`.
-      result.push(schema.node('image', { src: child.url ?? child.src ?? '', alt: child.alt ?? '' }))
+      result.push(schema.node('hard_break'))
+    } else if (child.type === 'image' || child.type === 'imageReference') {
+      // An image inside a link keeps the link: that is every README badge.
+      result.push(imageNode(child, schema, ctx, marks))
     } else if (child.type === 'masked_field') {
       result.push(schema.node('masked_field', { content: child.content ?? '', label: child.label ?? '' }))
+    } else if (child.type === 'linkReference') {
+      const target = child.identifier ? ctx.definitions.get(child.identifier) : undefined
+      const mark = schema.marks.link.create({
+        href: target?.url ?? '',
+        title: target?.title ?? null,
+        reference: { type: child.referenceType ?? 'full', label: child.label ?? '', url: target?.url ?? '' },
+      })
+      result.push(...parseInline(child.children ?? [], schema, ctx, [...marks, mark]))
+    } else if (child.type === 'html' || child.type === 'footnoteReference') {
+      const markdown = child.type === 'html' ? (child.value ?? '') : (sourceOf(child, ctx) ?? `[^${child.label ?? ''}]`)
+      if (markdown) result.push(schema.node('inline_source', { markdown }, undefined, marks))
     } else if (isMarkType(child.type)) {
       const markType = schema.marks[MARK_TYPE_ALIASES[child.type] ?? child.type]
       if (markType) {
@@ -338,21 +425,26 @@ function parseInline(
           if (child.title != null) markAttrs.title = child.title
         }
         const mark = markType.create(markAttrs)
-        const inner = parseInline(child.children ?? [], schema, [...marks, mark])
+        const inner = parseInline(child.children ?? [], schema, ctx, [...marks, mark])
         result.push(...inner)
       } else if (child.children) {
-        result.push(...parseInline(child.children, schema, marks))
+        result.push(...parseInline(child.children, schema, ctx, marks))
       }
     } else if (child.children) {
-      result.push(...parseInline(child.children, schema, marks))
+      result.push(...parseInline(child.children, schema, ctx, marks))
+    } else {
+      const markdown = sourceOf(child, ctx)
+      if (markdown) result.push(schema.node('inline_source', { markdown }, undefined, marks))
     }
   }
   return result
 }
 
-function serializeCellText(children: MdastNode[], schema: Schema): string {
-  const para = schema.node('paragraph', {}, parseInline(children, schema))
-  return serializeContent(para)
+/** A table cell's inline markdown. Cells are written raw, not escaped: a cell is
+ * also a formula's source (`=A1*2`), and the grid parses its own markdown. */
+function serializeCellText(children: MdastNode[], schema: Schema, ctx: ParseContext): string {
+  const para = schema.node('paragraph', {}, parseInline(children, schema, ctx))
+  return serializeContent(para, false)
 }
 
 // --- Serialize: ProseMirror → markdown ---
@@ -408,7 +500,9 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
       // does not need to be written out.
       const explicitId = node.attrs.id as string | null | undefined
       const suffix = explicitId && explicitId !== headingSlug(node.textContent) ? ` {#${explicitId}}` : ''
-      return indentLines('#'.repeat(level) + ' ' + serializeContent(node) + suffix, indent)
+      // A trailing ` ###` is an ATX closing sequence and would be read away.
+      const content = serializeContent(node).replace(/(^|[ \t])(#+[ \t]*)$/, '$1\\$2')
+      return indentLines('#'.repeat(level) + ' ' + content + suffix, indent)
     }
 
     case 'blockquote': {
@@ -443,10 +537,18 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
       // A runnable block just has its shebang as the first content line; the
       // info string must stay empty so it round-trips as a bare fence.
       const language = lang.startsWith('#!') ? '' : lang
+      const meta = (node.attrs.meta as string | undefined) ?? ''
+      const info = meta && language ? `${language} ${meta}` : language
       // Match the fence to the content so embedded fences (e.g. a ```example```
       // shown inside a ```markdown fence) survive a save/reload round-trip.
-      return fencedBlock(node.textContent, language, indent)
+      return fencedBlock(node.textContent, info, indent)
     }
+
+    case 'source_block':
+      return indentLines((node.attrs.markdown as string) ?? '', indent)
+
+    case 'inline_source':
+      return (node.attrs.markdown as string) ?? ''
 
     case 'horizontal_rule':
       return indent + '---'
@@ -454,8 +556,11 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
     case 'hard_break':
       return '  \n'
 
-    case 'image':
-      return `![${node.attrs.alt as string}](${node.attrs.src as string})`
+    case 'image': {
+      const alt = ((node.attrs.alt as string) ?? '').replace(/[\\[\]]/g, '\\$&')
+      const target = linkDestination((node.attrs.src as string) ?? '') + linkTitle(node.attrs.title)
+      return `![${alt}](${target})`
+    }
 
     case 'masked_field':
       return maskedFieldToMarkdown(node.attrs.content as string, node.attrs.label as string)
@@ -480,63 +585,242 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
     }
 
     case 'text':
-      return serializeInlineAtom(node.text ?? '', node.marks ?? [])
-
-    case 'inline':
-      return serializeInlineAtom(node.text ?? '', node.marks ?? [])
+      return serializeInlineRun([node], true)
 
     default:
       return node.textContent
   }
 }
 
-function serializeContent(node: ProseNode): string {
+/**
+ * A block's inline content as markdown. `escape` is off only for table cells,
+ * whose text is also formula source and is written raw.
+ */
+function serializeContent(node: ProseNode, escape = true): string {
+  return serializeInlineRun(collectChildren(node), escape)
+}
+
+/** Inline nodes that sit inside the marks around them (`[![badge](i)](url)`).
+ * Others — hard breaks, masked fields — are written outside every mark. */
+const INLINE_ATOMS_IN_MARKS = new Set(['image', 'inline_source'])
+
+function serializeInlineRun(nodes: readonly ProseNode[], escape: boolean): string {
   // Inline content is a run of ProseMirror text nodes whose marks can overlap
   // (e.g. `**`code` words**` = [strong, code] then [strong]). Wrapping each
   // text node independently would emit a fresh `**` per node (`**`code`****
   // words**`). Instead stream the run: keep the marks shared by adjacent nodes
   // open across the boundary and only open/close the delimiters that differ.
+  //
+  // Code is not one of the streamed marks: a code span is literal, so it is
+  // written whole around its own text node, innermost, with a fence chosen
+  // for that text.
   const out: string[] = []
   const stack: Mark[] = []
+  // The text each open mark has covered so far, for a reference link's label.
+  const covered: string[] = []
+  const delimiters = escape ? delimiterEscapes(nodes) : []
+  let lineStart = true
 
   const syncTo = (target: readonly Mark[]) => {
     // Close open marks (innermost first) that the target atom doesn't carry.
-    while (stack.length && !target.some((m) => m.eq(stack[stack.length - 1]))) {
-      out.push(markCloseDelimiter(stack.pop()!))
+    while (stack.length && !target.some((m) => m.eq(stack[stack.length - 1]!))) {
+      out.push(markCloseDelimiter(stack.pop()!, covered.pop()!))
     }
-    // Open marks the target carries that aren't open yet, in canonical
-    // outer→inner order.
-    for (const m of orderedMarks(target)) {
+    // Open marks the target carries that aren't open yet, in ProseMirror's
+    // rank order (outer→inner); links nest fine around other emphasis because
+    // their `[..](href)` delimiters wrap the whole run.
+    for (const m of target) {
+      if (m.type.name === 'code') continue
       if (!stack.some((s) => s.eq(m))) {
         out.push(markOpenDelimiter(m))
         stack.push(m)
+        covered.push('')
       }
     }
   }
 
-  node.content.forEach((child) => {
+  nodes.forEach((child, index) => {
+    const before = out.length
     if (child.isText) {
-      syncTo(child.marks ?? [])
-      out.push(child.text ?? '')
+      syncTo(child.marks)
+      const text = child.text ?? ''
+      const atLineStart = lineStart && out.length === before
+      const code = child.marks.some((m) => m.type.name === 'code')
+      out.push(code ? codeSpan(text) : escape ? escapeText(text, atLineStart, delimiters[index]!) : text)
+      for (let i = 0; i < covered.length; i++) covered[i] += text
     } else {
-      // Inline non-text nodes (image, hard break, masked field) are serialized
-      // standalone; don't wrap them in the surrounding marks.
-      syncTo([])
+      syncTo(INLINE_ATOMS_IN_MARKS.has(child.type.name) ? child.marks : [])
       out.push(serializeNode(child))
     }
+    lineStart = child.type.name === 'hard_break'
   })
   syncTo([])
   return out.join('')
 }
 
-// Code is always emitted innermost: a Markdown code span is literal, so
-// `` `**x**` `` would swallow the asterisks as plain text. The given marks are
-// already rank-sorted (outer→inner) by ProseMirror; links nest fine around
-// other emphasis because their `[..](href)` delimiters wrap the whole run.
-function orderedMarks(marks: readonly Mark[]): readonly Mark[] {
-  const code = marks.find((m) => m.type.name === 'code')
-  if (!code) return [...marks]
-  return [...marks.filter((m) => m.type.name !== 'code'), code]
+const DELIMITER_CHARS = ['*', '_', '~', '=', '^', '`'] as const
+
+/** The delimiter each mark is written with: a text run of one of these is only
+ * ever read as markup when the block holds something it could pair with. */
+const MARK_DELIMITER_CHAR: Record<string, string> = {
+  strong: '*',
+  em: '*',
+  strikethrough: '~',
+  sub: '~',
+  highlight: '=',
+  sup: '^',
+  code: '`',
+}
+
+interface DelimiterRun {
+  node: number
+  start: number
+  end: number
+  ch: string
+  canOpen: boolean
+  canClose: boolean
+}
+
+/**
+ * Which delimiter characters in each text node need escaping, as offsets into
+ * that node's text.
+ *
+ * A run is only read as markup if it pairs: an opener with a later closer of
+ * the same character, or a mark in the block written with that character
+ * (which pairs with anything). A run that can open needs whitespace-free text
+ * after it, one that can close needs it before. So `5 * 3`, `~5 min` and
+ * `~9px … ~48px` (openers with no closer) are left as typed rather than
+ * escaped on every save. The test is looser than CommonMark's flanking rules,
+ * which only ever means an escape more than strictly needed.
+ */
+function delimiterEscapes(nodes: readonly ProseNode[]): Set<number>[] {
+  const marked = new Set<string>()
+  const runs: DelimiterRun[] = []
+  nodes.forEach((node, index) => {
+    for (const m of node.marks) {
+      const ch = MARK_DELIMITER_CHAR[m.type.name]
+      if (ch) marked.add(ch)
+    }
+    if (!node.isText || node.marks.some((m) => m.type.name === 'code')) return
+    const text = node.text ?? ''
+    for (let i = 0; i < text.length; ) {
+      const ch = text[i]!
+      if (!(DELIMITER_CHARS as readonly string[]).includes(ch)) {
+        i++
+        continue
+      }
+      let j = i
+      while (j < text.length && text[j] === ch) j++
+      // A node's edge is not known to be whitespace, so it counts as text.
+      const before = text[i - 1]
+      const after = text[j]
+      const intraword = ch === '_' && isAlphanumeric(before) && isAlphanumeric(after)
+      const inert = intraword || (ch === '=' && j - i < 2)
+      // Backtick runs pair without regard to what is around them.
+      const any = ch === '`'
+      runs.push({
+        node: index,
+        start: i,
+        end: j,
+        ch,
+        canOpen: !inert && (any || !isWhitespace(after)),
+        canClose: !inert && (any || !isWhitespace(before)),
+      })
+      i = j
+    }
+  })
+  const escapes = nodes.map(() => new Set<number>())
+  runs.forEach((run, k) => {
+    const pairs =
+      (marked.has(run.ch) && (run.canOpen || run.canClose)) ||
+      (run.canOpen && runs.some((other, l) => l > k && other.ch === run.ch && other.canClose)) ||
+      (run.canClose && runs.some((other, l) => l < k && other.ch === run.ch && other.canOpen))
+    if (pairs) for (let i = run.start; i < run.end; i++) escapes[run.node]!.add(i)
+  })
+  return escapes
+}
+
+const ASCII_PUNCTUATION = /[!-/:-@[-`{-~]/
+const ENTITY = /^&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/
+const isWhitespace = (ch: string | undefined) => ch !== undefined && /\s/.test(ch)
+const isAlphanumeric = (ch: string | undefined) => ch !== undefined && /[\p{L}\p{N}]/u.test(ch)
+
+/**
+ * Text as markdown that reads back as the same text. Only what could start a
+ * construct is escaped, so prose such as `snake_case`, `AT&T` or `a < b` is
+ * written exactly as typed.
+ *
+ * `delimiters` are the offsets of emphasis-like delimiters that would pair
+ * (`delimiterEscapes`). `lineStart` says the text begins a line, where block
+ * syntax (`# `, `- `, `1. `, `> `, a fence) would turn it into a different block.
+ */
+function escapeText(text: string, lineStart: boolean, delimiters: ReadonlySet<number>): string {
+  const escapeAt = new Set(delimiters)
+  const n = text.length
+  for (let i = 0; i < n; i++) {
+    const ch = text[i]!
+    const next = text[i + 1]
+    if (ch === '\\' && (next === undefined || next === '\n' || ASCII_PUNCTUATION.test(next))) escapeAt.add(i)
+    else if (ch === '<' && next !== undefined && /[A-Za-z/!?]/.test(next)) escapeAt.add(i)
+    else if (ch === '&' && ENTITY.test(text.slice(i))) escapeAt.add(i)
+    else if (ch === '[' && /^\[[^\]]*\](?:[([:]|$)/.test(text.slice(i))) escapeAt.add(i)
+  }
+
+  // Block syntax at the start of each line the text begins.
+  let start = lineStart ? 0 : text.indexOf('\n') + 1 || n
+  while (start < n) {
+    const end = text.indexOf('\n', start)
+    const line = text.slice(start, end === -1 ? n : end)
+    const lead = /^[ \t]*/.exec(line)![0].length
+    const rest = line.slice(lead)
+    const at = start + lead
+    if (/^(?:#{1,6}|[-+*]|>|\[[ xX]\])(?:[ \t]|$)/.test(rest) || /^>/.test(rest)) escapeAt.add(at)
+    else if (/^\d{1,9}[.)](?:[ \t]|$)/.test(rest)) escapeAt.add(at + rest.search(/[.)]/))
+    else if (/^(?:[-*_][ \t]*){3,}$/.test(rest) || /^=+[ \t]*$/.test(rest) || /^(?:`{3,}|~{3,})/.test(rest)) {
+      escapeAt.add(at)
+    }
+    if (end === -1) break
+    start = end + 1
+  }
+
+  if (escapeAt.size === 0) return text
+  let out = ''
+  for (let i = 0; i < n; i++) out += (escapeAt.has(i) ? '\\' : '') + text[i]
+  return out
+}
+
+/** A code span for `text`: a fence of backticks no run inside matches, and a
+ * space of padding where the text's own edges would otherwise be read away. */
+function codeSpan(text: string): string {
+  const runs = new Set((text.match(/`+/g) ?? []).map((run) => run.length))
+  let size = 1
+  while (runs.has(size)) size++
+  const fence = '`'.repeat(size)
+  const pad = /^`|`$/.test(text) || (/^ [\s\S]* $/.test(text) && /[^ ]/.test(text)) ? ' ' : ''
+  return fence + pad + text + pad + fence
+}
+
+/** A link or image destination, in angle brackets when it would not survive
+ * bare (a space, a `<`, unbalanced parentheses). */
+function linkDestination(url: string): string {
+  let depth = 0
+  let balanced = true
+  for (const ch of url) {
+    if (ch === '(') depth++
+    else if (ch === ')' && --depth < 0) balanced = false
+  }
+  if (balanced && depth === 0 && !/[\s<>]/.test(url)) return url
+  return '<' + url.replace(/[<>\\]/g, '\\$&') + '>'
+}
+
+function linkTitle(title: unknown): string {
+  if (typeof title !== 'string' || title === '') return ''
+  return ' "' + title.replace(/["\\]/g, '\\$&') + '"'
+}
+
+/** Labels match case-insensitively and with whitespace collapsed (CommonMark). */
+function normalizeLabel(label: string): string {
+  return label.trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
 function markOpenDelimiter(mark: Mark): string {
@@ -562,24 +846,26 @@ function markOpenDelimiter(mark: Mark): string {
   }
 }
 
-function markCloseDelimiter(mark: Mark): string {
-  if (mark.type.name === 'link') {
-    const title =
-      mark.attrs.title != null && mark.attrs.title !== ''
-        ? ` "${mark.attrs.title}"`
-        : ''
-    return '](' + (mark.attrs.href as string) + title + ')'
-  }
-  return markOpenDelimiter(mark)
+interface LinkReference {
+  type: 'shortcut' | 'collapsed' | 'full'
+  label: string
+  url: string
 }
 
-function serializeInlineAtom(text: string, marks: readonly Mark[]): string {
-  const ordered = orderedMarks(marks)
-  let out = ''
-  for (const mark of ordered) out += markOpenDelimiter(mark)
-  out += text
-  for (let i = ordered.length - 1; i >= 0; i--) out += markCloseDelimiter(ordered[i])
-  return out
+/** `text` is what the mark covered, which a shortcut or collapsed reference
+ * uses as its label. */
+function markCloseDelimiter(mark: Mark, text: string): string {
+  if (mark.type.name !== 'link') return markOpenDelimiter(mark)
+  const href = (mark.attrs.href as string) ?? ''
+  // Written back as the reference it was read from while it still points where
+  // its definition does — and, for the forms whose label is the text, while
+  // the text is still that label.
+  const ref = mark.attrs.reference as LinkReference | null
+  if (ref && ref.url === href) {
+    if (ref.type === 'full') return `][${ref.label}]`
+    if (normalizeLabel(text) === normalizeLabel(ref.label)) return ref.type === 'collapsed' ? '][]' : ']'
+  }
+  return '](' + linkDestination(href) + linkTitle(mark.attrs.title) + ')'
 }
 
 function serializeList(node: ProseNode, ordered: boolean, indent: string, env: FormulaEnv): string {
@@ -677,12 +963,26 @@ function serializeListItemContent(
 
 // --- Public API ---
 
+/** YAML front matter: a `---` fence opening the file around `key: value` lines.
+ * Without the `key:` line it is a rule and a setext heading, as CommonMark says. */
+const FRONT_MATTER = /^---[ \t]*\n[A-Za-z0-9_-]+[ \t]*:.*\n(?:.*\n)*?(?:---|\.\.\.)[ \t]*(?:\n|$)/
+
 export function markdownToProse(markdown: string, mdSchema: Schema): ProseNode {
-  const processor = createProcessor()
-  const tree = processor.parse(markdown) as MdastNode
-  const doc = mdastToProse(tree, mdSchema)
-  if (doc.childCount === 0) {
-    return mdSchema.node('doc', {}, [mdSchema.node('paragraph')])
+  // One line ending throughout: a CRLF file would otherwise keep `\r` inside
+  // soft breaks and code while the blocks between them are written with `\n`.
+  const normalized = markdown.replace(/\r\n?/g, '\n')
+  const frontMatter = FRONT_MATTER.exec(normalized)?.[0] ?? ''
+  const body = normalized.slice(frontMatter.length)
+  const tree = createProcessor().parse(body) as MdastNode
+  const ctx: ParseContext = { source: body, definitions: new Map() }
+  collectDefinitions(tree, ctx.definitions)
+  const doc = mdastToProse(tree, mdSchema, ctx)
+  if (frontMatter) {
+    const block = mdSchema.node('source_block', { markdown: frontMatter.replace(/\n$/, '') })
+    const rest = doc.childCount === 1 && doc.firstChild!.type.name === 'paragraph' && doc.firstChild!.childCount === 0
+      ? []
+      : collectChildren(doc)
+    return mdSchema.node('doc', {}, [block, ...rest])
   }
   return doc
 }

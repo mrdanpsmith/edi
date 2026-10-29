@@ -25,6 +25,16 @@ markdown; a resolved table or diagram is stored in its node's `attrs.value`.
 The markdown file remains the source of truth. Undo, save, export and search
 all operate on the document, not on a separate model that could drift from it.
 
+Opening and saving a file must not change it. `src/markdown.ts` keeps what the
+editor has no model for as the markdown it was written as: HTML blocks, link and
+footnote definitions and YAML front matter become a `source_block`, and inline
+HTML and footnote references an `inline_source` atom. Reference links are
+ordinary links that are written back in reference form while their target is
+unchanged. Text is escaped only where a character could start a construct, so a
+lone `*` or `snake_case` is written as typed; table cells are written raw,
+because a cell is also formula source. `src/markdown-roundtrip.test.ts` holds
+the files that must survive a save byte for byte.
+
 ## Data flow
 
 1. `backend/main.py` creates the QApplication and `MainWindow`.

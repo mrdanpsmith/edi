@@ -211,13 +211,13 @@ describe('resolved tables', () => {
     expect(proseToMarkdown(doc)).toBe(md)
   })
 
-  it('leaves a foreign comment after a table as a literal paragraph', () => {
+  it('leaves a foreign comment after a table as raw source', () => {
     const doc = markdownToProse('| A |\n| --- |\n| 1 |\n\n<!-- hello -->', schema)
     expect(doc.firstChild!.type.name).toBe('table')
     expect(doc.firstChild!.attrs._resolved).toBe(false)
     const last = doc.content.child(doc.childCount - 1)
-    expect(last.type.name).toBe('paragraph')
-    expect(last.textContent).toBe('<!-- hello -->')
+    expect(last.type.name).toBe('source_block')
+    expect(last.attrs.markdown).toBe('<!-- hello -->')
   })
 })
 
@@ -230,10 +230,10 @@ describe('further parse paths', () => {
     expect(serialize('2. b\n3. c')).toBe('2. b\n3. c\n')
   })
 
-  it('turns raw html into a paragraph', () => {
+  it('keeps raw html as a source block', () => {
     const doc = markdownToProse('<div>hi</div>', schema)
-    expect(doc.firstChild?.type.name).toBe('paragraph')
-    expect(doc.firstChild?.textContent).toBe('<div>hi</div>')
+    expect(doc.firstChild?.type.name).toBe('source_block')
+    expect(doc.firstChild?.attrs.markdown).toBe('<div>hi</div>')
     expect(serialize('<div>hi</div>')).toBe('<div>hi</div>\n')
   })
 

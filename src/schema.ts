@@ -108,7 +108,8 @@ const nodes: SchemaSpec['nodes'] = {
     content: 'text*',
     marks: '',
     code: true,
-    attrs: { language: { default: '' } },
+    // `meta` is the rest of the fence's info string (` ```js title="a.js" `).
+    attrs: { language: { default: '' }, meta: { default: '' } },
     parseDOM: [{
       tag: 'pre',
       preserveWhitespace: 'full',
@@ -189,15 +190,42 @@ const nodes: SchemaSpec['nodes'] = {
     attrs: {
       src: { default: '' },
       alt: { default: '' },
+      title: { default: null },
     },
     parseDOM: [{
       tag: 'img',
       getAttrs(dom: HTMLElement) {
-        return { src: dom.getAttribute('src') ?? '', alt: dom.getAttribute('alt') ?? '' }
+        return {
+          src: dom.getAttribute('src') ?? '',
+          alt: dom.getAttribute('alt') ?? '',
+          title: dom.getAttribute('title'),
+        }
       },
     }],
     toDOM(node) {
-      return ['img', { src: node.attrs.src as string, alt: node.attrs.alt as string }]
+      const attrs: Record<string, string> = { src: node.attrs.src as string, alt: node.attrs.alt as string }
+      if (node.attrs.title) attrs.title = node.attrs.title as string
+      return ['img', attrs]
+    },
+  },
+
+  // Inline markdown the editor has no model for (inline HTML, a footnote
+  // reference), kept byte-for-byte so a save never drops it.
+  inline_source: {
+    inline: true,
+    atom: true,
+    group: 'inline',
+    attrs: {
+      markdown: { default: '' },
+    },
+    parseDOM: [{
+      tag: 'span[data-inline-source]',
+      getAttrs(dom: HTMLElement) {
+        return { markdown: dom.textContent ?? '' }
+      },
+    }],
+    toDOM(node) {
+      return ['span', { 'data-inline-source': '', class: 'inline-source' }, node.attrs.markdown as string]
     },
   },
 
@@ -330,7 +358,11 @@ const marks: SchemaSpec['marks'] = {
   },
 
   link: {
-    attrs: { href: { default: '' }, title: { default: null } },
+    // `reference` is set on a link read from a reference (`[text][label]`,
+    // `[label][]`, `[label]`): { type, label, url } with the url its definition
+    // gave. The serializer writes the reference form back while href still
+    // matches, so a file's definitions keep being the links' targets.
+    attrs: { href: { default: '' }, title: { default: null }, reference: { default: null } },
     parseDOM: [
       {
         tag: 'a',

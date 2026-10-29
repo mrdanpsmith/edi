@@ -87,6 +87,14 @@
   padding: 0.15em 0.35em;
 }
 
+/* Inline markdown kept verbatim (inline HTML, a footnote reference): shown as
+   its source, dimmed, so it reads as markup rather than as text. */
+.ProseMirror .inline-source {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
 .ProseMirror mark {
   background: var(--md-mark);
   color: inherit;
