@@ -140,14 +140,19 @@ fi
 # from EDI_SELFTEST_OUT, not stdout: a windowed .app launched by the runner can
 # produce no captured stdout at all, while the app has still exited with a
 # verdict. The log keeps the bootloader/Chromium diagnostics and is printed on
-# failure. The onefile self-extracts to $TMPDIR, so point it at a disk-backed
-# dir under build/.
+# failure.
+#
+# The smoke test runs a throwaway copy, never the bundle that ships: with the
+# sandbox disabled QtWebEngine creates an empty
+# QtWebEngineCore.framework/Versions/Resources inside the bundle, which breaks
+# the `codesign --verify --deep --strict` that install.sh runs.
 print_step "Verifying Edi.app via the offscreen smoke test"
 SMOKE_DIR="$ROOT/build/smoke-tmp-macos"
 SMOKE_LOG="$SMOKE_DIR/selftest.log"
 SMOKE_OUT="$SMOKE_DIR/selftest.json"
 rm -rf "$SMOKE_DIR"
 mkdir -p "$SMOKE_DIR"
+ditto "$APP" "$SMOKE_DIR/Edi.app"
 # GNU coreutils `timeout` is not on stock macOS, so bound the app ourselves:
 # run in the background, poll up to 120s, then kill. The app os._exits after
 # writing SELFTEST; its exit code and the verdict file are the gate.
@@ -157,7 +162,7 @@ QTWEBENGINE_DISABLE_SANDBOX=1 \
 QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage --disable-gpu" \
 EDI_SELFTEST=1 \
 EDI_SELFTEST_OUT="$SMOKE_OUT" \
-"$APP/Contents/MacOS/Edi" >"$SMOKE_LOG" 2>&1 &
+"$SMOKE_DIR/Edi.app/Contents/MacOS/Edi" >"$SMOKE_LOG" 2>&1 &
 SMOKE_PID=$!
 DEADLINE=$(( $(date +%s) + 120 ))
 while kill -0 "$SMOKE_PID" 2>/dev/null && [ "$(date +%s)" -lt "$DEADLINE" ]; do
@@ -194,6 +199,9 @@ if [[ "$VERDICT" != SELFTEST\ * ]]; then
   echo "error: selftest produced no verdict (got '${VERDICT:-nothing}')" >&2
   exit 1
 fi
+
+# The bundle being packaged must still pass the check install.sh makes.
+codesign --verify --deep --strict "$APP"
 
 # --- Drag-to-Applications .dmg ---------------------------------------------------
 print_step "Creating the .dmg"

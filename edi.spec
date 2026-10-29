@@ -221,19 +221,21 @@ elif sys.platform == 'darwin':
     if not _icns.is_file():
         raise SystemExit('error: scripts/assets/app-icon.icns missing; run node scripts/generate-icon.mjs')
 
+    # Onedir, not onefile: a onefile .app unpacks ~400 MB to a fresh $TMPDIR
+    # directory on every launch, and macOS re-validates those freshly written
+    # dylibs at their new path each time, which cost 8-12 s before any Python
+    # ran. Inside the bundle the libraries sit at a fixed path, are checked once
+    # and start in a few seconds.
     exe = EXE(
         pyz,
         a.scripts,
-        a.binaries,
-        a.datas,
         [],
+        exclude_binaries=True,
         name='Edi',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
         upx=False,
-        upx_exclude=[],
-        runtime_tmpdir=None,
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
@@ -243,8 +245,18 @@ elif sys.platform == 'darwin':
         icon=str(_icns),
     )
 
-    app = BUNDLE(
+    coll = COLLECT(
         exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='Edi',
+    )
+
+    app = BUNDLE(
+        coll,
         name='Edi.app',
         icon=str(_icns),
         bundle_identifier='com.mrdanpsmith.edi',

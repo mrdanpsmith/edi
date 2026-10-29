@@ -253,11 +253,24 @@ gate.
 needed. It mirrors the Linux steps into `dist-app/Edi.app`, ad-hoc code-signs
 the bundle (`codesign --force --deep -s -`; arm64 will not launch unsigned),
 asserts the Markdown document type is in the sealed Info.plist, smoke-tests
-the bundle binary (the verdict comes from `EDI_SELFTEST_OUT`; the captured app
-log and verdict are printed when it fails), then produces:
+a throwaway copy of the bundle (the verdict comes from `EDI_SELFTEST_OUT`; the
+captured app log and verdict are printed when it fails), re-verifies the
+signature, then produces:
 
 - `dist-app/Edi-<ver>-macos-arm64.dmg` with an `Applications` symlink;
 - `dist-app/Edi-<ver>-arm64.zip` and `.sha256`.
+
+The `.app` is **onedir** (`COLLECT` + `BUNDLE`), unlike the Linux and Windows
+onefiles. A onefile `.app` unpacked ~400 MB to a new `$TMPDIR` directory on
+every launch, and macOS re-validated those freshly written dylibs at their new
+path each time: 8–12 s before any Python ran, against well under a second for
+onedir. Do not switch it back.
+
+The smoke test must not run the shipped bundle. With the sandbox disabled
+(`QTWEBENGINE_DISABLE_SANDBOX=1`, which the selftest sets) QtWebEngine creates
+an empty `QtWebEngineCore.framework/Versions/Resources` inside the bundle,
+and that fails the `codesign --verify --deep --strict` in `install.sh`.
+Normal launches leave the bundle alone.
 
 The zip is made with `ditto -c -k --sequesterRsrc --keepParent`, never
 `zip -r`, which can break the signature.
