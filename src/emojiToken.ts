@@ -16,6 +16,12 @@ export interface EmojiToken {
 const TOKEN = /:([A-Za-z0-9_+-]*)$/
 /** A `:` only opens a token at the start or after one of these. */
 const BOUNDARY = /[\s([{'"]/
+/**
+ * …or after an emoji, so a second `:` right after one just picked opens the
+ * card again. Matches the end of a pictograph, flag or keycap, including any
+ * skin-tone modifier or variation selector after it.
+ */
+const EMOJI_END = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator})[\p{Emoji_Modifier}️]*$|⃣$/u
 /** `A1:` is the start of `A1:B2`, not an emoji token. */
 const RANGE_REF = /\b[A-Za-z]{1,3}[0-9]+:$/
 
@@ -41,7 +47,7 @@ export function emojiTokenAt(
   const query = match[1]!
   const from = caret - query.length - 1
   const preceding = from > 0 ? before[from - 1]! : ''
-  if (preceding && !BOUNDARY.test(preceding)) return null
+  if (preceding && !BOUNDARY.test(preceding) && !EMOJI_END.test(before.slice(0, from))) return null
   if (RANGE_REF.test(before.slice(0, from + 1))) return null
   return { query, from, to: caret }
 }

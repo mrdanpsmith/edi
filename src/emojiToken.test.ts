@@ -21,6 +21,17 @@ describe('emojiTokenAt', () => {
     expect(emojiTokenAt('[:sm', 4)?.query).toBe('sm')
   })
 
+  it('opens right after an emoji, so emoji can be typed back to back', () => {
+    expect(emojiTokenAt('😀:sm')?.query).toBe('sm')
+    expect(emojiTokenAt('hi 😀:')?.query).toBe('')
+    expect(emojiTokenAt('❤️:sm')?.query).toBe('sm')
+    expect(emojiTokenAt('👍🏽:sm')?.query).toBe('sm')
+    expect(emojiTokenAt('👩‍💻:sm')?.query).toBe('sm')
+    expect(emojiTokenAt('🇬🇧:sm')?.query).toBe('sm')
+    expect(emojiTokenAt('1️⃣:sm')?.query).toBe('sm')
+    expect(emojiTokenAt('😀:sm')?.from).toBe(2)
+  })
+
   it('does not open after a word character', () => {
     expect(emojiTokenAt('12:30', 5)).toBeNull()
     expect(emojiTokenAt('~/path:file', 11)).toBeNull()
