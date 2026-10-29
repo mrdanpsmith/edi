@@ -67,12 +67,16 @@ function unescapeCell(cell: string): string {
  */
 export function parsePipes(value: string): string[][] {
   const rows: string[][] = []
+  let delimiterSeen = false
   for (const line of value.split('\n')) {
     if (line.trim() === '') continue
     const cells = splitRow(trimOuterPipes(line)).map(unescapeCell)
-    // Drop the GFM delimiter row (`| --- |`, `| :---: |`, …). Any row whose
-    // every cell is dash-shaped is an alignment row, never data.
-    if (cells.every((cell) => DELIMITER_CELL.test(cell))) continue
+    // Drop the GFM delimiter row (`| --- |`, `| :---: |`, …). Only the line
+    // straight after the header is one; a later `| - | - |` is data.
+    if (isDelimiterRow(cells, rows.length, delimiterSeen)) {
+      delimiterSeen = true
+      continue
+    }
     rows.push(cells)
   }
   const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0)
@@ -87,14 +91,20 @@ export function parsePipes(value: string): string[][] {
  * Returns an empty array when the table has no delimiter row.
  */
 export function parsePipesAlign(value: string): TableAlign[] {
-  for (const line of value.split('\n')) {
-    if (line.trim() === '') continue
-    const cells = splitRow(trimOuterPipes(line)).map(unescapeCell)
-    if (cells.length > 0 && cells.every((cell) => DELIMITER_CELL.test(cell))) {
-      return cells.map(delimiterAlign)
-    }
-  }
-  return []
+  const lines = value.split('\n').filter((line) => line.trim() !== '')
+  const cells = lines.length > 1 ? splitRow(trimOuterPipes(lines[1]!)).map(unescapeCell) : []
+  return isDelimiterRow(cells, 1, false) ? cells.map(delimiterAlign) : []
+}
+
+/** Whether `cells` is the GFM delimiter row: dash-shaped cells on the line
+ * straight after the header (`rowsBefore` rows already read), and only once. */
+export function isDelimiterRow(cells: readonly string[], rowsBefore: number, delimiterSeen: boolean): boolean {
+  return (
+    !delimiterSeen &&
+    rowsBefore === 1 &&
+    cells.length > 0 &&
+    cells.every((cell) => DELIMITER_CELL.test(cell))
+  )
 }
 
 /**

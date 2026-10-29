@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS = ("md", "markdown", "txt", "mermaid")
@@ -34,10 +35,36 @@ def read_any_text_file(path: str) -> str:
 
 
 def write_text_file(path: str, content: str) -> None:
-    target = Path(path)
-    if target.parent and str(target.parent) != ".":
-        target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    """Write ``content`` so the file on disk is always the old or the new text.
+
+    The text goes to a temporary file beside the target, is flushed to disk and
+    then renamed over it, so a crash or a full disk mid-save never leaves a
+    truncated document. A symlinked target is written through to the file it
+    points at, and an existing file keeps its permissions.
+    """
+    target = Path(os.path.realpath(path))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = target.stat().st_mode & 0o7777
+    except FileNotFoundError:
+        mode = None
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(tmp_name, mode)
+        else:
+            # mkstemp creates 0600; give a new file the usual umask-derived mode.
+            umask = os.umask(0)
+            os.umask(umask)
+            os.chmod(tmp_name, 0o666 & ~umask)
+        os.replace(tmp_name, target)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def rename_text_file(old_path: str, new_path: str, content: str) -> None:

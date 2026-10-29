@@ -1,9 +1,8 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
 import { createBlockCodeMirror, type BlockCodeMirror } from './codemirror-block'
-import { attachBlockControls, commitSourceBlock, modeFor } from './block-modes'
+import { attachBlockControls, commitSourceBlock, modeFor, sourceMarkdownFor } from './block-modes'
 import { exitCodeBlock } from './codeBlockExit'
-import { serializeBlock } from './markdown'
 import { headingSlug } from './schema'
 
 /**
@@ -72,22 +71,18 @@ export function showsSource(view: EditorView, pos: number | undefined): boolean 
 class BlockSourceNodeView implements NodeView {
   dom: HTMLElement
   private cm: BlockCodeMirror | null = null
-  private node: ProseNode
   private view: EditorView
   private getPos: () => number | undefined
   private controls: ReturnType<typeof attachBlockControls> = null
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
-    this.node = node
     this.view = view
     this.getPos = getPos
 
     this.dom = document.createElement('div')
     this.dom.className = 'block-source-mode'
 
-    const markdown = (node.attrs.markdown as string ?? '') ||
-      serializeBlock(this.node) ||
-      ''
+    const markdown = sourceMarkdownFor(node)
     let initialPos: number | undefined
     if (markdown.startsWith('```')) {
       const nl = markdown.indexOf('\n')
@@ -125,13 +120,11 @@ class BlockSourceNodeView implements NodeView {
     if (pos !== undefined) exitCodeBlock(this.view, pos, dir)
   }
 
-  update(node: ProseNode): boolean {
+  update(): boolean {
     // The mode is not a document attr, so it cannot be read off the node: ask
     // the record, and rebuild when the answer has changed — the source editor
     // and the rendering are two entirely different views of the same block.
-    if (!showsSource(this.view, this.getPos())) return false
-    this.node = node
-    return true
+    return showsSource(this.view, this.getPos())
   }
 
   stopEvent(): boolean {

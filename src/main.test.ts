@@ -1098,6 +1098,16 @@ describe('open and save', () => {
     expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/out.csv', expect.any(String))
   })
 
+  it('does not save to an unsupported extension when the user declines', async () => {
+    mainState.pickSavePath.mockResolvedValue('/tmp/out.csv')
+    mainState.confirmAction.mockResolvedValue(false)
+    await loadMain()
+    press('n')
+    menu('save')
+    await flushAsync()
+    expect(mainState.writeTextFile).not.toHaveBeenCalled()
+  })
+
   it('reports a failed save', async () => {
     mainState.pickSavePath.mockResolvedValue('/tmp/new.md')
     mainState.writeTextFile.mockRejectedValue(new Error('disk full'))
@@ -1181,6 +1191,16 @@ describe('rename', () => {
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(expect.stringContaining('out.csv'))
     expect(mainState.renameTextFile).toHaveBeenCalledWith('/tmp/notes.md', '/tmp/out.csv', 'hello file')
+  })
+
+  it('keeps the old name when the user declines an unsupported extension', async () => {
+    await openNotes()
+    mainState.promptForRename.mockResolvedValue('out.csv')
+    mainState.confirmAction.mockResolvedValue(false)
+    menu('rename')
+    await flushAsync()
+    expect(mainState.renameTextFile).not.toHaveBeenCalled()
+    expect(document.title).toBe('notes.md — Edi')
   })
 
   it('reports a failed rename, leaving the document on its old name', async () => {

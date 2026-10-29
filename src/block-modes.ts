@@ -4,7 +4,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import type { EditorView } from 'prosemirror-view'
 import { EditorView as CMEditorView } from '@codemirror/view'
-import { markdownToProse } from './markdown'
+import { markdownToProse, serializeBlock } from './markdown'
 import { BLOCK_CONTROLS_CLASS, pressTarget } from './press'
 import {
   CHECK_ICON,
@@ -1258,10 +1258,16 @@ function buildSourceCommitTransaction(
   const tr = view.state.tr
   const outgoing = modeFor(view.state, pos)
   const carriedForm = outgoing?.form
+  const node = view.state.doc.nodeAt(pos)
   const newDoc = markdownToProse(markdown, view.state.schema)
   const nodes: ProseNode[] = []
   newDoc.forEach((child) => nodes.push(child))
-  if (nodes.length > 0) {
+  if (node !== null && markdown === sourceMarkdownFor(node)) {
+    // The buffer is what the block opened with: leaving is a mode change only.
+    // Re-parsing it anyway would dirty the file, add an undo step and could
+    // rewrite text the user never touched.
+    placeCaretInText(tr, pos + nodeSize - 1, pos + 1, pos + nodeSize)
+  } else if (nodes.length > 0) {
     tr.replaceWith(pos, pos + nodeSize, nodes)
     const insertedSize = nodes.reduce((sum, n) => sum + n.nodeSize, 0)
     placeCaretInText(tr, pos + insertedSize - 1, pos + 1, pos + insertedSize)
@@ -1278,6 +1284,11 @@ function buildSourceCommitTransaction(
     setBlockMode(tr, null)
   }
   return tr
+}
+
+/** The markdown a block's source editor opens with. */
+export function sourceMarkdownFor(node: ProseNode): string {
+  return (node.attrs.markdown as string | undefined) || serializeBlock(node)
 }
 
 /** Exported for the source node view, which commits on Escape and on its banner. */

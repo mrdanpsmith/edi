@@ -112,6 +112,15 @@ describe('embedded code editor in code blocks', () => {
     view.destroy()
   })
 
+  it('commits a cleared editor as an empty block', () => {
+    const view = makeView('```js\nconst x = 1\n```')
+    const cm = cmOf(view)
+    cm.dispatch({ changes: { from: 0, to: cm.state.doc.length, insert: '' } })
+    expect(view.state.doc.firstChild?.textContent).toBe('')
+    expect(proseToMarkdown(view.state.doc)).not.toContain('const x')
+    view.destroy()
+  })
+
   it('mirrors a PM-side change into the editor without echoing it back', () => {
     const view = makeView('```js\nconst x = 1\n```')
     const pos = (() => {

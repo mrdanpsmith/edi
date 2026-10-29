@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { BUILTIN_ENV } from './formulas'
 import { colToLetters } from './cellRef'
+import { cellSpansInValue } from './node/tableShared'
 import {
   computeSpreadsheet,
   formatNumber,
@@ -283,9 +284,16 @@ describe('pipe-table utils', () => {
     expect(tableToPipes([['A', 'B'], ['1', '2']])).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |')
   })
 
-  it('skips blank lines and delimiter-shaped data rows', () => {
+  it('skips blank lines and the delimiter row after the header', () => {
     expect(parsePipes('\n| A |\n| --- |\n')).toEqual([['A']])
-    expect(parsePipes('| :---: |\n| x |')).toEqual([['x']])
+    expect(parsePipes('| A |\n\n| :---: |\n| x |')).toEqual([['A'], ['x']])
+  })
+
+  it('keeps dash-only data rows below the delimiter', () => {
+    const pipes = '| A | B |\n| --- | --- |\n| - | - |\n| 1 | 2 |'
+    expect(parsePipes(pipes)).toEqual([['A', 'B'], ['-', '-'], ['1', '2']])
+    expect(tableToPipes(parsePipes(pipes))).toBe(pipes)
+    expect(cellSpansInValue(pipes).filter((s) => s.row === 1)).toHaveLength(2)
   })
 
   it('converts a DOM table into normalized pipe markdown', () => {

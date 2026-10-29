@@ -170,8 +170,11 @@ export function createFileController(ctx: AppContext): FileController {
   }
 
   async function saveTo(path: string): Promise<void> {
-    if (!isSupportedFile(path)) {
-      await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`)
+    if (
+      !isSupportedFile(path) &&
+      !(await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`))
+    ) {
+      return
     }
     try {
       const md = ctx.blockEditor?.getMarkdown() ?? ''
@@ -206,8 +209,11 @@ export function createFileController(ctx: AppContext): FileController {
     const name = await promptForRename(currentName)
     if (name === null) return
     const newPath = oldPath.includes('/') ? `${dirname(oldPath)}/${name}` : name
-    if (!isSupportedFile(newPath)) {
-      await confirmAction(`"${name}" does not have a supported extension.\n\nContinue anyway?`)
+    if (
+      !isSupportedFile(newPath) &&
+      !(await confirmAction(`"${name}" does not have a supported extension.\n\nContinue anyway?`))
+    ) {
+      return
     }
     try {
       const md = ctx.blockEditor?.getMarkdown() ?? ''

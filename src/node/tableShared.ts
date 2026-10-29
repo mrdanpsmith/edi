@@ -2,7 +2,7 @@ import { type EditorState } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView } from 'prosemirror-view'
 import { blockFormMode, blockModeFor, setBlockForm } from '../block-modes'
-import { listMaskedTokens, DELIMITER_CELL } from '../spreadsheet-util'
+import { listMaskedTokens, isDelimiterRow } from '../spreadsheet-util'
 import { formulaParts, SPREADSHEET_PREFIX, type CellSolution, isFormula } from '../spreadsheet'
 import { fillTextValues, shiftFormulaRefs } from '../series'
 import { getSearchState, searchMatchesInText } from '../search'
@@ -369,6 +369,7 @@ export function cellSpansInValue(value: string): CellSpan[] {
   const spans: CellSpan[] = []
   let row = 0
   let offset = 0
+  let delimiterSeen = false
   for (const rawLine of value.split('\n')) {
     const lineStart = offset
     offset += rawLine.length + 1
@@ -392,12 +393,13 @@ export function cellSpansInValue(value: string): CellSpan[] {
     tokens.push({ text: buf, from: bufStart, to: line.length })
     // parsePipes equivalent: a trailing `|` produces a phantom empty token, so
     // drop it before the delimiter-row check or a GFM `|--- | --- |` row reads
-    // as ordinary data (the phantom's empty string fails `DELIMITER_CELL`).
+    // as ordinary data (the phantom's empty string is not dash-shaped).
     const cells =
       tokens.length > 0 && tokens[tokens.length - 1]!.from === tokens[tokens.length - 1]!.to
         ? tokens.slice(0, -1)
         : tokens
-    if (cells.length > 0 && cells.every((token) => DELIMITER_CELL.test(token.text.trim()))) {
+    if (isDelimiterRow(cells.map((token) => token.text.trim()), row, delimiterSeen)) {
+      delimiterSeen = true
       continue
     }
     cells.forEach((token, col) => {

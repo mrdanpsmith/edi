@@ -324,7 +324,9 @@ class RunnableBlockNodeView implements NodeView {
     if (value === this.node.textContent) return
     const pos = this.getPos()
     if (pos === undefined) return
-    const newNode = this.node.type.create(this.node.attrs, this.node.type.schema.text(value))
+    // schema.text('') throws, so a cleared editor becomes an empty block.
+    const content = value ? this.node.type.schema.text(value) : null
+    const newNode = this.node.type.create(this.node.attrs, content)
     this.view.dispatch(
       this.view.state.tr
         .replaceWith(pos, pos + this.node.nodeSize, newNode)

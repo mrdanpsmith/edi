@@ -9,6 +9,7 @@ from backend.files import (
     read_any_text_file,
     read_text_file,
     rename_text_file,
+    write_text_file,
 )
 
 import pytest
@@ -42,6 +43,41 @@ def test_is_supported_extension():
     assert is_supported_extension("a.md") is True
     assert is_supported_extension("a.txt") is True
     assert is_supported_extension("a.log") is False
+
+
+def test_write_text_file_keeps_the_old_text_when_the_write_fails(tmp_path, monkeypatch):
+    path = tmp_path / "notes.md"
+    path.write_text("saved before", encoding="utf-8")
+
+    def full_disk(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr("os.fsync", full_disk)
+    with pytest.raises(OSError, match="No space left"):
+        write_text_file(str(path), "# Half written")
+
+    assert path.read_text(encoding="utf-8") == "saved before"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["notes.md"]
+
+
+def test_write_text_file_keeps_permissions_and_writes_through_symlinks(tmp_path):
+    real = tmp_path / "real.md"
+    real.write_text("old", encoding="utf-8")
+    real.chmod(0o640)
+    link = tmp_path / "link.md"
+    link.symlink_to(real)
+
+    write_text_file(str(link), "new")
+
+    assert link.is_symlink()
+    assert real.read_text(encoding="utf-8") == "new"
+    assert real.stat().st_mode & 0o777 == 0o640
+
+
+def test_write_text_file_creates_missing_folders(tmp_path):
+    path = tmp_path / "a" / "b" / "notes.md"
+    write_text_file(str(path), "hi")
+    assert path.read_text(encoding="utf-8") == "hi"
 
 
 def test_rename_text_file_moves_the_content_and_deletes_the_old_file(tmp_path):

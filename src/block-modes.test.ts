@@ -339,6 +339,26 @@ describe('the mode is not document content', () => {
     view.destroy()
   })
 
+  it('leaving source without an edit does not change the document', () => {
+    const view = createEditor('Some \\*escaped\\* text\n\nSecond paragraph', [history()])
+    const [first] = allBlockPositions(view)
+    const before = view.state.doc
+    let docChanges = 0
+    view.setProps({
+      dispatchTransaction: (tr) => {
+        if (tr.docChanged) docChanges++
+        view.updateState(view.state.apply(tr))
+      },
+    })
+    enterSourceMode(view, first)
+    toggleSourceMode(view, first)
+    expect(modeFor(view.state, first)?.representation).not.toBe('source')
+    expect(docChanges).toBe(0)
+    expect(view.state.doc.eq(before)).toBe(true)
+    expect(undo(view.state, view.dispatch)).toBe(false)
+    view.destroy()
+  })
+
   it('rebuilds the node view when the record changes, despite no doc change', () => {
     const view = createEditor('# Hello')
     const [first] = allBlockPositions(view)
