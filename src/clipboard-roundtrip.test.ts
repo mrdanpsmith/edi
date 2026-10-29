@@ -110,6 +110,13 @@ describe('clipboard round-trip', () => {
     expect(restored).toContain('const x = 1')
   })
 
+  it('marks a code block language on the pre for Confluence', () => {
+    const container = document.createElement('div')
+    container.appendChild(DOMSerializer.fromSchema(schema).serializeFragment(doc.content))
+    expect(container.querySelector('pre[data-language="js"] > code.language-js')?.textContent)
+      .toBe('const x = 1')
+  })
+
   it('preserves horizontal rule', () => {
     expect(restored).toContain('---')
   })

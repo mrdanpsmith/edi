@@ -86,7 +86,7 @@ describe('serializeDocToHtml', () => {
 
   it('renders code blocks with language class', () => {
     const html = serializeDocToHtml(docFrom('```js\nconst x = 1\n```'))
-    expect(html).toContain('<pre>')
+    expect(html).toContain('<pre data-language="js">')
     expect(html).toContain('language-js')
     expect(html).toContain('const x = 1')
   })
@@ -254,7 +254,7 @@ describe('serializeDocToHtml', () => {
 
   it('renders code blocks as pre/code', () => {
     const html = serializeDocToHtml(docFrom('```python\nprint("hi")\n```'))
-    expect(html).toContain('<pre>')
+    expect(html).toContain('<pre data-language="python">')
     expect(html).toContain('<code')
     expect(html).toContain('print')
   })

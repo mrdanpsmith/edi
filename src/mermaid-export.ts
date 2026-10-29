@@ -42,7 +42,8 @@ export async function snapshotMermaidHtml(root: ParentNode): Promise<void> {
 }
 
 export function mermaidFigure(source: string, png: MermaidPng): HTMLElement {
-  const figure = document.createElement('figure')
+  // A `div`, not a `<figure>`: Confluence flattens an expand nested in a figure.
+  const figure = document.createElement('div')
   figure.className = 'mermaid-figure'
   figure.setAttribute('data-mermaid-block', '')
   figure.setAttribute('data-mermaid-source', source)
@@ -54,17 +55,24 @@ export function mermaidFigure(source: string, png: MermaidPng): HTMLElement {
   img.width = png.width
   img.height = png.height
 
+  // Confluence turns `div[data-node-type="expand"]` into a real Expand titled by
+  // `data-title`, but drops its image and flattens a `<details>`, pasting the
+  // `<summary>` as a stray line. With no `<summary>`, other targets still fold
+  // the source under the browser's own "Details" label.
+  const expand = document.createElement('div')
+  expand.setAttribute('data-node-type', 'expand')
+  expand.setAttribute('data-title', 'Mermaid source')
   const details = document.createElement('details')
   details.className = 'mermaid-source'
-  const summary = document.createElement('summary')
-  summary.textContent = 'Mermaid source'
   const pre = document.createElement('pre')
+  pre.setAttribute('data-language', 'mermaid')
   const code = document.createElement('code')
   code.className = 'language-mermaid'
   code.textContent = source
   pre.append(code)
-  details.append(summary, pre)
-  figure.append(img, details)
+  details.append(pre)
+  expand.append(details)
+  figure.append(img, expand)
   return figure
 }
 

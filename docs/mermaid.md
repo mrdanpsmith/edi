@@ -413,6 +413,30 @@ the pointer stream the kanban drag listens on. Cancel `dragstart`
 Do **not** `preventDefault()` on `pointerdown` to fix that: it would suppress
 label-editor clicks.
 
+### Copied HTML is shaped for Confluence
+
+Copy replaces each diagram with `mermaidFigure` (`src/mermaid-export.ts`): a
+`div[data-mermaid-block][data-mermaid-source]` holding a PNG `data:` image, then
+the source in
+`div[data-node-type="expand"][data-title] > details > pre[data-language] > code`.
+These shapes come from paste tests against Confluence Cloud:
+
+- The outer wrapper is a `div`, not a `<figure>`: Confluence flattens an expand
+  nested in a figure. Keeping the expand inside the wrapper means a paste back
+  into Edi parses one atom `mermaid_block` from `data-mermaid-source`, instead of
+  a diagram followed by a stray code block.
+- The expand `div` is Confluence's own marker and pastes as a real Expand. A bare
+  `<details>` is flattened to text, so the `div` wraps it rather than replacing it.
+- The `<details>` has no `<summary>`. Confluence pastes a `<summary>` as a stray
+  line inside the Expand; without one, other targets still fold the source under
+  the browser's default label.
+- Confluence reads a code block's language only from `pre[data-language]`, never
+  from `code.language-*`, so the schema's `code_block` `toDOM` writes both. It has
+  no `mermaid` language, so the source pastes as plain code.
+- Confluence drops `data:` images, and a clipboard that also carries a separate
+  `image/png` pastes as that image alone. The PNG stays in the HTML for other
+  targets; in Confluence, paste each diagram with its own image copy.
+
 ## One walk, one field
 
 `buildScope(svg, source)` parses the source once and walks the drawing once,

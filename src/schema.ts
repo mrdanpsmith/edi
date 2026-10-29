@@ -121,7 +121,8 @@ const nodes: SchemaSpec['nodes'] = {
     }],
     toDOM(node) {
       const lang = node.attrs.language as string
-      return ['pre', ['code', { class: lang ? `language-${lang}` : '' }, 0]]
+      // Confluence reads a pasted block's language from `pre[data-language]`.
+      return ['pre', lang ? { 'data-language': lang } : {}, ['code', { class: lang ? `language-${lang}` : '' }, 0]]
     },
   },
 

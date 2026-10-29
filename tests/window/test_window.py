@@ -9725,9 +9725,11 @@ def test_exported_html_embeds_mermaid_as_a_png_with_collapsible_source(window, t
 def test_copying_a_mermaid_selection_puts_a_png_and_markdown_on_the_clipboard(window):
     """Ctrl+A / Ctrl+C on a diagram carries both representations.
 
-    The HTML leg is for other apps — a PNG followed by the collapsible source.
-    The markdown leg is what Edi itself reads back, so the diagram stays a
-    mermaid block rather than becoming the picture that was meant for Confluence.
+    The HTML leg is for other apps — a PNG followed by the collapsible source,
+    wrapped in the expand marker Confluence pastes as a real Expand (see
+    docs/mermaid.md). The markdown leg is what Edi itself reads back, so the
+    diagram stays a mermaid block rather than becoming the picture that was meant
+    for Confluence.
     """
     _render(window, FLOW)
     QGuiApplication.clipboard().clear()
@@ -9745,8 +9747,11 @@ def test_copying_a_mermaid_selection_puts_a_png_and_markdown_on_the_clipboard(wi
 
     mime = QGuiApplication.clipboard().mimeData()
     html = mime.html()
+    assert '<div data-node-type="expand" data-title="Mermaid source">' in html
     assert '<details class="mermaid-source">' in html
-    assert "<summary>Mermaid source</summary>" in html
+    assert "<summary" not in html
+    assert '<pre data-language="mermaid">' in html
+    assert "<figure" not in html
     assert "graph TD" in html
     assert "cdn.jsdelivr.net" not in html
 

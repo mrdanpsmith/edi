@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Node as ProseNode } from 'prosemirror-model'
+import { DOMParser, type Node as ProseNode } from 'prosemirror-model'
 
 const hoisted = vi.hoisted(() => ({
   render: vi.fn(),
@@ -89,7 +89,7 @@ describe('snapshotMermaidHtml', () => {
 
     await snapshotMermaidHtml(root)
 
-    const figure = root.querySelector('figure.mermaid-figure')
+    const figure = root.querySelector('div.mermaid-figure')
     expect(figure).not.toBeNull()
     expect(figure!.getAttribute('data-mermaid-block')).toBe('')
     expect(figure!.getAttribute('data-mermaid-source')).toBe('graph TD\n  A-->B')
@@ -97,10 +97,28 @@ describe('snapshotMermaidHtml', () => {
     expect(img.src).toBe('data:image/png;base64,UE5H')
     expect(img.width).toBe(800)
     expect(img.height).toBe(450)
-    const details = figure!.querySelector('details.mermaid-source') as HTMLDetailsElement
+    const expand = figure!.querySelector('div[data-node-type="expand"]')
+    expect(expand?.getAttribute('data-title')).toBe('Mermaid source')
+    const details = expand!.querySelector('details.mermaid-source') as HTMLDetailsElement
     expect(details.open).toBe(false)
-    expect(details.querySelector('summary')?.textContent).toBe('Mermaid source')
-    expect(details.querySelector('code.language-mermaid')?.textContent).toBe('graph TD\n  A-->B')
+    expect(details.querySelector('summary')).toBeNull()
+    expect(details.querySelector('pre[data-language="mermaid"] > code.language-mermaid')?.textContent)
+      .toBe('graph TD\n  A-->B')
+  })
+
+  it('pastes back into Edi as one mermaid block', async () => {
+    const root = document.createElement('div')
+    const block = document.createElement('div')
+    block.setAttribute('data-mermaid-block', '')
+    block.textContent = 'graph TD\n  A-->B'
+    root.append(block)
+
+    await snapshotMermaidHtml(root)
+
+    const doc = DOMParser.fromSchema(schema).parse(root)
+    expect(doc.childCount).toBe(1)
+    expect(doc.firstChild!.type.name).toBe('mermaid_block')
+    expect(doc.firstChild!.attrs.value).toBe('graph TD\n  A-->B')
   })
 
   it('prefers the source attribute over the rendered text', async () => {
