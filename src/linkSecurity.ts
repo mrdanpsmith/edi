@@ -77,3 +77,21 @@ export function isMisleadingLink(href: string, text: string): boolean {
   if (!tBase || !hBase) return false
   return tBase !== hBase
 }
+
+/** Schemes that open in a browser or mail client, never run anything. */
+const WEB_SCHEME = /^(?:https?|mailto):/i
+
+/**
+ * The confirmation to show before handing `target` to the operating system,
+ * or null when it can open without one.
+ *
+ * A web or mail link opens in its usual app. Anything else — a local file that
+ * is not a document Edi opens itself, `file:`, or any other scheme — goes to
+ * whatever handler the OS has registered, and that can be a program: a
+ * `setup.command` or an `.app` in a downloaded markdown file runs on one click.
+ */
+export function launchConfirmation(target: string, isLocalFile: boolean): string | null {
+  if (!isLocalFile && WEB_SCHEME.test(target)) return null
+  const what = isLocalFile ? `the file "${target}"` : `"${target}"`
+  return `This link opens ${what} with another application, which can run programs on this computer.\n\nOpen it?`
+}

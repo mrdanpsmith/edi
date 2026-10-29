@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest'
-import { isMisleadingLink } from './linkSecurity'
+import { isMisleadingLink, launchConfirmation } from './linkSecurity'
+
+describe('launchConfirmation', () => {
+  it('opens web and mail links without asking', () => {
+    expect(launchConfirmation('https://example.com', false)).toBeNull()
+    expect(launchConfirmation('HTTP://example.com', false)).toBeNull()
+    expect(launchConfirmation('mailto:a@b.c', false)).toBeNull()
+  })
+
+  it('asks before any other scheme', () => {
+    for (const url of ['file:///Applications/Evil.app', 'vscode://x', 'smb://host/share', 'C:\\run.bat']) {
+      expect(launchConfirmation(url, false)).toContain(url)
+    }
+  })
+
+  it('asks before a local file, even one named like a URL', () => {
+    expect(launchConfirmation('/tmp/setup.command', true)).toContain('the file "/tmp/setup.command"')
+    expect(launchConfirmation('https.txt', true)).not.toBeNull()
+  })
+})
 
 describe('isMisleadingLink', () => {
   it('flags a URL-shaped link text pointing to a different host', () => {

@@ -23,7 +23,7 @@ import threading
 from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage
 
-from .exec import run_code_block, run_code_block_streamed
+from .exec import kill_process_tree, run_code_block, run_code_block_streamed
 from .files import read_any_text_file, read_text_file, rename_text_file, write_text_file
 from .tables import parse_table_file
 
@@ -375,11 +375,19 @@ class Bridge(QObject):
         run_id = int(args.get("id", request_id))
         proc = self._procs.pop(run_id, None)
         if proc is not None:
-            try:
-                proc.kill()
-            except (ProcessLookupError, OSError):
-                pass
+            kill_process_tree(proc)
         self._reply(request_id, None)
+
+    def shutdown(self) -> None:
+        """Kill every code block still running: the app is going away.
+
+        The timeout lives on a daemon thread that dies with the process, and
+        each run leads its own session, so nothing else would ever stop them.
+        """
+        for run_id in list(self._procs):
+            proc = self._procs.pop(run_id, None)
+            if proc is not None:
+                kill_process_tree(proc)
 
     def _open_url(self, request_id: int, args: dict) -> None:
         url = str(args.get("url") or "")

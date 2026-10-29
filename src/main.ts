@@ -20,7 +20,7 @@ import { SearchPanel } from './searchPanel'
 import { getActive, getState, setActiveDirty, subscribe } from './state'
 import { HomeScreen } from './home'
 import { Tabs } from './tabs'
-import { isMisleadingLink } from './linkSecurity'
+import { isMisleadingLink, launchConfirmation } from './linkSecurity'
 import { ContextMenu } from './contextmenu'
 import { createAppContext, type AppContext, type AppRoots } from './appContext'
 import { createContextMenuController } from './contextMenuController'
@@ -125,14 +125,23 @@ async function openLink(
   href: string,
   text: string,
 ): Promise<void> {
+  // One question per click: a destination the user has already been shown and
+  // accepted is not asked about a second time.
+  let confirmed = false
   if (isMisleadingLink(href, text)) {
     const go = await confirmAction(
       `The link text "${text}" does not match its destination (${href}). Open it anyway?`,
     )
     if (!go) return
+    confirmed = true
+  }
+  const launch = async (target: string, isLocalFile: boolean): Promise<void> => {
+    const question = confirmed ? null : launchConfirmation(target, isLocalFile)
+    if (question !== null && !(await confirmAction(question))) return
+    void openUrl(target)
   }
   if (isExternalUrl(href)) {
-    void openUrl(href)
+    await launch(href, false)
     return
   }
   const hashIndex = href.indexOf('#')
@@ -151,7 +160,7 @@ async function openLink(
       requestAnimationFrame(() => requestAnimationFrame(() => scrollToFragment(fragment)))
     }
   } else {
-    void openUrl(target)
+    await launch(target, true)
   }
 }
 

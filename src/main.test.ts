@@ -82,6 +82,7 @@ const mainState = vi.hoisted(() => {
       | {
           onChange?: () => void
           onModeChange?: (mode: BlockMode | null) => void
+          onOpenLink?: (href: string, text: string) => void
         }
       | undefined,
   }
@@ -138,6 +139,7 @@ vi.mock('./editor', async (importOriginal) => ({
     options?: {
       onChange?: () => void
       onModeChange?: (mode: BlockMode | null) => void
+      onOpenLink?: (href: string, text: string) => void
     },
   ) => {
     mainState.editorOptions = options
@@ -1118,6 +1120,43 @@ describe('open and save', () => {
     expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to save /tmp/new.md'),
     )
+  })
+})
+
+describe('opening links', () => {
+  const openedUrls = () =>
+    mainState.invoke.mock.calls.filter(([command]) => command === 'openUrl').map(([, args]) => args)
+
+  it('opens a web link without asking', async () => {
+    await loadMain()
+    mainState.editorOptions!.onOpenLink!('https://example.com', 'example')
+    await flushAsync()
+    expect(mainState.confirmAction).not.toHaveBeenCalled()
+    expect(openedUrls()).toEqual([{ url: 'https://example.com' }])
+  })
+
+  it('asks before launching another scheme, and respects a no', async () => {
+    mainState.confirmAction.mockResolvedValue(false)
+    await loadMain()
+    mainState.editorOptions!.onOpenLink!('file:///Applications/Evil.app', 'docs')
+    await flushAsync()
+    expect(mainState.confirmAction).toHaveBeenCalledWith(expect.stringContaining('Evil.app'))
+    expect(openedUrls()).toEqual([])
+  })
+
+  it('asks before opening a local file Edi does not open itself', async () => {
+    await loadMain()
+    mainState.editorOptions!.onOpenLink!('/tmp/setup.command', 'setup.command')
+    await flushAsync()
+    expect(mainState.confirmAction).toHaveBeenCalledTimes(1)
+    expect(openedUrls()).toEqual([{ url: '/tmp/setup.command' }])
+  })
+
+  it('asks once when the link is also misleading', async () => {
+    await loadMain()
+    mainState.editorOptions!.onOpenLink!('vscode://evil', 'https://example.com')
+    await flushAsync()
+    expect(mainState.confirmAction).toHaveBeenCalledTimes(1)
   })
 })
 

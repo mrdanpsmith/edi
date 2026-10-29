@@ -4745,7 +4745,11 @@ def test_a_written_preference_is_what_the_next_window_would_inject(window):
         window.set_preference("zoomFactor", 1.5)
         assert window.preferences()["hoverBand"] is False
         assert window.preferences()["zoomFactor"] == 1.5
-        source = window._preferences_source()
+        # Read off the page's own collection: `insert` stored a copy, so the
+        # window's script object is not what a reload runs.
+        injected = window._web.page().scripts().find("edi-preferences")
+        assert len(injected) == 1, injected
+        source = injected[0].sourceCode()
         assert '"hoverBand": false' in source, source
         assert '"zoomFactor": 1.5' in source, source
     finally:

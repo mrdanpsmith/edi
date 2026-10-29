@@ -41,9 +41,11 @@ first paint, and a `QWebChannel` round trip cannot be awaited there.
 (`edi-preferences`, `MainWorld`) that assigns `window.ediPreferences` before
 the bundle runs. `src/preferences.ts` reads that global **at module load**.
 
-The script is a static string, so `set_preference` rewrites its source on every
-write. Otherwise a document created later in the same run would replay the
-answers this window booted with.
+The script is a static string, so `set_preference` rebuilds it on every write
+and replaces the page's copy by name (`scripts().find` / `remove` / `insert`).
+`insert` stores a copy, so editing the window's own script object afterwards
+changes nothing a reload would run. Otherwise a document created later in the
+same run would replay the answers this window booted with.
 
 Writes go back as `setPreference` over the bridge. `getPreferences` exists so
 the store stays reachable and testable without going through the injection.

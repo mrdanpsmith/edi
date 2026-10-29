@@ -35,6 +35,21 @@ lone `*` or `snake_case` is written as typed; table cells are written raw,
 because a cell is also formula source. `src/markdown-roundtrip.test.ts` holds
 the files that must survive a save byte for byte.
 
+## What a document can make the machine do
+
+A markdown file can come from anywhere, so two features that reach outside the
+page have explicit limits:
+
+- **Links.** `http`, `https` and `mailto` open directly. Any other scheme, and any
+  local file that is not a document Edi opens itself, is handed to the OS only
+  after a confirmation naming the target (`launchConfirmation` in
+  `src/linkSecurity.ts`): the OS handler for a `.command`, an `.app` or a
+  custom scheme can run a program.
+- **Runnable code blocks** (`backend/exec.py`). On POSIX each run leads its own
+  process group, and Stop, the 30-second timeout and quitting the app
+  (`Bridge.shutdown`, on `aboutToQuit`) kill the whole group; Windows uses
+  `taskkill /T`. A run that exits normally leaves what it launched alone.
+
 ## Data flow
 
 1. `backend/main.py` creates the QApplication and `MainWindow`.

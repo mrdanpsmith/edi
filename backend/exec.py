@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -95,6 +97,40 @@ def _resolve_run(shebang: str) -> tuple[str, list[str], dict[str, str]]:
     return program, list(args), env
 
 
+def kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill a code block's interpreter and everything it started.
+
+    Killing only the interpreter leaves its children running — an `sh` block's
+    `sleep 600`, a server it launched — still holding the output pipes open, so
+    the readers never see EOF either. On POSIX every run leads its own session
+    (`start_new_session`), so its process group is exactly its tree; Windows has
+    no groups to signal, and `taskkill /T` walks the tree instead.
+    """
+    if proc.poll() is not None and sys.platform == "win32":
+        return
+    try:
+        if sys.platform == "win32":
+            # Fixed argv, no shell; taskkill is a system binary.
+            subprocess.run(  # nosec B603 B607
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
+
+
+# A run leads its own process group on POSIX, so the group can be killed whole.
+_NEW_SESSION = sys.platform != "win32"
+
+
 def run_code_block(shebang: str, source: str) -> dict:
     program, args, env = _resolve_run(shebang)
 
@@ -108,6 +144,7 @@ def run_code_block(shebang: str, source: str) -> dict:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            start_new_session=_NEW_SESSION,
         )
     except FileNotFoundError as exc:
         raise ValueError(f"Failed to start {program}: {exc}") from exc
@@ -118,7 +155,7 @@ def run_code_block(shebang: str, source: str) -> dict:
             timeout=EXEC_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        proc.kill()
+        kill_process_tree(proc)
         proc.communicate()
         raise TimeoutError(f"Execution timed out after {EXEC_TIMEOUT_SECONDS} seconds")
 
@@ -172,7 +209,7 @@ def run_code_block_streamed(
             stdout=stdout_slave if stdout_slave is not None else subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            start_new_session=stdout_slave is not None,
+            start_new_session=_NEW_SESSION,
         )
     except FileNotFoundError as exc:
         if stdout_master is not None:
@@ -191,8 +228,19 @@ def run_code_block_streamed(
     if on_start is not None:
         on_start(proc)
 
-    proc.stdin.write(strip_shebang_line(source).encode("utf-8"))  # pyright: ignore[reportOptionalMemberAccess]
-    proc.stdin.close()  # pyright: ignore[reportOptionalMemberAccess]
+    def feed_stdin(handle, data: bytes) -> None:
+        # On its own thread, after the readers are running: a child that writes
+        # before it reads, or never reads stdin at all, would otherwise block this
+        # write — and with it the timeout — once a pipe buffer fills.
+        try:
+            handle.write(data)
+        except (BrokenPipeError, OSError):
+            pass  # the child exited or closed stdin; its output says why
+        finally:
+            try:
+                handle.close()
+            except (BrokenPipeError, OSError):
+                pass
 
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
@@ -261,6 +309,11 @@ def run_code_block_streamed(
     ]
     for thread in readers:
         thread.start()
+    threading.Thread(
+        target=feed_stdin,
+        args=(proc.stdin, strip_shebang_line(source).encode("utf-8")),
+        daemon=True,
+    ).start()
 
     timed_out = False
     stopped = False
@@ -268,12 +321,14 @@ def run_code_block_streamed(
         proc.wait(timeout=EXEC_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         timed_out = True
-        proc.kill()
+        kill_process_tree(proc)
         proc.wait()
 
     if is_stopped() and not timed_out:
         stopped = True
-        proc.kill()
+        # The stop handler killed the tree already; a stop that raced the
+        # interpreter's own exit can still leave its children behind.
+        kill_process_tree(proc)
 
     for thread in readers:
         thread.join(timeout=5)

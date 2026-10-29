@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QFile, QPoint, QSettings, QUrl, Qt
+from PySide6.QtCore import QCoreApplication, QFile, QPoint, QSettings, QUrl, Qt
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QKeySequence, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
@@ -301,6 +301,11 @@ class MainWindow(QMainWindow):
 
         self._preferences = Preferences()
         self._bridge = Bridge(self, pending_files)
+        # Quitting does not always close the window first (Cmd+Q on macOS), and a
+        # code block still running would outlive the app.
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._bridge.shutdown)
         self._web = _AppWebView()
         self._web.setPage(_AppPage(self._web))
         self._setup_web()
@@ -360,9 +365,18 @@ class MainWindow(QMainWindow):
         return self._preferences.all()
 
     def set_preference(self, name: str, value) -> None:
-        """Persist one preference and keep the injected copy in step."""
+        """Persist one preference and keep the injected copy in step.
+
+        ``scripts().insert`` stores a copy of the script, so editing
+        ``_preferences_script`` afterwards changes nothing the page will run: the
+        collection's entry is replaced by name instead.
+        """
         if self._preferences.set(name, value):
             self._preferences_script.setSourceCode(self._preferences_source())
+            scripts = self._web.page().scripts()
+            for stale in scripts.find(self._preferences_script.name()):
+                scripts.remove(stale)
+            scripts.insert(self._preferences_script)
 
     def _menubar_action(self, label: str, command: str, *, shell_owns_key: bool) -> QAction:
         """Build a menubar item, and decide explicitly who owns its key.
