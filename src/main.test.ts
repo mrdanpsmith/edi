@@ -164,6 +164,10 @@ vi.mock('./editor', async (importOriginal) => ({
       // before replacing a document. Synchronous here, exactly as the real editor is
       // whenever no reveal has un-persisted typing — which is every test in this file.
       flushReveals: () => mainState.flushReveals(),
+      // Every edit in this file is a real change; undoing back to the saved
+      // document is the editor's own test (`editor.test.ts`).
+      isAtSavedPoint: () => false,
+      markSavedPoint: vi.fn(),
       discardPending: vi.fn(),
       destroy: vi.fn(),
     }

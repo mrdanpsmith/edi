@@ -47,6 +47,13 @@ export function buildFunctionMap(
 /** The builtins-only environment; the default for every `solve` call. */
 export const BUILTIN_ENV: FormulaEnv = { functions: buildFunctionMap() }
 
+function arityMessage(fn: FormulaFunction): string {
+  const plural = (n: number): string => `${n} argument${n === 1 ? '' : 's'}`
+  if (fn.minArgs === fn.maxArgs) return `${fn.name} takes ${plural(fn.minArgs)}`
+  if (fn.maxArgs === Infinity) return `${fn.name} takes at least ${plural(fn.minArgs)}`
+  return `${fn.name} takes ${fn.minArgs} to ${plural(fn.maxArgs)}`
+}
+
 /** Resolve and invoke a function by name, case-insensitively. Eager functions
  * receive the values of their forced argument thunks; lazy ones receive the
  * thunks unchanged so they can choose not to evaluate branches at all. */
@@ -58,6 +65,13 @@ export function invokeFunction(
   const fn = env.functions.get(name.toUpperCase())
   if (!fn) {
     return err('#NAME?', `Unknown function "${name}"`)
+  }
+  // Every function declares its arity; a call outside it is a mistake in the
+  // formula, not a call to answer: `ABS(1,2,3)` would otherwise quietly use
+  // the 1, and a document function `G(a, b)` called as `G(1)` would read `b`
+  // as blank.
+  if (argThunks.length < fn.minArgs || argThunks.length > fn.maxArgs) {
+    return err('#ERROR!', arityMessage(fn))
   }
   const ctx: EvalContext = { env }
   if (fn.lazy) {

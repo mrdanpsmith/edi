@@ -31,9 +31,20 @@ footnote definitions and YAML front matter become a `source_block`, and inline
 HTML and footnote references an `inline_source` atom. Reference links are
 ordinary links that are written back in reference form while their target is
 unchanged. Text is escaped only where a character could start a construct, so a
-lone `*` or `snake_case` is written as typed; table cells are written raw,
-because a cell is also formula source. `src/markdown-roundtrip.test.ts` holds
-the files that must survive a save byte for byte.
+lone `*` or `snake_case` is written as typed. Table cells are escaped the same
+way, except a formula cell, which is written raw because it is the formula's
+source. `src/markdown-roundtrip.test.ts` holds the files that must survive a
+save byte for byte.
+
+The bytes around the text are the file's too. `backend/files.py` reads with
+`utf-8-sig` and universal newlines, so the page only ever sees `\n` and no
+byte-order mark, and a write takes the line ending and BOM of the file it
+replaces (or, for a rename, the file it moves). A new file gets the platform's
+line ending, as it always has.
+
+A tab is dirty when its document is not the one on disk. The editor keeps the
+last-saved document as plugin state (`savedPoint` in `src/editor.ts`), so it
+travels with each tab's state, and undoing back to it makes the tab clean.
 
 ## What a document can make the machine do
 

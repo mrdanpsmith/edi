@@ -32,6 +32,21 @@ function byName(functions: readonly FormulaFunction[], name: string): FormulaFun
   return fn
 }
 
+describe('parameters', () => {
+  it('are case-insensitive, like function names', () => {
+    const { functions, issues } = buildDocumentFunctions(['F(x) = X + 1'])
+    expect(issues).toEqual([])
+    expect(call(byName(functions, 'F'), [num(2)], envFor(functions))).toEqual(num(3))
+  })
+
+  it('must all be given: a call with too few arguments is an error', () => {
+    const { functions } = buildDocumentFunctions(['G(a, b) = a + b'])
+    const env = envFor(functions)
+    expect(applyFunction('G', [num(1)], env)).toMatchObject({ kind: 'error', hint: 'G takes 2 arguments' })
+    expect(applyFunction('G', [num(1), num(2)], env)).toEqual(num(3))
+  })
+})
+
 describe('lazy arguments in a definition body', () => {
   it('evaluates each nested IF branch once', () => {
     // Every level used to evaluate its branches while stepping over them and

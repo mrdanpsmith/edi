@@ -1,6 +1,6 @@
 import { EditorState, Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
-import { Slice } from 'prosemirror-model'
+import { Slice, type Node as ProseNode } from 'prosemirror-model'
 import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap, toggleMark } from 'prosemirror-commands'
@@ -195,6 +195,12 @@ export interface BlockEditor {
    * that read or the tab stores a document that has since been rewritten under it.
    */
   flushReveals(): void | Promise<void>
+  /** Whether the document is the one last saved (or loaded): undoing back to it
+   * makes a tab clean again. */
+  isAtSavedPoint(): boolean
+  /** `doc` is now on disk. It is the document the save read, which a keystroke
+   * since then may already have moved past. */
+  markSavedPoint(doc: ProseNode): void
   /**
    * Forget this editor's pending commits rather than writing them.
    *
@@ -255,6 +261,20 @@ export interface LinkRange {
 export function selectionMarkdownFor(view: EditorView): string {
   return sliceMarkdown(view.state.selection.content().content, view.state.schema, formulaEnvFor(view.state))
 }
+
+/**
+ * The document as it was last saved, kept in the state it belongs to — so it
+ * travels with a tab's state when tabs swap, and a document created from a
+ * file starts out at its saved point. A transaction carrying the meta moves it.
+ */
+const savedPointKey = new PluginKey<ProseNode>('savedPoint')
+const savedPointPlugin = new Plugin<ProseNode>({
+  key: savedPointKey,
+  state: {
+    init: (_config, state) => state.doc,
+    apply: (tr, saved) => (tr.getMeta(savedPointKey) as ProseNode | undefined) ?? saved,
+  },
+})
 
 export function createBlockEditor(
   parent: HTMLElement,
@@ -376,7 +396,7 @@ export function createBlockEditor(
   const createState = (markdown: string): EditorState =>
     EditorState.create({
       doc: markdownToProse(markdown, schema),
-      plugins,
+      plugins: [...plugins, savedPointPlugin],
     })
 
   const viewRef: { current: EditorView | null } = { current: null }
@@ -523,6 +543,12 @@ export function createBlockEditor(
     },
     flushReveals() {
       return flushOpenReveals(view)
+    },
+    isAtSavedPoint() {
+      return savedPointKey.getState(view.state)?.eq(view.state.doc) ?? false
+    },
+    markSavedPoint(doc) {
+      view.dispatch(view.state.tr.setMeta(savedPointKey, doc).setMeta('addToHistory', false))
     },
     discardPending() {
       discardOpenReveals(view)

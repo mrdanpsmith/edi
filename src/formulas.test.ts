@@ -96,6 +96,41 @@ describe('formatNumber', () => {
   it('flags non-finite values', () => {
     expect(formatNumber(Number.NaN)).toBe('#VALUE!')
   })
+
+  it('shows magnitudes four decimals cannot, rather than Infinity or 0', () => {
+    expect(formatNumber(1e305)).toBe('1e+305')
+    expect(formatNumber(0.00001)).toBe('0.00001')
+    expect(formatNumber(-1.23456789e-9)).toBe('-1.23456789e-9')
+    expect(formatNumber(0)).toBe('0')
+  })
+})
+
+describe('ROUND family', () => {
+  const round = (...args: CellValue[]) => applyFunction('ROUND', args, BUILTIN_ENV)
+
+  it('rounds decimal halves up despite binary representation', () => {
+    expect(round(num(1.005), num(2))).toEqual(num(1.01))
+    expect(round(num(-2.675), num(2))).toEqual(num(-2.68))
+    expect(round(num(1234.5), num(-2))).toEqual(num(1200))
+    expect(applyFunction('ROUNDUP', [num(0.1 + 0.2), num(1)], BUILTIN_ENV)).toEqual(num(0.3))
+  })
+
+  it('truncates the digits argument and passes its errors on', () => {
+    expect(round(num(1.5), num(0.5))).toEqual(num(2))
+    expect(round(num(5), err('#DIV/0!'))).toMatchObject({ kind: 'error', message: '#DIV/0!' })
+  })
+})
+
+describe('arity', () => {
+  it('refuses a call outside the declared argument count', () => {
+    expect(applyFunction('ABS', [num(1), num(2), num(3)], BUILTIN_ENV)).toMatchObject({
+      kind: 'error',
+      message: '#ERROR!',
+      hint: 'ABS takes 1 argument',
+    })
+    expect(applyFunction('PI', [num(9)], BUILTIN_ENV)).toMatchObject({ kind: 'error' })
+    expect(applyFunction('ROUND', [num(1.5)], BUILTIN_ENV)).toEqual(num(2))
+  })
 })
 
 describe('logical builtins', () => {
@@ -539,6 +574,20 @@ describe('criteria builtins (SUMIF/COUNTIF/AVERAGEIF)', () => {
     const range = setValue([num(1), num(5), num(9)])
     const sums = setValue([num(10), num(20), num(30)])
     expect(applyFunction('SUMIF', [range, text('>4'), sums], env)).toEqual(num(50))
+  })
+
+  it('treats blanks as Excel does, not as 0', () => {
+    const range = setValue([num(5), blank(), dateSerial(45292)])
+    expect(applyFunction('COUNTIF', [range, text('')], env)).toEqual(num(1))
+    expect(applyFunction('COUNTIF', [range, num(0)], env)).toEqual(num(0))
+    expect(applyFunction('COUNTIF', [range, text('<>')], env)).toEqual(num(2))
+    expect(applyFunction('COUNTIF', [range, text('<>5')], env)).toEqual(num(2))
+    expect(applyFunction('AVERAGEIF', [setValue([num(5), blank()]), text('<10')], env)).toEqual(num(5))
+  })
+
+  it('matches a date criterion against date cells', () => {
+    const range = setValue([num(5), blank(), dateSerial(45292)])
+    expect(applyFunction('COUNTIF', [range, dateSerial(45292)], env)).toEqual(num(1))
   })
 
   it('SUMIF with no match sums to zero', () => {

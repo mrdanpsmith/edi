@@ -1,3 +1,4 @@
+import type { Node as ProseNode } from 'prosemirror-model'
 import { confirmAction } from './bridge'
 import {
   dirname,
@@ -54,6 +55,14 @@ export interface FileController {
 interface NativeEvent {
   type?: unknown
   paths?: unknown
+}
+
+/** What a save writes, and which tab, edit and document it was read from. */
+interface SaveSnapshot {
+  id: string
+  revision: number
+  markdown: string
+  doc: ProseNode | null
 }
 
 /**
@@ -194,16 +203,24 @@ export function createFileController(ctx: AppContext): FileController {
    * text from before them and marks the tab clean. The tab is read *after* that
    * await, together with the markdown, so the two always describe one document.
    */
-  async function snapshotForSave(): Promise<{ id: string; revision: number; markdown: string } | null> {
+  async function snapshotForSave(): Promise<SaveSnapshot | null> {
     await ctx.blockEditor?.flushReveals()
     const session = getActive()
     if (!session) return null
-    return { id: session.id, revision: session.revision, markdown: ctx.blockEditor?.getMarkdown() ?? '' }
+    return {
+      id: session.id,
+      revision: session.revision,
+      markdown: ctx.blockEditor?.getMarkdown() ?? '',
+      doc: ctx.blockEditor?.getView().state.doc ?? null,
+    }
   }
 
   /** The document is on disk under `path`: everything that follows. */
-  function afterSave(path: string, snapshot: { id: string; revision: number }): void {
+  function afterSave(path: string, snapshot: SaveSnapshot): void {
     markSaved(snapshot.id, path, snapshot.revision)
+    // The editor's saved point is the document the save read. Only for the tab
+    // in view: another tab's state is stored away, and is not this editor's.
+    if (snapshot.doc && getActive()?.id === snapshot.id) ctx.blockEditor?.markSavedPoint(snapshot.doc)
     ctx.updateTitle()
     ctx.updateStatus()
     ctx.syncDirty()

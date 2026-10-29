@@ -12,6 +12,7 @@ import {
   maskedFieldToMarkdown,
 } from './node/masked'
 import { shebangFromFenceInfo } from './exec'
+import { isFormula } from './spreadsheet'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
 import { headingSlug } from './schema'
 import {
@@ -440,11 +441,14 @@ function parseInline(
   return result
 }
 
-/** A table cell's inline markdown. Cells are written raw, not escaped: a cell is
- * also a formula's source (`=A1*2`), and the grid parses its own markdown. */
+/** A table cell's inline markdown. A formula cell is written raw — it is the
+ * formula's source (`=A1*2`), and escaping it would change the formula — and
+ * any other cell is escaped like prose, so `\*x\*` stays text rather than
+ * coming back italic. */
 function serializeCellText(children: MdastNode[], schema: Schema, ctx: ParseContext): string {
   const para = schema.node('paragraph', {}, parseInline(children, schema, ctx))
-  return serializeContent(para, false)
+  const raw = serializeContent(para, false)
+  return isFormula(raw) ? raw : serializeContent(para, true)
 }
 
 // --- Serialize: ProseMirror → markdown ---

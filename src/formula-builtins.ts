@@ -71,11 +71,7 @@ function sqrtCall(args: readonly CellValue[]): CellValue {
 }
 
 function roundCall(args: readonly CellValue[]): CellValue {
-  const value = firstNumber(args)
-  if (typeof value !== 'number') return value
-  const digits = args.length > 1 ? (toNumber(args[1]!) ?? 0) : 0
-  const factor = 10 ** digits
-  return num((Math.sign(value) * Math.round(Math.abs(value) * factor)) / factor)
+  return roundDirectionalCall(args, Math.round)
 }
 
 // --- Logical builtins ------------------------------------------------------
@@ -460,10 +456,14 @@ function roundDirectionalCall(
   if (typeof n !== 'number') return n
   const digitsArg = args[1] === undefined ? 0 : numberAt(args, 1)
   if (typeof digitsArg !== 'number') return digitsArg
+  // Excel truncates the digits argument: ROUND(1.5, 0.5) rounds to 0 places.
   const factor = 10 ** Math.trunc(digitsArg)
-  // Round the magnitude, then re-apply the sign: ROUNDUP away from zero,
-  // ROUNDDOWN toward it.
-  return mathResult((Math.sign(n) * round(Math.abs(n) * factor)) / factor)
+  // Round the magnitude, then re-apply the sign: ROUND half away from zero,
+  // ROUNDUP away from zero, ROUNDDOWN toward it. The scaled magnitude goes
+  // through 15 significant digits first, which is what removes binary noise:
+  // 1.005 * 100 is 100.49999999999999, which rounds to 1.00 rather than 1.01.
+  const scaled = Number((Math.abs(n) * factor).toPrecision(15))
+  return mathResult((Math.sign(n) * round(scaled)) / factor)
 }
 
 function roundUpCall(args: readonly CellValue[]): CellValue {
@@ -685,6 +685,12 @@ function criterionKey(value: CellValue): CriterionKey {
  * never match. */
 function matchCriterion(cell: CellValue, op: CompareOp, operand: string): boolean {
   if (cell.kind === 'error' || cell.kind === 'set') return false
+  // A blank is not 0 to a criterion, as in Excel: `""` matches it, `<>` alone
+  // means "not blank", `<>x` matches it (it is not x), and every comparison
+  // with a value skips it — so `COUNTIF(r, 0)` and `AVERAGEIF(r, "<10")` no
+  // longer count empty cells.
+  if (cell.kind === 'blank') return op === '<>' ? operand !== '' : op === '=' && operand === ''
+  if (operand === '' && (op === '=' || op === '<>')) return op === '<>'
   const a = criterionKey(cell)
   const b = criterionKey(text(operand))
   if (op === '=') return a.kind === b.kind && a.value === b.value
@@ -714,7 +720,9 @@ function parseCriteria(
       break
     }
   }
-  if (op !== '=' && operand === '') {
+  // `"="` and `"<>"` alone are Excel's "blank" and "not blank"; any other
+  // operator needs a value to compare with.
+  if (op !== '=' && op !== '<>' && operand === '') {
     return err('#VALUE!', 'Criteria needs a value after the operator')
   }
   if (hasWildcard(operand) && (op === '=' || op === '<>')) {
@@ -813,6 +821,10 @@ function averageIfCall(args: readonly CellValue[]): CellValue {
 
 /** The criteria text shared by the SUMIF family, parsed once. */
 function parseCriteriaFromArgs(args: readonly CellValue[]): ((cell: CellValue) => boolean) | ErrorCell {
+  // A number or date criterion is that value, not its display text: a date's
+  // text (`2024-01-01`) never equals the serial a date cell holds.
+  const arg = args[1]
+  if (arg?.kind === 'number' || arg?.kind === 'date') return parseCriteria(String(arg.value))
   const criteria = nthText(args, 1)
   if (typeof criteria !== 'string') return criteria
   return parseCriteria(criteria)

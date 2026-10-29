@@ -123,10 +123,17 @@ export function formatDate(serial: number): string {
   return out
 }
 
-/** Format a number for display: up to four decimals, trailing zeros dropped. */
+/** Format a number for display: up to four decimals, trailing zeros dropped.
+ * Outside the range four decimals can show — a magnitude past 1e15, or a
+ * non-zero one under 0.0001 — ten significant digits instead, so `1e305`
+ * does not display as `Infinity` (the ×10000 overflowed) nor `0.00001` as `0`. */
 export function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
     return '#VALUE!'
+  }
+  const magnitude = Math.abs(value)
+  if (magnitude !== 0 && (magnitude >= 1e15 || magnitude < 1e-4)) {
+    return String(Number(value.toPrecision(10)))
   }
   return String(Math.round(value * 10000) / 10000)
 }

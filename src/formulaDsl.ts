@@ -248,7 +248,7 @@ export function validateBody(
   env: FormulaEnv,
 ): string | null {
   const scope = new Map<string, CellValueThunk>()
-  for (const param of params) scope.set(param, () => num(0))
+  for (const param of params) scope.set(upper(param), () => num(0))
   const result = new BodyParser(body, scope, env, true).parse()
   if (result.kind === 'error') return result.hint ?? result.message
   return null
@@ -290,7 +290,7 @@ function makeFormulaFunction(def: RawDefinition): FormulaFunction {
         const incoming = args[index]
         const thunk: CellValueThunk =
           typeof incoming === 'function' ? incoming : () => incoming ?? blank()
-        scope.set(param, memoize(thunk))
+        scope.set(upper(param), memoize(thunk))
       })
       return evaluateBody(def.body, scope, ctx.env)
     },
@@ -453,7 +453,9 @@ class BodyParser extends FormulaScanner {
     const upperIdent = ident.toUpperCase()
     if (upperIdent === 'TRUE') return bool(true)
     if (upperIdent === 'FALSE') return bool(false)
-    const param = this.scope.get(ident)
+    // Parameter names are case-insensitive, as function names and the
+    // duplicate-parameter check already are: `F(x) = X + 1` is `x + 1`.
+    const param = this.scope.get(upperIdent)
     if (param) {
       if (this.validateOnly) return num(0)
       return param()

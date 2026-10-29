@@ -74,6 +74,29 @@ def test_write_text_file_keeps_permissions_and_writes_through_symlinks(tmp_path)
     assert real.stat().st_mode & 0o777 == 0o640
 
 
+def test_a_saved_file_keeps_its_line_endings_and_bom(tmp_path):
+    crlf = tmp_path / "windows.md"
+    crlf.write_bytes(b"\xef\xbb\xbf# Title\r\nline\r\n")
+    # The page sees clean text: no BOM, `\n` endings.
+    assert read_text_file(str(crlf)) == "# Title\nline\n"
+
+    write_text_file(str(crlf), "# Title\nedited\n")
+    assert crlf.read_bytes() == b"\xef\xbb\xbf# Title\r\nedited\r\n"
+
+    lf = tmp_path / "unix.md"
+    lf.write_bytes(b"a\nb\n")
+    write_text_file(str(lf), "a\nc\n")
+    assert lf.read_bytes() == b"a\nc\n"
+
+
+def test_a_renamed_file_keeps_the_format_of_the_file_it_was(tmp_path):
+    old = tmp_path / "notes.md"
+    old.write_bytes(b"a\r\nb\r\n")
+    new = tmp_path / "ideas.md"
+    rename_text_file(str(old), str(new), "a\nb\nc\n")
+    assert new.read_bytes() == b"a\r\nb\r\nc\r\n"
+
+
 def test_write_text_file_creates_missing_folders(tmp_path):
     path = tmp_path / "a" / "b" / "notes.md"
     write_text_file(str(path), "hi")

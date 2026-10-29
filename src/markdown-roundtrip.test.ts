@@ -36,6 +36,7 @@ const CANONICAL = [
   '> [r]: https://quoted.example\n',
   '**bold** *em* ~~strike~~ ==mark== ~sub~ ^sup^ `code`\n',
   'a  \nb\n',
+  '| Item | Total |\n| --- | --- |\n| \\*not em\\* and 5 * 3 | =2*3 |\n',
 ]
 
 /** Input in other styles: the saved form may differ, but must read back as the

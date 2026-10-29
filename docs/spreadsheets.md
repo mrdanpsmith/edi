@@ -10,7 +10,22 @@ evaluates through a `FormulaEnv`:
 { functions: ReadonlyMap<string, FormulaFunction> }
 ```
 
-Functions are looked up case-insensitively.
+Functions are looked up case-insensitively, and so are a document function's
+parameters. Every function declares `minArgs`/`maxArgs`, and `invokeFunction`
+enforces them for builtins and document functions alike: a call outside them
+is `#ERROR!` with a hint such as `ABS takes 1 argument`.
+
+Where Excel has an answer, the builtins follow it:
+
+- **Criteria** (`COUNTIF`, `SUMIF`, `AVERAGEIF`): a blank is not 0. `""` and
+  `"="` match blanks, `"<>"` matches non-blanks, `"<>x"` matches blanks too,
+  and every comparison with a value skips them. A number or date criterion is
+  compared by value, not by its display text.
+- **Rounding** (`ROUND`, `ROUNDUP`, `ROUNDDOWN`): the digits argument is
+  truncated and its errors pass through, and the scaled value goes through 15
+  significant digits, so `ROUND(1.005, 2)` is `1.01`.
+- **Display**: four decimals, except past 1e15 or under 0.0001, which show ten
+  significant digits rather than `Infinity` or `0`.
 
 `solve`, `computeSpreadsheet`, `resolveTableValue`, `proseToMarkdown` and
 `serializeDocToHtml` all take an optional env that defaults to `BUILTIN_ENV`.

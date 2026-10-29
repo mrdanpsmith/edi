@@ -340,7 +340,8 @@ export function init(roots: AppRoots): () => void {
   setEncryptedBlockImageResolver(resolveImageFileUrl)
   ctx.blockEditor = createBlockEditor(roots.editorContainer, '', {
     onOpenLink: (href, text) => openLink(files, href, text),
-    onChange: () => setActiveDirty(true),
+    // Dirty means "not the document on disk", so undoing back to it is clean.
+    onChange: () => setActiveDirty(!(ctx.blockEditor?.isAtSavedPoint() ?? false)),
     onModeChange: (mode) => ctx.renderModeChip(mode),
     resolveImageSrc: resolveImageFileUrl,
   })

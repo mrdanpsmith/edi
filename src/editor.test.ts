@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { EditorView } from 'prosemirror-view'
 import { TextSelection } from 'prosemirror-state'
 import { Slice } from 'prosemirror-model'
+import { closeHistory, undo } from 'prosemirror-history'
 import { createBlockEditor } from './editor'
 import { proseToMarkdown } from './markdown'
 import { currentBlockMode, enterSourceMode, exitBlockMode } from './block-modes'
@@ -59,6 +60,41 @@ function textMarks(view: EditorView): string[] {
   })
   return [...marks]
 }
+
+describe('saved point', () => {
+  it('is the loaded document, and undoing back to it is clean again', () => {
+    const changes: boolean[] = []
+    const editor = createBlockEditor(document.body, 'hello', {
+      onChange: () => changes.push(editor.isAtSavedPoint()),
+    })
+    const view = editor.getView()
+    expect(editor.isAtSavedPoint()).toBe(true)
+    view.dispatch(view.state.tr.insertText('!', view.state.doc.content.size - 1))
+    expect(editor.isAtSavedPoint()).toBe(false)
+    expect(undo(view.state, view.dispatch)).toBe(true)
+    expect(editor.isAtSavedPoint()).toBe(true)
+    expect(changes).toEqual([false, true])
+    editor.destroy()
+  })
+
+  it('moves to the document a save wrote, not to whatever is there later', () => {
+    const editor = createBlockEditor(document.body, 'hello')
+    const view = editor.getView()
+    view.dispatch(view.state.tr.insertText(' saved', view.state.doc.content.size - 1))
+    const written = view.state.doc
+    // A separate undo step, as an edit made after the save would be.
+    view.dispatch(closeHistory(view.state.tr.insertText(' later', view.state.doc.content.size - 1)))
+    editor.markSavedPoint(written)
+    expect(editor.isAtSavedPoint()).toBe(false)
+    expect(undo(view.state, view.dispatch)).toBe(true)
+    expect(editor.isAtSavedPoint()).toBe(true)
+    // A tab's state carries its own saved point with it.
+    const other = editor.createState('another tab')
+    void editor.applyState(other)
+    expect(editor.isAtSavedPoint()).toBe(true)
+    editor.destroy()
+  })
+})
 
 describe('input rules', () => {
   it('turns "# " into a heading via incremental typing', () => {

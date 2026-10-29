@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import os
 import tempfile
 from pathlib import Path
@@ -23,7 +24,11 @@ def read_text_file(path: str) -> str:
                 ", ".join(SUPPORTED_EXTENSIONS), path
             )
         )
-    return target.read_text(encoding="utf-8")
+    # `utf-8-sig` drops a byte-order mark, which would otherwise be read as a
+    # `﻿` at the start of the first line (and stop a `# Title` there being a
+    # heading). The page always gets `\n` line endings; `write_text_file` puts
+    # the file's own back.
+    return target.read_text(encoding="utf-8-sig")
 
 
 def read_any_text_file(path: str) -> str:
@@ -31,16 +36,39 @@ def read_any_text_file(path: str) -> str:
     target = Path(path)
     if not target.is_file():
         raise FileNotFoundError(f"Not a file: {path}")
-    return target.read_text(encoding="utf-8")
+    return target.read_text(encoding="utf-8-sig")
 
 
-def write_text_file(path: str, content: str) -> None:
+def _file_format(path: Path) -> tuple[str | None, bool]:
+    """How an existing file is written: its line ending and whether it has a BOM.
+
+    The line ending is the file's first one, as ``open(newline=…)`` takes it;
+    ``None`` (the platform's own) for a file that does not exist or has no line
+    break yet, which is what a new file has always been written with.
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(65536)
+    except OSError:
+        return None, False
+    bom = head.startswith(codecs.BOM_UTF8)
+    first = head.find(b"\n")
+    if first < 0:
+        return None, bom
+    return ("\r\n" if head[first - 1 : first] == b"\r" else "\n"), bom
+
+
+def write_text_file(path: str, content: str, *, like: str | None = None) -> None:
     """Write ``content`` so the file on disk is always the old or the new text.
 
     The text goes to a temporary file beside the target, is flushed to disk and
     then renamed over it, so a crash or a full disk mid-save never leaves a
     truncated document. A symlinked target is written through to the file it
     points at, and an existing file keeps its permissions.
+
+    It also keeps its *format*: the line endings and byte-order mark of the file
+    being replaced (or of ``like``, the file a rename moves), so saving a CRLF
+    file on macOS, or an LF one on Windows, does not rewrite every line.
     """
     target = Path(os.path.realpath(path))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -48,9 +76,10 @@ def write_text_file(path: str, content: str) -> None:
         mode = target.stat().st_mode & 0o7777
     except FileNotFoundError:
         mode = None
+    newline, bom = _file_format(Path(os.path.realpath(like)) if like else target)
     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8-sig" if bom else "utf-8", newline=newline) as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
@@ -88,7 +117,7 @@ def rename_text_file(old_path: str, new_path: str, content: str) -> None:
         raise ValueError("The document already has that name")
     if new.exists() or new.is_symlink():
         raise FileExistsError(f"A file already exists: {new_path}")
-    write_text_file(new_path, content)
+    write_text_file(new_path, content, like=old_path)
     try:
         old.unlink()
     except OSError:
