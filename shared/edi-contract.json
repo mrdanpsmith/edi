@@ -74,5 +74,8 @@
     "zoomFactor": 1.0,
     "toolbarVisible": true,
     "hoverBand": true
+  },
+  "errorCodes": {
+    "notPermitted": true
   }
 }

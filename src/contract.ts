@@ -27,6 +27,9 @@ export type BridgeMethod = keyof typeof contract.bridgeMethods
 /** Every persisted preference name the store will accept. */
 export type PreferenceName = keyof typeof contract.preferences
 
+/** Every `code` a bridge error reply may carry, beside its message. */
+export type BridgeErrorCode = keyof typeof contract.errorCodes
+
 /**
  * `true` only when `T` is exactly `string` — a compile-time probe that the
  * unions above kept their literals. `IsExactlyString<`replace` | `copy`>` is

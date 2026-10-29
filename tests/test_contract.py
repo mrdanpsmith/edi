@@ -115,6 +115,13 @@ def test_the_preference_defaults_are_the_declared_ones(contract):
     assert NAMES == frozenset(contract["preferences"])
 
 
+def test_the_bridge_error_codes_are_the_declared_ones(contract):
+    """(d) every ``code`` the bridge can reply with is one the page knows."""
+    from backend.bridge import NOT_PERMITTED
+
+    assert set(contract["errorCodes"]) == {NOT_PERMITTED}
+
+
 def test_both_name_sections_are_sorted(contract):
     """Sorted, so a rename shows up in a diff as one changed line."""
     for section in ("menuCommands", "bridgeMethods"):

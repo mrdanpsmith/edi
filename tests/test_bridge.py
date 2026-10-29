@@ -330,6 +330,7 @@ def test_read_any_text_file(bridge, tmp_path):
     bridge_obj, _window, result = bridge
     target = tmp_path / "notes.log"
     target.write_text("log line", encoding="utf-8")
+    bridge_obj.grants.allow_read(str(target))  # as the import dialog does
     _invoke(bridge_obj, "readAnyTextFile", {"path": str(target)}, request_id=2)
     message = _wait_for(lambda: result.get(2))
     assert message["ok"] is True
@@ -340,6 +341,7 @@ def test_parse_table_file_csv(bridge, tmp_path):
     bridge_obj, _window, result = bridge
     target = tmp_path / "data.csv"
     target.write_text("a,b\n1,2\n", encoding="utf-8")
+    bridge_obj.grants.allow_read(str(target))  # as the import dialog does
 
     _invoke(bridge_obj, "parseTableFile", {"path": str(target)}, 30)
     message = _wait_for(lambda: result.get(30))
@@ -555,6 +557,7 @@ def test_get_recent_files_returns_empty_initially(bridge):
 
 def test_add_recent_file_then_get_recent_files(bridge):
     bridge_obj, window, result = bridge
+    bridge_obj.grants.allow_write("/x.md")  # a document the user opened or saved
     _invoke(bridge_obj, "addRecentFile", {"path": "/x.md"})
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
@@ -615,6 +618,7 @@ def test_open_url_missing_url_errors(bridge):
 def test_write_and_read_round_trip(bridge, tmp_path):
     bridge_obj, _window, result = bridge
     target = tmp_path / "notes.md"
+    bridge_obj.grants.allow_write(str(target))  # as the Save dialog does
 
     _invoke(bridge_obj, "writeTextFile", {"path": str(target), "content": "hello edi"}, 10)
     write = _wait_for(lambda: result.get(10))
@@ -880,6 +884,8 @@ def test_write_text_file_error(bridge, tmp_path):
     bridge_obj, _window, result = bridge
     blocker = tmp_path / "blocker"
     blocker.write_text("x", encoding="utf-8")
+    # Granted, so what fails is the write itself, not the permission.
+    bridge_obj.grants.allow_write(str(blocker / "sub" / "out.md"))
     _invoke(
         bridge_obj,
         "writeTextFile",
@@ -896,6 +902,7 @@ def test_rename_text_file_renames_and_drops_the_old_recent(bridge, tmp_path):
     old.write_text("stale", encoding="utf-8")
     new = tmp_path / "ideas.md"
     window.recent_files_list = [str(old), "/other.md"]
+    bridge_obj.grants.allow_write(str(old))
 
     _invoke(
         bridge_obj,
@@ -926,6 +933,8 @@ def test_rename_text_file_error_keeps_the_recents(bridge, tmp_path):
     taken = tmp_path / "ideas.md"
     taken.write_text("taken", encoding="utf-8")
     window.recent_files_list = [str(old)]
+    # Granted, so what fails is the existing destination, not the permission.
+    bridge_obj.grants.allow_write(str(old))
 
     _invoke(
         bridge_obj,
@@ -938,6 +947,99 @@ def test_rename_text_file_error_keeps_the_recents(bridge, tmp_path):
     # The rename did not happen, so the old name is still the document's.
     assert window.recent_files_list == [str(old)]
     assert old.exists()
+
+
+# ── what the page may touch ───────────────────────────────────────────────
+
+
+def _refused(message: dict) -> bool:
+    return message["ok"] is False and message.get("code") == "notPermitted"
+
+
+def test_the_page_cannot_write_a_file_the_user_never_named(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    target = tmp_path / ".zshrc"
+    _invoke(bridge_obj, "writeTextFile", {"path": str(target), "content": "evil"}, 80)
+    assert _refused(_wait_for(lambda: result.get(80)))
+    assert not target.exists()
+
+    _invoke(bridge_obj, "writeBinaryFile", {"path": str(tmp_path / "x.png"), "data": "aGk="}, 81)
+    assert _refused(_wait_for(lambda: result.get(81)))
+
+
+def test_the_page_cannot_read_arbitrary_files(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    secret = tmp_path / "id_rsa"
+    secret.write_text("key", encoding="utf-8")
+    _invoke(bridge_obj, "readAnyTextFile", {"path": str(secret)}, 82)
+    assert _refused(_wait_for(lambda: result.get(82)))
+    _invoke(bridge_obj, "parseTableFile", {"path": str(secret)}, 83)
+    assert _refused(_wait_for(lambda: result.get(83)))
+
+
+def test_a_save_dialog_grants_the_path_it_returns(bridge, tmp_path, monkeypatch):
+    bridge_obj, window, result = bridge
+    chosen = tmp_path / "chosen.md"
+    monkeypatch.setattr(window, "pick_save_path", lambda _name, callback=None: callback(str(chosen)))
+    _invoke(bridge_obj, "pickSavePath", {"defaultName": "x"}, 84)
+    assert _wait_for(lambda: result.get(84))["data"] == str(chosen)
+
+    _invoke(bridge_obj, "writeTextFile", {"path": str(chosen), "content": "mine"}, 85)
+    assert _wait_for(lambda: result.get(85))["ok"] is True
+    assert chosen.read_text(encoding="utf-8") == "mine"
+    # The same file by another spelling is the same file.
+    assert bridge_obj.grants.may_write(str(tmp_path / "." / "chosen.md"))
+
+
+def test_files_given_at_launch_or_by_the_os_may_be_saved(bridge, tmp_path):
+    _bridge, window, _result = bridge
+    launched = tmp_path / "launched.md"
+    opened = tmp_path / "opened.md"
+    fresh = Bridge(window, [str(launched)])
+    fresh.grant_opened([str(opened)])
+    assert fresh.grants.may_write(str(launched))
+    assert fresh.grants.may_write(str(opened))
+
+
+def test_reopening_a_recent_file_grants_it_but_the_page_cannot_add_one(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    recent = tmp_path / "recent.md"
+    recent.write_text("r", encoding="utf-8")
+    window.recent_files_list = [str(recent)]
+    _invoke(bridge_obj, "readTextFile", {"path": str(recent)}, 86)
+    assert _wait_for(lambda: result.get(86))["ok"] is True
+    assert bridge_obj.grants.may_write(str(recent))
+
+    # Adding a path to the list would otherwise be a grant the page gave itself.
+    _invoke(bridge_obj, "addRecentFile", {"path": "/elsewhere/evil.md"}, 87)
+    _wait_for(lambda: result.get(87))
+    assert "/elsewhere/evil.md" not in window.recent_files_list
+
+
+def test_a_link_opened_document_is_readable_but_not_writable(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    linked = tmp_path / "linked.md"
+    linked.write_text("l", encoding="utf-8")
+    _invoke(bridge_obj, "readTextFile", {"path": str(linked)}, 88)
+    assert _wait_for(lambda: result.get(88))["ok"] is True
+    _invoke(bridge_obj, "writeTextFile", {"path": str(linked), "content": "x"}, 89)
+    assert _refused(_wait_for(lambda: result.get(89)))
+
+
+def test_a_rename_stays_in_the_documents_folder(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    old = tmp_path / "notes.md"
+    old.write_text("n", encoding="utf-8")
+    bridge_obj.grants.allow_write(str(old))
+    elsewhere = tmp_path / "sub" / "notes.md"
+    _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(elsewhere), "content": "x"}, 90)
+    assert _refused(_wait_for(lambda: result.get(90)))
+    assert old.exists()
+
+    renamed = tmp_path / "ideas.md"
+    _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(renamed), "content": "x"}, 91)
+    assert _wait_for(lambda: result.get(91))["ok"] is True
+    assert bridge_obj.grants.may_write(str(renamed))
 
 
 def test_parse_shebang_env_without_interpreter_returns_none():

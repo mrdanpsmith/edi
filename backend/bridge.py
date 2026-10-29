@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 import threading
 
@@ -27,6 +28,72 @@ from .exec import kill_process_tree, run_code_block, run_code_block_streamed
 from .files import read_any_text_file, read_text_file, rename_text_file, write_text_file
 from .tables import parse_table_file
 
+# The error code a refused file access replies with (`shared/edi-contract.json`
+# → `errorCodes`), so the page can tell "not yours to write" from a failure.
+NOT_PERMITTED = "notPermitted"
+
+
+class NotPermitted(Exception):
+    """A file access the user never handed to Edi."""
+
+
+class PathGrants:
+    """The files the *user* gave Edi, which are the only ones the page may touch.
+
+    The page is not trusted with paths: a markdown file is content from
+    anywhere, and a script that ever ran in the page could otherwise ask the
+    bridge to write `~/.zshrc` or read `~/.ssh/id_rsa`. A path is granted only
+    where the user named it outside the page — a native file dialog, the
+    command line, the OS asking Edi to open a document, the backend's own
+    recent list — and the bridge refuses everything else.
+
+    Writing a file implies reading it. Paths are compared by `realpath`, so a
+    symlink or a `..` spelling is the file it names. Grants live as long as the
+    window: a new run starts with none but what it was launched with.
+    """
+
+    def __init__(self) -> None:
+        self._writable: set[str] = set()
+        self._readable: set[str] = set()
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _key(path: str) -> str:
+        return os.path.normcase(os.path.realpath(path))
+
+    def allow_write(self, path: str) -> None:
+        with self._lock:
+            self._writable.add(self._key(path))
+
+    def allow_read(self, path: str) -> None:
+        with self._lock:
+            self._readable.add(self._key(path))
+
+    def may_write(self, path: str) -> bool:
+        with self._lock:
+            return self._key(path) in self._writable
+
+    def may_read(self, path: str) -> bool:
+        key = self._key(path)
+        with self._lock:
+            return key in self._readable or key in self._writable
+
+    def check_write(self, path: str) -> None:
+        if not self.may_write(path):
+            raise NotPermitted(f"Edi was not given this file to write: {path}")
+
+    def check_read(self, path: str) -> None:
+        if not self.may_read(path):
+            raise NotPermitted(f"Edi was not given this file to read: {path}")
+
+    def check_rename(self, old_path: str, new_path: str) -> None:
+        """A rename moves a writable document to a new name *in its own folder*:
+        the new name is typed into the page, so it is the folder that is trusted."""
+        self.check_write(old_path)
+        same_folder = os.path.dirname(self._key(new_path)) == os.path.dirname(self._key(old_path))
+        if not same_folder or os.path.basename(new_path) in ("", ".", ".."):
+            raise NotPermitted(f"A rename stays in the document's folder: {new_path}")
+
 
 class Bridge(QObject):
     result = Signal(str)
@@ -36,7 +103,11 @@ class Bridge(QObject):
     def __init__(self, window, pending_files: list[str] | None = None) -> None:
         super().__init__()
         self._window = window
+        self.grants = PathGrants()
         self._pending_files = list(pending_files or [])
+        # Named on the command line: the user's own choice, so they may be saved.
+        for path in self._pending_files:
+            self.grants.allow_write(path)
         # Set when the page first asks for pending files (at the end of its
         # init). Until then an open-document event is queued rather than pushed
         # over the notify signal, which would be lost before the page listens.
@@ -92,6 +163,8 @@ class Bridge(QObject):
             return
         try:
             handler(request_id, args)
+        except NotPermitted as exc:
+            self._reply_error(request_id, str(exc), code=NOT_PERMITTED)
         except Exception as exc:  # noqa: BLE001
             self._reply_error(request_id, str(exc))
 
@@ -104,32 +177,46 @@ class Bridge(QObject):
         self._window.alert(message)
         self._reply(request_id, None)
 
+    # A native dialog is the user naming a file outside the page, so its answer is
+    # what grants the page that file (see `PathGrants`).
+
+    def _granting(self, request_id: int, grant):
+        """A dialog callback that grants each chosen path, then replies with it."""
+
+        def reply(chosen) -> None:
+            for path in chosen if isinstance(chosen, list) else [chosen]:
+                if path:
+                    grant(str(path))
+            self._reply(request_id, chosen or None)
+
+        return reply
+
     def _pick_open_path(self, request_id: int, _args: dict) -> None:
-        self._window.pick_open_path(lambda paths: self._reply(request_id, paths or None))
+        self._window.pick_open_path(self._granting(request_id, self.grants.allow_write))
 
     def _pick_save_path(self, request_id: int, args: dict) -> None:
         self._window.pick_save_path(
             str(args.get("defaultName", "Untitled")),
-            lambda path: self._reply(request_id, path or None),
+            self._granting(request_id, self.grants.allow_write),
         )
 
     def _pick_export_path(self, request_id: int, args: dict) -> None:
         self._window.pick_export_path(
             str(args.get("defaultName", "Untitled")),
-            lambda path: self._reply(request_id, path or None),
+            self._granting(request_id, self.grants.allow_write),
         )
 
     def _pick_image_save_path(self, request_id: int, args: dict) -> None:
         self._window.pick_image_save_path(
             str(args.get("defaultName", "diagram")),
-            lambda path: self._reply(request_id, path or None),
+            self._granting(request_id, self.grants.allow_write),
         )
 
     def _pick_import_path(self, request_id: int, _args: dict) -> None:
-        self._window.pick_import_path(lambda path: self._reply(request_id, path or None))
+        self._window.pick_import_path(self._granting(request_id, self.grants.allow_read))
 
     def _pick_text_import_path(self, request_id: int, _args: dict) -> None:
-        self._window.pick_text_import_path(lambda path: self._reply(request_id, path or None))
+        self._window.pick_text_import_path(self._granting(request_id, self.grants.allow_read))
 
     def _pick_image_import_path(self, request_id: int, _args: dict) -> None:
         self._window.pick_image_import_path(lambda path: self._reply(request_id, path or None))
@@ -139,6 +226,7 @@ class Bridge(QObject):
         if not path:
             self._reply_error(request_id, "Missing path")
             return
+        self.grants.check_read(str(path))
 
         def work() -> None:
             try:
@@ -211,6 +299,12 @@ class Bridge(QObject):
         if not path:
             self._reply_error(request_id, "Missing path")
             return
+        # A document type may be read without a grant — a link to another note
+        # opens it — but only the backend's own recent list makes it writable:
+        # a document opened by following a link is saved through the Save
+        # dialog the first time (see `fileController.saveTo`).
+        if str(path) in self._window.recent_files():
+            self.grants.allow_write(str(path))
 
         def work() -> None:
             try:
@@ -227,6 +321,7 @@ class Bridge(QObject):
         if not path:
             self._reply_error(request_id, "Missing path")
             return
+        self.grants.check_read(str(path))
 
         def work() -> None:
             try:
@@ -243,6 +338,7 @@ class Bridge(QObject):
         if not path:
             self._reply_error(request_id, "Missing path")
             return
+        self.grants.check_write(str(path))
 
         def work() -> None:
             try:
@@ -266,6 +362,7 @@ class Bridge(QObject):
         if not old_path or not new_path:
             self._reply_error(request_id, "Missing path")
             return
+        self.grants.check_rename(str(old_path), str(new_path))
 
         def work() -> None:
             try:
@@ -275,6 +372,7 @@ class Bridge(QObject):
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
+                self.grants.allow_write(str(new_path))
                 # The old name no longer names anything, so it is not something
                 # the recent list should offer a click away.
                 self._window.forget_recent_file(str(old_path))
@@ -295,6 +393,7 @@ class Bridge(QObject):
         if not path or not data:
             self._reply_error(request_id, "Missing path or data")
             return
+        self.grants.check_write(str(path))
 
         def work() -> None:
             try:
@@ -437,7 +536,10 @@ class Bridge(QObject):
 
     def _add_recent_file(self, request_id: int, args: dict) -> None:
         path = args.get("path", "")
-        if path:
+        # The recent list grants write access when a path in it is reopened, so
+        # it only takes paths that already have one: otherwise adding a path
+        # and reading it back would be a grant the page gave itself.
+        if path and self.grants.may_write(str(path)):
             self._window.add_recent_file(str(path))
         self._reply(request_id, None)
 
@@ -452,9 +554,16 @@ class Bridge(QObject):
 
     def add_pending_files(self, paths: list[str]) -> None:
         """Queue paths for the page's next boot (it has not asked yet)."""
+        self.grant_opened(paths)
         for path in paths:
             if path and path not in self._pending_files:
                 self._pending_files.append(path)
+
+    def grant_opened(self, paths: list[str]) -> None:
+        """The OS asked Edi to open these: the user's choice, so they may be saved."""
+        for path in paths:
+            if path:
+                self.grants.allow_write(path)
 
     def reset_frontend_ready(self) -> None:
         """Forget that the page is listening (a reload starts a fresh one)."""
@@ -474,8 +583,11 @@ class Bridge(QObject):
     def _reply(self, request_id: int, data) -> None:
         self._send_result(json.dumps({"id": request_id, "ok": True, "data": data}, default=str))
 
-    def _reply_error(self, request_id: int, message: str) -> None:
-        self._send_result(json.dumps({"id": request_id, "ok": False, "error": message}))
+    def _reply_error(self, request_id: int, message: str, code: str | None = None) -> None:
+        reply: dict = {"id": request_id, "ok": False, "error": message}
+        if code is not None:
+            reply["code"] = code
+        self._send_result(json.dumps(reply))
 
     def _send_stream(self, message: dict) -> None:
         # Skip emitting anything for a run the frontend has already stopped.

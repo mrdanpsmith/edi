@@ -56,6 +56,16 @@ page have explicit limits:
   after a confirmation naming the target (`launchConfirmation` in
   `src/linkSecurity.ts`): the OS handler for a `.command`, an `.app` or a
   custom scheme can run a program.
+- **Files** (`PathGrants` in `backend/bridge.py`). The bridge writes only files
+  the user named outside the page: a native Open, Save, Export or Save Image
+  dialog, the command line, the OS opening a document, or a document reopened
+  from the backend's own recent list (which in turn only takes paths already
+  granted). Reading an arbitrary file needs an import dialog; a document type
+  may be read without one, so a link to another note still opens. A rename
+  stays in the document's folder. Anything else is refused with the
+  `notPermitted` error code, and the page answers a refused save by opening the
+  Save dialog on that file — which is how a document opened from a link is
+  saved the first time.
 - **Runnable code blocks** (`backend/exec.py`). On POSIX each run leads its own
   process group, and Stop, the 30-second timeout and quitting the app
   (`Bridge.shutdown`, on `aboutToQuit`) kill the whole group; Windows uses

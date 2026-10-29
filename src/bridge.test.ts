@@ -88,6 +88,21 @@ describe('bridge', () => {
     await expect(promise).rejects.toThrow('boom')
   })
 
+  it('carries the error code a refused file access replies with', async () => {
+    const fake = fakeBridge()
+    const bridge = await freshBridge(() => {
+      window.bridge = fake
+    })
+
+    const promise = bridge.invoke('writeTextFile', { path: '/x.md', content: '' })
+    await vi.waitFor(() => expect(fake.invoke).toHaveBeenCalled())
+    const id = fake.invoke.mock.calls[0]![1]
+    fake._fire(JSON.stringify({ id, ok: false, error: 'not given', code: 'notPermitted' }))
+    const error = await promise.catch((reason: unknown) => reason)
+    expect(bridge.isNotPermitted(error)).toBe(true)
+    expect(bridge.isNotPermitted(new Error('not given'))).toBe(false)
+  })
+
   it('rejects with a default message when the error is missing', async () => {
     const fake = fakeBridge()
     const bridge = await freshBridge(() => {

@@ -1,5 +1,5 @@
 import type { Node as ProseNode } from 'prosemirror-model'
-import { confirmAction } from './bridge'
+import { confirmAction, isNotPermitted } from './bridge'
 import {
   dirname,
   fileName,
@@ -178,7 +178,7 @@ export function createFileController(ctx: AppContext): FileController {
     await saveTo(path)
   }
 
-  async function saveTo(path: string): Promise<void> {
+  async function saveTo(path: string, confirmed = false): Promise<void> {
     if (
       !isSupportedFile(path) &&
       !(await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`))
@@ -191,6 +191,15 @@ export function createFileController(ctx: AppContext): FileController {
       await writeTextFile(path, snapshot.markdown)
       afterSave(path, snapshot)
     } catch (error) {
+      if (isNotPermitted(error) && !confirmed) {
+        // The shell only writes files the user named outside the page (see
+        // `PathGrants` in backend/bridge.py) — a document opened by following
+        // a link was not. The Save dialog, opened on that same file, is how the
+        // user names it: one dialog, the first time.
+        const chosen = await pickSavePath(path)
+        if (chosen) await saveTo(chosen, true)
+        return
+      }
       ctx.reportError(`Failed to save ${path}`, error)
     }
   }

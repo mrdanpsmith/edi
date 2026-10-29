@@ -89,7 +89,10 @@ const mainState = vi.hoisted(() => {
   }
 })
 
-vi.mock('./bridge', () => ({
+vi.mock('./bridge', async (importOriginal) => ({
+  // The real error type and its check: a refused write is told apart by them.
+  BridgeError: (await importOriginal<typeof import('./bridge')>()).BridgeError,
+  isNotPermitted: (await importOriginal<typeof import('./bridge')>()).isNotPermitted,
   hasBridge: () => mainState.hasBridge(),
   invoke: mainState.invoke,
   confirmAction: mainState.confirmAction,
@@ -1145,6 +1148,27 @@ describe('open and save', () => {
     await flushAsync()
     const state = await stateModule()
     expect(state.getActive()).toMatchObject({ path: '/tmp/new.md', dirty: true })
+  })
+
+  it('asks where to save a document the shell was not given, instead of failing', async () => {
+    const { BridgeError } = await import('./bridge')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/linked.md'])
+    mainState.readTextFile.mockResolvedValue('linked')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.writeTextFile
+      .mockRejectedValueOnce(new BridgeError('not given', 'notPermitted'))
+      .mockResolvedValueOnce(undefined)
+    mainState.pickSavePath.mockResolvedValue('/tmp/linked.md')
+    menu('save')
+    await flushAsync()
+    // The Save dialog opens on the same file, and the write is retried there.
+    expect(mainState.pickSavePath).toHaveBeenCalledWith('/tmp/linked.md')
+    expect(mainState.writeTextFile).toHaveBeenCalledTimes(2)
+    expect(mainState.showError).not.toHaveBeenCalledWith(expect.stringContaining('linked.md'))
+    const state = await stateModule()
+    expect(state.isAnyDirty()).toBe(false)
   })
 
   it('reports a failed save', async () => {

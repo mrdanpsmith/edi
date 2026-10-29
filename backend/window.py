@@ -727,6 +727,7 @@ class MainWindow(QMainWindow):
         if not self._bridge.frontend_ready:
             self._bridge.add_pending_files(files)
             return
+        self._bridge.grant_opened(files)
         self.push_event({"type": "openFiles", "paths": files})
 
     def push_event(self, event: dict) -> None:

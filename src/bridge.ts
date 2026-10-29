@@ -1,4 +1,4 @@
-import type { BridgeMethod, PreferenceName } from './contract'
+import type { BridgeErrorCode, BridgeMethod, PreferenceName } from './contract'
 
 interface PendingRequest {
   resolve: (value: unknown) => void
@@ -61,11 +61,35 @@ const pending = new Map<number, PendingRequest>()
 const streamHandlers = new Map<number, (event: StreamEvent) => void>()
 const channelPromise = { value: null as Promise<void> | null }
 
+/** A failed bridge call. `code` says what kind of failure it was, when the
+ * shell names one (`errorCodes` in the contract). */
+export class BridgeError extends Error {
+  constructor(
+    message: string,
+    readonly code: BridgeErrorCode | null = null,
+  ) {
+    super(message)
+  }
+}
+
+/** The shell refused a file the user never gave it (see `PathGrants`). */
+export function isNotPermitted(error: unknown): boolean {
+  return error instanceof BridgeError && error.code === 'notPermitted'
+}
+
+interface ResultMessage {
+  id: number
+  ok: boolean
+  data?: unknown
+  error?: string
+  code?: BridgeErrorCode
+}
+
 function connectResult(bridge: BridgeObject): void {
   bridge.result.connect((payload) => {
-    let message: { id: number; ok: boolean; data?: unknown; error?: string }
+    let message: ResultMessage
     try {
-      message = JSON.parse(payload) as { id: number; ok: boolean; data?: unknown; error?: string }
+      message = JSON.parse(payload) as ResultMessage
     } catch {
       return
     }
@@ -77,7 +101,7 @@ function connectResult(bridge: BridgeObject): void {
     if (message.ok) {
       entry.resolve(message.data)
     } else {
-      entry.reject(new Error(message.error ?? 'Bridge call failed'))
+      entry.reject(new BridgeError(message.error ?? 'Bridge call failed', message.code ?? null))
     }
   })
   bridge.stream?.connect((payload) => {

@@ -7,16 +7,20 @@ the Python ↔ TypeScript boundary as bare strings:
   into `MenuCommands` in `src/menus.ts`;
 - **bridge methods** — the `invoke('…')`/`invokeStream('…')` names against
   `Bridge._handlers` in `backend/bridge.py`;
-- **the three preference defaults**.
+- **the three preference defaults**;
+- **bridge error codes** — the `code` an error reply may carry beside its
+  message (`errorCodes`), read on the page as `BridgeError.code`. The one code
+  is `notPermitted`, a file access the user never handed to Edi (see
+  [architecture.md](architecture.md)).
 
-All three used to drift silently: a rename on one side left a menu item that
-did nothing, a call that answered `Unknown method`, or a store disagreeing with
-the page.
+The first three used to drift silently: a rename on one side left a menu item
+that did nothing, a call that answered `Unknown method`, or a store disagreeing
+with the page.
 
 Each side checks itself against the manifest:
 
-- `tests/test_contract.py` checks Python's `_handlers`, the **built menubar**
-  and `DEFAULTS`/`NAMES`;
+- `tests/test_contract.py` checks Python's `_handlers`, the **built menubar**,
+  `DEFAULTS`/`NAMES` and the bridge's error codes;
 - `src/contract.ts` and `src/contract.test.ts` check the page at typecheck
   time.
 
