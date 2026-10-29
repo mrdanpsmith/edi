@@ -66,6 +66,7 @@ const mainState = vi.hoisted(() => {
     pickImageImportPath: vi.fn(),
     pickImportPath: vi.fn(),
     pickTextImportPath: vi.fn(),
+    printHtml: vi.fn(),
     readAnyTextFile: vi.fn(),
     getRecentFiles: vi.fn().mockResolvedValue([]),
     addRecentFile: vi.fn().mockResolvedValue(undefined),
@@ -123,6 +124,7 @@ vi.mock('./files', async () => {
     pickImageImportPath: mainState.pickImageImportPath,
     pickImportPath: mainState.pickImportPath,
     pickTextImportPath: mainState.pickTextImportPath,
+    printHtml: mainState.printHtml,
     readAnyTextFile: mainState.readAnyTextFile,
   }
 })
@@ -450,6 +452,7 @@ const FILE_MOCKS = [
   mainState.pickImageImportPath,
   mainState.pickImportPath,
   mainState.pickTextImportPath,
+  mainState.printHtml,
   mainState.readAnyTextFile,
 ]
 
@@ -1472,6 +1475,66 @@ describe('export', () => {
     expect(mainState.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to export /tmp/out.html'),
     )
+  })
+})
+
+describe('print', () => {
+  it('prints the exported page with the document path as its base', async () => {
+    mainState.printHtml.mockResolvedValue(true)
+    await loadMain()
+    press('n')
+    menu('print')
+    await flushAsync()
+    expect(mainState.printHtml).toHaveBeenCalledWith(expect.stringContaining('<html'), null)
+    expect(statusLeft().textContent).toBe('Printed Untitled')
+  })
+
+  it('enables export and print only while a document is in view', async () => {
+    function lastMenuState(): { hasDocument?: boolean } {
+      const calls = mainState.invoke.mock.calls.filter((call) => call[0] === 'setMenuState')
+      return calls[calls.length - 1]?.[1] as { hasDocument?: boolean }
+    }
+
+    await loadMain()
+    expect(appEl().dataset.view).toBe('home')
+    expect(lastMenuState().hasDocument).toBe(false)
+
+    press('n')
+    await flushAsync()
+    expect(lastMenuState().hasDocument).toBe(true)
+
+    press('w')
+    await flushAsync()
+    expect(appEl().dataset.view).toBe('home')
+    expect(lastMenuState().hasDocument).toBe(false)
+  })
+
+  it('prints from the toolbar button', async () => {
+    mainState.printHtml.mockResolvedValue(true)
+    await loadMain()
+    press('n')
+    document.querySelector<HTMLButtonElement>('#toolbar button[title="Print… (Ctrl+P)"]')!.click()
+    await flushAsync()
+    expect(mainState.printHtml).toHaveBeenCalledWith(expect.stringContaining('<html'), null)
+  })
+
+  it('says nothing when the print dialog is cancelled', async () => {
+    mainState.printHtml.mockResolvedValue(false)
+    await loadMain()
+    press('n')
+    menu('print')
+    await flushAsync()
+    expect(mainState.printHtml).toHaveBeenCalled()
+    expect(statusLeft().textContent).not.toBe('Printed Untitled')
+  })
+
+  it('reports a failed print', async () => {
+    mainState.printHtml.mockRejectedValue(new Error('boom'))
+    await loadMain()
+    press('n')
+    menu('print')
+    await flushAsync()
+    expect(mainState.showError).toHaveBeenCalledWith(expect.stringContaining('Failed to print Untitled'))
   })
 })
 

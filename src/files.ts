@@ -90,6 +90,15 @@ export async function pickImageSavePath(defaultName: string): Promise<string | n
   return invoke<string | null>('pickImageSavePath', { defaultName })
 }
 
+/**
+ * Print a standalone HTML page through the native print dialog. Relative
+ * images resolve against ``documentPath``'s folder. Resolves ``false`` when
+ * the dialog is cancelled.
+ */
+export async function printHtml(html: string, documentPath: string | null): Promise<boolean> {
+  return invoke<boolean>('printHtml', { html, documentPath })
+}
+
 export async function pickImportPath(): Promise<string | null> {
   return invoke<string | null>('pickImportPath', {})
 }

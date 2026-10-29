@@ -174,6 +174,8 @@ function syncDirty(): void {
 function syncMenuState(ctx: AppContext): void {
   const active = getActive()
   void invoke('setMenuState', {
+    // False on the home screen: there is nothing to export or print.
+    hasDocument: Boolean(active),
     canRevert: Boolean(active?.path),
     canCopyPath: Boolean(active?.path),
     canRename: Boolean(active?.path),

@@ -12,6 +12,7 @@ import {
   pickOpenPath,
   pickSavePath,
   pickTextImportPath,
+  printHtml,
   readAnyTextFile,
   readTextFile,
   renameTextFile,
@@ -50,6 +51,7 @@ export interface FileController {
   importTextFile(): Promise<void>
   insertImage(): Promise<void>
   exportHtml(): Promise<void>
+  printDocument(): Promise<void>
 }
 
 interface NativeEvent {
@@ -335,6 +337,17 @@ export function createFileController(ctx: AppContext): FileController {
     ctx.flashStatus(`Inserted ${fileName(path)}`)
   }
 
+  /** The active document as a standalone page: what export writes and print prints. */
+  async function documentHtml(title: string): Promise<string | null> {
+    const state = ctx.blockEditor?.getView().state
+    if (!state) {
+      return null
+    }
+    const snapshots = await mermaidPngSnapshots(state.doc)
+    const bodyHtml = serializeDocToHtml(state.doc, formulaEnvFor(state), snapshots)
+    return buildExportHtml(title, bodyHtml)
+  }
+
   async function exportHtml(): Promise<void> {
     if (!getActive()) return
     const base = getActive()!.path ? fileName(getActive()!.path!) : UNTITLED
@@ -343,16 +356,31 @@ export function createFileController(ctx: AppContext): FileController {
       return
     }
     try {
-      const state = ctx.blockEditor?.getView().state
-      if (!state) {
+      const html = await documentHtml(fileName(path))
+      if (html === null) {
         return
       }
-      const snapshots = await mermaidPngSnapshots(state.doc)
-      const bodyHtml = serializeDocToHtml(state.doc, formulaEnvFor(state), snapshots)
-      await writeTextFile(path, buildExportHtml(fileName(path), bodyHtml))
+      await writeTextFile(path, html)
       ctx.flashStatus(`Exported ${path}`)
     } catch (error) {
       ctx.reportError(`Failed to export ${path}`, error)
+    }
+  }
+
+  async function printDocument(): Promise<void> {
+    const active = getActive()
+    if (!active) return
+    const title = active.path ? fileName(active.path) : UNTITLED
+    try {
+      const html = await documentHtml(title)
+      if (html === null) {
+        return
+      }
+      if (await printHtml(html, active.path ?? null)) {
+        ctx.flashStatus(`Printed ${title}`)
+      }
+    } catch (error) {
+      ctx.reportError(`Failed to print ${title}`, error)
     }
   }
 
@@ -396,5 +424,6 @@ export function createFileController(ctx: AppContext): FileController {
     importTextFile,
     insertImage,
     exportHtml,
+    printDocument,
   }
 }

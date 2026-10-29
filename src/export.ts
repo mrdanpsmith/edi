@@ -26,7 +26,8 @@ const EXPORT_CSS = `
   --exec-fg: #e6edf3;
 }
 
-@media (prefers-color-scheme: dark) {
+/* Screen only: paper is always printed in the light palette. */
+@media screen and (prefers-color-scheme: dark) {
   :root {
     --bg: #0d1117;
     --surface: #161b22;
@@ -265,6 +266,63 @@ body {
   margin: 1em 0;
   font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
   font-size: 0.85em;
+}
+
+@media print {
+  .md-preview {
+    padding: 0;
+  }
+
+  .md-preview h1,
+  .md-preview h2,
+  .md-preview h3,
+  .md-preview h4,
+  .md-preview h5,
+  .md-preview h6 {
+    break-after: avoid;
+  }
+
+  .md-preview pre,
+  .md-preview table,
+  .md-preview figure,
+  .md-preview img,
+  .md-preview li[data-checked] {
+    break-inside: avoid;
+  }
+
+  .md-preview .mermaid-figure > img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* The diagram's source is a screen affordance; the paper has the picture. */
+  .md-preview .mermaid-source {
+    display: none;
+  }
+
+  /* A box big enough to tick with a pen. The native box is ~3.5mm and, being
+     disabled, prints a faint grey. */
+  .md-preview li[data-checked] {
+    align-items: flex-start;
+  }
+
+  .md-preview li[data-checked] + li[data-checked] {
+    margin-top: 0.5em;
+  }
+
+  .md-preview li[data-checked] > input[type='checkbox'] {
+    appearance: none;
+    width: max(1.3em, 5mm);
+    height: max(1.3em, 5mm);
+    margin: 0.05em 0.6em 0 0;
+    border: 1.5px solid #000;
+    border-radius: 2px;
+    background: #fff center / 80% no-repeat;
+  }
+
+  .md-preview li[data-checked] > input[type='checkbox']:checked {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.2 3.2L13 4.8' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
 }
 `
 

@@ -70,6 +70,11 @@ page have explicit limits:
   process group, and Stop, the 30-second timeout and quitting the app
   (`Bridge.shutdown`, on `aboutToQuit`) kill the whole group; Windows uses
   `taskkill /T`. A run that exits normally leaves what it launched alone.
+- **Printing** (`backend/printing.py`). `printHtml` takes the page Export
+  writes and prints it from a hidden `QWebEngineView` of its own: no bridge,
+  JavaScript off, loaded from a temporary file (removed when the print reports
+  back) because `setHtml` caps content at 2 MB. The document path the page
+  sends is used only as the `<base>` for relative images.
 
 ## Data flow
 
@@ -103,7 +108,7 @@ bridge methods and preference defaults are declared in
 | `src/styles.css` | Application stylesheet entry; imports the component sheets in cascade order. |
 | `src/styles/` | One stylesheet per component (`tabs`, `toolbar`, `block-controls`, `tables`, `mermaid`, …). |
 | `src/docs/` | Markdown used by the in-app Help guide. |
-| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, code execution, table import, preferences and theming. |
+| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, code execution, table import, printing, preferences and theming. |
 | `shared/edi-contract.json` | Single source of truth for menu-command, bridge-method and preference names. |
 | `tests/` | Python tests, including the real-WebEngine tests in `tests/window/test_window.py` and helpers in `tests/mermaid_render.py`. |
 | `scripts/` | Developer, build, packaging and release scripts. |

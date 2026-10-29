@@ -13,6 +13,7 @@ import {
   pickOpenPath,
   pickSavePath,
   pickTextImportPath,
+  printHtml,
   readAnyTextFile,
   readTextFile,
   renameTextFile,
@@ -83,6 +84,12 @@ describe('bridge wrappers', () => {
     vi.mocked(invoke).mockResolvedValue('/tmp/out.html')
     await expect(pickExportPath('out.html')).resolves.toBe('/tmp/out.html')
     expect(invoke).toHaveBeenCalledWith('pickExportPath', { defaultName: 'out.html' })
+  })
+
+  it('printHtml hands the page and the document path over', async () => {
+    vi.mocked(invoke).mockResolvedValue(true)
+    await expect(printHtml('<html></html>', '/tmp/a.md')).resolves.toBe(true)
+    expect(invoke).toHaveBeenCalledWith('printHtml', { html: '<html></html>', documentPath: '/tmp/a.md' })
   })
 
   it('pickImportPath resolves a path', async () => {

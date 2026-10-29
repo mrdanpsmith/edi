@@ -115,14 +115,15 @@ describe('Toolbar', () => {
     expect(bar.querySelectorAll('.toolbar-btn').length).toBeGreaterThan(5)
   })
 
-  it('getFileButtons returns the four file-action specs', () => {
+  it('getFileButtons returns the five file-action specs', () => {
     const files = getFileButtons()
-    expect(files).toHaveLength(4)
+    expect(files).toHaveLength(5)
     expect(files.map((f) => f.title)).toEqual([
       'New (Ctrl+N)',
       'Open… (Ctrl+O)',
       'Save (Ctrl+S)',
       'Save As… (Ctrl+Shift+S)',
+      'Print… (Ctrl+P)',
     ])
     for (const file of files) {
       expect(file.markup).toBeTruthy()
@@ -134,7 +135,7 @@ describe('Toolbar', () => {
     const { bar, ctx } = makeFixture()
     new Toolbar(bar, ctx, getFileButtons())
     const children = Array.from(bar.children)
-    const fileTitles = children.slice(0, 4).map(
+    const fileTitles = children.slice(0, 5).map(
       (el) => (el as HTMLButtonElement).title,
     )
     expect(fileTitles).toEqual([
@@ -142,11 +143,12 @@ describe('Toolbar', () => {
       'Open… (Ctrl+O)',
       'Save (Ctrl+S)',
       'Save As… (Ctrl+Shift+S)',
+      'Print… (Ctrl+P)',
     ])
-    const separator = children[4]
+    const separator = children[5]
     expect(separator.classList.contains('toolbar-separator')).toBe(true)
     expect(separator.getAttribute('aria-hidden')).toBe('true')
-    expect((children[5] as HTMLButtonElement).title).toBe('Heading')
+    expect((children[6] as HTMLButtonElement).title).toBe('Heading')
   })
 
   it('starts with the heading dropdown and still shows format-group separators', () => {

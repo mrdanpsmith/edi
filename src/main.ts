@@ -7,7 +7,7 @@ import { insertTable as insertSpreadsheetTable } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
 import { setEncryptedBlockImageResolver } from './node/encryptedblock'
 import { createBlockEditor } from './editor'
-import { NEW_ICON, OPEN_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
+import { NEW_ICON, OPEN_ICON, PRINT_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
 import { applyZoom, clampZoom, DEFAULT_ZOOM, zoomIn, zoomOut } from './zoom'
 import { currentPreferences } from './preferences'
@@ -389,6 +389,7 @@ export function init(roots: AppRoots): () => void {
     { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => void files.openFile() },
     { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => void files.saveFile() },
     { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => void files.saveFileAs() },
+    { label: 'Print', title: 'Print… (Ctrl+P)', markup: PRINT_ICON, action: () => void files.printDocument() },
   ])
   ctx.homeScreen = buildHomeScreen(ctx, files)
   ctx.searchPanel = new SearchPanel({ getView: () => edit.focusedEditor() })
@@ -443,6 +444,7 @@ export function init(roots: AppRoots): () => void {
     insertTableDefault: () => void insertTableDefault(ctx),
     insertKanban: () => void insertKanban(ctx),
     export: () => void files.exportHtml(),
+    print: () => void files.printDocument(),
     toggleToolbar: () => toggleToolbar(ctx),
     toggleHoverBand: () => toggleHoverBand(ctx),
     zoomIn: () => zoom.set(zoomIn(ctx.documentZoom)),

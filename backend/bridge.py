@@ -138,6 +138,7 @@ class Bridge(QObject):
             "streamCodeBlock": self._stream_code_block,
             "stopCodeBlock": self._stop_code_block,
             "openUrl": self._open_url,
+            "printHtml": self._print_html,
             "setDirty": self._set_dirty,
             "setTitle": self._set_title,
             "setMenuState": self._set_menu_state,
@@ -496,6 +497,22 @@ class Bridge(QObject):
         self._window.open_external_url(url)
         self._reply(request_id, None)
 
+    def _print_html(self, request_id: int, args: dict) -> None:
+        html = str(args.get("html") or "")
+        if not html:
+            self._reply_error(request_id, "Missing html")
+            return
+        # Only the base for relative images; nothing is read through the bridge.
+        document_path = args.get("documentPath")
+
+        def done(printed: bool, error: str | None) -> None:
+            if error:
+                self._reply_error(request_id, error)
+            else:
+                self._reply(request_id, printed)
+
+        self._window.print_html(html, str(document_path) if document_path else None, done)
+
     def _set_dirty(self, request_id: int, args: dict) -> None:
         self._window.set_dirty(bool(args.get("dirty")))
         self._reply(request_id, None)
@@ -506,6 +523,7 @@ class Bridge(QObject):
 
     def _set_menu_state(self, request_id: int, args: dict) -> None:
         self._window.update_menu_state(
+            has_document=bool(args.get("hasDocument")),
             can_revert=bool(args.get("canRevert")),
             can_copy_path=bool(args.get("canCopyPath")),
             toolbar_visible=bool(args.get("toolbarVisible")),

@@ -60,6 +60,17 @@ describe('buildExportHtml', () => {
     expect(html).toContain('align-items: baseline')
   })
 
+  it('prints in the light palette with pen-sized checkboxes', () => {
+    const html = buildExportHtml('T', '')
+    // The dark palette is screen-only, so paper never inherits it.
+    expect(html).toContain('@media screen and (prefers-color-scheme: dark)')
+    expect(html).not.toMatch(/@media \(prefers-color-scheme: dark\)/)
+    const print = html.slice(html.indexOf('@media print'))
+    expect(print).toContain('width: max(1.3em, 5mm)')
+    expect(print).toContain('border: 1.5px solid #000')
+    expect(print).toContain(":checked")
+  })
+
   it('does not set loose security level', () => {
     const html = buildExportHtml('T', '')
     expect(html).not.toContain('securityLevel')

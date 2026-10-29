@@ -507,6 +507,17 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert band_actions[0].isChecked() is True
 
 
+def test_update_menu_state_disables_export_and_print_without_a_document(visible, qtbot):
+    window = visible
+    window.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True, has_document=True)
+    assert window._export_action.isEnabled() is True
+    assert window._print_action.isEnabled() is True
+
+    window.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True)
+    assert window._export_action.isEnabled() is False
+    assert window._print_action.isEnabled() is False
+
+
 def test_update_menu_state_toggles_actions(visible, qtbot):
     window = visible
     assert window._revert_action.isEnabled() is False

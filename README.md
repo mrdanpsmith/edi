@@ -141,6 +141,10 @@ match.
   Mermaid diagrams are embedded as PNG snapshots, each followed by a
   collapsible block holding its source. It carries no keyboard shortcut, so
   `Ctrl+Shift+E` stays the block-source toggle.
+- `File → Print…` (`Ctrl+P`) prints that same page through the system print
+  dialog, always in light colours. Checklist boxes print at about 5mm with a
+  solid outline, big enough to tick with a pen, and headings, tables and
+  diagrams are kept off page breaks where they fit.
 - Copying or cutting a selection uses the same representation: other apps get
   each diagram as a PNG with its source underneath, while Edi also puts the
   selection's markdown on the clipboard and prefers it when pasting back, so
@@ -148,8 +152,8 @@ match.
 
 ### Menus and toolbar
 
-Document actions live in the native menu bar, with the four most common ones
-(New, Open, Save, Save As) also as toolbar buttons; the rest of the toolbar
+Document actions live in the native menu bar, with the most common ones
+(New, Open, Save, Save As, Print) also as toolbar buttons; the rest of the toolbar
 toggles markdown formatting on the selection. Hide the row with
 `View → Toolbar`. `View → Hover Band` turns off the band that marks the block
 the pointer is over; it is on by default. Both answers, and the zoom level, are
@@ -157,7 +161,7 @@ remembered between runs (`~/.config/Edi/Edi.conf`).
 
 | Menu | Items |
 | --- | --- |
-| **File** | New, Open, Open Recent, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Quit |
+| **File** | New, Open, Open Recent, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Print…, Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
 | **View** | Toolbar, Hover Band, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |

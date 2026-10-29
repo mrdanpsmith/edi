@@ -35,6 +35,8 @@ class StubWindow(QObject):
         self.preference_writes: list[tuple[str, object]] = []
         self.opened_urls: list[str] = []
         self.recent_files_list: list[str] = []
+        self.printed: list[tuple[str, str | None]] = []
+        self.print_outcome: tuple[bool, str | None] = (True, None)
 
     def confirm(self, message, callback=None) -> None:
         self.confirm_messages.append(message)
@@ -60,7 +62,9 @@ class StubWindow(QObject):
         zoom_factor=1.0,
         can_zoom_in=True,
         can_zoom_out=True,
+        has_document=False,
     ) -> None:
+        self.has_document = has_document
         self.can_revert = can_revert
         self.can_copy_path = can_copy_path
         self.toolbar_visible = toolbar_visible
@@ -107,6 +111,10 @@ class StubWindow(QObject):
 
     def open_external_url(self, url: str) -> None:
         self.opened_urls.append(url)
+
+    def print_html(self, html: str, document_path, callback) -> None:
+        self.printed.append((html, document_path))
+        callback(*self.print_outcome)
 
     def recent_files(self) -> list[str]:
         return self.recent_files_list
@@ -207,6 +215,7 @@ def test_set_menu_state(bridge):
         bridge_obj,
         "setMenuState",
         {
+            "hasDocument": True,
             "canRevert": True,
             "toolbarVisible": False,
             "canRename": True,
@@ -214,6 +223,7 @@ def test_set_menu_state(bridge):
     )
     message = _wait_for(lambda: result.get(1))
     assert message["ok"] is True
+    assert window.has_document is True
     assert window.can_revert is True
     assert window.toolbar_visible is False
     assert window.can_rename is True
@@ -605,6 +615,42 @@ def test_pending_files_queue_until_the_page_asks(bridge):
 
     bridge_obj.reset_frontend_ready()
     assert bridge_obj.frontend_ready is False
+
+
+def test_print_html_forwards_the_page_and_document_path(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "printHtml", {"html": "<html></html>", "documentPath": "/tmp/a.md"})
+    message = _wait_for(lambda: result.get(1))
+    assert message == {"id": 1, "ok": True, "data": True}
+    assert window.printed == [("<html></html>", "/tmp/a.md")]
+
+
+def test_print_html_replies_false_when_cancelled(bridge):
+    bridge_obj, window, result = bridge
+    window.print_outcome = (False, None)
+    _invoke(bridge_obj, "printHtml", {"html": "<html></html>", "documentPath": None})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] is False
+    assert window.printed == [("<html></html>", None)]
+
+
+def test_print_html_reports_a_failed_print(bridge):
+    bridge_obj, window, result = bridge
+    window.print_outcome = (False, "Printing failed")
+    _invoke(bridge_obj, "printHtml", {"html": "<html></html>"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is False
+    assert message["error"] == "Printing failed"
+
+
+def test_print_html_missing_html_errors(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "printHtml", {})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is False
+    assert "Missing html" in message["error"]
+    assert window.printed == []
 
 
 def test_open_url_missing_url_errors(bridge):

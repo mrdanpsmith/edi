@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .bridge import Bridge
 from .preferences import Preferences
+from .printing import PrintJob
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
@@ -290,6 +291,8 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._allow_close = False
         self._revert_action = None
+        self._export_action = None
+        self._print_action = None
         self._copy_path_action = None
         self._rename_action = None
         self._toolbar_action = None
@@ -298,6 +301,8 @@ class MainWindow(QMainWindow):
         self._zoom_in_action = None
         self._zoom_out_action = None
         self._zoom_actions: dict[float, QAction] = {}
+        # The print in flight, kept alive until it reports back.
+        self._print_job: PrintJob | None = None
 
         self._preferences = Preferences()
         self._bridge = Bridge(self, pending_files)
@@ -490,9 +495,16 @@ class MainWindow(QMainWindow):
         # (`Mod-Shift-e` in `src/editor.ts`), and a menubar shortcut wins over
         # the page — see the Rename action above. This label used to claim it,
         # which is why block source mode had no working keyboard entry.
-        export_action = QAction("&Export HTML…", self)
-        self._link_command(export_action, "export")
-        file_menu.addAction(export_action)
+        # Both start disabled: Edi opens on the home screen, with no document.
+        # The frontend enables them while one is in view.
+        self._export_action = QAction("&Export HTML…", self)
+        self._export_action.setEnabled(False)
+        self._link_command(self._export_action, "export")
+        file_menu.addAction(self._export_action)
+
+        self._print_action = self._menubar_action("&Print…\tCtrl+P", "print", shell_owns_key=True)
+        self._print_action.setEnabled(False)
+        file_menu.addAction(self._print_action)
 
         file_menu.addSeparator()
 
@@ -681,7 +693,11 @@ class MainWindow(QMainWindow):
         zoom_factor: float = 1.0,
         can_zoom_in: bool = True,
         can_zoom_out: bool = True,
+        has_document: bool = False,
     ) -> None:
+        for action in (self._export_action, self._print_action):
+            if action is not None:
+                action.setEnabled(has_document)
         if self._revert_action is not None:
             self._revert_action.setEnabled(can_revert)
         if self._copy_path_action is not None:
@@ -882,6 +898,19 @@ class MainWindow(QMainWindow):
             default_name = f"{default_name}.png"
         dialog.selectFile(default_name)
         self._run_dialog(dialog, callback)
+
+    def print_html(self, html: str, document_path: str | None, callback) -> None:
+        """Print ``html`` via the native dialog; ``callback(printed, error)`` once."""
+        if self._print_job is not None:
+            callback(False, "A print is already in progress")
+            return
+
+        def done(printed: bool, error: str | None) -> None:
+            self._print_job = None
+            callback(printed, error)
+
+        self._print_job = PrintJob(self, html, document_path, done)
+        self._print_job.start()
 
     def pick_import_path(self, callback=None) -> None:
         dialog = QFileDialog(self, "Import spreadsheet")

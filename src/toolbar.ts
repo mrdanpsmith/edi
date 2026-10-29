@@ -44,6 +44,13 @@ export const SAVE_AS_ICON = icon(
   '0 0 24 24',
 )
 
+export const PRINT_ICON = icon(
+  '<path d="M6 9V2h12v7"/>' +
+    '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>' +
+    '<path d="M6 14h12v8H6z"/>',
+  '0 0 24 24',
+)
+
 function findLinkHref(view: EditorView): string {
   const { state } = view
   const linkType = state.schema.marks.link
@@ -395,7 +402,7 @@ export function taskClickPlugin(): Plugin {
 }
 
 /**
- * The four standard file actions (New/Open/Save/Save As) shown at the front of
+ * The standard file actions (New/Open/Save/Save As/Print) shown at the front of
  * the toolbar. The actions here are placeholders: `main.ts` wires the real
  * document actions in when it constructs the `Toolbar`.
  */
@@ -405,6 +412,7 @@ export function getFileButtons(): FileActionSpec[] {
     { label: 'Open', title: 'Open… (Ctrl+O)', markup: OPEN_ICON, action: () => undefined },
     { label: 'Save', title: 'Save (Ctrl+S)', markup: SAVE_ICON, action: () => undefined },
     { label: 'Save As', title: 'Save As… (Ctrl+Shift+S)', markup: SAVE_AS_ICON, action: () => undefined },
+    { label: 'Print', title: 'Print… (Ctrl+P)', markup: PRINT_ICON, action: () => undefined },
   ]
 }
 
