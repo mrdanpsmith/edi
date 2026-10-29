@@ -384,8 +384,8 @@ is a paragraph of source. So the places to add are *drawn*.
 
 `kanbanAuthoringSource` in `src/mermaid-edit.ts`:
 
-- appends a `slotc<n>` card to every column;
-- appends a `slotn` column to the end;
+- appends a `__edi_slot_c<n>` card to every column;
+- appends a `__edi_slot_n` column to the end;
 - **and a card slot inside that column too**.
 
 The card slot in the drawn column means the board ends in a column with
@@ -539,7 +539,7 @@ end of the board — a place to add a column, and the one thing on the board a
 card has no business in — **is** the bin, and it says so.
 
 That column is drawn *with a card slot in it*
-(`kanbanAuthoringSource` appends `slotc${doc.columns.length}` under `slotn`),
+(`kanbanAuthoringSource` appends `__edi_slot_c${doc.columns.length}` under `__edi_slot_n`),
 and that card slot is the bin.
 
 **At rest it paints nothing.** A card captioned `+ Add a card` standing in a

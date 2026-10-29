@@ -461,8 +461,11 @@ export const KANBAN_CARD_SLOT = '+ Add a card'
 export const KANBAN_COLUMN_SLOT = '+ Add a column'
 // A reserved id, so a slot is recognisable by what it *is* rather than by what
 // it says: a card the user has genuinely titled `+ Add a card` is a real card,
-// and only the drawn slot carries an id nothing else on a board would.
-const SLOT_ID = /^slot[cn]\d*$/
+// and only the drawn slot carries an id nothing else on a board would. It is
+// spelled so no one would write it: a card of the user's own with a slot id
+// is read as a slot, and dropped or rewritten on the next edit (`slotc3`, the
+// old spelling, is an id a person could easily give a card).
+const SLOT_ID = /^__edi_slot_[cn]\d*$/
 export const isSlotId = (id: string): boolean => SLOT_ID.test(id)
 
 /** Whether a line is one of the board's own slots, rather than content. */
@@ -498,8 +501,8 @@ export function kanbanAuthoringSource(source: string): string {
   const columnIndent = doc.lines[first].indent
   const card = doc.cards.find((entry) => entry.column === 0)
   const cardIndent = doc.lines[card?.line ?? -1]?.indent ?? `${columnIndent}  `
-  const cardSlot = (id: number): string => `${cardIndent}slotc${id}[${KANBAN_CARD_SLOT}]`
-  const columnSlot = (): string => `${columnIndent}slotn[${KANBAN_COLUMN_SLOT}]`
+  const cardSlot = (id: number): string => `${cardIndent}__edi_slot_c${id}[${KANBAN_CARD_SLOT}]`
+  const columnSlot = (): string => `${columnIndent}__edi_slot_n[${KANBAN_COLUMN_SLOT}]`
 
   // Where each column's slot lines go: after the last thing that belongs to it.
   const after = new Map<number, string[]>()

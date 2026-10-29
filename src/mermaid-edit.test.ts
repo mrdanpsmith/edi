@@ -634,6 +634,13 @@ describe('parseKanban', () => {
   })
 })
 
+describe('kanban slot ids', () => {
+  it('leaves a card whose id merely looks like a slot alone', () => {
+    const board = 'kanban\n  Todo\n    slotc3[+ Add a card]\n    slotn[Mine]'
+    expect(kanbanRealSource(kanbanAuthoringSource(board))).toBe(board)
+  })
+})
+
 describe('kanban item keys', () => {
   const drawn = 'kanban\n  Todo\n    a[One]\n    b[Two]\n  Done\n    c[Two]'
 
@@ -2236,14 +2243,14 @@ describe('kanban drawn slots', () => {
         '  Todo',
         '    id1[One]',
         '    id2[Two]',
-        '    slotc0[+ Add a card]',
+        '    __edi_slot_c0[+ Add a card]',
         '  Doing',
-        '    slotc1[+ Add a card]',
+        '    __edi_slot_c1[+ Add a card]',
         '  Done',
         '    id3[Three]',
-        '    slotc2[+ Add a card]',
-        '  slotn[+ Add a column]',
-        '    slotc3[+ Add a card]',
+        '    __edi_slot_c2[+ Add a card]',
+        '  __edi_slot_n[+ Add a column]',
+        '    __edi_slot_c3[+ Add a card]',
       ].join('\n'),
     )
     expect(cardSlots(svg)).toHaveLength(4)
@@ -2255,11 +2262,11 @@ describe('kanban drawn slots', () => {
     expect(kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE))).toBe(BOARD_SOURCE)
     // A card typed into a slot is content, and its slot id is not committed.
     expect(
-      kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE).replace('slotc1[+ Add a card]', '[Fresh]')),
+      kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE).replace('__edi_slot_c1[+ Add a card]', '[Fresh]')),
     ).toBe(['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '    [Fresh]', '  Done', '    id3[Three]'].join('\n'))
     // And a column named where the new one was drawn becomes a real column.
     expect(
-      kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE).replace('slotn[+ Add a column]', 'slotn[Archive]')),
+      kanbanRealSource(kanbanAuthoringSource(BOARD_SOURCE).replace('__edi_slot_n[+ Add a column]', '__edi_slot_n[Archive]')),
     ).toBe(['kanban', '  Todo', '    id1[One]', '    id2[Two]', '  Doing', '  Done', '    id3[Three]', '  col1[Archive]'].join('\n'))
   })
 
@@ -2268,7 +2275,7 @@ describe('kanban drawn slots', () => {
     // the column above it, so a duplicate is not a cosmetic slip. `col3` is a card
     // on this board and `col1` a column: the new column has to step over both.
     const board = ['kanban', '  col1[Todo]', '    col3[One]', '  Doing'].join('\n')
-    const next = kanbanRealSource(kanbanAuthoringSource(board).replace('slotn[+ Add a column]', 'slotn[Review]'))
+    const next = kanbanRealSource(kanbanAuthoringSource(board).replace('__edi_slot_n[+ Add a column]', '__edi_slot_n[Review]'))
     expect(next).toBe(['kanban', '  col1[Todo]', '    col3[One]', '  Doing', '  col2[Review]'].join('\n'))
   })
 
@@ -2277,7 +2284,7 @@ describe('kanban drawn slots', () => {
     // a named slot included: `Q3 (launch)` is a name the user can type, and
     // `Q3 (launch)` is what the board has to draw afterwards.
     const next = kanbanRealSource(
-      kanbanAuthoringSource(BOARD_SOURCE).replace('slotn[+ Add a column]', 'slotn[Q3 (launch)]'),
+      kanbanAuthoringSource(BOARD_SOURCE).replace('__edi_slot_n[+ Add a column]', '__edi_slot_n[Q3 (launch)]'),
     )
     expect(next).toContain('  col1["Q3 (launch)"]')
     expect(parseKanban(next).lines[parseKanban(next).columns[3]!]!.label).toBe('Q3 (launch)')

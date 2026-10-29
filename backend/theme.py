@@ -170,7 +170,10 @@ def _read_gsettings_key(key: str) -> object | None:
             [gsettings, "get", _GSETTINGS_SCHEMA, key],
             capture_output=True,
             text=True,
-            timeout=2,
+            # This runs on the GUI thread from the 2 s poll, twice per tick. A
+            # healthy gsettings answers in milliseconds; a hung one froze the
+            # window for the whole timeout, so it is kept short.
+            timeout=0.5,
             env=env,
         )
     except (OSError, subprocess.SubprocessError):
