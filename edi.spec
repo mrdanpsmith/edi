@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 #
-# PyInstaller spec for Edi. The Analysis block is shared across platforms; the
-# binary-packing filters and the EXE/BUNDLE step are per-platform (PyInstaller
-# cannot cross-compile; build each OS's bundle on that OS).
+# PyInstaller spec for Edi. The Analysis and the onedir EXE/COLLECT step are
+# shared across platforms; the binary filters, the icon/version metadata and
+# the macOS BUNDLE are per-platform (PyInstaller cannot cross-compile; build
+# each OS's bundle on that OS).
 #
 # -- Linux (see Dockerfile.pyzip) -------------------------------------------
 #
@@ -24,11 +25,6 @@
 # reference (Qt3D, QtQuick3D, QtCharts, QtGraphs, QtVirtualKeyboard, ...).
 # Excluding them keeps the bundle to what WebEngine actually needs (roughly
 # -120 MB smaller).
-#
-# The Windows onefile CArchive packs at zlib level 1 instead of the default 9
-# (see PYINSTALLER_ZLIB_COMPRESSION_LEVEL in build-windows.ps1 / CI). Build
-# time for the pack step is ~3x lower for a negligible size change. Linux and
-# macOS are onedir and have no CArchive to pack.
 
 import re
 import sys
@@ -163,57 +159,7 @@ if sys.platform == 'win32':
         if _os.path.isfile(_icu_src) and _dest.lower() not in _collected_dests:
             a.binaries.append((_dest, _icu_src, 'BINARY'))
 
-    exe = EXE(
-        pyz,
-        a.scripts,
-        a.binaries,
-        a.datas,
-        [],
-        name='Edi',
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,
-        upx_exclude=[],
-        runtime_tmpdir=None,
-        console=False,
-        disable_windowed_traceback=False,
-        argv_emulation=False,
-        target_arch=None,
-        codesign_identity=None,
-        entitlements_file=None,
-        icon='scripts/assets/app-icon.ico',
-        version=vs_version_info,
-    )
-
-    # Console-bootloader twin (not shipped): runw.exe swallows the onefile
-    # bootloader's fatal messages into an invisible dialog and returns only an
-    # exit code (-1 = Z_ERRNO, a failed fwrite while self-extracting to
-    # %TEMP%\_MEI*). build-windows.ps1 smoke-tests run.exe so the actual
-    # "Error extracting <entry>: <errno>" line lands in the CI log instead of
-    # being lost. Shares pyz/a so this is just a second ~25s PKG pack.
-    selftest_exe = EXE(
-        pyz,
-        a.scripts,
-        a.binaries,
-        a.datas,
-        [],
-        name='Edi-selftest',
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,
-        upx_exclude=[],
-        runtime_tmpdir=None,
-        console=True,
-        disable_windowed_traceback=False,
-        argv_emulation=False,
-        target_arch=None,
-        codesign_identity=None,
-        entitlements_file=None,
-        icon='scripts/assets/app-icon.ico',
-        version=vs_version_info,
-    )
+    _exe_options = dict(name='Edi', icon='scripts/assets/app-icon.ico', version=vs_version_info)
 
 elif sys.platform == 'darwin':
     from pathlib import Path
@@ -221,41 +167,58 @@ elif sys.platform == 'darwin':
     _icns = Path('scripts/assets/app-icon.icns')
     if not _icns.is_file():
         raise SystemExit('error: scripts/assets/app-icon.icns missing; run node scripts/generate-icon.mjs')
+    _exe_options = dict(name='Edi', icon=str(_icns))
 
-    # Onedir, not onefile: a onefile .app unpacks ~400 MB to a fresh $TMPDIR
-    # directory on every launch, and macOS re-validates those freshly written
-    # dylibs at their new path each time, which cost 8-12 s before any Python
-    # ran. Inside the bundle the libraries sit at a fixed path, are checked once
-    # and start in a few seconds.
-    exe = EXE(
+else:
+    _exe_options = dict(name='edi')
+
+
+def _exe(**overrides):
+    """A onedir launcher: the binaries and data go in COLLECT, not the exe."""
+    return EXE(
         pyz,
         a.scripts,
         [],
         exclude_binaries=True,
-        name='Edi',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
         upx=False,
-        console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
-        icon=str(_icns),
+        # Merged, not passed beside them, so an override (the twin's
+        # console=True) replaces the default instead of repeating it.
+        **{'console': False, **_exe_options, **overrides},
     )
 
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.datas,
-        strip=False,
-        upx=False,
-        upx_exclude=[],
-        name='Edi',
-    )
 
+# Every platform ships onedir: <name>/<name>[.exe] plus <name>/_internal. A
+# onefile unpacks the whole ~430 MB bundle into a fresh temp directory on
+# every launch, and the OS then re-checks those new files at their new path
+# (macOS code validation, Windows Defender), so nothing is ever cached:
+# measured 8-12 s on macOS and ~1.3 s on Linux before any Python ran.
+executables = [_exe()]
+if sys.platform == 'win32':
+    # Console twin (not shipped; build-windows.ps1 deletes it after the smoke
+    # test). The windowed Edi.exe puts a fatal startup error in a modal
+    # dialog, which would hang a CI run; this one prints it to the job log.
+    # It shares _internal, so it costs one small launcher.
+    executables.append(_exe(name='Edi-selftest', console=True))
+
+coll = COLLECT(
+    *executables,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name=_exe_options['name'],
+)
+
+if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name='Edi.app',
@@ -302,37 +265,4 @@ elif sys.platform == 'darwin':
                 },
             ],
         },
-    )
-
-else:
-    # Linux is onedir (dist-app/edi/edi + dist-app/edi/_internal) for the same
-    # reason as macOS: a onefile inflates ~430 MB into $TMPDIR on every launch,
-    # which measured ~1.3 s before any Python ran (and a RAM-backed /tmp holds
-    # that copy per running instance). The packages install the directory.
-    exe = EXE(
-        pyz,
-        a.scripts,
-        [],
-        exclude_binaries=True,
-        name='edi',
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,
-        console=False,
-        disable_windowed_traceback=False,
-        argv_emulation=False,
-        target_arch=None,
-        codesign_identity=None,
-        entitlements_file=None,
-    )
-
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.datas,
-        strip=False,
-        upx=False,
-        upx_exclude=[],
-        name='edi',
     )

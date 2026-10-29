@@ -2,15 +2,18 @@
 ;
 ; Built by the CI build-windows job (native Windows makensis) and on a
 ; Windows desktop:
-;   makensis /DVERSION=0.5.0 /DSETUPEXE=dist-app\Edi-0.5.0-win64.exe \
+;   makensis /DVERSION=0.5.0 /DBUNDLE=dist-app\Edi \
 ;            /DICO=scripts\assets\app-icon.ico packaging\edi.nsi
 ; Define values are absolute paths when run from any directory.
+;
+; BUNDLE is the PyInstaller onedir bundle (Edi.exe + _internal\). It is
+; installed as-is: Edi.exe finds _internal\ next to itself.
 
 !ifndef VERSION
   !error "VERSION not defined (run with /DVERSION=0.5.0)"
 !endif
-!ifndef SETUPEXE
-  !error "SETUPEXE not defined (run with /DSETUPEXE=dist-app\Edi-...-win64.exe)"
+!ifndef BUNDLE
+  !error "BUNDLE not defined (run with /DBUNDLE=dist-app\Edi)"
 !endif
 !ifndef ICO
   !define ICO "app-icon.ico"
@@ -47,7 +50,11 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 
 Section "Edi"
   SetOutPath "$INSTDIR"
-  File /oname=Edi.exe "${SETUPEXE}"
+  ; An upgrade must not leave the previous version's libraries beside the new
+  ; ones; _internal\ only ever holds the bundle.
+  RMDir /r "$INSTDIR\_internal"
+  File "${BUNDLE}\Edi.exe"
+  File /r "${BUNDLE}\_internal"
   File "${ICO}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
@@ -71,6 +78,7 @@ SectionEnd
 
 Section "Uninstall"
   Delete "$INSTDIR\Edi.exe"
+  RMDir /r "$INSTDIR\_internal"
   Delete "$INSTDIR\app-icon.ico"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"

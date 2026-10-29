@@ -1,4 +1,4 @@
-# Builds the Windows Edi binary: the PyInstaller onefile. This is the FULL-SMOKE
+# Builds the Windows Edi bundle: the PyInstaller onedir. This is the FULL-SMOKE
 # desktop path — the CI job runs on a windows-2025 runner, which is the
 # only place the full QtWebEngine smoke can run.
 #
@@ -9,16 +9,16 @@
 # when none is present),
 # then:
 #   1. python venv from requirements-build.txt (same pins as Linux)
-#   2. pyinstaller - edi.spec  ->  dist-app\Edi.exe
+#   2. pyinstaller - edi.spec  ->  dist-app\Edi\ (Edi.exe + _internal\)
 #   3. smoke test it offscreen (EDI_SELFTEST=1, verdict via EDI_SELFTEST_OUT)
-#   4. copy to dist-app\Edi-<ver>-win64.exe
+#   4. zip the bundle to dist-app\Edi-<ver>-win64.zip (the portable download)
 #
 # The NSIS installer (packaging/edi.nsi) is built by the CI job now
 # (native Windows makensis, `choco install nsis`). It can still produce a
 # `-win64-setup.exe` by hand: running makensis from the checkout root with
 # ABSOLUTE -D defines (makensis resolves relative File/OutFile paths against
 # the SCRIPT's dir, not the CWD, and Linux makensis takes -D, not /D):
-#   makensis -DVERSION=0.5.0 -DSETUPEXE=C:\path\Edi-0.5.0-win64.exe \
+#   makensis -DVERSION=0.5.0 -DBUNDLE=C:\path\dist-app\Edi \
 #            -DICO=C:\path\app-icon.ico -DOUTEXE=C:\path\Edi-0.5.0-win64-setup.exe
 #            packaging\edi.nsi
 #
@@ -56,11 +56,10 @@ Write-Host "==> Building Edi $Version for Windows"
 if (-not (Test-Path 'package.json')) { throw 'run this from the repository root' }
 
 # The runner's real-time AV thrashes every file write in this workspace (pip
-# installs into .venv-win, the extracted onefile, the exe) and the pip+PyInstaller
+# installs into .venv-win, the bundle PyInstaller writes) and the pip+PyInstaller
 # phase was the job's dominant cost. The VM is ephemeral and the runner is
 # elevated, so exclude the whole checkout to speed it up. Exclusions are
-# dropped with the VM at job end. (Not a fix for selftest extraction aborts —
-# those persist with the exclusion in place; Edi-selftest.exe surfaces them.)
+# dropped with the VM at job end.
 try {
     Add-MpPreference -ExclusionPath (Resolve-Path '.').Path -ErrorAction Stop | Out-Null
 } catch {
@@ -141,19 +140,18 @@ if ($copiedIcu.Count -eq 0) {
 }
 Write-Host "==> Bundled system ICU into PySide6 dir: $($copiedIcu -join ', ')"
 
-# --- PyInstaller onefile ---
-Write-Host '==> PyInstaller onefile'
-$env:PYINSTALLER_ZLIB_COMPRESSION_LEVEL = '1'
+# --- PyInstaller onedir ---
+Write-Host '==> PyInstaller onedir'
 & $PyVenv -m PyInstaller --clean --distpath dist-app --workpath build edi.spec
 Assert-ExitCode 'pyinstaller'
+$BundleDir = Join-Path $PWD 'dist-app\Edi'
 
 # --- Offscreen smoke test --------------------------------------------
-# The shipped Edi.exe is windowed (runw.exe): its onefile bootloader swallows
-# fatal self-extraction errors into an invisible dialog and returns only an
-# exit code (-1 = Z_ERRNO, a failed fwrite). We smoke-test the console twin
-# Edi-selftest.exe instead so "Error extracting <entry>: <errno>" lands in the
-# CI log. The verdict itself (SELFTEST {...}) is parsed from EDI_SELFTEST_OUT
-# because no console is guaranteed attached to the job.
+# The shipped Edi.exe is windowed (runw.exe): a fatal startup error becomes a
+# modal dialog nobody can see, and the run hangs until the budget. We
+# smoke-test the console twin Edi-selftest.exe (same _internal) instead, so
+# the error lands in the CI log. The verdict itself (SELFTEST {...}) is parsed
+# from EDI_SELFTEST_OUT because no console is guaranteed attached to the job.
 # --- Host capability probe before the frozen selftest --------------------
 # Qt6WebEngineCore.dll has hard static imports of dcomp.dll (Desktop Window
 # Manager composition) and bthprops.cpl (Bluetooth shell). GitLab's SaaS
@@ -186,10 +184,10 @@ if (-not $probeOk) {
 if ($probeOk) {
 Write-Host '==> Smoke test (console bootloader twin)'
 $SmokeFile = Join-Path (Resolve-Path 'build') 'selftest-win.json'
-$SmokeExe = Join-Path $PWD 'dist-app\Edi-selftest.exe'
-# The post-boot phase is already bounded by the backend's 25s watchdog, so a
-# smoke run left waiting here can only be pre-boot extraction/launch. Local
-# startup is ~1s; 3 min is a generous ceiling, override via EDI_SMOKE_BUDGET_MIN.
+$SmokeExe = Join-Path $BundleDir 'Edi-selftest.exe'
+# The post-boot phase is already bounded by the backend's 45s watchdog, so a
+# smoke run left waiting here can only be a pre-boot hang. 3 min is a
+# generous ceiling, override via EDI_SMOKE_BUDGET_MIN.
 $SmokeBudgetMin = 3
 if ($env:EDI_SMOKE_BUDGET_MIN -match '^\d+$') {
     $SmokeBudgetMin = [int]$env:EDI_SMOKE_BUDGET_MIN
@@ -211,8 +209,8 @@ function Invoke-SmokeRun {
         -RedirectStandardOutput $BootOut -RedirectStandardError $BootErr
     # Poll instead of a fixed wait: succeed the moment a verdict (or the
     # watchdog's post-boot timeout) appears, but allow the budget while the
-    # boot heartbeat (or nothing yet) shows — a hang can only be pre-boot
-    # extraction now. Print a progress line every ~30s so the log shows life.
+    # boot heartbeat (or nothing yet) shows. Print a progress line every ~30s
+    # so the log shows life.
     $deadline = (Get-Date).AddMinutes($SmokeBudgetMin)
     $ln = $null
     $progressAt = $null
@@ -222,7 +220,7 @@ function Invoke-SmokeRun {
             try { $ln = (Get-Content -Raw $SmokeFile).Trim() } catch { $ln = $null }
         }
         if (($null -eq $ln) -and ($null -eq $progressAt -or (Get-Date) -ge $progressAt) -and -not $p.HasExited) {
-            $msg = "bootloader still running, no verdict (extracting/launching; budget $SmokeBudgetMin min)"
+            $msg = "still running, no verdict (budget $SmokeBudgetMin min)"
             if (Test-Path $SmokeFile) { $msg += " [heartbeat read]" }
             Write-Host "  $msg"
             $progressAt = (Get-Date).AddSeconds(30)
@@ -247,20 +245,7 @@ function Invoke-SmokeRun {
     return @($p, $ln)
 }
 
-$proc = $null
-$line = ''
-for ($attempt = 1; $attempt -le 2 -and -not $line; $attempt++) {
-    if ($attempt -gt 1) {
-        # Process exited before Python with no verdict (an extraction abort) —
-        # flaky, so give it one clean retry. A budget hang is NOT retried.
-        Write-Host "==> Bootloader aborted before Python; retrying smoke test (attempt $attempt)"
-    }
-    $proc, $line = Invoke-SmokeRun
-    if (-not $line -and $proc -and -not $proc.HasExited) {
-        # Killed at the budget without a verdict: a real hang, not a flake.
-        break
-    }
-}
+$proc, $line = Invoke-SmokeRun
 
 $exitNote = ''
 if ($proc -and $proc.HasExited) {
@@ -269,13 +254,7 @@ if ($proc -and $proc.HasExited) {
     $exitNote = ' (killed after the smoke budget)'
 }
 if (-not $line) {
-    # Diagnostics: free space + partial _MEI* extractions in the bootloader's
-    # temp dir separate "no room / blocked path" from other boot failures.
-    $drv = [System.IO.DriveInfo]::new((Resolve-Path '.').Path)
-    Write-Host "DIAG extracted under $([System.IO.Path]::GetTempPath()) free=$([math]::Round($drv.AvailableFreeSpace / 1MB))MB"
-    Get-ChildItem (Join-Path ([System.IO.Path]::GetTempPath()) '_MEI*') -Directory -ErrorAction SilentlyContinue |
-        ForEach-Object { Write-Host "DIAG partial extract $($_.Name): $($_.GetFiles().Count) files" }
-    throw "unexpected selftest state: '$line'$exitNote"
+    throw "selftest produced no verdict: Python never booted$exitNote"
 }
 if ($line -eq 'SELFTEST_BOOTING') {
     throw "selftest hung: Python booted but QtWebEngine never produced a verdict in $SmokeBudgetMin min$exitNote"
@@ -303,9 +282,11 @@ if (-not $probeOk) {
 # --- Versioned, ready-to-publish artifacts ---
 Write-Host '==> Wrapping artifacts'
 # Edi-selftest.exe is a CI diagnostic (console bootloader, not shipped); drop it
-# so the EDI-*.exe artifact glob only sees the real onefile.
-Remove-Item (Join-Path $PWD 'dist-app\Edi-selftest.exe') -Force
-$OneFile = Join-Path $PWD ("dist-app\Edi-$Version-win64.exe")
-Move-Item -Force (Join-Path $PWD 'dist-app\Edi.exe') $OneFile
+# so neither the zip nor the installer carries it.
+Remove-Item (Join-Path $BundleDir 'Edi-selftest.exe') -Force
+# The portable download: the bundle under a top-level Edi\ folder.
+$Zip = Join-Path $PWD ("dist-app\Edi-$Version-win64.zip")
+Remove-Item $Zip -Force -ErrorAction SilentlyContinue
+Compress-Archive -Path $BundleDir -DestinationPath $Zip
 
-Write-Host "==> Done: $OneFile"
+Write-Host "==> Done: $BundleDir (bundle), $Zip"

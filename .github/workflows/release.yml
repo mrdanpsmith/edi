@@ -188,7 +188,7 @@ jobs:
       # Qt hooks find the plugins. The version is recomputed per step from the
       # workflow-level VER rather than passed through an env var: each pwsh
       # step is a separate process, so a plain $env: var would not survive.
-      - name: Build onefile + full smoke on real Windows
+      - name: Build onedir bundle + full smoke on real Windows
         shell: pwsh
         run: |
           $v = '${{ env.VER }}'.TrimStart('v')
@@ -198,12 +198,11 @@ jobs:
       # that still runs when the smoke above is skipped as environmental: the
       # pluginless-bundle defect dies here even on a host that cannot render.
       # Same script the Wine path used, so the two cannot drift.
-      - name: Structural bundle check (Qt plugins + ICU in the CArchive)
+      - name: Structural bundle check (Qt plugins + ICU in the bundle)
         shell: pwsh
         run: |
-          $v = '${{ env.VER }}'.TrimStart('v')
           $py = (Resolve-Path '.venv-win/Scripts/python.exe').Path
-          & $py scripts/check_bundle_contents.py "dist-app/Edi-$v-win64.exe"
+          & $py scripts/check_bundle_contents.py "dist-app/Edi"
           if ($LASTEXITCODE -ne 0) { throw "bundle is missing Qt plugins / ICU: the Qt hooks did not collect them" }
       - name: Build the NSIS installer
         shell: pwsh
@@ -252,21 +251,21 @@ jobs:
           }
           Write-Host "using makensis: $mk"
           $v = '${{ env.VER }}'.TrimStart('v')
-          $onefile = (Resolve-Path "dist-app/Edi-$v-win64.exe").Path
+          $bundle = (Resolve-Path 'dist-app/Edi').Path
           $ico = (Resolve-Path 'scripts/assets/app-icon.ico').Path
           $setup = Join-Path $PWD "dist-app/Edi-$v-win64-setup.exe"
-          # The selftest console twin is a build-time artifact, not a release
-          # artifact: deleting it here keeps the upload glob to exactly the
-          # versioned onefile + the installer.
-          Remove-Item 'dist-app/Edi-selftest.exe' -ErrorAction SilentlyContinue
-          & $mk "-DVERSION=$v" "-DSETUPEXE=$onefile" "-DICO=$ico" "-DOUTEXE=$setup" packaging/edi.nsi
+          # build-windows.ps1 already removed the selftest console twin from
+          # the bundle, so the installer ships exactly what the zip does.
+          & $mk "-DVERSION=$v" "-DBUNDLE=$bundle" "-DICO=$ico" "-DOUTEXE=$setup" packaging/edi.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed: $LASTEXITCODE" }
           Get-ChildItem dist-app | Select-Object Name, Length
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v7
         with:
           name: edi-win
-          path: dist-app/Edi-*.exe
+          path: |
+            dist-app/Edi-*-win64-setup.exe
+            dist-app/Edi-*-win64.zip
           if-no-files-found: error
           retention-days: 90
 
@@ -415,7 +414,7 @@ jobs:
           # Commits marked `[skip changelog]` / `[no changelog]` are dropped.
           ./scripts/changelog.sh "$RANGE" >> /tmp/CHANGELOG.md
           printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
-          printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: replace `Edi-%s-win64.exe`); settings and documents are untouched. Linux: upgrade via your package manager. macOS: run the curl installer (`curl -fsSL https://github.com/%s/releases/latest/download/install.sh | bash`) or replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" "$GITHUB_REPOSITORY" >> /tmp/CHANGELOG.md
+          printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: unzip `Edi-%s-win64.zip` and run `Edi\\Edi.exe` instead of the old file); settings and documents are untouched. Linux: upgrade via your package manager. macOS: run the curl installer (`curl -fsSL https://github.com/%s/releases/latest/download/install.sh | bash`) or replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" "$GITHUB_REPOSITORY" >> /tmp/CHANGELOG.md
       - name: Create GitHub release
         run: |
           mapfile -t FILES < <(find artifacts -type f | sort)

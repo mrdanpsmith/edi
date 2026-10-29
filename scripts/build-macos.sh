@@ -156,7 +156,6 @@ ditto "$APP" "$SMOKE_DIR/Edi.app"
 # GNU coreutils `timeout` is not on stock macOS, so bound the app ourselves:
 # run in the background, poll up to 120s, then kill. The app os._exits after
 # writing SELFTEST; its exit code and the verdict file are the gate.
-TMPDIR="$SMOKE_DIR" \
 QT_QPA_PLATFORM=offscreen \
 QTWEBENGINE_DISABLE_SANDBOX=1 \
 QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage --disable-gpu" \

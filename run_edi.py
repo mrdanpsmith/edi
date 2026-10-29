@@ -2,7 +2,7 @@
 
 Under EDI_SELFTEST (packaged-binary smoke test) the import of backend.main can
 die inside QtWebEngine's DLL loading before any of our code runs; when that
-happens print a DLL inventory of the extracted bundle plus a PE import-table
+happens print a DLL inventory of the bundle's _internal dir plus a PE import-table
 lint of the Qt module that failed, so the CI job log states exactly which
 library is missing and where the loader should have found it.
 """

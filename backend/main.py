@@ -128,9 +128,9 @@ def _run_selftest(app: QApplication, window: MainWindow) -> None:
 
     if os.environ.get("EDI_SELFTEST_OUT"):
         # Windowed builds have no console, so write a boot heartbeat before
-        # kicking off the Qt timers: lets the smoke script tell "onefile is
-        # still self-extracting / Qt is still starting" apart from "Python
-        # booted but QtWebEngine never finished loading".
+        # kicking off the Qt timers: lets the smoke script tell "the process
+        # never reached Python" apart from "Python booted but QtWebEngine never
+        # finished loading".
         try:
             with open(os.environ["EDI_SELFTEST_OUT"], "w", encoding="utf-8") as fh:
                 fh.write("SELFTEST_BOOTING\n")

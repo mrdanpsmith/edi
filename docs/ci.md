@@ -261,6 +261,6 @@ flat at the artifact root, and the Windows/macOS files lose their `Edi-`
 prefix. The job downloads all three artifacts into `artifacts/` and uses
 `find` to enumerate them, failing loudly if none landed.
 
-The Windows job uploads `dist-app/Edi-*.exe` as `edi-win`. The selftest console
-twin is deleted before the upload, so the glob ships exactly the versioned
-onefile and the installer.
+The Windows job uploads the NSIS installer `dist-app/Edi-*-win64-setup.exe`
+and the portable `dist-app/Edi-*-win64.zip` as `edi-win`. The selftest console
+twin is deleted from the bundle before either is made, so neither carries it.

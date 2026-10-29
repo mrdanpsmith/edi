@@ -229,7 +229,7 @@ cannot cross-compile), so a real Windows host is needed to cut a release:
 | Artifact | Install |
 | --- | --- |
 | `Edi-X.Y.Z-win64-setup.exe` | run it; installs to `%ProgramFiles%\Edi` with Start Menu / desktop shortcuts and a Settings → Apps uninstall entry |
-| `Edi-X.Y.Z-win64.exe` | run directly; nothing is installed (settings are still shared via the registry) |
+| `Edi-X.Y.Z-win64.zip` | extract; run `Edi\Edi.exe` in place; nothing is installed (settings are still shared via the registry) |
 
 **macOS** — Apple Silicon only. The curl installer downloads over HTTPS, checks
 the SHA-256 and the code signature, and replaces the installed app (`/Applications`
@@ -264,8 +264,9 @@ and documents are never touched.
 - **Windows (installer):** run the new setup over the existing install. It
   replaces the app in `%ProgramFiles%\Edi`, refreshes the shortcuts and the
   Settings → Apps entry, and needs no uninstall first.
-- **Windows (portable):** replace your copy of the `.exe`. Each launch unpacks
-  to a temp directory, so there is nothing to uninstall.
+- **Windows (portable):** extract the new `.zip` and delete the old `Edi`
+  folder (or, from releases before the zip, the old single `.exe`). Nothing
+  was installed, so there is nothing to uninstall.
 - **Linux:** upgrade through your package manager with the new `.deb`/`.rpm`;
   AppImage and tar.gz users just download the new archive.
 - **macOS:** run the curl installer again (it quits Edi, verifies the download

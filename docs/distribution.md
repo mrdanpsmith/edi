@@ -43,13 +43,26 @@ rg -c 'libQt6' build/edi/PKG-00.toc   # expect about 100, not 468
 
 and with the smoke test.
 
-### PyInstaller compression
+### Onedir on every platform
 
-This only applies to the Windows onefile; the Linux and macOS onedir bundles
-have no CArchive to pack. The CArchive (PKG) step defaults to zlib level 9,
-which makes onefile packing dominate build time. `build-windows.ps1` builds
-with `PYINSTALLER_ZLIB_COMPRESSION_LEVEL=1`, which packs about three times
-faster for roughly 18 MiB more binary.
+Every platform ships a PyInstaller **onedir** bundle: the executable plus an
+`_internal/` directory beside it. Never switch a platform back to onefile.
+
+A onefile unpacks the whole ~430 MB bundle into a fresh temp directory on
+every launch, and the OS then re-checks the new files at their new path, so
+nothing is ever cached: macOS re-validates the dylibs and Windows Defender
+scans the DLLs. Measured before any Python ran: 8–12 s on macOS, ~1.3 s on
+Linux (against ~0.15 s onedir). On a RAM-backed `/tmp` each running instance
+also held its own copy.
+
+| Platform | Build output | Shipped as |
+| --- | --- | --- |
+| Linux | `dist-app/edi/` (`edi`) | `.deb`/`.rpm`/`.tar.gz`/AppImage, see [Linux packaging](#linux-packaging) |
+| Windows | `dist-app/Edi/` (`Edi.exe`) | NSIS installer and a portable `.zip` |
+| macOS | `dist-app/Edi.app` | `.dmg` and the curl installer's `.zip` |
+
+With no archive inside the executable there is nothing to compress, so no
+build sets `PYINSTALLER_ZLIB_COMPRESSION_LEVEL` any more.
 
 ### One JS bundle, no runtime imports
 
@@ -103,16 +116,18 @@ the Ubuntu 22.04 container.
 
 ## PyInstaller specification
 
-`edi.spec` shares one `Analysis` across platforms (the datas and the
-QtQml/QtQuick excludes are platform-independent) and branches on
-`sys.platform`:
+`edi.spec` shares one `Analysis` (the datas and the QtQml/QtQuick excludes
+are platform-independent) and one onedir `EXE` + `COLLECT` across platforms.
+The per-platform branches only adjust the inputs:
 
 - **Linux** applies `GL_HOST_DEPS` and `QT_DEAD_PREFIXES` and keeps the
   lowercase `edi` executable name.
-- **Windows** names the executable `Edi`, attaches `app-icon.ico` and a
-  `VSVersionInfo` whose version is parsed from `backend/__init__.py` at spec
-  time so it cannot drift from the tag.
-- **macOS** produces `Edi.app` with an Info.plist declaring the icon,
+- **Windows** adds the WebEngine companion DLLs and ICU (see below), names the
+  executable `Edi`, attaches `app-icon.ico` and a `VSVersionInfo` whose
+  version is parsed from `backend/__init__.py` at spec time so it cannot
+  drift from the tag, and adds the console twin to the same `COLLECT`.
+- **macOS** wraps the collected folder in `BUNDLE`: `Edi.app` with an
+  Info.plist declaring the icon,
   `bundle_identifier=com.mrdanpsmith.edi`, `CFBundleDocumentTypes` (Markdown
   `Default`, plain text `Alternate`) and an imported
   `net.daringfireball.markdown` UTI.
@@ -134,27 +149,26 @@ The script:
 1. creates a venv and installs `requirements-build.txt` (runtime, PyInstaller
    and the marker-gated Windows wheels);
 2. probes that `QtWebEngineCore` can be imported;
-3. builds both the windowed app and a console twin (`Edi-selftest.exe`);
+3. builds the bundle `dist-app/Edi/` holding the windowed `Edi.exe`, a console
+   twin `Edi-selftest.exe` and the shared `_internal\`;
 4. runs the frozen smoke test of the console twin;
-5. builds the NSIS installer.
+5. deletes the twin and zips the bundle to `dist-app/Edi-<v>-win64.zip`.
 
-Outputs are `dist-app/Edi-<v>-win64.exe` (portable onefile) and
-`dist-app/Edi-<v>-win64-setup.exe` (per-user NSIS installer).
+The CI job then runs the structural bundle check on `dist-app/Edi` and builds
+`dist-app/Edi-<v>-win64-setup.exe` (the NSIS installer) from the same folder.
+The zip is the portable download: extract it and run `Edi\Edi.exe`.
 
 ### Why the console twin exists
 
 The shipped `Edi.exe` uses `runw.exe`/`console=False`. A fatal startup error
-therefore goes into an invisible dialog and the job sees nothing. The console
-twin shares the same Analysis and `pyz` (about 30 seconds of extra packing) and
-lets `Start-Process -RedirectStandardOutput/-RedirectStandardError` capture
-the real line, such as:
+therefore becomes a modal dialog nobody can see, and the job hangs until the
+smoke budget runs out. The console twin is a second small launcher in the
+same `COLLECT`, sharing `_internal\`, and lets
+`Start-Process -RedirectStandardOutput/-RedirectStandardError` capture the
+real error in the job log.
 
-```text
-Error extracting <entry>: <errno>
-```
-
-The twin is deleted before the artifact upload so the `dist-app/Edi-*.exe` glob
-ships exactly the versioned onefile and the installer.
+The twin is deleted from the bundle before it is zipped or packaged, so
+neither the zip nor the installer carries it.
 
 The verdict is parsed from `EDI_SELFTEST_OUT` because no console is attached to
 the job. `EDI_SELFTEST_BOOTING` is a heartbeat, so a hang can be distinguished
@@ -208,8 +222,8 @@ the job before the skip logic could run.
 `Qt6WebChannel`, `Qt6Network`, `Qt6PrintSupport`) to `a.binaries` as
 `(dest, src, 'BINARY')`, deduped against destinations already collected.
 
-The bundle root holds no Qt DLLs: they extract to the `PySide6/`
-subdirectory. System and Python DLLs sit at the root. The msvcp140 family is
+`_internal\` holds no Qt DLLs at its top level: they sit in its `PySide6/`
+subdirectory. System and Python DLLs sit at the top of `_internal\`. The msvcp140 family is
 never collected because PyInstaller excludes everything resolved under
 `C:\Windows`, which is fine because System32's copy loads.
 
@@ -226,21 +240,27 @@ MISSING <name>
 The NSIS installer is built by the same Windows job with native Windows
 `makensis` (`choco install nsis`). `makensis` resolves relative
 `File`/`OutFile` paths against the **script's** directory, not the current
-working directory. The build therefore passes `-DSETUPEXE`, `-DICO` and
-`-DOUTEXE` as **absolute** paths. `edi.nsi` exposes an optional `OUTEXE`
-define so the output lands in the checkout root, not `packaging/`.
-`packaging/edi.nsi` stays desktop-compatible.
+working directory. The build therefore passes `-DBUNDLE` (the `dist-app/Edi`
+folder), `-DICO` and `-DOUTEXE` as **absolute** paths. `edi.nsi` exposes an
+optional `OUTEXE` define so the output lands in the checkout root, not
+`packaging/`. `packaging/edi.nsi` stays desktop-compatible.
+
+The installer copies `Edi.exe` and `_internal\` into `%ProgramFiles%\Edi`.
+It removes any existing `_internal\` first, so an upgrade never leaves the
+previous version's libraries beside the new ones; installing over a
+pre-onedir release just overwrites its single `Edi.exe`. The uninstaller
+removes exactly `Edi.exe`, `_internal\`, the icon and itself, never the
+whole install directory, which the user may have chosen.
 
 ## Structural bundle check
 
 `scripts/check_bundle_contents.py` is the load-bearing regression gate. It
 asserts that `qwindows.dll`, `qoffscreen.dll`, `qjpeg.dll`, `icuuc.dll` and
-`icuin.dll` are all in the CArchive. It uses `CArchiveReader` from PyInstaller
-plus the standard library, so it reads the `.exe` with no render, X display or
-GPU.
+`icuin.dll` are all in the bundle's `_internal\`. It only lists files (pure
+standard library), so it runs with no render, X display or GPU.
 
 This catches the pluginless-bundle defect: the Qt hooks stop collecting,
-PyInstaller still reports success and still produces an `.exe`, and the only
+PyInstaller still reports success and still produces a bundle, and the only
 symptom is a crash on a machine that lacks the DLLs.
 
 It has to be separate from the smoke because the smoke can be skipped as
@@ -260,11 +280,8 @@ signature, then produces:
 - `dist-app/Edi-<ver>-macos-arm64.dmg` with an `Applications` symlink;
 - `dist-app/Edi-<ver>-arm64.zip` and `.sha256`.
 
-The `.app` is **onedir** (`COLLECT` + `BUNDLE`), like Linux and unlike the
-Windows onefile. A onefile `.app` unpacked ~400 MB to a new `$TMPDIR` directory on
-every launch, and macOS re-validated those freshly written dylibs at their new
-path each time: 8–12 s before any Python ran, against well under a second for
-onedir. Do not switch it back.
+The `.app` is the onedir `COLLECT` wrapped by `BUNDLE` (see
+[Onedir on every platform](#onedir-on-every-platform)).
 
 The smoke test must not run the shipped bundle. With the sandbox disabled
 (`QTWEBENGINE_DISABLE_SANDBOX=1`, which the selftest sets) QtWebEngine creates
@@ -293,11 +310,6 @@ a green build of something else. The frontend and icons are built once, in the
 (`dist-app/edi/`: the `edi` executable plus `_internal/`). It never
 recompiles, so it inherits the glibc 2.35 build. It needs `dpkg-deb`,
 `rpmbuild` and `curl`.
-
-The bundle is **onedir**, not onefile. A onefile inflated ~430 MB into
-`$TMPDIR` on every launch, about 1.3 s before any Python ran (measured
-against ~0.15 s onedir), and on a RAM-backed `/tmp` every running instance
-held its own copy. Do not switch it back.
 
 It produces:
 

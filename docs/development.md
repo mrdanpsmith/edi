@@ -157,22 +157,11 @@ prints the captured app log and the verdict on failure, and treats a missing
 `SELFTEST` verdict as an error. The Windows build details are in
 [distribution.md](distribution.md).
 
-### Onefile temp space (Windows)
+### No temp extraction
 
-Only the Windows build is a onefile; Linux and macOS are onedir bundles and
-extract nothing (see [distribution.md](distribution.md)). The onefile
-self-extracts roughly 450 MB to the temp directory on every launch. A full
-temp filesystem surfaces as:
-
-```text
-Failed to extract ...: decompression resulted in return code -1
-```
-
-Return code `-1` is the bootloader's `Z_ERRNO`, set only when `fwrite` fails
-while unpacking. It means temp space ran out, not that the archive is corrupt
-(a corrupt archive would report `-2`/`-3`/`-4`).
-
-The selftest exits without Qt teardown, so a QtWebEngine subprocess can outlive
-the parent and relaunch the onefile bootloader. If the extraction directory is
-removed under it, that late process fails with `Could not create temporary
-directory!`.
+Every build is a onedir bundle, so nothing is unpacked at launch and the smoke
+tests need no `TMPDIR` redirection (see
+[distribution.md](distribution.md#onedir-on-every-platform)). The old
+onefile failures — `decompression resulted in return code -1` (temp space ran
+out) and `Could not create temporary directory!` — cannot occur any more; if
+one appears, a build has gone back to onefile.

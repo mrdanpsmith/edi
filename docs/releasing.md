@@ -41,7 +41,7 @@ if the tag does not match the declared version.
 The release artifacts are:
 
 - Linux: `.deb`, `.rpm`, `.tar.gz`, `.AppImage`;
-- Windows: versioned onefile `.exe` and NSIS setup `.exe`;
+- Windows: NSIS setup `.exe` and the portable `.zip`;
 - macOS: `.dmg`, arm64 `.zip` and `.sha256`;
 - `install.sh`, the macOS curl installer.
 
