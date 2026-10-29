@@ -159,15 +159,16 @@ $BundleDir = Join-Path $PWD 'dist-app\Edi'
 # load AT ALL -- even `python -c "import PySide6.QtWebEngineCore"` fails with
 # the identical ImportError, so no bundle (and no amount of extra PyInstaller
 # bundling) could ever pass the selftest there. Redistributing the missing MS
-# system files is not an option. So we probe the freshly-installed venv
-# directly (same VM, same wheels): if the HOST cannot import QtWebEngineCore,
-# that is an environment limitation, not a bundle regression -- skip the frozen
-# smoke with an explicit environmental verdict and continue into packaging.
-# On normal desktop Windows the probe passes and the full smoke still runs.
+# system files is not an option. GitHub's windows-2025 image (Desktop
+# Experience) has both, so the smoke must run: a host that cannot import
+# QtWebEngineCore FAILS the build rather than skipping the smoke, so an image
+# change can never silently turn the gate off. We probe the freshly-installed
+# venv first (same VM, same wheels) so that failure names the host, not the
+# bundle.
 Write-Host '==> Host capability probe (QtWebEngineCore import)'
 # Run under $ErrorActionPreference 'Continue': Windows PowerShell 5.1 promotes
 # native-command stderr to a terminating NativeCommandError when EAP is 'Stop',
-# which would abort here before the skip logic below can run. The probe's
+# which would abort here before the failure report below can run. The probe's
 # stderr (a python traceback on failure) is useful, so capture it via 2>&1 and
 # decide on the process exit code + the 'WEBENGINE_HOST_OK' marker.
 $prevEAP = $ErrorActionPreference
@@ -177,11 +178,10 @@ $probeExit = $LASTEXITCODE
 $ErrorActionPreference = $prevEAP
 $probeOk = ($probeExit -eq 0) -and (($probeLines -join "`n") -match 'WEBENGINE_HOST_OK')
 if (-not $probeOk) {
-    Write-Host "  host cannot import QtWebEngineCore (exit $probeExit) -- this runner lacks Desktop Experience (no dcomp.dll/bthprops.cpl); frozen smoke SKIPPED (environmental)"
     $probeLines | ForEach-Object { Write-Host "  probe: $_" }
+    throw "host cannot import QtWebEngineCore (exit $probeExit): this runner likely lacks Desktop Experience (no dcomp.dll/bthprops.cpl), so the smoke cannot run"
 }
 
-if ($probeOk) {
 Write-Host '==> Smoke test (console bootloader twin)'
 $SmokeFile = Join-Path (Resolve-Path 'build') 'selftest-win.json'
 $SmokeExe = Join-Path $BundleDir 'Edi-selftest.exe'
@@ -268,15 +268,6 @@ if (-not $line.StartsWith('SELFTEST ')) {
 $data = $line.Substring(9) | ConvertFrom-Json
 if (-not ($data.editor -and $data.mermaid -and $data.icon)) {
     throw "selftest probes missing: $line"
-}
-}
-# Host probe failed: QtWebEngine cannot load on this Server-SKU runner at all
-# (missing dcomp.dll/bthprops.cpl), so no bundle could pass the smoke. Leave an
-# unambiguous marker for any EDI_SELFTEST_OUT consumer and proceed straight
-# into packaging -- the build/installer still get validated.
-if (-not $probeOk) {
-    $SkipFile = Join-Path (Resolve-Path 'build') 'selftest-win.json'
-    Set-Content -Path $SkipFile -Value 'SELFTEST_SKIPPED_ENVIRONMENTAL' -NoNewline
 }
 
 # --- Versioned, ready-to-publish artifacts ---

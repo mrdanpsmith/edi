@@ -5,9 +5,8 @@ This is the load-bearing regression gate for the pluginless-bundle defect: the
 Qt hooks stop collecting `platforms/`, `imageformats/` and friends, PyInstaller
 reports success, the bundle is produced, and the only symptom is a crash on a
 machine that lacks the DLLs. It has to be a separate check from the frozen
-smoke because the smoke can be SKIPPED as environmental (a host that cannot
-import QtWebEngineCore) -- and on such a host the smoke proves nothing about
-the bundle, so this is what still has to run.
+smoke because the smoke runs offscreen: it never loads qwindows.dll, the
+platform plugin users actually get, so it cannot prove that plugin shipped.
 
 It only lists files, so it runs on any host: no render, no X display, no
 working GPU. That is why the Windows build job calls this one file rather than

@@ -194,10 +194,10 @@ jobs:
           $v = '${{ env.VER }}'.TrimStart('v')
           if (-not $v) { throw "no version" }
           ./scripts/build-windows.ps1 -Version $v
-      # Kept as its own step, and kept unconditionally, because it is the gate
-      # that still runs when the smoke above is skipped as environmental: the
-      # pluginless-bundle defect dies here even on a host that cannot render.
-      # Same script the Wine path used, so the two cannot drift.
+      # Kept as its own step because the smoke above runs offscreen and so
+      # never loads qwindows.dll, the platform plugin users actually get: the
+      # pluginless-bundle defect dies here. Same script the Wine path used, so
+      # the two cannot drift.
       - name: Structural bundle check (Qt plugins + ICU in the bundle)
         shell: pwsh
         run: |

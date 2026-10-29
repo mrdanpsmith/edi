@@ -172,9 +172,9 @@ neither the zip nor the installer carries it.
 
 The verdict is parsed from `EDI_SELFTEST_OUT` because no console is attached to
 the job. `EDI_SELFTEST_BOOTING` is a heartbeat, so a hang can be distinguished
-from a slow boot. A host that cannot import `QtWebEngineCore` is classified
-`SELFTEST_SKIPPED_ENVIRONMENTAL` and the build continues. A client-SKU
-`windows-2025` runner is not such a host.
+from a slow boot. A host that cannot import `QtWebEngineCore` fails the build;
+the smoke is never skipped. GitHub's `windows-2025` runner (Server 2025 with
+Desktop Experience) runs it in full.
 
 ### The DLL and ICU history
 
@@ -207,14 +207,15 @@ DLLs to the bundle (deduped, like the WebEngine companions) so the executable
 is self-contained even on a Windows install without ICU.
 
 The build probes that the venv's `QtWebEngineCore` import works **before** the
-frozen smoke. If that probe fails, the smoke is classified
-`SELFTEST_SKIPPED_ENVIRONMENTAL` and packaging proceeds; a frozen render would
-prove nothing about the bundle on such a host.
+frozen smoke. If that probe fails, the build fails with the probe's traceback
+in the log, so the error names the host rather than the bundle. It used to
+skip the smoke as environmental (for GitLab's Server Core runners); that let a
+runner image change switch the gate off silently, so it was removed.
 
 The probe must run under `$ErrorActionPreference='Continue'` with `2>&1`
 capture, then restore EAP. Windows PowerShell 5.1 promotes native-command
-stderr to a terminating `NativeCommandError` when EAP is `Stop`, which aborted
-the job before the skip logic could run.
+stderr to a terminating `NativeCommandError` when EAP is `Stop`, which aborts
+the job before the probe's traceback can be printed.
 
 `edi.spec`'s win32 branch also explicitly appends the WebEngine companion set
 (`Qt6WebEngineCore`, `Qt6WebEngineWidgets`, `Qt6Qml`, `Qt6Quick`,
@@ -263,9 +264,9 @@ This catches the pluginless-bundle defect: the Qt hooks stop collecting,
 PyInstaller still reports success and still produces a bundle, and the only
 symptom is a crash on a machine that lacks the DLLs.
 
-It has to be separate from the smoke because the smoke can be skipped as
-environmental. The native Windows job calls this same file as its structural
-gate.
+It has to be separate from the smoke because the smoke runs offscreen and never
+loads `qwindows.dll`, the platform plugin users actually get. The native
+Windows job calls this same file as its structural gate.
 
 ## macOS build
 
