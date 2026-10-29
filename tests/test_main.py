@@ -216,6 +216,25 @@ def test_main_sets_up_app_and_runs(monkeypatch):
     assert proxy.file_open_handler is not None
 
 
+def test_main_opens_command_line_files_by_absolute_path(monkeypatch, tmp_path):
+    app = _app()
+    proxy = _AppProxy(app)
+    monkeypatch.setattr(main_module, "_EdiApplication", lambda argv: proxy)
+    opened: list = []
+
+    def window(pending):
+        opened.append(pending)
+        return _FakeWindow()
+
+    monkeypatch.setattr(main_module, "MainWindow", window)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["edi", "notes.md", "--flag"])
+    QTimer.singleShot(0, app.quit)
+
+    assert main_module.main() == 0
+    assert opened == [[str(tmp_path / "notes.md")]]
+
+
 def test_main_without_app_icon(monkeypatch):
     app = _app()
     proxy = _AppProxy(app)

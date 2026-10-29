@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from backend.files import (
@@ -112,6 +113,16 @@ def test_rename_text_file_moves_the_content_and_deletes_the_old_file(tmp_path):
 
     assert not old.exists()
     assert new.read_text(encoding="utf-8") == "# Edited"
+
+
+def test_rename_text_file_changes_only_the_case_of_a_name(tmp_path):
+    # On a case-insensitive filesystem the new name already "exists" as the
+    # document itself; on a case-sensitive one it is an ordinary rename.
+    old = tmp_path / "Notes.md"
+    old.write_text("stale", encoding="utf-8")
+    rename_text_file(str(old), str(tmp_path / "notes.md"), "# Edited")
+    assert sorted(os.listdir(tmp_path)) == ["notes.md"]
+    assert (tmp_path / "notes.md").read_text(encoding="utf-8") == "# Edited"
 
 
 def test_rename_text_file_refuses_an_existing_destination(tmp_path):

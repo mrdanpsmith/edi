@@ -199,7 +199,9 @@ def main() -> int:
     icon = load_app_icon()
     if icon is not None:
         app.setWindowIcon(icon)
-    pending_files = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    # Absolute, because the path outlives this working directory: it goes into
+    # the recent list, and relative images in the document resolve against it.
+    pending_files = [os.path.abspath(arg) for arg in sys.argv[1:] if not arg.startswith("-")]
     window = MainWindow(pending_files)
     # Queued cold-launch file events are delivered as soon as the window can
     # take them; warm-launch events arrive here too, through the same handler.

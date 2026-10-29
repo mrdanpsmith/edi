@@ -96,6 +96,16 @@ def write_text_file(path: str, content: str, *, like: str | None = None) -> None
         raise
 
 
+def _is_case_only_rename(old: Path, new: Path) -> bool:
+    """The same folder, a name differing only in case, naming this very file."""
+    if old.parent != new.parent or old.name == new.name or old.name.casefold() != new.name.casefold():
+        return False
+    try:
+        return os.path.samefile(old, new)
+    except OSError:
+        return False
+
+
 def rename_text_file(old_path: str, new_path: str, content: str) -> None:
     """Write ``content`` to ``new_path`` and delete ``old_path`` — or neither.
 
@@ -115,6 +125,13 @@ def rename_text_file(old_path: str, new_path: str, content: str) -> None:
         raise FileNotFoundError(f"Not a file: {old_path}")
     if os.path.realpath(old) == os.path.realpath(new):
         raise ValueError("The document already has that name")
+    if _is_case_only_rename(old, new):
+        # `Foo.md` → `foo.md` on a case-insensitive filesystem (macOS, Windows):
+        # the "new" name already exists because it *is* this file, so it is
+        # written in place and then renamed, which only changes the spelling.
+        write_text_file(old_path, content)
+        os.replace(old, new)
+        return
     if new.exists() or new.is_symlink():
         raise FileExistsError(f"A file already exists: {new_path}")
     write_text_file(new_path, content, like=old_path)
