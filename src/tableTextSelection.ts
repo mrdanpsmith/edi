@@ -313,13 +313,13 @@ function drawInCell(cell: HTMLElement, range: Range): void {
   // every selection change on the page, so it must not be able to throw. The paint itself
   // is gated in the real engine for the same reason the cell painter's is.
   if (typeof range.getClientRects !== 'function') return
-  // **The cell's border, because the box is placed against the padding box.** An
-  // absolutely positioned child is positioned from the inside of the border, so a box
-  // meant to sit on the text lands a border's width out without this — a pixel on every
-  // side of every cell, which is exactly the kind of thing a pixel gate catches.
-  const style = getComputedStyle(cell)
-  const borderLeft = parseFloat(style.borderLeftWidth) || 0
-  const borderTop = parseFloat(style.borderTopWidth) || 0
+  // **Where `left: 0; top: 0` lands, measured rather than worked out from the border.** An
+  // absolutely positioned child is placed from inside the cell's border, but how much of
+  // the border that is depends on the table: the Visual table collapses its borders, so a
+  // cell owns half of each 1px line, and subtracting the computed `1px` put every box half
+  // a pixel up and to the left of its text. Measuring the first box is right for any
+  // border model.
+  let origin: { left: number; top: number } | null = null
   const rects = range.getClientRects()
   for (let i = 0; i < rects.length; i++) {
     const rect = rects[i]
@@ -331,11 +331,19 @@ function drawInCell(cell: HTMLElement, range: Range): void {
     if (right - left < 0.5 || bottom - top < 0.5) continue
     const box = document.createElement('div')
     box.className = `${LAYER_CLASS}-rect`
-    box.style.left = `${left - cellBox.left - borderLeft}px`
-    box.style.top = `${top - cellBox.top - borderTop}px`
+    cell.appendChild(box)
+    if (origin === null) {
+      // Placed explicitly first: with no `left`/`top` at all, an absolute box sits at its
+      // static position, not at the origin being measured.
+      box.style.left = '0px'
+      box.style.top = '0px'
+      const at = box.getBoundingClientRect()
+      origin = { left: at.left, top: at.top }
+    }
+    box.style.left = `${left - origin.left}px`
+    box.style.top = `${top - origin.top}px`
     box.style.width = `${right - left}px`
     box.style.height = `${bottom - top}px`
-    cell.appendChild(box)
   }
 }
 

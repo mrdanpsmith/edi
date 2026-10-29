@@ -12,7 +12,8 @@
 # bumps/updates a version (e.g. "Bump version to 1.2.3", "Bump minor version
 # for next release") is a housekeeping commit, not a user-facing change. This
 # keeps `./scripts/version.sh`'s suggested commit message out of the notes even
-# when the marker is forgotten.
+# when the marker is forgotten. The word boundary is spelled out rather than
+# `\b`: macOS git's regex library has no `\b`, so it matched nothing there.
 #
 # Usage:
 #   ./scripts/changelog.sh v0.9.0..v0.10.0
@@ -25,7 +26,7 @@ range="${1:?usage: changelog.sh <rev-range>}"
 entries="$(git log --pretty=format:'- %h %s' \
   --extended-regexp --invert-grep --regexp-ignore-case \
   --grep='\[(skip|no) changelog\]' \
-  --grep='(bump|update).*version\b' \
+  --grep='(bump|update).*version([^[:alnum:]_]|$)' \
   "$range")"
 
 if [[ -z "$entries" ]]; then

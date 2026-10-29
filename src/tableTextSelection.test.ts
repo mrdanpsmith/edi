@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach } from 'vitest'
+import { describe, expect, it, afterEach, vi } from 'vitest'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Plugin } from 'prosemirror-state'
@@ -62,6 +62,7 @@ afterEach(() => {
   // The rect stubs below are global, so a later test must not inherit them — and jsdom
   // has no layout, so the real one is an empty list rather than anything meaningful.
   Range.prototype.getClientRects = REAL_GET_CLIENT_RECTS
+  vi.restoreAllMocks()
   while (views.length) views.pop()!.destroy()
   document.body.innerHTML = ''
 })
@@ -250,6 +251,18 @@ describe('the highlight is one box per cell, inside that cell', () => {
       cell.getBoundingClientRect = () =>
         ({ left, top, right: left + 90, bottom: top + 30 }) as DOMRect
     })
+    // ...where a box placed at `left: 0; top: 0` lands: half a pixel inside the cell, which
+    // is what a collapsed 1px border gives (each cell owns half of the line). The painter
+    // has to measure this; working it out from the computed `1px` was half a pixel off.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (!this.classList.contains('ss-plain-selection-rect') || !this.parentElement) {
+        return { left: 0, top: 0, right: 0, bottom: 0 } as DOMRect
+      }
+      const cell = this.parentElement.getBoundingClientRect()
+      const left = cell.left + 0.5 + (parseFloat(this.style.left) || 0)
+      const top = cell.top + 0.5 + (parseFloat(this.style.top) || 0)
+      return { left, top, right: left, bottom: top } as DOMRect
+    })
     // ...and the range's own boxes: over the prose, then over the four cells it covers
     // (rows one and two of the body, 8px down inside each cell for its border and padding).
     Range.prototype.getClientRects = function (): DOMRectList {
@@ -270,12 +283,12 @@ describe('the highlight is one box per cell, inside that cell', () => {
 
     // **One box per cell, inside the cell** — the prose rect and the block's controls are
     // not drawn, because they are not in a cell; and each box sits on the text rather
-    // than on the cell, less the border an absolutely positioned child is placed against.
+    // than on the cell, less the half-pixel of border the box is placed inside.
     expect(drawn).toEqual([
-      ['one', '5px', '8px', '40px', '14px'],
-      ['two', '5px', '8px', '40px', '14px'],
-      ['three', '5px', '8px', '40px', '14px'],
-      ['four', '5px', '8px', '40px', '14px'],
+      ['one', '4.5px', '7.5px', '40px', '14px'],
+      ['two', '4.5px', '7.5px', '40px', '14px'],
+      ['three', '4.5px', '7.5px', '40px', '14px'],
+      ['four', '4.5px', '7.5px', '40px', '14px'],
     ])
 
     // A repaint replaces them rather than adding to them.

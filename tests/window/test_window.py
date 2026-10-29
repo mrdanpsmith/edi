@@ -708,10 +708,13 @@ def test_ctrl_shift_e_reaches_the_page(window):
     time.sleep(0.4)
     entered = _wait(
         window,
+        # `Mod` is Cmd on macOS and Ctrl elsewhere, and a press holding both is
+        # neither binding — so send the one the page's own platform means.
         "(() => { const p = document.querySelector('.ProseMirror p');"
         " if (!p) return { missing: true };"
+        " const mod = /Mac/.test(navigator.platform) ? 'metaKey' : 'ctrlKey';"
         " p.dispatchEvent(new KeyboardEvent('keydown',"
-        " { key: 'e', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));"
+        " { key: 'e', [mod]: true, shiftKey: true, bubbles: true, cancelable: true }));"
         " return { source: !!document.querySelector('.block-source-mode') }; })()",
         lambda d: d.get("source") is True,
         timeout=10,
@@ -9795,12 +9798,15 @@ def test_arrow_keys_leave_a_code_blocks_visual_and_source_views(window):
             " inside: !!(el && el.closest('#editor-container .ProseMirror')) }; })()"
         )
 
+    # `Mod-End` (document end) is Cmd+End on macOS and Ctrl+End elsewhere; `mod`
+    # presses the one the page's platform binds.
     visual = _dump(window, """(() => {
       const content = document.querySelector('.runnable-block .cm-content');
       content.focus();
-      const send = (key, keyCode, ctrlKey = false) => content.dispatchEvent(
+      const modKey = /Mac/.test(navigator.platform) ? 'metaKey' : 'ctrlKey';
+      const send = (key, keyCode, mod = false) => content.dispatchEvent(
         new KeyboardEvent('keydown',
-          { key, code: key, keyCode, ctrlKey, bubbles: true, cancelable: true }));
+          { key, code: key, keyCode, [modKey]: mod, bubbles: true, cancelable: true }));
       send('End', 35, true);
       send('ArrowDown', 40);
       return { d: 1 };
@@ -9820,9 +9826,10 @@ def test_arrow_keys_leave_a_code_blocks_visual_and_source_views(window):
     source = _dump(window, """(() => {
       const content = document.querySelector('.block-source-mode .cm-content');
       content.focus();
-      const send = (key, keyCode, ctrlKey = false) => content.dispatchEvent(
+      const modKey = /Mac/.test(navigator.platform) ? 'metaKey' : 'ctrlKey';
+      const send = (key, keyCode, mod = false) => content.dispatchEvent(
         new KeyboardEvent('keydown',
-          { key, code: key, keyCode, ctrlKey, bubbles: true, cancelable: true }));
+          { key, code: key, keyCode, [modKey]: mod, bubbles: true, cancelable: true }));
       send('End', 35, true);
       send('ArrowDown', 40);
       return { d: 1 };
