@@ -84,7 +84,10 @@ valid_semver() {
 
 apply_version() {
   local version="$1"
-  sed -i -E 's/^__version__ = ".*"/__version__ = "'"$version"'"/' backend/__init__.py
+  # An attached suffix is the only -i spelling GNU and BSD sed agree on; a bare
+  # `-i -E` makes macOS sed take `-E` as the suffix and leave a backup behind.
+  sed -i.bak -E 's/^__version__ = ".*"/__version__ = "'"$version"'"/' backend/__init__.py
+  rm -f backend/__init__.py.bak
 }
 
 print_next_steps() {
