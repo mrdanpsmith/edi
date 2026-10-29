@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import zipfile
 from pathlib import Path
 from defusedxml import ElementTree
@@ -23,6 +24,14 @@ XLSX_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
 # Cap repeated-row/column expansion so a crafted file cannot balloon memory.
 _MAX_REPEAT = 1000
+# Cap where an XLSX cell may say it is (`r="ZZZZZZ1"`, a row a million down):
+# the gap before it is filled with empty cells, so an uncapped position is an
+# allocation the file chooses. Cells and rows past these are not imported.
+_MAX_COLUMNS = 1000
+_MAX_ROWS = 10000
+
+XLSX_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 SUPPORTED_TABLE_EXTENSIONS = (".csv", ".tsv", ".txt", ".ods", ".xlsx", ".xlsm")
 
@@ -93,8 +102,32 @@ def _ods_row_cells(row_el) -> list[str]:
     return cells
 
 
+def _ods_text(element) -> str:
+    """All the text of an ODS paragraph, not just what precedes its first child.
+
+    A paragraph's text is split across `<text:span>`s, links and the like, and
+    runs of spaces, tabs and breaks are elements of their own (`<text:s
+    text:c="3"/>`), so `element.text` alone dropped everything after the first
+    formatted run.
+    """
+    out = element.text or ""
+    for child in element:
+        name = _local_name(child.tag)
+        if name == "s":
+            raw = child.get(f"{{{ODS_NS['text']}}}c")
+            out += " " * (min(int(raw), _MAX_REPEAT) if raw and raw.isdigit() else 1)
+        elif name == "tab":
+            out += "\t"
+        elif name == "line-break":
+            out += "\n"
+        else:
+            out += _ods_text(child)
+        out += child.tail or ""
+    return out
+
+
 def _ods_cell_value(cell_el) -> str:
-    texts = [part.text or "" for part in cell_el.findall("text:p", ODS_NS)]
+    texts = [_ods_text(part) for part in cell_el.findall("text:p", ODS_NS)]
     if texts:
         return "\n".join(texts).strip()
     value_type = cell_el.get(f"{{{ODS_NS['office']}}}value-type")
@@ -138,12 +171,36 @@ def _xlsx_first_sheet_name(archive) -> str:
 
 
 def _xlsx_first_sheet_path(archive) -> str | None:
+    """The part holding the workbook's first sheet.
+
+    The workbook lists its sheets in tab order and names each one's part through
+    its relationships; file names say nothing about order (`sheet10.xml` sorts
+    before `sheet2.xml`, and a reordered workbook keeps its old names). The
+    sorted file names are only the fallback for an archive without that wiring.
+    """
+    names = archive.namelist()
+    if "xl/workbook.xml" in names and "xl/_rels/workbook.xml.rels" in names:
+        workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+        first = workbook.find(f"{{{XLSX_NS}}}sheets/{{{XLSX_NS}}}sheet")
+        rel_id = first.get(f"{{{XLSX_REL_NS}}}id") if first is not None else None
+        rels = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        for rel in rels.findall(f"{{{PACKAGE_REL_NS}}}Relationship"):
+            if rel_id is None or rel.get("Id") != rel_id:
+                continue
+            target = (rel.get("Target") or "").lstrip("/")
+            path = target if target.startswith("xl/") else f"xl/{target}"
+            if path in names:
+                return path
     sheets = sorted(
-        name
-        for name in archive.namelist()
-        if name.startswith("xl/worksheets/") and name.endswith(".xml")
+        (name for name in names if name.startswith("xl/worksheets/") and name.endswith(".xml")),
+        key=_natural_key,
     )
     return sheets[0] if sheets else None
+
+
+def _natural_key(name: str) -> list:
+    """Sort `sheet2` before `sheet10`."""
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
 
 
 def _xlsx_sheet_rows(sheet_xml: bytes, shared: list[str]) -> list[list[str]]:
@@ -153,10 +210,19 @@ def _xlsx_sheet_rows(sheet_xml: bytes, shared: list[str]) -> list[list[str]]:
         return []
     rows: list[list[str]] = []
     for row_el in sheet_data.findall(f"{{{XLSX_NS}}}row"):
+        # A sheet only stores rows that hold something: `r` says which row this
+        # is, and the empty rows before it are part of the table.
+        row_number = _xlsx_row_number(row_el.get("r"), len(rows) + 1)
+        if row_number > _MAX_ROWS:
+            break
+        while len(rows) < row_number - 1:
+            rows.append([])
         row: list[str] = []
         col = 1
         for cell_el in row_el.findall(f"{{{XLSX_NS}}}c"):
             cell_col = _xlsx_cell_col(cell_el.get("r") or "")
+            if cell_col > _MAX_COLUMNS:
+                break
             while col < cell_col:
                 row.append("")
                 col += 1
@@ -164,6 +230,11 @@ def _xlsx_sheet_rows(sheet_xml: bytes, shared: list[str]) -> list[list[str]]:
             col += 1
         rows.append(row)
     return rows
+
+
+def _xlsx_row_number(raw: str | None, default: int) -> int:
+    """The 1-based row a `<row r=…>` names; rows without one follow the last."""
+    return int(raw) if raw and raw.isdigit() and int(raw) >= default else default
 
 
 def _xlsx_cell_value(cell_el, shared: list[str]) -> str:
@@ -187,6 +258,8 @@ def _xlsx_cell_col(ref: str) -> int:
     col = 0
     for char in letters.upper():
         col = col * 26 + (ord(char) - 64)
+        if col > _MAX_COLUMNS:
+            return _MAX_COLUMNS + 1
     return col
 
 

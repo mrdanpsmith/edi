@@ -17,7 +17,10 @@ Matches that land on an atom use a whole-block `NodeSelection`.
 
 ## Replacement
 
-Replace preserves marks.
+Replace preserves marks: the replacement takes the marks of the match's own
+first character (`marksAt`). `$pos.marks()` is what typing would get, the marks
+of the text *before* the match, so it dropped a mid-paragraph bold and spread
+the bold of `**bold**foo` onto a replaced `foo`.
 
 A table's pipe value refuses a replacement containing `\n`, because a newline
 would corrupt the row.

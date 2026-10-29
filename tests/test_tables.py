@@ -205,6 +205,82 @@ def test_xlsx_column_gaps(tmp_path):
     assert parse_table_file(str(target))["rows"] == [["1", "", "", "4"]]
 
 
+def _ods_with_cell(cell_xml: str) -> bytes:
+    content = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<office:document-content {ODS_NS}>'
+        "<office:body><office:spreadsheet>"
+        f'<table:table table:name="S"><table:table-row>{cell_xml}</table:table-row></table:table>'
+        "</office:spreadsheet></office:body>"
+        "</office:document-content>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("content.xml", content)
+    return buffer.getvalue()
+
+
+def test_ods_keeps_text_after_formatted_runs_and_spaces(tmp_path):
+    target = tmp_path / "styled.ods"
+    target.write_bytes(
+        _ods_with_cell(
+            '<table:table-cell office:value-type="string"><text:p>Hello '
+            "<text:span>world</text:span>,<text:s text:c=\"2\"/>again</text:p></table:table-cell>"
+        )
+    )
+    assert parse_table_file(str(target))["rows"] == [["Hello world,  again"]]
+
+
+def test_xlsx_keeps_empty_rows_between_data(tmp_path):
+    sheet_xml = (
+        f'<worksheet xmlns="{XLSX_NS}"><sheetData>'
+        '<row r="1"><c r="A1"><v>1</v></c></row>'
+        '<row r="4"><c r="A4"><v>4</v></c></row>'
+        "</sheetData></worksheet>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    target = tmp_path / "sparse.xlsx"
+    target.write_bytes(buffer.getvalue())
+    assert parse_table_file(str(target))["rows"] == [["1"], [], [], ["4"]]
+
+
+def test_xlsx_reads_the_first_sheet_the_workbook_lists(tmp_path):
+    def sheet(value: str) -> str:
+        return f'<worksheet xmlns="{XLSX_NS}"><sheetData><row><c r="A1" t="inlineStr"><is><t>{value}</t></is></c></row></sheetData></worksheet>'
+
+    rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    workbook_xml = (
+        f'<workbook xmlns="{XLSX_NS}" xmlns:r="{rel_ns}"><sheets>'
+        '<sheet name="Summary" sheetId="1" r:id="rId2"/>'
+        '<sheet name="Raw" sheetId="2" r:id="rId1"/>'
+        "</sheets></workbook>"
+    )
+    rels_xml = (
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/>'
+        '<Relationship Id="rId2" Target="worksheets/sheet10.xml"/>'
+        "</Relationships>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet("raw data"))
+        archive.writestr("xl/worksheets/sheet10.xml", sheet("summary data"))
+    target = tmp_path / "ordered.xlsx"
+    target.write_bytes(buffer.getvalue())
+    result = parse_table_file(str(target))
+    assert result == {"name": "Summary", "rows": [["summary data"]]}
+
+
+def test_xlsx_caps_where_a_cell_may_say_it_is(tmp_path):
+    target = tmp_path / "huge.xlsx"
+    target.write_bytes(_xlsx_bytes([[("A1", "", "1"), ("ZZZZZZ1", "", "far away")]]))
+    assert parse_table_file(str(target))["rows"] == [["1"]]
+
+
 def test_unsupported_extension(tmp_path):
     target = tmp_path / "notes.doc"
     target.write_text("hello", encoding="utf-8")

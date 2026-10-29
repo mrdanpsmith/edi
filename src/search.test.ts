@@ -164,6 +164,25 @@ describe('search plugin and editor actions', () => {
     editor.destroy()
   })
 
+  it('keeps the marks of the matched text itself, not of the text before it', () => {
+    const mid = setup('a **foo** b and `foo` c')
+    updateSearchQuery(mid.view, 'foo')
+    replaceAllSearch(mid.view, 'bar')
+    expect(proseToMarkdown(mid.view.state.doc)).toBe('a **bar** b and `bar` c\n')
+    mid.editor.destroy()
+  })
+
+  it('does not spread the marks of the text before a match onto it', () => {
+    const { editor, view } = setup('**bold**foo')
+    updateSearchQuery(view, 'foo')
+    expect(getSearchState(view).matches).toHaveLength(1)
+    expect(selectSearchMatch(view, 0)).toBe(true)
+    // Returns whether there is a next match to settle on; this was the only one.
+    replaceSearchCurrent(view, 'bar')
+    expect(proseToMarkdown(view.state.doc)).toBe('**bold**bar\n')
+    editor.destroy()
+  })
+
   it('replaces every match in one transaction, incl. spreadsheet cell text', () => {
     const { editor, view } = setup('222\n\n| A | 2 |\n| --- | --- |\n| 2 | B |')
     updateSearchQuery(view, '2')

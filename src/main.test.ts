@@ -75,6 +75,7 @@ const mainState = vi.hoisted(() => {
     spreadsheetMenuEntries: vi.fn<(target: EventTarget | null) => ContextMenuEntry[] | null>(
       () => null,
     ),
+    flushReveals: vi.fn<() => void | Promise<void>>(() => undefined),
     markdown: 'Welcome',
     selectionMarkdown: 'Welcome',
     editorView,
@@ -162,7 +163,7 @@ vi.mock('./editor', async (importOriginal) => ({
       // The two pending-commit hooks `Tabs` asks for at a snapshot boundary and
       // before replacing a document. Synchronous here, exactly as the real editor is
       // whenever no reveal has un-persisted typing — which is every test in this file.
-      flushReveals: () => undefined,
+      flushReveals: () => mainState.flushReveals(),
       discardPending: vi.fn(),
       destroy: vi.fn(),
     }
@@ -468,6 +469,7 @@ beforeEach(() => {
   mainState.readText.mockReset().mockResolvedValue('PASTED')
   mainState.snapshotMermaidHtml.mockReset().mockResolvedValue(undefined)
   mainState.spreadsheetMenuEntries.mockReset().mockReturnValue(null)
+  mainState.flushReveals.mockReset().mockReturnValue(undefined)
   mainState.markdown = 'Welcome'
   mainState.selectionMarkdown = 'Welcome'
   mainState.editorView = mainState.defaultEditorView
@@ -1108,6 +1110,37 @@ describe('open and save', () => {
     menu('save')
     await flushAsync()
     expect(mainState.writeTextFile).not.toHaveBeenCalled()
+  })
+
+  it('writes an open encrypted block\'s pending text, not the text from before it', async () => {
+    mainState.pickSavePath.mockResolvedValue('/tmp/new.md')
+    // The reveal's last keystrokes reach the document only when flushed.
+    mainState.flushReveals.mockImplementation(async () => {
+      mainState.markdown = 'with the latest secret'
+    })
+    await loadMain()
+    press('n')
+    menu('save')
+    await flushAsync()
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/new.md', 'with the latest secret')
+  })
+
+  it('stays dirty when the document is edited while the write is in flight', async () => {
+    mainState.pickSavePath.mockResolvedValue('/tmp/new.md')
+    let finishWrite: () => void = () => undefined
+    mainState.writeTextFile.mockImplementation(
+      () => new Promise<void>((resolve) => { finishWrite = resolve }),
+    )
+    await loadMain()
+    press('n')
+    mainState.editorOptions!.onChange!()
+    menu('save')
+    await flushAsync()
+    mainState.editorOptions!.onChange!() // typed before the write came back
+    finishWrite()
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getActive()).toMatchObject({ path: '/tmp/new.md', dirty: true })
   })
 
   it('reports a failed save', async () => {

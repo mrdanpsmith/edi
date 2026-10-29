@@ -26,8 +26,8 @@ import { addRecentFile, getRecentFiles } from './recents'
 import {
   findSessionByPath,
   getActive,
+  markSaved,
   setActiveDirty,
-  setActivePath,
 } from './state'
 import { promptForRename } from './urlDialog'
 import type { AppContext } from './appContext'
@@ -177,18 +177,33 @@ export function createFileController(ctx: AppContext): FileController {
       return
     }
     try {
-      const md = ctx.blockEditor?.getMarkdown() ?? ''
-      await writeTextFile(path, md)
-      afterSave(path)
+      const snapshot = await snapshotForSave()
+      if (snapshot === null) return
+      await writeTextFile(path, snapshot.markdown)
+      afterSave(path, snapshot)
     } catch (error) {
       ctx.reportError(`Failed to save ${path}`, error)
     }
   }
 
-  /** The document is on disk under `path` and clean: everything that follows. */
-  function afterSave(path: string): void {
-    setActivePath(path)
-    setActiveDirty(false)
+  /**
+   * The active document as it is to be written, and which tab and edit it is.
+   *
+   * An open encrypted block's last keystrokes are only written into the
+   * document after a debounce, so they are flushed first or the save writes the
+   * text from before them and marks the tab clean. The tab is read *after* that
+   * await, together with the markdown, so the two always describe one document.
+   */
+  async function snapshotForSave(): Promise<{ id: string; revision: number; markdown: string } | null> {
+    await ctx.blockEditor?.flushReveals()
+    const session = getActive()
+    if (!session) return null
+    return { id: session.id, revision: session.revision, markdown: ctx.blockEditor?.getMarkdown() ?? '' }
+  }
+
+  /** The document is on disk under `path`: everything that follows. */
+  function afterSave(path: string, snapshot: { id: string; revision: number }): void {
+    markSaved(snapshot.id, path, snapshot.revision)
     ctx.updateTitle()
     ctx.updateStatus()
     ctx.syncDirty()
@@ -216,9 +231,10 @@ export function createFileController(ctx: AppContext): FileController {
       return
     }
     try {
-      const md = ctx.blockEditor?.getMarkdown() ?? ''
-      await renameTextFile(oldPath, newPath, md)
-      afterSave(newPath)
+      const snapshot = await snapshotForSave()
+      if (snapshot === null) return
+      await renameTextFile(oldPath, newPath, snapshot.markdown)
+      afterSave(newPath, snapshot)
       ctx.flashStatus(`Renamed to ${name}`)
     } catch (error) {
       ctx.reportError(`Failed to rename ${oldPath}`, error)

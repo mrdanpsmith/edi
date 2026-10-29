@@ -2,6 +2,9 @@ export interface SessionMeta {
   id: string
   path: string | null
   dirty: boolean
+  /** Bumped on every edit, so a save can tell whether the document it wrote is
+   * still the document (see `markSaved`). */
+  revision: number
 }
 
 export interface StateSnapshot {
@@ -36,7 +39,7 @@ export function subscribe(listener: Listener): () => void {
 
 export function createSession(): string {
   const id = `tab-${nextId.value++}`
-  sessions.push({ id, path: null, dirty: false })
+  sessions.push({ id, path: null, dirty: false, revision: 0 })
   activeId.value = id
   emit()
   return id
@@ -80,10 +83,29 @@ export function setActivePath(path: string | null): void {
 
 export function setActiveDirty(dirty: boolean): void {
   const active = getActive()
-  if (active && active.dirty !== dirty) {
+  if (!active) return
+  if (dirty) active.revision++
+  if (active.dirty !== dirty) {
     active.dirty = dirty
     emit()
   }
+}
+
+/**
+ * A save of session `id`, taken at `revision`, has reached disk as `path`.
+ *
+ * The session is named rather than "the active one" because the write is
+ * asynchronous: the user can switch tabs while it is in flight, and the tab
+ * that was saved is the one that becomes clean. It becomes clean only if it was
+ * not edited after the markdown was read — otherwise those edits are not on
+ * disk, and a clean flag would let the tab close without asking.
+ */
+export function markSaved(id: string, path: string, revision: number): void {
+  const session = sessions.find((entry) => entry.id === id)
+  if (!session) return
+  session.path = path
+  if (session.revision === revision) session.dirty = false
+  emit()
 }
 
 export function isAnyDirty(): boolean {

@@ -8,6 +8,7 @@ import {
   getActive,
   getState,
   isAnyDirty,
+  markSaved,
   setActiveDirty,
   setActivePath,
   subscribe,
@@ -60,6 +61,26 @@ describe('state session store', () => {
     setActivePath('/tmp/a.md')
     setActiveDirty(true)
     expect(getState().sessions[0]).toMatchObject({ id, path: '/tmp/a.md', dirty: true })
+  })
+
+  it('marks the saved session clean, even when another tab is active', () => {
+    const saved = createSession()
+    setActiveDirty(true)
+    const revision = getActive()!.revision
+    createSession()
+    markSaved(saved, '/tmp/a.md', revision)
+    const session = getState().sessions.find((entry) => entry.id === saved)!
+    expect(session).toMatchObject({ path: '/tmp/a.md', dirty: false })
+    expect(getActive()!.path).toBeNull()
+  })
+
+  it('keeps a session dirty when it was edited after the save read it', () => {
+    const id = createSession()
+    setActiveDirty(true)
+    const revision = getActive()!.revision
+    setActiveDirty(true) // typed while the write was in flight
+    markSaved(id, '/tmp/a.md', revision)
+    expect(getActive()).toMatchObject({ path: '/tmp/a.md', dirty: true })
   })
 
   it('finds an open session by path', () => {

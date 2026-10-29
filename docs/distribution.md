@@ -390,7 +390,9 @@ outside `requirements*.txt`.
 
 `backend/tables.py` parses ODS/XLSX XML with **`defusedxml`** as a drop-in for
 `xml.etree.ElementTree`. Plain ElementTree is XML-bomb vulnerable on
-user-opened files, and bandit flags it. `defusedxml` is a runtime import, so
+user-opened files, and bandit flags it. For the same reason, everything a file
+can use to make the importer allocate is capped: ODS repeat counts and space
+runs at 1000, and XLSX cell positions at 1000 columns and 10000 rows. `defusedxml` is a runtime import, so
 every PyInstaller build venv gets it through `requirements-build.txt`:
 `Dockerfile.pyzip`, `scripts/build-windows.ps1` and
 `scripts/build-macos.sh` all install that file.

@@ -290,8 +290,16 @@ export function searchNext(view: EditorView, dir: 1 | -1 = 1): boolean {
   return selectSearchMatch(view, search.current + dir)
 }
 
+/**
+ * The marks a replacement keeps: those of the match's own first character.
+ * `$pos.marks()` is what *typing* at `pos` would get, which is the text before
+ * it — so `**foo**` replaced lost its bold, and `**bold**foo` spread bold over
+ * the replacement.
+ */
 function marksAt(view: EditorView, pos: number): readonly Mark[] {
-  return view.state.doc.resolve(pos).marks()
+  const $pos = view.state.doc.resolve(pos)
+  const after = $pos.nodeAfter
+  return after?.isText ? after.marks : $pos.marks()
 }
 
 /** Replace text across `ranges` (ascending); returns null when nothing changed. */
