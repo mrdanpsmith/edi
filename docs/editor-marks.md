@@ -39,23 +39,23 @@ drag the rest of the sentence into itself.
 
 ## When the arrow fires
 
-The arrow handler only fires where the browser cannot do it itself:
+A mark boundary is two caret stops at one document position: inside the run
+and outside it. The browser only knows one, and at the end of a run it is the
+inside one, so `` `code`tail `` had no way to type between `code` and `tail`.
+`arrowStep` adds the second stop:
 
-- the caret is at the end (or start) of its textblock's text; **and**
-- there is no node beyond it at any nesting level (`noNodeBeyond` — no
-  following paragraph, no next list item).
+- **Leaving.** If the next character would inherit a mark that the node on
+  the arrow's side lacks (plain text after a span, or the edge of the
+  textblock, wherever it is in the document), the first press drops the
+  innermost such mark and the caret stays put. The next press is the
+  browser's and moves.
+- **Arriving.** `←` onto the end of a run from the text after it moves the
+  caret itself and keeps only the marks of the character it crossed, so it
+  lands outside. The step is one grapheme (`Intl.Segmenter`), never half an
+  emoji.
 
-Everywhere else the browser's own arrow already moves the caret, and the
-position it lands on is outside the run. Those presses work and must keep
-working. Handling them would make `→` a key that sometimes does not move the
-caret.
-
-Two traps in that check:
-
-- `ResolvedPos.index(depth)` is the index *into* that level, so the node at
-  `depth` is `index(depth - 1)`.
-- The siblings are `node(depth - 1).childCount`; a textblock's own
-  `childCount` is 0 because its text is inline.
+The start of a run mid-sentence needs neither: `$from.marks()` there reads
+the text before it, so the caret is already outside.
 
 Only the **innermost** mark is left. A mark set is rank-ordered and `code` is
 innermost per `orderedMarks`, so `→` out of a code span inside bold leaves the

@@ -36,15 +36,14 @@ function typeText(view: EditorView, text: string): void {
 
 /** The start of the `index`th text block, as a document position. */
 function blockStart(view: EditorView, index = 0): number {
-  let at = -1
+  let seen = -1
+  let start = -1
   view.state.doc.descendants((node, pos) => {
-    if (node.isTextblock && ++at === index) {
-      at = pos + 1
-      return false
-    }
-    return at < 0
+    if (start >= 0) return false
+    if (node.isTextblock && ++seen === index) start = pos + 1
+    return !node.isTextblock
   })
-  return at
+  return start
 }
 
 /** Put the caret `offset` characters into the text block at `index`. */
@@ -117,12 +116,52 @@ describe('leaving an inline mark with an arrow key', () => {
     destroy()
   })
 
-  it('does not handle the arrow where a character on that side is outside the mark', () => {
-    const { view, markdown, destroy } = editorOn('`code` tail')
+  it('ArrowRight at the end of a span mid-sentence leaves it, then moves', () => {
+    const { view, markdown, destroy } = editorOn('`code`tail')
     caretAt(view, 4)
 
+    expect(dispatchKeydown(view, 'ArrowRight')).toBe(true)
+    expect(view.state.selection.from).toBe(blockStart(view) + 4)
+    // Outside the span now, so the next press is the browser's.
     expect(dispatchKeydown(view, 'ArrowRight')).toBe(false)
-    expect(markdown()).toBe('`code` tail')
+    typeText(view, 'x')
+    expect(markdown()).toBe('`code`xtail')
+    destroy()
+  })
+
+  it('ArrowLeft onto the end of a span from the text after it lands outside', () => {
+    const { view, markdown, destroy } = editorOn('`code`tail')
+    caretAt(view, 5)
+
+    expect(dispatchKeydown(view, 'ArrowLeft')).toBe(true)
+    expect(view.state.selection.from).toBe(blockStart(view) + 4)
+    typeText(view, 'x')
+    expect(markdown()).toBe('`code`xtail')
+    destroy()
+  })
+
+  it('ArrowLeft onto the end of a span steps over a whole grapheme', () => {
+    const { view, destroy } = editorOn('`code`😀')
+    caretAt(view, 6)
+
+    expect(dispatchKeydown(view, 'ArrowLeft')).toBe(true)
+    expect(view.state.selection.from).toBe(blockStart(view) + 4)
+    destroy()
+  })
+
+  it('leaves ArrowLeft to the browser where it does not reach a span', () => {
+    const { view, destroy } = editorOn('`code`tail')
+    caretAt(view, 6)
+
+    expect(dispatchKeydown(view, 'ArrowLeft')).toBe(false)
+    destroy()
+  })
+
+  it('ArrowLeft at the start of a span mid-sentence is already outside', () => {
+    const { view, destroy } = editorOn('head`code`')
+    caretAt(view, 4)
+
+    expect(dispatchKeydown(view, 'ArrowLeft')).toBe(false)
     destroy()
   })
 
@@ -136,20 +175,24 @@ describe('leaving an inline mark with an arrow key', () => {
     destroy()
   })
 
-  it('leaves the arrow alone when another block follows, so it still moves', () => {
+  it('leaves the mark before another block, and the next press moves', () => {
     const { view, markdown, destroy } = editorOn('**bold**\n\nplain')
     caretAt(view, 4)
 
+    expect(dispatchKeydown(view, 'ArrowRight')).toBe(true)
     expect(dispatchKeydown(view, 'ArrowRight')).toBe(false)
     expect(markdown()).toBe('**bold**\n\nplain')
     destroy()
   })
 
-  it('leaves the arrow alone when a block comes before, so it still moves', () => {
-    const { view, destroy } = editorOn('plain\n\n**bold**')
-    caretAt(view, 4, 1)
+  it('leaves the mark after a block, and the next press moves', () => {
+    const { view, markdown, destroy } = editorOn('plain\n\n**bold**')
+    caretAt(view, 0, 1)
 
+    expect(dispatchKeydown(view, 'ArrowLeft')).toBe(true)
     expect(dispatchKeydown(view, 'ArrowLeft')).toBe(false)
+    typeText(view, 'say ')
+    expect(markdown()).toBe('plain\n\nsay **bold**')
     destroy()
   })
 
@@ -163,10 +206,11 @@ describe('leaving an inline mark with an arrow key', () => {
     destroy()
   })
 
-  it('leaves the arrow alone between list items', () => {
+  it('leaves the mark between list items, and the next press moves', () => {
     const { view, destroy } = editorOn('- **one**\n- two')
     caretEndOf(view, 'one')
 
+    expect(dispatchKeydown(view, 'ArrowRight')).toBe(true)
     expect(dispatchKeydown(view, 'ArrowRight')).toBe(false)
     destroy()
   })
@@ -212,7 +256,7 @@ describe('leaving an inline mark with an arrow key', () => {
     caretAt(view, 4)
 
     dispatchKeydown(view, 'ArrowRight')
-    expect(dispatchKeydown(view, 'ArrowRight')).toBe(true)
+    expect(dispatchKeydown(view, 'ArrowRight')).toBe(false)
     typeText(view, '!')
     expect(markdown()).toBe('**bold**!')
     destroy()
