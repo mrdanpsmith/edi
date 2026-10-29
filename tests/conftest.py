@@ -9,6 +9,9 @@ import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+# The same flags CI sets. Without --disable-gpu a local offscreen run (macOS
+# especially) keeps losing its GPU context and eventually segfaults mid-suite.
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-dev-shm-usage --disable-gpu")
 
 # Isolate QSettings/QStandardPaths from the developer's real config: test mode
 # must be enabled before any PySide6 module (or QSettings) is first used.

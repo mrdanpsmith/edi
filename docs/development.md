@@ -114,8 +114,10 @@ QTWEBENGINE_DISABLE_SANDBOX=1
 QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage --disable-gpu"
 ```
 
-`tests/conftest.py` sets the first two with `os.environ.setdefault` *before*
-importing PySide6. Never import PySide6 before those variables are set.
+`tests/conftest.py` sets all three with `os.environ.setdefault` *before*
+importing PySide6. Never import PySide6 before those variables are set. A
+local run without `--disable-gpu` (macOS especially) keeps losing its GPU
+context and segfaults partway through the real-WebEngine tests.
 
 QtWebEngine also segfaults at interpreter exit in headless/container pytest
 runs: the tests pass, then the job fails with exit 139. `tests/conftest.py`'s

@@ -55,12 +55,16 @@ def _set_scheme(win, dark):
 
 
 
-def _render(win, code, timeout=20):
+def _render(win, code, timeout=20, after=None):
     """Insert ``code`` and wait for the current render: a freshly-id'd svg or an
     error block. Renders replace the previous svg with a new id, so an id change
-    distinguishes the new content from a stale previous diagram."""
+    distinguishes the new content from a stale previous diagram.
+
+    The node view re-renders in place, so the previous svg stays up until the
+    new one lands. Pass ``after`` (that svg's id) when ``code`` differs from what
+    is on screen, so the stale svg is not taken for the new render."""
     js = win._web.page().runJavaScript
-    prev = {"id": None, "errT": None}
+    prev = {"id": after, "errT": None}
 
     def snapshot():
         return _dump(
@@ -370,7 +374,7 @@ LABEL_INVENTORY = (
 # a committed patch is told apart from a no-op when mermaid refuses the result.
 LABEL_STATE = (
     "(() => { const svg = document.querySelector('.mermaid .mermaid-preview svg');"
-    " return { texts: svg"
+    " return { id: svg ? svg.id : null, texts: svg"
     "   ? [...svg.querySelectorAll('text, .nodeLabel, .edgeLabel, .labelText, .loopText,"
     "      .titleText, .sectionTitle, .taskText')].map((e) => e.textContent.trim())"
     "   : [],"

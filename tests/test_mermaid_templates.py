@@ -96,6 +96,10 @@ def win(qapp):
     _pump_until(lambda: injected["done"], timeout=5.0)
 
     yield w
+    # The label walk's renames leave the document dirty, and a dirty close is
+    # refused behind a confirm prompt: the window would stay up with a modal
+    # open, and every later dialog test would find that prompt instead of its own.
+    w.set_dirty(False)
     w.close()
     w.deleteLater()
 
@@ -190,17 +194,20 @@ def classify(value: str, state: dict) -> tuple[str, str]:
     return "rewritten", "mermaid re-read the value under its own grammar"
 
 
-def wait_settled(win, value: str, timeout: float = 20) -> dict:
-    """Poll until the rename has visibly landed, or the timeout runs out.
+def wait_settled(win, before: str | None, timeout: float = 20) -> dict:
+    """Poll until the rename has settled, or the timeout runs out.
 
-    This never raises: an outcome with no bucket in `classify` is exactly what
-    it has to report.
+    Settled is a new render (an svg id other than ``before``, the one up when
+    Enter was pressed), a notice or an error block -- not "the value is drawn",
+    which a rename mermaid re-reads never is, so it would always wait out the
+    timeout. This never raises: an outcome with no bucket in `classify` is
+    exactly what it has to report.
     """
     seen: dict = {}
 
     def settled() -> bool:
         seen.update(_dump(win, LABEL_STATE))
-        return drawn(value, seen.get("texts", [])) or seen.get("notice") or seen.get("error")
+        return (seen.get("id") or before) != before or seen.get("notice") or seen.get("error")
 
     _pump_until(settled, timeout=timeout)
     return seen
@@ -218,11 +225,12 @@ def rename_label(win, index: int) -> tuple[str, str, str]:
     if seeded is None:
         return "?", "failed", "no editor opened"
     value = f"{seeded}{SUFFIX}" if seeded else SUFFIX
+    before = _dump(win, LABEL_STATE).get("id")
     try:
         _type_and_confirm(win, value)
     except AssertionError as exc:
         return value, "failed", f"the editor never closed ({exc})"
-    return (value, *classify(value, wait_settled(win, value)))
+    return (value, *classify(value, wait_settled(win, before)))
 
 
 @pytest.mark.parametrize("name,code", load_fixtures(), ids=[n for n, _ in load_fixtures()])
@@ -235,8 +243,12 @@ def test_every_offered_label_renames(win, name, code):
     failed, rewritten = [], []
     for index, label in enumerate(inv["labels"]):
         # Back to the pristine source and a fresh edit mode: a committed rename
-        # would otherwise change what the next label has to match.
-        _render(win, code)
+        # would otherwise change what the next label has to match. When the
+        # rename did change the source, the renamed svg stays up until the
+        # pristine one replaces it, so wait for an svg newer than it.
+        shown = _dump(win, LABEL_STATE)
+        changed = (shown.get("source") or "").strip() != code.strip()
+        _render(win, code, after=shown.get("id") if changed else None)
         _enter_edit_mode(win)
         if index >= len(_dump(win, LABEL_INVENTORY).get("labels", [])):
             failed.append(f"{label!r}: the offer did not survive a re-render")

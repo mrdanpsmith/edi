@@ -57,7 +57,7 @@ ordinary part of `pytest tests/`, so it runs in the `test` job on every commit
 with no path filter or job of its own. It renames every offered label of every
 template against real Mermaid, so a Mermaid upgrade that changes SVG markup or
 grammar fails before merge instead of in a manual regression hunt. It is the
-slowest part of the suite, about three minutes.
+slowest part of the suite, under two minutes.
 
 `mermaid` is pinned exactly in `package.json`, so an upgrade arrives as a
 deliberate commit that changes the lockfile.

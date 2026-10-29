@@ -388,7 +388,7 @@ exhaustive one, one case per template. It walks *every* offered label through
 the real gesture path in the template sweep's own window and fails on any
 silent no-op or render failure, listing each label that failed. A rename
 mermaid re-reads under its own grammar is a warning, not a failure. It runs in
-the normal suite (about three minutes); `-k "label_renames and Kanban"` narrows
+the normal suite (under two minutes); `-k "label_renames and Kanban"` narrows
 it while working on mappers, mappers' regexes or the `GENERATED_BY_FAMILY`
 lists. It is the only thing that can see mermaid's real DOM shape; it found the
 `diagramFamily` case bug and the ER substring bug, which no jsdom test could.
