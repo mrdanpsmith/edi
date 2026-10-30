@@ -52,12 +52,28 @@ export HOMEBREW_NO_AUTO_UPDATE
 # Node is deliberately NOT provisioned here: the frontend and the icon
 # variants are built once in the frontend job and consumed, so nothing in this
 # script runs npm. Only the Python venv below needs a toolchain check.
-if ! command -v python3 >/dev/null 2>&1 || \
-   ! python3 -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+#
+# **An interpreter the PySide6 pin has wheels for, not whatever `python3` is.**
+# The runner image's default moves on its own (macos-15 went to 3.15, which
+# PySide6 6.11.x does not support), and pip then finds no PySide6 at all. The
+# window here is PySide6's `Requires-Python` for the pinned version; widen the
+# upper bound when the pin in requirements.txt moves to a release that allows it.
+supported_python() {
+  "$1" -c 'import sys; exit(0 if (3, 10) <= sys.version_info[:2] < (3, 15) else 1)' 2>/dev/null
+}
+PYTHON=""
+for candidate in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do
+  if command -v "$candidate" >/dev/null 2>&1 && supported_python "$candidate"; then
+    PYTHON="$(command -v "$candidate")"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
   echo "Installing python@3.12 via Homebrew..."
   brew install python@3.12
-  export PATH="/opt/homebrew/opt/python@3.12/bin:$PATH"
+  PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
 fi
+echo "using $PYTHON ($("$PYTHON" --version))"
 
 print_step "Building Edi $VERSION for macOS (arm64)"
 
@@ -91,7 +107,7 @@ fi
 echo "using the prebuilt dist/ + generated icons"
 
 # --- Python venv --------------------------------------------------------------
-python3 -m venv .venv-macos
+"$PYTHON" -m venv .venv-macos
 PY_VENV="$ROOT/.venv-macos/bin/python"
 "$PY_VENV" -m pip install --upgrade pip
 "$PY_VENV" -m pip install -r requirements-build.txt
