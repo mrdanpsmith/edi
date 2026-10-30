@@ -416,6 +416,9 @@ const INTERACTION_FACES: Record<string, ControlFaces> = {
 }
 
 
+/** Clicks an editor's mode gesture has already answered, so no outer editor answers again. */
+const claimedGestures = new WeakSet<Event>()
+
 export const blockModePlugin = new Plugin<BlockMode | null>({
   key: BLOCK_MODE_KEY,
   props: {
@@ -426,6 +429,19 @@ export const blockModePlugin = new Plugin<BlockMode | null>({
   },
   view(view: EditorView) {
     const onClick = (event: MouseEvent): void => {
+      // **One press, one editor: the innermost.** An unlocked encrypted block is an
+      // editor inside this one, and its scroller is inside ours, so the same click
+      // bubbles to both listeners — the reveal's first. Without the claim an Alt+click
+      // on a cell in a reveal opened the sheet *and* toggled the encrypted block shut
+      // around it. (Slow saves used to hide this: the block stayed on screen while
+      // its lock awaited PBKDF2.)
+      // Claimed only by the editor the press is *in*: editors can share a scroller,
+      // and one that the press is not in must leave it for the one it is.
+      if (claimedGestures.has(event)) return
+      const target = event.target
+      if (target instanceof Node && (target === view.dom.parentElement || view.dom.contains(target))) {
+        claimedGestures.add(event)
+      }
       blockModeGesture(view, event)
     }
     // The editor's *scroll container*: the editor's own box is only as tall as
