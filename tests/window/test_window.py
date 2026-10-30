@@ -6302,7 +6302,7 @@ BLOCK_PASSWORD = "clipboard-gate-password"
 def _encrypt_block_with(window, needle, password=BLOCK_PASSWORD, nth=None):
     """Encrypt the block whose text contains `needle`, through the app's own menu.
 
-    The menu, not a caret: `encryptBlockCommand` takes the block the selection is in,
+    The menu, not a caret: Edit ▸ Encrypt… acts on the selection,
     and a synthetic click does not move a ProseMirror selection in this harness. The
     context menu resolves its target through `blockPosForElement`, the app's one
     DOM→position authority, so right-clicking is both deterministic and the gesture a
@@ -6330,7 +6330,7 @@ def _encrypt_block_with(window, needle, password=BLOCK_PASSWORD, nth=None):
       const items = [...document.querySelectorAll('.edi-context-menu button')]
         .map((b) => b.textContent.trim());
       const item = [...document.querySelectorAll('.edi-context-menu button')]
-        .find((b) => b.textContent.indexOf('Encrypt block') >= 0);
+        .find((b) => b.textContent.trim() === 'Encrypt…');
       if (!item) return { items };
       item.click();
       return { items };
@@ -6340,20 +6340,13 @@ def _encrypt_block_with(window, needle, password=BLOCK_PASSWORD, nth=None):
                 "null" if nth is None else str(nth)))
     assert not offered.get("missing"), (
         "no such block to encrypt: %r" % (offered,))
-    assert any("Encrypt block" in t for t in offered.get("items", [])), (
+    assert "Encrypt…" in offered.get("items", []), (
         "the block's context menu offered no way to encrypt it: %r" % (offered,))
-    # The label dialog first, then the password asked twice. Left at their defaults.
+    # One dialog: the label (left blank), then the password asked twice.
     _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
-          lambda d: (d.get("t") or "").startswith("Encrypt"), timeout=10)
+          lambda d: (d.get("t") or "") == "Encrypt block", timeout=10)
     _dump(window, """(() => {
-      [...document.querySelectorAll('.edi-dialog-actions button')]
-        .find((b) => b.textContent.trim() === 'Encrypt').click();
-      return { d: 1 };
-    })()""")
-    _wait(window, "(() => ({ t: (document.querySelector('.edi-dialog-title') || {}).textContent }))()",
-          lambda d: (d.get("t") or "") == "Set password", timeout=10)
-    _dump(window, """(() => {
-      for (const input of document.querySelectorAll('.edi-dialog-input')) {
+      for (const input of document.querySelectorAll('.edi-dialog-input[type="password"]')) {
         input.value = %s;
       }
       [...document.querySelectorAll('.edi-dialog-actions button')]

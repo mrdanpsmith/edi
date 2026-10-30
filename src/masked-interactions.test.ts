@@ -5,7 +5,7 @@ import { promptForPassword } from './crypto-dialog'
 
 vi.mock('./crypto-dialog', () => ({
   promptForPassword: vi.fn(),
-  promptForSecretCreate: vi.fn(),
+  promptForEncrypt: vi.fn(),
 }))
 
 const promptMock = vi.mocked(promptForPassword)

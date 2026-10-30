@@ -540,9 +540,9 @@ class MainWindow(QMainWindow):
 
         edit_menu.addSeparator()
 
-        encrypt_block_action = QAction("&Encrypt Block…", self)
-        self._link_command(encrypt_block_action, "encryptBlock")
-        edit_menu.addAction(encrypt_block_action)
+        encrypt_action = QAction("&Encrypt…", self)
+        self._link_command(encrypt_action, "encrypt")
+        edit_menu.addAction(encrypt_action)
 
         edit_menu.addSeparator()
 

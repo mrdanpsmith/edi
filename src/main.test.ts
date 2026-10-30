@@ -905,7 +905,7 @@ describe('tabs', () => {
     expect(state.getState().sessions).toHaveLength(1)
     expect(activeTabTitle()).toBe('Untitled')
     expect(mainState.markdown).toContain('# Edi Guide')
-    expect(mainState.markdown).toContain('## Masked fields')
+    expect(mainState.markdown).toContain('## Encryption')
   })
 })
 
@@ -2412,7 +2412,7 @@ describe('context menu', () => {
       'Select all',
       'Visual',
       'Source',
-      'Encrypt block…',
+      'Encrypt…',
     ])
 
     teardown()
@@ -2428,7 +2428,7 @@ describe('context menu', () => {
     const cell = sheet.querySelector<HTMLElement>('.ss-cell')!
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
-    expect(menuLabels()).toEqual(['Visual', 'Source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Visual', 'Source', 'Encrypt…'])
 
     teardown()
   })
@@ -2449,7 +2449,7 @@ describe('context menu', () => {
 
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }))
     expect(mainState.spreadsheetMenuEntries).toHaveBeenCalledWith(cell)
-    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Visual', 'Source', 'Encrypt block…'])
+    expect(menuLabels()).toEqual(['Cut', 'Copy', 'Visual', 'Source', 'Encrypt…'])
 
     findMenuItem('Cut').click()
     expect(cut).toHaveBeenCalledTimes(1)

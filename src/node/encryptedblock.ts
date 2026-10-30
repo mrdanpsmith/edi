@@ -63,6 +63,41 @@ export function getActiveEncryptedBlockView(): EditorView | null {
   return activeRevealView.value
 }
 
+/** Is `view` the editor of an open reveal — that is, already inside an encrypted block? */
+export function isEncryptedBlockReveal(view: EditorView): boolean {
+  return view.dom.parentElement?.closest('.encrypted-block-reveal') != null
+}
+
+/** Does `from`–`to` of `doc` hold an encrypted block? */
+export function containsEncryptedBlock(doc: ProseNode, from = 0, to = doc.content.size): boolean {
+  let found = false
+  doc.nodesBetween(from, to, (node) => {
+    if (node.type.name === 'encrypted_block') found = true
+    return !found
+  })
+  return found
+}
+
+function countEncryptedBlocks(doc: ProseNode): number {
+  let count = 0
+  doc.descendants((node) => {
+    if (node.type.name === 'encrypted_block') count++
+    return !node.isTextblock
+  })
+  return count
+}
+
+/**
+ * **One level of encryption**, for the editor inside an open reveal: any change that
+ * would add an encrypted block — a paste, a typed fence, a flip out of source — is
+ * refused. Counted rather than forbidden outright, so a document that already nests
+ * (written before this rule) still opens, edits and saves without losing anything.
+ */
+export const noNestedEncryptedBlocksPlugin = new Plugin({
+  filterTransaction: (tr, state) =>
+    !tr.docChanged || countEncryptedBlocks(tr.doc) <= countEncryptedBlocks(state.doc),
+})
+
 /** Forget the reveal editor — focus returned to the document proper. */
 export function clearActiveEncryptedBlockView(): void {
   activeRevealView.value = null
@@ -93,7 +128,7 @@ function primeEncryptedBlockShow(password: string): void {
 /**
  * Open the encrypted block at `pos`, taking `password` for it.
  *
- * **This is what "Encrypt block…" calls to leave a fresh block unlocked, and it is
+ * **This is what "Encrypt…" calls to leave a fresh block unlocked, and it is
  * a function rather than the button press it used to be.** That route primed the
  * password and then found `.encrypted-block-toggle` in the block's DOM and clicked
  * it — which only worked because the node view had rendered that button
@@ -114,9 +149,13 @@ interface EncryptedBlockAttrs {
   content: string
 }
 
+/**
+ * The chip names the block by its label only. The stored `type` is kept for old
+ * files but not shown: a block holds any number of blocks once it is open, so the
+ * type it was made from stops describing it.
+ */
 function encryptedBlockChipText(attrs: EncryptedBlockAttrs): string {
-  const type = attrs.type.replace(/_/g, ' ') || 'block'
-  return `🔒 encrypted · ${type}${attrs.label ? ' · ' + attrs.label : ''}`
+  return `🔒 encrypted${attrs.label ? ' · ' + attrs.label : ''}`
 }
 
 function getAttrs(node: ProseNode): EncryptedBlockAttrs {
@@ -361,6 +400,7 @@ class EncryptedBlockNodeView implements NodeView {
     this.revealInner = createBlockEditor(host, plaintext, {
       resolveImageSrc: imageResolver.value,
       onChange: () => this.schedulePersist(),
+      insideEncryptedBlock: true,
       // This editor is a **rung** of the page's focus path, not a rival of it: the
       // block above is the encrypted block this reveal lives in, and saying so is
       // what stops a sheet opened down here from releasing *its* record — which

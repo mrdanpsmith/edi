@@ -7,6 +7,7 @@ import { insertTable as insertSpreadsheetTable } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
 import { setEncryptedBlockImageResolver } from './node/encryptedblock'
 import { createBlockEditor } from './editor'
+import { encryptSelection } from './encrypt'
 import { NEW_ICON, OPEN_ICON, PRINT_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
 import { applyZoom, clampZoom, DEFAULT_ZOOM, zoomIn, zoomOut } from './zoom'
@@ -461,7 +462,10 @@ export function init(roots: AppRoots): () => void {
     paste: () => void edit.paste(),
     pasteAsMarkdown: () => void edit.pasteAsMarkdown(),
     selectAll: () => edit.selectAll(),
-    encryptBlock: () => void menus.encryptBlockCommand(),
+    encrypt: () => {
+      const view = edit.focusedEditor()
+      if (view) void encryptSelection(view)
+    },
     find: () => openSearch(ctx),
     replace: () => openSearch(ctx, true),
     openRecent: (path) => {

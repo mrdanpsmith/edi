@@ -1865,17 +1865,9 @@ describe('TableNodeView grid', () => {
     const createInputs = createOverlay.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
     createInputs[0]!.value = 'Api'
     createInputs[1]!.value = 'hunter2'
+    createInputs[2]!.value = 'pw3'
+    createInputs[3]!.value = 'pw3'
     ;(createOverlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
-    await vi.waitFor(() => {
-      expect(document.body.querySelector('.edi-dialog-overlay')).toBeTruthy()
-    }, { timeout: 3000 })
-
-    const pwdOverlay = document.body.querySelector('.edi-dialog-overlay') as HTMLElement
-    expect(pwdOverlay).toBeTruthy()
-    const pwdInputs = pwdOverlay.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
-    pwdInputs[0]!.value = 'pw3'
-    pwdInputs[1]!.value = 'pw3'
-    ;(pwdOverlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
     await vi.waitFor(() => {
       expect(docValue(view)).toContain('!masked[')
     }, { timeout: 5000 })

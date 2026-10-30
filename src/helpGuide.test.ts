@@ -11,7 +11,7 @@ describe('buildHelpGuideMarkdown', () => {
       '## Tabs, menus, and shortcuts',
       '## Spreadsheet tables',
       '## Defining your own functions',
-      '## Masked fields',
+      '## Encryption',
       '## Mermaid diagrams',
       '## Runnable code blocks',
       '## Export',
@@ -57,8 +57,9 @@ describe('buildHelpGuideMarkdown', () => {
     expect(guide).toContain('`=TAX(B2)`')
   })
 
-  it('documents masked fields without leaking specifics', () => {
-    expect(guide).toContain('**Insert encrypted field**')
+  it('documents encryption without leaking specifics', () => {
+    expect(guide).toContain('**Encrypt…**')
+    expect(guide).toContain('cannot hold\nanother encrypted block')
     expect(guide).toContain('`!masked[…]{label="…"}`')
     expect(guide).toContain('plaintext never appears in the document source')
   })

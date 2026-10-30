@@ -1,11 +1,5 @@
 import { validateMaskedLabel } from './node/masked'
 
-export interface SecretCreateResult {
-  label: string
-  value: string
-  showValueInitially: boolean
-}
-
 function createDialog(): {
   overlay: HTMLDivElement
   box: HTMLDivElement
@@ -101,6 +95,93 @@ function confirmBlankPassword(): Promise<boolean> {
   })
 }
 
+function labelledInput(box: HTMLElement, text: string, type: 'text' | 'password'): HTMLInputElement {
+  const label = document.createElement('label')
+  label.className = 'edi-dialog-label'
+  label.textContent = text
+  box.append(label)
+  const input = document.createElement('input')
+  input.className = 'edi-dialog-input'
+  input.type = type
+  input.autocomplete = 'off'
+  box.append(input)
+  return input
+}
+
+function dialogActions(box: HTMLElement, okText: string): { cancel: HTMLButtonElement; ok: HTMLButtonElement } {
+  const actions = document.createElement('div')
+  actions.className = 'edi-dialog-actions'
+  const cancel = document.createElement('button')
+  cancel.type = 'button'
+  cancel.className = 'toolbar-btn'
+  cancel.textContent = 'Cancel'
+  const ok = document.createElement('button')
+  ok.type = 'button'
+  ok.className = 'toolbar-btn toolbar-primary'
+  ok.textContent = okText
+  actions.append(cancel, ok)
+  box.append(actions)
+  return { cancel, ok }
+}
+
+/**
+ * The Password / Confirm pair every new password is typed into, and the rule it has
+ * to pass: the two entries match, and a blank one is an explicit choice.
+ *
+ * `read` resolves with the password, or `null` when the dialog has to stay open (it
+ * has already said why and put the caret where the fix goes).
+ */
+function newPasswordFields(box: HTMLElement, error: HTMLDivElement): {
+  first: HTMLInputElement
+  second: HTMLInputElement
+  read: () => Promise<string | null>
+} {
+  const first = labelledInput(box, 'Password', 'password')
+  const second = labelledInput(box, 'Confirm password', 'password')
+  async function read(): Promise<string | null> {
+    if (first.value !== second.value) {
+      error.textContent = 'Passwords do not match'
+      error.hidden = false
+      second.value = ''
+      second.focus()
+      return null
+    }
+    if (first.value === '' && !(await confirmBlankPassword())) {
+      first.focus()
+      return null
+    }
+    return first.value
+  }
+  return { first, second, read }
+}
+
+/**
+ * Wire a dialog's keyboard: Enter moves through `inputs` and submits from the last,
+ * Escape and a backdrop press cancel.
+ */
+function wireDialogKeys(
+  overlay: HTMLElement,
+  inputs: HTMLInputElement[],
+  submit: () => void,
+  cancel: () => void,
+): void {
+  inputs.forEach((input, i) => {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const next = inputs[i + 1]
+        if (next) { next.focus(); next.select() } else submit()
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        cancel()
+      }
+    })
+  })
+  overlay.addEventListener('mousedown', (event) => {
+    if (event.target === overlay) cancel()
+  })
+}
+
 /**
  * Set a brand-new password: the dialog asks twice and only accepts a match. */
 export function promptForNewPassword(
@@ -115,42 +196,10 @@ export function promptForNewPassword(
     title.textContent = opts?.title ?? `Set password for ${context}`
     box.append(title)
 
-    const label1 = document.createElement('label')
-    label1.className = 'edi-dialog-label'
-    label1.textContent = 'Password'
-    box.append(label1)
-    const input1 = document.createElement('input')
-    input1.className = 'edi-dialog-input'
-    input1.type = 'password'
-    input1.autocomplete = 'off'
-    box.append(input1)
-
-    const label2 = document.createElement('label')
-    label2.className = 'edi-dialog-label'
-    label2.textContent = 'Confirm password'
-    box.append(label2)
-    const input2 = document.createElement('input')
-    input2.className = 'edi-dialog-input'
-    input2.type = 'password'
-    input2.autocomplete = 'off'
-    box.append(input2)
-
     const error = errorLine()
+    const password = newPasswordFields(box, error)
     box.append(error)
-
-    const actions = document.createElement('div')
-    actions.className = 'edi-dialog-actions'
-    const cancel = document.createElement('button')
-    cancel.type = 'button'
-    cancel.className = 'toolbar-btn'
-    cancel.textContent = 'Cancel'
-    actions.append(cancel)
-    const ok = document.createElement('button')
-    ok.type = 'button'
-    ok.className = 'toolbar-btn toolbar-primary'
-    ok.textContent = opts?.okText ?? 'Encrypt'
-    actions.append(ok)
-    box.append(actions)
+    const { cancel, ok } = dialogActions(box, opts?.okText ?? 'Encrypt')
 
     function finish(value: string | null): void {
       close()
@@ -158,43 +207,16 @@ export function promptForNewPassword(
     }
 
     function submit(): void {
-      const a = input1.value
-      const b = input2.value
-      if (a !== b) {
-        error.textContent = 'Passwords do not match'
-        error.hidden = false
-        input2.value = ''
-        input2.focus()
-        return
-      }
-      if (a === '') {
-        void confirmBlankPassword().then((allow) => {
-          if (allow) {
-            finish('')
-          } else {
-            input1.focus()
-          }
-        })
-        return
-      }
-      finish(a)
+      void password.read().then((value) => {
+        if (value !== null) finish(value)
+      })
     }
 
     cancel.addEventListener('click', () => finish(null))
     ok.addEventListener('click', submit)
-    input1.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') { event.preventDefault(); input2.focus(); input2.select() }
-      else if (event.key === 'Escape') { event.preventDefault(); finish(null) }
-    })
-    input2.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') { event.preventDefault(); submit() }
-      else if (event.key === 'Escape') { event.preventDefault(); finish(null) }
-    })
-    overlay.addEventListener('mousedown', (event) => {
-      if (event.target === overlay) finish(null)
-    })
+    wireDialogKeys(overlay, [password.first, password.second], submit, () => finish(null))
 
-    input1.focus()
+    password.first.focus()
   })
 }
 
@@ -307,150 +329,88 @@ export function promptForPassword(
   })
 }
 
-/** Prompt for an encrypted block's optional label (asks for the type first for context). */
-export interface EncryptedBlockLabelResult {
+export interface EncryptRequest {
+  /** What is being made: a field takes a value, a block encrypts the selection itself. */
+  kind: 'field' | 'block'
+  /** A field's prefilled value — the selected text it will replace. */
+  initialValue?: string
+}
+
+export interface EncryptResult {
   label: string
-  /** true = render the block locked (blank). default false: unlocked, like a masked inline field. */
+  /** The field's secret; always `''` for a block. */
+  value: string
+  password: string
+  /** Leave the result locked rather than showing what was just encrypted. */
   lockImmediately: boolean
 }
 
-export function promptForEncryptedBlockLabel(blockType: string): Promise<EncryptedBlockLabelResult | null> {
-  return new Promise((resolve) => {
-    const { overlay, box, close } = createDialog()
-    const title = document.createElement('div')
-    title.className = 'edi-dialog-title'
-    title.textContent = `Encrypt ${blockType.replace(/_/g, ' ')}`
-    box.append(title)
-    const labelText = document.createElement('label')
-    labelText.className = 'edi-dialog-label'
-    labelText.textContent = 'Label (optional — shown next to the lock icon)'
-    box.append(labelText)
-    const nameInput = document.createElement('input')
-    nameInput.className = 'edi-dialog-input'
-    nameInput.type = 'text'
-    nameInput.placeholder = 'e.g. API keys table'
-    box.append(nameInput)
-    const blockShowCheck = document.createElement('label')
-    blockShowCheck.className = 'edi-dialog-label'
-    const blockShowBox = document.createElement('input')
-    blockShowBox.type = 'checkbox'
-    blockShowCheck.appendChild(blockShowBox)
-    blockShowCheck.appendChild(document.createTextNode(' Lock immediately'))
-    box.append(blockShowCheck)
-    const actions = document.createElement('div')
-    actions.className = 'edi-dialog-actions'
-    const cancel = document.createElement('button')
-    cancel.type = 'button'
-    cancel.className = 'toolbar-btn'
-    cancel.textContent = 'Cancel'
-    actions.append(cancel)
-    const ok = document.createElement('button')
-    ok.type = 'button'
-    ok.className = 'toolbar-btn toolbar-primary'
-    ok.textContent = 'Encrypt'
-    actions.append(ok)
-    box.append(actions)
-    function finish(value: { label: string; lockImmediately: boolean } | null): void {
-      close()
-      resolve(value)
-    }
-    function submit(): void {
-      finish({ label: nameInput.value.trim(), lockImmediately: blockShowBox.checked })
-    }
-    cancel.addEventListener('click', () => finish(null))
-    ok.addEventListener('click', () => submit())
-    nameInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') { event.preventDefault(); submit() }
-      else if (event.key === 'Escape') { event.preventDefault(); finish(null) }
-    })
-    overlay.addEventListener('mousedown', (event) => {
-      if (event.target === overlay) finish(null)
-    })
-    nameInput.focus()
-  })
-}
-
 /**
- * Prompt for a new masked field's optional label and secret value. Resolves
- * with ``{ label, value }`` (label already sanitized/validated) or ``null`` on
- * cancel.
+ * The one dialog behind **Encrypt…**, for a field and a block alike: an optional
+ * label, the value (a field only), the password asked twice, and Lock immediately.
+ * Resolves with everything the caller needs to encrypt, or `null` on cancel.
+ *
+ * **Lock immediately defaults differ by kind, on purpose:** a field's value is a
+ * secret just typed and is hidden by default; a block is text the reader is about
+ * to keep working on and stays open.
  */
-export function promptForSecretCreate(initialValue = ''): Promise<SecretCreateResult | null> {
+export function promptForEncrypt(request: EncryptRequest): Promise<EncryptResult | null> {
+  const isField = request.kind === 'field'
   return new Promise((resolve) => {
     const { overlay, box, close } = createDialog()
 
     const title = document.createElement('div')
     title.className = 'edi-dialog-title'
-    title.textContent = 'Insert encrypted field'
+    title.textContent = isField ? 'Encrypt field' : 'Encrypt block'
     box.append(title)
 
-    const labelText = document.createElement('label')
-    labelText.className = 'edi-dialog-label'
-    labelText.textContent = 'Label (optional)'
-    box.append(labelText)
+    const nameInput = labelledInput(box, 'Label (optional)', 'text')
+    nameInput.placeholder = isField ? 'e.g. API Key' : 'e.g. Deployment credentials'
 
-    const nameInput = document.createElement('input')
-    nameInput.className = 'edi-dialog-input'
-    nameInput.type = 'text'
-    nameInput.placeholder = 'e.g. API Key'
-    box.append(nameInput)
-
-    const valueText = document.createElement('label')
-    valueText.className = 'edi-dialog-label'
-    valueText.textContent = 'Secret value'
-    box.append(valueText)
-
-    const row = document.createElement('div')
-    row.className = 'edi-dialog-input-row'
-    const valueInput = document.createElement('input')
-    valueInput.className = 'edi-dialog-input'
-    valueInput.type = 'password'
-    valueInput.placeholder = 'value stored encrypted'
-    if (initialValue) valueInput.value = initialValue
-    row.append(valueInput)
-    const toggle = document.createElement('button')
-    toggle.type = 'button'
-    toggle.className = 'toolbar-btn edi-dialog-reveal-toggle'
-    toggle.textContent = 'Show'
-    toggle.addEventListener('mousedown', (e) => e.preventDefault())
-    toggle.addEventListener('click', () => {
-      const showing = valueInput.type === 'text'
-      valueInput.type = showing ? 'password' : 'text'
-      toggle.textContent = showing ? 'Show' : 'Hide'
-      valueInput.focus()
-    })
-    row.append(toggle)
-    box.append(row)
-
-    const showCheck = document.createElement('label')
-    showCheck.className = 'edi-dialog-label'
-    const showBox = document.createElement('input')
-    showBox.type = 'checkbox'
-    showBox.id = 'edi-masked-show-immediately'
-    showBox.checked = true
-    showCheck.appendChild(showBox)
-    showCheck.appendChild(document.createTextNode(' Lock immediately'))
-    box.append(showCheck)
+    let valueInput: HTMLInputElement | null = null
+    if (isField) {
+      const valueText = document.createElement('label')
+      valueText.className = 'edi-dialog-label'
+      valueText.textContent = 'Secret value'
+      box.append(valueText)
+      const row = document.createElement('div')
+      row.className = 'edi-dialog-input-row'
+      const input = document.createElement('input')
+      input.className = 'edi-dialog-input'
+      input.type = 'password'
+      input.autocomplete = 'off'
+      input.placeholder = 'value stored encrypted'
+      input.value = request.initialValue ?? ''
+      row.append(input)
+      const toggle = document.createElement('button')
+      toggle.type = 'button'
+      toggle.className = 'toolbar-btn edi-dialog-reveal-toggle'
+      toggle.textContent = 'Show'
+      toggle.addEventListener('mousedown', (e) => e.preventDefault())
+      toggle.addEventListener('click', () => {
+        const showing = input.type === 'text'
+        input.type = showing ? 'password' : 'text'
+        toggle.textContent = showing ? 'Show' : 'Hide'
+        input.focus()
+      })
+      row.append(toggle)
+      box.append(row)
+      valueInput = input
+    }
 
     const error = errorLine()
+    const password = newPasswordFields(box, error)
+
+    const lockCheck = document.createElement('label')
+    lockCheck.className = 'edi-dialog-label'
+    const lockBox = document.createElement('input')
+    lockBox.type = 'checkbox'
+    lockBox.checked = isField
+    lockCheck.append(lockBox, document.createTextNode(' Lock immediately'))
+    box.append(lockCheck)
+
     box.append(error)
-
-    const actions = document.createElement('div')
-    actions.className = 'edi-dialog-actions'
-
-    const cancel = document.createElement('button')
-    cancel.type = 'button'
-    cancel.className = 'toolbar-btn'
-    cancel.textContent = 'Cancel'
-    actions.append(cancel)
-
-    const ok = document.createElement('button')
-    ok.type = 'button'
-    ok.className = 'toolbar-btn toolbar-primary'
-    ok.textContent = 'Insert'
-    actions.append(ok)
-
-    box.append(actions)
+    const { cancel, ok } = dialogActions(box, 'Encrypt')
 
     function fail(message: string, focus: HTMLInputElement): void {
       error.textContent = message
@@ -458,42 +418,30 @@ export function promptForSecretCreate(initialValue = ''): Promise<SecretCreateRe
       focus.focus()
     }
 
-    function finish(value: SecretCreateResult | null): void {
+    function finish(value: EncryptResult | null): void {
       close()
       resolve(value)
     }
 
-    function submit(): void {
+    let submitting = false
+    async function submit(): Promise<void> {
+      if (submitting) return
       const label = nameInput.value.trim()
-      const value = valueInput.value
-      const problem = validateMaskedLabel(label)
-      if (problem) {
-        fail(problem, nameInput)
-        return
-      }
-      if (!value) {
-        fail('Secret value is required', valueInput)
-        return
-      }
-      finish({ label, value, showValueInitially: !showBox.checked })
+      const problem = isField ? validateMaskedLabel(label) : null
+      if (problem) return fail(problem, nameInput)
+      const value = valueInput?.value ?? ''
+      if (valueInput && !value) return fail('Secret value is required', valueInput)
+      submitting = true
+      const pw = await password.read()
+      submitting = false
+      if (pw === null) return
+      finish({ label, value, password: pw, lockImmediately: lockBox.checked })
     }
 
     cancel.addEventListener('click', () => finish(null))
-    ok.addEventListener('click', submit)
-    for (const inputEl of [nameInput, valueInput]) {
-      inputEl.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault()
-          submit()
-        } else if (event.key === 'Escape') {
-          event.preventDefault()
-          finish(null)
-        }
-      })
-    }
-    overlay.addEventListener('mousedown', (event) => {
-      if (event.target === overlay) finish(null)
-    });
+    ok.addEventListener('click', () => void submit())
+    const inputs = [nameInput, ...(valueInput ? [valueInput] : []), password.first, password.second]
+    wireDialogKeys(overlay, inputs, () => void submit(), () => finish(null))
 
     nameInput.focus()
   })

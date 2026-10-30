@@ -7,8 +7,7 @@ import { getActiveEncryptedBlockView } from './encryptedblock'
 
 vi.mock('../crypto-dialog', () => ({
   promptForPassword: vi.fn(),
-  promptForEncryptedBlockLabel: vi.fn(),
-  promptForSecretCreate: vi.fn(),
+  promptForEncrypt: vi.fn(),
 }))
 vi.mock('../bridge', () => ({
   confirmAction: vi.fn(),
@@ -47,7 +46,7 @@ const interactionButton = (): HTMLButtonElement =>
   document.querySelector<HTMLButtonElement>('.encrypted-block .block-control-interaction')!
 
 describe('encrypted_block', () => {
-  it('shows the block type in the chrome with underscores replaced by spaces', async () => {
+  it('names the block by its label only, not the type it was made from', async () => {
     const editor = await (async () => {
       const envelope = await encryptField('x', password)
       const host = document.createElement('div')
@@ -56,8 +55,7 @@ describe('encrypted_block', () => {
       return createBlockEditor(host, md, {})
     })()
     const chip = document.querySelector('.encrypted-block-label')!
-    expect(chip.textContent).toBe('🔒 encrypted · code block · Keys')
-    expect(chip.textContent).not.toContain('_')
+    expect(chip.textContent).toBe('🔒 encrypted · Keys')
     editor.destroy()
   })
 

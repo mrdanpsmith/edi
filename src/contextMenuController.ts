@@ -16,14 +16,10 @@ import {
 } from './block-modes'
 import { copyText, readText } from './clipboard'
 import type { ContextMenuEntry, ContextMenuItem } from './contextmenu'
-import { encryptFieldVerified } from './crypto'
-import { promptForEncryptedBlockLabel, promptForNewPassword } from './crypto-dialog'
 import { linkRangeAt, type LinkRange } from './editor'
+import { ENCRYPT_LABEL, encryptBlockAt } from './encrypt'
 import { fileName, UNTITLED } from './files'
-import { formulaEnvFor } from './formulaDefs'
-import { serializeBlock } from './markdown'
 import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
-import { unlockEncryptedBlockAt } from './node/encryptedblock'
 import { spreadsheetMenuEntries } from './node/table'
 import { pressTarget } from './press'
 import { getActive } from './state'
@@ -37,7 +33,6 @@ export interface ContextMenuController {
   buildInputMenu(input: HTMLInputElement | HTMLTextAreaElement): ContextMenuEntry[]
   buildDocumentMenu(target?: Element | null): ContextMenuEntry[]
   buildBlockMenuItems(target: Element, event: MouseEvent): ContextMenuEntry[]
-  encryptBlockCommand(): void
 }
 
 /**
@@ -400,7 +395,7 @@ export function createContextMenuController(
       })
     }
     if (node.type.name !== 'encrypted_block') {
-      addItem('Encrypt block…', () => { void encryptBlockAt(view, pos) })
+      addItem(ENCRYPT_LABEL, () => { void encryptBlockAt(view, pos) })
     }
     return entries
   }
@@ -414,43 +409,10 @@ export function createContextMenuController(
     return el instanceof HTMLElement && el !== view.dom ? el : null
   }
 
-  function encryptBlockCommand(): void {
-    const view = ctx.blockEditor?.getView()
-    if (!view) return
-    const selPos = view.state.selection.from
-    let blockPos = -1
-    view.state.doc.forEach((node, offset) => {
-      if (blockPos >= 0) return
-      if (selPos >= offset && selPos <= offset + node.nodeSize) blockPos = offset
-    })
-    if (blockPos < 0) return
-    void encryptBlockAt(view, blockPos)
-  }
-
-  async function encryptBlockAt(view: ProseEditorView, pos: number): Promise<void> {
-    const node = view.state.doc.nodeAt(pos)
-    if (!node) return
-    const labelResult = await promptForEncryptedBlockLabel(node.type.name)
-    if (labelResult === null) return
-    const label = labelResult.label
-    const lockImmediately = labelResult.lockImmediately
-    const password = await promptForNewPassword(label || node.type.name, { okText: 'Encrypt', title: 'Set password' })
-    if (password === null) return
-    const markdown = serializeBlock(node, formulaEnvFor(view.state))
-    const envelope = await encryptFieldVerified(markdown, password)
-    const encrypted = view.state.schema.nodes.encrypted_block.create({ type: node.type.name, label, content: envelope })
-    view.dispatch(view.state.tr.replaceWith(pos, pos + node.nodeSize, encrypted))
-    view.focus()
-    // Unless "Lock immediately" was chosen, freshly encrypted blocks arrive
-    // unlocked (no second lock).
-    if (!lockImmediately) unlockEncryptedBlockAt(view, pos, password)
-  }
-
   return {
     buildContextMenu,
     buildInputMenu,
     buildDocumentMenu,
     buildBlockMenuItems,
-    encryptBlockCommand,
   }
 }

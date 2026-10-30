@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { promptForNewPassword, promptForSecretCreate, promptForEncryptedBlockLabel } from './crypto-dialog'
+import { promptForEncrypt, promptForNewPassword } from './crypto-dialog'
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -37,9 +37,77 @@ describe('promptForNewPassword', () => {
   })
 })
 
-describe('promptForSecretCreate', () => {
+async function openDialog(): Promise<{ overlay: HTMLElement; inputs: HTMLInputElement[] }> {
+  await vi.waitFor(() => {
+    expect(document.querySelector('.edi-dialog-overlay')).toBeTruthy()
+  })
+  const overlay = document.querySelector('.edi-dialog-overlay') as HTMLElement
+  return { overlay, inputs: [...overlay.querySelectorAll<HTMLInputElement>('.edi-dialog-input')] }
+}
+
+describe('promptForEncrypt', () => {
+  it('asks a field for its label, value and password in one dialog, locked by default', async () => {
+    const p = promptForEncrypt({ kind: 'field' })
+    const { overlay, inputs } = await openDialog()
+    expect(overlay.querySelector('.edi-dialog-title')!.textContent).toBe('Encrypt field')
+    expect(inputs).toHaveLength(4)
+    const lock = overlay.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    expect(lock.checked).toBe(true)
+    expect(overlay.textContent).toContain('Lock immediately')
+    inputs[0]!.value = 'API Key'
+    inputs[1]!.value = 'hunter2'
+    inputs[2]!.value = 'pw'
+    inputs[3]!.value = 'pw'
+    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
+    await expect(p).resolves.toEqual({ label: 'API Key', value: 'hunter2', password: 'pw', lockImmediately: true })
+  })
+
+  it('asks a block for its label and password only, open by default', async () => {
+    const p = promptForEncrypt({ kind: 'block' })
+    const { overlay, inputs } = await openDialog()
+    expect(overlay.querySelector('.edi-dialog-title')!.textContent).toBe('Encrypt block')
+    expect(inputs).toHaveLength(3)
+    const lock = overlay.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    expect(lock.checked).toBe(false)
+    inputs[0]!.value = 'Keys'
+    inputs[1]!.value = 'pw'
+    inputs[2]!.value = 'pw'
+    lock.click()
+    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
+    await expect(p).resolves.toEqual({ label: 'Keys', value: '', password: 'pw', lockImmediately: true })
+  })
+
+  it('stays open when a field has no value or the passwords differ', async () => {
+    const p = promptForEncrypt({ kind: 'field' })
+    const { overlay, inputs } = await openDialog()
+    const ok = overlay.querySelector('.toolbar-primary') as HTMLButtonElement
+    const err = overlay.querySelector<HTMLElement>('.edi-dialog-error')!
+    ok.click()
+    await vi.waitFor(() => expect(err.textContent).toContain('required'))
+    inputs[1]!.value = 'v'
+    inputs[2]!.value = 'a'
+    inputs[3]!.value = 'b'
+    ok.click()
+    await vi.waitFor(() => expect(err.textContent).toContain('match'))
+    expect(await Promise.race([p, Promise.resolve('pending')])).toBe('pending')
+  })
+
+  it('moves through the fields on Enter and submits from the last', async () => {
+    const p = promptForEncrypt({ kind: 'block' })
+    const { inputs } = await openDialog()
+    const enter = (el: HTMLInputElement): void => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    }
+    enter(inputs[0]!)
+    expect(document.activeElement).toBe(inputs[1])
+    inputs[1]!.value = 'pw'
+    inputs[2]!.value = 'pw'
+    enter(inputs[2]!)
+    await expect(p).resolves.toMatchObject({ password: 'pw' })
+  })
+
   it('focuses the label field and masks the secret value, even with a prefill', async () => {
-    const p = promptForSecretCreate('prefill')
+    const p = promptForEncrypt({ kind: 'field', initialValue: 'prefill' })
     await vi.waitFor(() => {
       expect(document.querySelector('.edi-dialog-overlay')).toBeTruthy()
     })
@@ -56,62 +124,6 @@ describe('promptForSecretCreate', () => {
     expect(toggle.textContent).toBe('Hide')
     ;(overlay.querySelector('.edi-dialog-actions .toolbar-btn') as HTMLButtonElement).click()
     await expect(p).resolves.toBeNull()
-  })
-
-  it('resolves hidden when Lock immediately is checked (default), unlocked when unchecked', async () => {
-    const p = promptForSecretCreate()
-    await vi.waitFor(() => {
-      expect(document.querySelector('.edi-dialog-overlay')).toBeTruthy()
-    })
-    const overlay = document.querySelector('.edi-dialog-overlay') as HTMLElement
-    const inputs = overlay.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
-    const lock = overlay.querySelector<HTMLInputElement>('#edi-masked-show-immediately')!
-    expect(lock.checked).toBe(true)
-    expect(overlay.textContent).toContain('Lock immediately')
-    inputs[0]!.value = 'API Key'
-    inputs[1]!.value = 'hunter2'
-    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
-    await expect(p).resolves.toEqual({ label: 'API Key', value: 'hunter2', showValueInitially: false })
-
-    const p2 = promptForSecretCreate()
-    await vi.waitFor(() => {
-      expect(document.querySelector('.edi-dialog-overlay')).toBeTruthy()
-    })
-    const overlay2 = document.querySelector('.edi-dialog-overlay') as HTMLElement
-    const inputs2 = overlay2.querySelectorAll<HTMLInputElement>('.edi-dialog-input')
-    const lock2 = overlay2.querySelector<HTMLInputElement>('#edi-masked-show-immediately')!
-    lock2.click()
-    expect(lock2.checked).toBe(false)
-    inputs2[0]!.value = 'Token'
-    inputs2[1]!.value = 'abc'
-    ;(overlay2.querySelector('.toolbar-primary') as HTMLButtonElement).click()
-    await expect(p2).resolves.toEqual({ label: 'Token', value: 'abc', showValueInitially: true })
-  })
-})
-
-describe('promptForEncryptedBlockLabel', () => {
-  it('offers Lock immediately, unchecked by default, and resolves the label', async () => {
-    const p = promptForEncryptedBlockLabel('code_block')
-    await vi.waitFor(() => {
-      expect(document.querySelector('.edi-dialog-overlay')).toBeTruthy()
-    })
-    const overlay = document.querySelector('.edi-dialog-overlay') as HTMLElement
-    const lock = overlay.querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    expect(lock.checked).toBe(false)
-    expect(overlay.textContent).toContain('Lock immediately')
-    const input = overlay.querySelector<HTMLInputElement>('.edi-dialog-input')!
-    input.value = 'API keys table'
-    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
-    await expect(p).resolves.toEqual({ label: 'API keys table', lockImmediately: false })
-
-    const p2 = promptForEncryptedBlockLabel('code_block')
-    await vi.waitFor(() => {
-      expect(document.querySelector('.edi-dialog-overlay')).toBeTruthy()
-    })
-    const overlay2 = document.querySelector('.edi-dialog-overlay') as HTMLElement
-    overlay2.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
-    ;(overlay2.querySelector('.toolbar-primary') as HTMLButtonElement).click()
-    await expect(p2).resolves.toEqual({ label: '', lockImmediately: true })
   })
 })
 

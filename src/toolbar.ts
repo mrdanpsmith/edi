@@ -4,7 +4,7 @@ import { setBlockType, toggleMark, wrapIn } from 'prosemirror-commands'
 import { wrapInList } from 'prosemirror-schema-list'
 import { TextSelection, Plugin } from 'prosemirror-state'
 import { promptForLink } from './urlDialog'
-import { insertMaskedFieldCommand } from './node/masked'
+import { ENCRYPT_LABEL, encryptSelection } from './encrypt'
 import { insertTable } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
 import { getActiveCellHost, type InlineCellHost, type InlineCellKind } from './inline-format'
@@ -513,13 +513,13 @@ export function getFormattingButtons(_ctx: ToolbarContext): ToolbarEntry[] {
     },
     { kind: 'divider' },
     {
-      label: 'Encrypted field', title: 'Insert encrypted field', markup: icon(
+      label: 'Encrypt', title: ENCRYPT_LABEL, markup: icon(
         '<rect x="3.25" y="7" width="9.5" height="6.5" rx="1.2"/>' +
         '<path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7"/>' +
         '<circle cx="8" cy="10.2" r="0.7" fill="currentColor" stroke="none"/>',
       ),
       inline: 'secret',
-      run: (view) => insertMaskedFieldCommand(view),
+      run: (view) => encryptSelection(view),
     },
     {
       kind: 'menu',

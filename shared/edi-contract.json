@@ -4,7 +4,7 @@
     "copyAsMarkdown": true,
     "copyFilePath": true,
     "cut": true,
-    "encryptBlock": true,
+    "encrypt": true,
     "export": true,
     "find": true,
     "formulaReference": true,

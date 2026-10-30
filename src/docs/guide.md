@@ -70,13 +70,23 @@ Call them like any built-in: `=TAX(B2)`. A parameter can be a number, a
 cell, or a range (delivered to `SUM`/`AVERAGE`/… as its values). Names may
 not collide with built-ins, repeat, or form a loop.
 
-## Masked fields
+## Encryption
 
-The toolbar's **Insert encrypted field** stores a value as ciphertext — the
-markdown holds only `!masked[…]{label="…"}`, rendered as a masked pill. Click
-a pill to reveal, copy, or edit it, and the
-plaintext never appears in the document source. Each of those asks for the
-password again — nothing is kept between reveals.
+**Encrypt…** — the toolbar's lock, the Edit menu, or a block's right-click
+menu — encrypts what you have selected:
+
+- **Nothing selected, or text within one line**: an encrypted field, holding
+  the selected text if there is any. The markdown holds only
+  `!masked[…]{label="…"}`, rendered as a masked pill. Click a pill to reveal,
+  copy, or edit it, and the plaintext never appears in the document source.
+  Each asks for the password again — nothing is kept between reveals.
+- **Anything larger**: an encrypted block holding every block the selection
+  touches. Unlock it to read and edit its contents in place; **Normalize**
+  turns it back into ordinary blocks.
+
+One dialog asks for an optional label and the password (and, for a field,
+the value). Encryption is one level deep: an encrypted block cannot hold
+another encrypted block, though it can hold fields.
 
 ## Mermaid diagrams
 

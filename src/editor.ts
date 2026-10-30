@@ -36,6 +36,7 @@ import {
   discardOpenReveals,
   encryptedBlockNodeViewPlugin,
   flushOpenReveals,
+  noNestedEncryptedBlocksPlugin,
 } from './node/encryptedblock'
 import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
@@ -239,6 +240,8 @@ export interface BlockEditorOptions {
    * thing the sheet was opened in.
    */
   focusParent?: () => { view: EditorView; pos: number; type: string } | undefined
+  /** This editor is an open encrypted block's: it refuses to gain encrypted blocks of its own. */
+  insideEncryptedBlock?: boolean
 }
 
 /** One link in the document, as the range of linked text it covers. */
@@ -392,6 +395,8 @@ export function createBlockEditor(
       },
     }),
   ]
+
+  if (options.insideEncryptedBlock) plugins.push(noNestedEncryptedBlocksPlugin)
 
   const createState = (markdown: string): EditorState =>
     EditorState.create({
