@@ -138,6 +138,16 @@ a toggle should charge to get back where it started.
 Only `source_block` has nothing to toggle to. A click naming no block finishes
 whatever is editing. Double click is the browser's again, in every block type.
 
+A block entering source focuses its CodeMirror; a `source_block` never does. It
+is always in source and only comes from parsing (raw HTML, front matter), so
+focusing it would take the caret on every load and redecoration — an HTML
+comment under the title then swallowed `Ctrl+A` and Edit → Select All.
+
+`Ctrl+A` and Edit → Select All are one command (`editSelectAll` in
+`src/editController.ts`; the key is taken in the capture phase in `main.ts`). It
+acts on what has focus: a CodeMirror selects its own text, a live sheet its cells,
+an open encrypted block its reveal, and otherwise the whole document.
+
 ## The cluster is two boxes
 
 A row in the margin has to be *reached* before it can be pressed.

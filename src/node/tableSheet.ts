@@ -583,7 +583,7 @@ export class TableNodeView implements NodeView, InlineCellHost {
     if (text) this.pasteTsv(text)
   }
 
-  private selectAllCells(): void {
+  selectAllCells(): void {
     this.selection.selectAll(this.rows.length, this.rows[0]?.length ?? 0)
     this.renderSelection()
     this.grid?.focus()
@@ -733,12 +733,8 @@ export class TableNodeView implements NodeView, InlineCellHost {
     const mod = event.metaKey || event.ctrlKey
     const key = event.key
 
-    if (mod && key.toLowerCase() === 'a') {
-      event.preventDefault()
-      event.stopPropagation()
-      this.selectAllCells()
-      return
-    }
+    // `Ctrl+A` never arrives: the window takes it first and routes it, like Edit →
+    // Select All, to `selectAllCells` (`editController.ts`).
 
     if (mod && key.toLowerCase() === 'd') {
       event.preventDefault()

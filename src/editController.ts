@@ -1,3 +1,5 @@
+import { selectAll as cmSelectAll } from '@codemirror/commands'
+import { EditorView as CMEditorView } from '@codemirror/view'
 import { selectAll } from 'prosemirror-commands'
 import { redoNoScroll, undoNoScroll } from 'prosemirror-history'
 import type { EditorView as ProseEditorView } from 'prosemirror-view'
@@ -6,6 +8,7 @@ import { hasBridge, invoke } from './bridge'
 import { copyText, readText, writeClipboard } from './clipboard'
 import { selectionMarkdownFor } from './editor'
 import { getActiveEncryptedBlockView } from './node/encryptedblock'
+import { selectAllInSpreadsheet } from './node/table'
 import { insertPastedText, pasteAsMarkdown } from './paste'
 import { snapshotMermaidHtml } from './mermaid-export'
 import { computeSpreadsheet } from './spreadsheet'
@@ -278,13 +281,21 @@ export function createEditController(ctx: AppContext): EditController {
    * the reader had a cell selected in — the two-selections state in reverse.
    */
   function editSelectAll(): void {
+    // The menu and `Ctrl+A` both land here (`registerShortcuts` takes the key before any
+    // widget sees it), so this is the one answer to "select all in what?". A code editor
+    // selects its own text and a live sheet its own cells — never the document around
+    // them, which would put a second selection on screen while the reader works inside one.
+    const active = document.activeElement
+    const cm = active?.closest<HTMLElement>('.cm-editor')
+    const cmView = cm ? CMEditorView.findFromDOM(cm) : null
+    if (cmView) {
+      cmSelectAll(cmView)
+      return
+    }
+    if (selectAllInSpreadsheet(active)) return
+    if (active?.closest('.ss-plain')) return
     const view = focusedEditor(ctx)
     if (!view) return
-    // A grid owns its own selection and has no "select all" of its own, so the document
-    // command is not the reader's while one has the caret. Doing nothing is the only
-    // honest answer: selecting the whole document around a live sheet would put a
-    // second selection on screen while the reader is working inside one.
-    if (document.activeElement?.closest('.spreadsheet, .ss-plain')) return
     const scrollTop = ctx.roots.editorContainer.scrollTop
     view.focus()
     selectAll(view.state, view.dispatch)

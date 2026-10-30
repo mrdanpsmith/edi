@@ -7710,6 +7710,42 @@ def test_select_all_marks_every_selected_object(window):
         f"select-all should paint every cell of every table: {painted}")
 
 
+def test_a_source_block_does_not_take_focus_on_load_so_ctrl_a_selects_the_document(window):
+    """An HTML comment under the title, then `Ctrl+A`: the whole document is selected.
+
+    A `source_block` (raw HTML, front matter) is drawn by the same view as a block the
+    reader has put into source, and that view focused its CodeMirror when it was built —
+    which for a `source_block` is every load. The caret landed in the comment, so
+    `Ctrl+A` went to CodeMirror and selected the comment alone.
+    """
+    doc = "# Title\n\n<!--\n  a note\n-->\n\nFirst paragraph.\n\nSecond paragraph.\n"
+    window._web.page().runJavaScript("window.ediSetContent(%s); true" % json.dumps(doc))
+    _wait(window, "(() => ({ n: document.querySelectorAll("
+                  "'#editor-container .block-source-mode .cm-content').length }))()",
+          lambda d: d.get("n") == 1, timeout=25)
+    _dump(window, "(() => { document.querySelector('#editor-container .ProseMirror').focus();"
+                  " return { focused: true }; })()")
+    # Let the node view's deferred work run before asking where focus is.
+    time.sleep(0.4)
+    _dump(window, """(() => {
+      for (const type of ['keydown', 'keyup']) {
+        document.activeElement.dispatchEvent(new KeyboardEvent(type, {
+          key: 'a', code: 'KeyA', keyCode: 65, which: 65,
+          ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+      }
+      return { sent: true };
+    })()""")
+    state = _wait(
+        window,
+        """(() => ({
+          inComment: !!document.activeElement?.closest('.cm-editor'),
+          text: document.getSelection().toString(),
+        }))()""",
+        lambda d: "Second paragraph." in d.get("text", ""), timeout=10)
+    assert not state["inComment"], state
+    assert "Title" in state["text"], state
+
+
 def test_entering_a_mode_drops_a_document_wide_selection(window):
     """Ctrl+A, *then* Alt+click: the block shows the mode's mark, not selection's.
 
@@ -8154,7 +8190,7 @@ def test_copying_across_a_table_is_unaffected(window):
         f"the table no longer renders as markdown on the way out: {everything[:160]!r}")
 
 
-def test_select_all_in_a_sheet_does_nothing_and_in_a_reveal_it_means_the_reveal(window):
+def test_select_all_in_a_sheet_selects_its_cells_and_in_a_reveal_it_means_the_reveal(window):
     """`Ctrl+A` belongs to the editor the reader is in, and never crosses a live grid.
 
     The residual this closed had two faces. Inside a sheet, `Ctrl+A` used to select **the
@@ -8167,27 +8203,40 @@ def test_select_all_in_a_sheet_does_nothing_and_in_a_reveal_it_means_the_reveal(
     rather than the block the reader was standing in, which is the focus-resolution rule
     the clipboard got in Phase 2 and select-all did not.
 
-    A grid's own selection is a cell selection with no "select all" behind it, so doing
-    nothing is the honest answer there — and it is the half that must not regress,
-    because "route the command to the focused editor" naively resolves to the editor
-    *containing* the grid and would then `focus()` the caret straight out of it.
+    In a grid, select-all means **every cell of that grid** — from the menu exactly as from
+    the key, which used to differ (the key selected the cells, the menu did nothing). The
+    half that must not regress is the caret: "route the command to the focused editor"
+    naively resolves to the editor *containing* the grid and would then `focus()` the
+    caret straight out of it.
     """
     _open_a_working_state(window)
-    _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
-    time.sleep(0.4)
-    sheet = _dump(window, r"""(() => {
+    sheet_probe = r"""(() => {
       const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      const cells = grid ? grid.querySelectorAll('td') : [];
       return {
         stillSheet: !!document.querySelector('#editor-container .spreadsheet'),
         gridFocused: !!grid && document.activeElement === grid,
         marked: document.querySelectorAll('#editor-container .edi-block-selected').length,
+        cells: cells.length,
+        inRange: [...cells].filter((td) => td.classList.contains('ss-range')).length,
       };
-    })()""")
-    assert sheet["stillSheet"], sheet
-    assert sheet["gridFocused"], (
-        f"select-all pulled the caret out of the sheet it was pressed in: {sheet}")
-    assert sheet["marked"] == 0, (
-        f"the document around a live sheet was selected: {sheet}")
+    })()"""
+    for how in ("menu", "key"):
+        _dump(window, "(() => { document.querySelector("
+                      "'#editor-container .spreadsheet .ss-grid').focus(); return { d: 1 }; })()")
+        if how == "menu":
+            _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
+        else:
+            _ctrl_key_on(window, "#editor-container .spreadsheet .ss-grid", "a")
+        time.sleep(0.4)
+        sheet = _dump(window, sheet_probe)
+        assert sheet["stillSheet"], (how, sheet)
+        assert sheet["gridFocused"], (
+            f"{how} select-all pulled the caret out of the sheet it was pressed in: {sheet}")
+        assert sheet["marked"] == 0, (
+            f"{how} select-all selected the document around a live sheet: {sheet}")
+        assert sheet["cells"] > 1 and sheet["inRange"] == sheet["cells"], (
+            f"{how} select-all should select every cell of the sheet: {sheet}")
 
     # Now the same key inside an open block, where it should mean the block.
     _alt_click_a_cell(window, "#editor-container .spreadsheet .ss-grid td")

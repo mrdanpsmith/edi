@@ -101,7 +101,10 @@ class BlockSourceNodeView implements NodeView {
     this.controls = attachBlockControls(node, view, getPos)
     if (this.controls) this.dom.appendChild(this.controls.dom)
 
-    requestAnimationFrame(() => this.cm?.focus())
+    // Focus belongs to a block the reader just put into source. A `source_block` is
+    // always in source and only ever comes from parsing (raw HTML, front matter), so
+    // focusing it would steal the caret on every load — and `Ctrl+A` with it.
+    if (node.type.name !== 'source_block') requestAnimationFrame(() => this.cm?.focus())
   }
 
   private commit(value: string): number | undefined {

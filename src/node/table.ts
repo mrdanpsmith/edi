@@ -66,6 +66,18 @@ export function spreadsheetMenuEntries(target: EventTarget | null): ContextMenuE
 }
 
 /**
+ * Select every cell of the live sheet containing `target`, keeping the grid's focus.
+ * False when `target` is not inside one, so the caller can fall back to the document.
+ */
+export function selectAllInSpreadsheet(target: Element | null): boolean {
+  const block = target?.closest<HTMLElement>('.spreadsheet')
+  const view = block ? spreadsheetViews.get(block) : undefined
+  if (!view) return false
+  view.selectAllCells()
+  return true
+}
+
+/**
  * A table is the one block whose Alt+click toggles its *form* rather than its
  * interaction axis, because a sheet is live whenever it is open and has no
  * state to finish. Registered rather than imported into `block-modes.ts`, which

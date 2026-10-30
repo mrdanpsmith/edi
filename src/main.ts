@@ -253,16 +253,6 @@ function registerShortcuts(
     } else if (key === 'c' && event.shiftKey) {
       event.preventDefault()
       edit.copyAsMarkdown()
-    } else if (key === 'a' && !event.defaultPrevented) {
-      // Focus the editor and select all. When the editor already had focus,
-      // ProseMirror's own Mod-a keymap handles it (and preventDefault), so
-      // this only kicks in when focus is elsewhere (e.g. the toolbar)
-      // where the browser would otherwise select the whole window.
-      if (!(document.activeElement instanceof HTMLInputElement) &&
-          !(document.activeElement instanceof HTMLTextAreaElement)) {
-        event.preventDefault()
-        edit.selectAll()
-      }
     } else if (key === 'f') {
       event.preventDefault()
       openSearch(ctx)
@@ -300,8 +290,25 @@ function registerShortcuts(
       else void edit.paste()
     }
   }
+  // `Ctrl+A` is Edit → Select All, so it is taken in the capture phase, before
+  // ProseMirror, CodeMirror or a sheet grid can bind it to something else: the
+  // key and the menu run the same `edit.selectAll()`. A native text field keeps
+  // the browser's own select-all.
+  const onSelectAllKey = (event: KeyboardEvent): void => {
+    if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return
+    if (event.key.toLowerCase() !== 'a') return
+    const active = document.activeElement
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+    event.preventDefault()
+    event.stopPropagation()
+    edit.selectAll()
+  }
+  window.addEventListener('keydown', onSelectAllKey, true)
   window.addEventListener('keydown', onKeyDown)
-  return () => window.removeEventListener('keydown', onKeyDown)
+  return () => {
+    window.removeEventListener('keydown', onSelectAllKey, true)
+    window.removeEventListener('keydown', onKeyDown)
+  }
 }
 
 /**
