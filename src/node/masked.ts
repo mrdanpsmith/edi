@@ -2,7 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
 import { visit } from 'unist-util-visit'
-import { decryptField, encryptFieldVerified } from '../crypto'
+import { decryptFailureMessage, decryptField, encryptField } from '../crypto'
 import { promptForEncrypt, promptForPassword } from '../crypto-dialog'
 
 export const MASKED_TYPE = 'masked_field'
@@ -325,14 +325,14 @@ export class MaskedFieldInteractions {
     const label = this.backend.label()
     const password = await promptForPassword(label || 'encrypted field', async (pw) => {
       try {
-        const value = await decryptField(content, pw)
+        const value = await decryptField(content, pw, { kind: 'field', label })
         this.plaintext = value
         this.unlockedContent = content
         return true
-      } catch {
+      } catch (error) {
         this.plaintext = null
         this.unlockedContent = ''
-        return 'Incorrect password'
+        return decryptFailureMessage(error)
       }
     })
     if (password === null) {
@@ -374,12 +374,12 @@ export class MaskedFieldInteractions {
     let copied = false
     const password = await promptForPassword(label || 'encrypted field', async (pw) => {
       try {
-        const value = await decryptField(content, pw)
+        const value = await decryptField(content, pw, { kind: 'field', label })
         copied = await copyToClipboard(value)
         return true
-      } catch {
+      } catch (error) {
         copied = false
-        return 'Incorrect password'
+        return decryptFailureMessage(error)
       }
     })
     if (password !== null && copied) this.flashCopied()
@@ -409,7 +409,7 @@ export class MaskedFieldInteractions {
     const label = this.backend.label()
     this.awaitingPassword = true
     try {
-      const envelope = await encryptFieldVerified(value, this.password)
+      const envelope = await encryptField(value, this.password, { kind: 'field', label })
       this.unlockedContent = envelope
       await this.backend.commit(envelope, label)
     } catch {
@@ -765,7 +765,7 @@ export async function promptForNewSecret(initialValue = ''): Promise<NewSecret |
   const created = await promptForEncrypt({ kind: 'field', initialValue })
   if (!created) return null
   try {
-    const envelope = await encryptFieldVerified(created.value, created.password)
+    const envelope = await encryptField(created.value, created.password, { kind: 'field', label: created.label })
     return {
       envelope,
       label: created.label,

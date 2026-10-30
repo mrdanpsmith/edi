@@ -92,6 +92,21 @@ describe('promptForEncrypt', () => {
     expect(await Promise.race([p, Promise.resolve('pending')])).toBe('pending')
   })
 
+  it('hints at the password strength as it is typed, without blocking a weak one', async () => {
+    const p = promptForEncrypt({ kind: 'block' })
+    const { overlay, inputs } = await openDialog()
+    const hint = overlay.querySelector<HTMLElement>('.edi-dialog-strength')!
+    expect(hint.hidden).toBe(true)
+    inputs[1]!.value = 'P@ssw0rd'
+    inputs[1]!.dispatchEvent(new Event('input'))
+    expect(hint.hidden).toBe(false)
+    expect(hint.dataset.score).toBe('0')
+    expect(hint.textContent).toContain('Very weak')
+    inputs[2]!.value = 'P@ssw0rd'
+    ;(overlay.querySelector('.toolbar-primary') as HTMLButtonElement).click()
+    await expect(p).resolves.toMatchObject({ password: 'P@ssw0rd' })
+  })
+
   it('moves through the fields on Enter and submits from the last', async () => {
     const p = promptForEncrypt({ kind: 'block' })
     const { inputs } = await openDialog()

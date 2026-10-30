@@ -7,7 +7,7 @@
 import { Plugin, PluginKey } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import { EditorView, type NodeView } from 'prosemirror-view'
-import { decryptField, encryptFieldVerified } from '../crypto'
+import { decryptFailureMessage, decryptField, openEnvelope, openWithKey, sealWithKey, type SealingKey, type SecretContext } from '../crypto'
 import { promptForPassword } from '../crypto-dialog'
 import { confirmAction } from '../bridge'
 import { markdownToProse } from '../markdown'
@@ -23,7 +23,7 @@ export function setEncryptedBlockImageResolver(fn: ResolveImage | undefined): vo
   imageResolver.value = fn
 }
 
-const pendingUnlockPassword: { value: string | null } = { value: null }
+const pendingUnlockKey: { value: SealingKey | null } = { value: null }
 
 const activeRevealView: { value: EditorView | null } = { value: null }
 
@@ -118,15 +118,15 @@ document.addEventListener('focusin', (event) => {
 })
 
 /**
- * The password the *next* unlock will use without asking, set by
- * {@link unlockEncryptedBlockAt} for a block whose password was just given.
+ * The key the *next* unlock will use without asking, set by
+ * {@link unlockEncryptedBlockAt} for a block that was just sealed with it.
  */
-function primeEncryptedBlockShow(password: string): void {
-  pendingUnlockPassword.value = password
+function primeEncryptedBlockShow(key: SealingKey): void {
+  pendingUnlockKey.value = key
 }
 
 /**
- * Open the encrypted block at `pos`, taking `password` for it.
+ * Open the encrypted block at `pos` with the key it was just sealed with.
  *
  * **This is what "Encrypt…" calls to leave a fresh block unlocked, and it is
  * a function rather than the button press it used to be.** That route primed the
@@ -136,10 +136,10 @@ function primeEncryptedBlockShow(password: string): void {
  * the first. Going through `BLOCK_MODE_HANDLERS` is the same gesture the cluster's
  * `Edit` makes, so a fresh block and a clicked one are the same code path.
  */
-export function unlockEncryptedBlockAt(view: EditorView, pos: number, password: string): void {
+export function unlockEncryptedBlockAt(view: EditorView, pos: number, key: SealingKey): void {
   const node = view.state.doc.nodeAt(pos)
   if (node === null || node.type.name !== 'encrypted_block') return
-  primeEncryptedBlockShow(password)
+  primeEncryptedBlockShow(key)
   BLOCK_MODE_HANDLERS['encrypted_block'].enter?.(view, pos)
 }
 
@@ -158,6 +158,11 @@ function encryptedBlockChipText(attrs: EncryptedBlockAttrs): string {
   return `🔒 encrypted${attrs.label ? ' · ' + attrs.label : ''}`
 }
 
+/** What a block's envelope is bound to: its kind and its label as saved. */
+export function blockContext(label: string): SecretContext {
+  return { kind: 'block', label }
+}
+
 function getAttrs(node: ProseNode): EncryptedBlockAttrs {
   return {
     type: String(node.attrs.type ?? ''),
@@ -174,7 +179,8 @@ class EncryptedBlockNodeView implements NodeView {
   private revealHost: HTMLDivElement | null = null
   private revealEditor: EditorView | null = null
   private revealInner: ReturnType<typeof createBlockEditor> | null = null
-  private revealPassword: string | null = null
+  /** The open reveal's derived key — never the password. */
+  private revealKey: SealingKey | null = null
   private lastRevealedMd: string | null = null
   private persistTimer: ReturnType<typeof setTimeout> | null = null
   /** The cluster's mode buttons, for when the record moves and they have to be told. */
@@ -278,7 +284,7 @@ class EncryptedBlockNodeView implements NodeView {
     this.revealEditor?.destroy()
     this.revealEditor = null
     this.revealInner = null
-    this.revealPassword = null
+    this.revealKey = null
     this.revealHost?.remove()
     this.revealHost = null
     this.modeControls?.refresh()
@@ -355,26 +361,39 @@ class EncryptedBlockNodeView implements NodeView {
       await this.closeReveal()
       return
     }
-    const primed = pendingUnlockPassword.value
-    pendingUnlockPassword.value = null
-    let plaintext: string | null = null
-    const password = primed ?? await promptForPassword(getAttrs(this.node).label || 'encrypted block', async (pw) => {
+    const primed = pendingUnlockKey.value
+    pendingUnlockKey.value = null
+    // The key is derived once, here, and every save while the block is open seals
+    // with it: the password itself is not kept, and a save costs no PBKDF2.
+    let opened: { plaintext: string; key: SealingKey } | null = null
+    const { content, label } = getAttrs(this.node)
+    if (primed) {
       try {
-        plaintext = await decryptField(getAttrs(this.node).content, pw)
-        return true
+        opened = { plaintext: await openWithKey(content, primed, blockContext(label)), key: primed }
       } catch {
-        plaintext = null
-        return 'Incorrect password'
-      }
-    }, { title: 'Show encrypted block' })
-    if (password === null) return
-    if (plaintext === null) {
-      try {
-        plaintext = await decryptField(getAttrs(this.node).content, password)
-      } catch {
-        return
+        opened = null
       }
     }
+    if (opened === null) {
+      const password = await promptForPassword(label || 'encrypted block', async (pw) => {
+        try {
+          opened = await openEnvelope(content, pw, blockContext(label))
+          return true
+        } catch (error) {
+          opened = null
+          return decryptFailureMessage(error)
+        }
+      }, { title: 'Show encrypted block' })
+      if (password === null) return
+      if (opened === null) {
+        try {
+          opened = await openEnvelope(content, password, blockContext(label))
+        } catch {
+          return
+        }
+      }
+    }
+    const { plaintext, key } = opened as { plaintext: string; key: SealingKey }
     // **One at a time, and only now.** Whichever other block is holding the page's
     // focus path is locked *after* this one's password has been accepted, because a
     // wrong password is not a decision to move on: lock first, decrypt second, and a
@@ -395,7 +414,7 @@ class EncryptedBlockNodeView implements NodeView {
     host.className = 'encrypted-block-reveal'
     this.dom.appendChild(host)
     this.revealHost = host
-    this.revealPassword = password
+    this.revealKey = key
     this.lastRevealedMd = plaintext
     this.revealInner = createBlockEditor(host, plaintext, {
       resolveImageSrc: imageResolver.value,
@@ -470,13 +489,13 @@ class EncryptedBlockNodeView implements NodeView {
    * route that exists to get here first.
    */
   private async persist(): Promise<void> {
-    if (this.revealPassword === null || !this.revealInner) return
+    if (this.revealKey === null || !this.revealInner) return
     const markdown = this.revealInner.getMarkdown()
     if (markdown === this.lastRevealedMd) return
     const a = getAttrs(this.node)
     const from = this.node
     try {
-      const envelope = await encryptFieldVerified(markdown, this.revealPassword)
+      const envelope = await sealWithKey(markdown, this.revealKey, blockContext(a.label))
       if (this.view.isDestroyed) return
       const pos = this.getPos()
       if (pos === undefined) return
@@ -507,17 +526,17 @@ class EncryptedBlockNodeView implements NodeView {
     let plaintext: string | null = null
     const password = await promptForPassword(attrs.label || 'encrypted block', async (pw) => {
       try {
-        plaintext = await decryptField(attrs.content, pw)
+        plaintext = await decryptField(attrs.content, pw, blockContext(attrs.label))
         return true
-      } catch {
+      } catch (error) {
         plaintext = null
-        return 'Incorrect password'
+        return decryptFailureMessage(error)
       }
     }, { title: 'Decrypt block' })
     if (password === null) return
     if (plaintext === null) {
       try {
-        plaintext = await decryptField(attrs.content, password)
+        plaintext = await decryptField(attrs.content, password, blockContext(attrs.label))
       } catch {
         return
       }
@@ -576,7 +595,7 @@ class EncryptedBlockNodeView implements NodeView {
    * "pending" means.
    */
   hasPendingCommit(): boolean {
-    if (this.revealPassword === null || !this.revealInner) return false
+    if (this.revealKey === null || !this.revealInner) return false
     return this.revealInner.getMarkdown() !== this.lastRevealedMd
   }
 

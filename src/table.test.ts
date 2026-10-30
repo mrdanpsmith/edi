@@ -1776,7 +1776,7 @@ describe('TableNodeView grid', () => {
   })
 
   it('cell masked pill gets interactive actions', async () => {
-    const envelope = await encryptField('s3cret', 'pw')
+    const envelope = await encryptField('s3cret', 'pw', { kind: 'field', label: 'Key' })
     const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
     const pill = cell(view, 1, 0).querySelector('.masked-field') as HTMLElement
     expect(pill).toBeTruthy()
@@ -1799,7 +1799,7 @@ describe('TableNodeView grid', () => {
   })
 
   it('cell masked pill edits inline like a body masked field', async () => {
-    const envelope = await encryptField('s3cret', 'pw')
+    const envelope = await encryptField('s3cret', 'pw', { kind: 'field', label: 'Key' })
     const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
     const pill = cell(view, 1, 0).querySelector('.masked-field') as HTMLElement
     ;(pill.querySelector('.masked-field-edit-btn') as HTMLButtonElement).click()
@@ -1829,7 +1829,7 @@ describe('TableNodeView grid', () => {
   })
 
   it('cell masked pill edit with a wrong password shows the error and never opens the editor', async () => {
-    const envelope = await encryptField('s3cret', 'pw')
+    const envelope = await encryptField('s3cret', 'pw', { kind: 'field', label: 'Key' })
     const view = createEditor(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
     const pill = cell(view, 1, 0).querySelector('.masked-field') as HTMLElement
     ;(pill.querySelector('.masked-field-edit-btn') as HTMLButtonElement).click()
@@ -1842,7 +1842,7 @@ describe('TableNodeView grid', () => {
       const err = overlay.querySelector('.edi-dialog-error') as HTMLElement
       expect(err.hidden).toBe(false)
     }, { timeout: 15000 })
-    expect(overlay.querySelector('.edi-dialog-error')?.textContent).toBe('Incorrect password')
+    expect(overlay.querySelector('.edi-dialog-error')?.textContent).toBe('Incorrect password, or the label was changed after encrypting')
     expect(pill.querySelector('.masked-field-input')).toBeNull()
 
     const cancel = overlay.querySelector('.edi-dialog-actions .toolbar-btn:not(.toolbar-primary)') as HTMLButtonElement
@@ -1929,7 +1929,7 @@ describe('TableNodeView grid', () => {
   })
 
   it('double-clicking a masked-field pill in a plain table keeps its actions', async () => {
-    const envelope = await encryptField('s3cret', 'pw')
+    const envelope = await encryptField('s3cret', 'pw', { kind: 'field', label: 'Key' })
     const view = createPlainTable(`| A |\n| --- |\n| !masked[${envelope}]{label="Key"} |`)
     const pill = view.dom.querySelector('.masked-field') as HTMLElement
     pill.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
@@ -1947,7 +1947,7 @@ describe('TableNodeView grid', () => {
   })
 
   it('renders computed formulas and masked pills in the plain view', async () => {
-    const envelope = await encryptField('s3cret', 'pw')
+    const envelope = await encryptField('s3cret', 'pw', { kind: 'field', label: 'Key' })
     const view = createPlainTable(
       `| A | B |\n| --- | --- |\n| 5 | =A2*3 |\n| **bold** | !masked[${envelope}]{label="Key"} |`,
     )

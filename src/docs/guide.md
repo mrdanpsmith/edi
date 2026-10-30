@@ -85,8 +85,13 @@ menu — encrypts what you have selected:
   turns it back into ordinary blocks.
 
 One dialog asks for an optional label and the password (and, for a field,
-the value). Encryption is one level deep: an encrypted block cannot hold
-another encrypted block, though it can hold fields.
+the value), with a hint at how guessable the password is. Encryption is one
+level deep: an encrypted block cannot hold another encrypted block, though it
+can hold fields.
+
+A secret is sealed to its label: change a label by hand in the markdown and
+the secret will no longer open, exactly as if the password were wrong. Put
+the label back to open it again.
 
 ## Mermaid diagrams
 

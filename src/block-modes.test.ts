@@ -535,7 +535,7 @@ describe('one cluster per top-level block', () => {
     // Both are now read from `interactionLabels(type)`, so each type says the same
     // two words twice and no type says another's. The tooltip is *built* from the
     // label, which is what makes the agreement structural rather than maintained.
-    const envelope = await encryptField('secret', 'pw')
+    const envelope = await encryptField('secret', 'pw', { kind: 'block', label: 'Secret' })
     const view = createEditor(
       '```mermaid\ngraph TD\n  A[Alpha]\n```\n\n'
       + '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```',

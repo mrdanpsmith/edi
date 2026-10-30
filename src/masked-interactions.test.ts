@@ -10,6 +10,8 @@ vi.mock('./crypto-dialog', () => ({
 
 const promptMock = vi.mocked(promptForPassword)
 
+const FIELD = { kind: 'field', label: 'field' } as const
+
 function fakeBackend(envelope: string) {
   let content = envelope
   return {
@@ -30,7 +32,7 @@ beforeEach(() => {
 
 describe('MaskedFieldInteractions password retention', () => {
   it('copy prompts but leaves nothing cached behind', async () => {
-    const envelope = await encryptField('secret', 'pw')
+    const envelope = await encryptField('secret', 'pw', FIELD)
     const it = new MaskedFieldInteractions(fakeBackend(envelope))
     await it.copy()
     expect(it.plaintextValue).toBeNull()
@@ -39,7 +41,7 @@ describe('MaskedFieldInteractions password retention', () => {
   })
 
   it('reveal then hide forgets the password; next reveal re-prompts', async () => {
-    const envelope = await encryptField('secret', 'pw')
+    const envelope = await encryptField('secret', 'pw', FIELD)
     const it = new MaskedFieldInteractions(fakeBackend(envelope))
     await it.toggle()
     expect(it.isRevealed).toBe(true)
@@ -49,7 +51,7 @@ describe('MaskedFieldInteractions password retention', () => {
   })
 
   it('commit forgets the password used for the edit', async () => {
-    const envelope = await encryptField('secret', 'pw')
+    const envelope = await encryptField('secret', 'pw', FIELD)
     const it = new MaskedFieldInteractions(fakeBackend(envelope))
     await it.startEdit()
     await it.commitEdit('secret2')
@@ -60,7 +62,7 @@ describe('MaskedFieldInteractions password retention', () => {
   })
 
   it('cancel clears the unlocked session', async () => {
-    const envelope = await encryptField('secret', 'pw')
+    const envelope = await encryptField('secret', 'pw', FIELD)
     const it = new MaskedFieldInteractions(fakeBackend(envelope))
     await it.startEdit()
     it.cancelEdit()

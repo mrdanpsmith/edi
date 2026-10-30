@@ -59,7 +59,8 @@ describe('buildHelpGuideMarkdown', () => {
 
   it('documents encryption without leaking specifics', () => {
     expect(guide).toContain('**Encrypt…**')
-    expect(guide).toContain('cannot hold\nanother encrypted block')
+    expect(guide).toContain('cannot hold another encrypted block')
+    expect(guide).toContain('A secret is sealed to its label')
     expect(guide).toContain('`!masked[…]{label="…"}`')
     expect(guide).toContain('plaintext never appears in the document source')
   })

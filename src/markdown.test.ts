@@ -462,7 +462,7 @@ describe('block offsets', () => {
 
 describe('masked field round-trip', () => {
   it('survives a ProseMirror round-trip with a real ciphertext envelope', async () => {
-    const envelope = await encryptField('hunter2-secret', 'a password')
+    const envelope = await encryptField('hunter2-secret', 'a password', { kind: 'field', label: '' })
     const mdTable = `token: !masked[${envelope}]`
     const out = serialize(mdTable)
     expect(out).toContain(envelope)

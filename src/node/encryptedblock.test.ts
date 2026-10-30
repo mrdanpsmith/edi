@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createBlockEditor } from '../editor'
-import { decryptField, encryptField } from '../crypto'
+import { decryptField, encryptField, openEnvelope, openWithKey } from '../crypto'
 import { promptForPassword } from '../crypto-dialog'
 import { confirmAction } from '../bridge'
 import { getActiveEncryptedBlockView } from './encryptedblock'
@@ -14,6 +14,7 @@ vi.mock('../bridge', () => ({
 }))
 
 const password = 'pw'
+const SECRET = { kind: 'block', label: 'Secret' } as const
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -23,7 +24,7 @@ beforeEach(() => {
 })
 
 async function editorWithEncrypted(innerMarkdown: string) {
-  const envelope = await encryptField(innerMarkdown, password)
+  const envelope = await encryptField(innerMarkdown, password, SECRET)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const md = '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```\n\nafter'
@@ -48,7 +49,7 @@ const interactionButton = (): HTMLButtonElement =>
 describe('encrypted_block', () => {
   it('names the block by its label only, not the type it was made from', async () => {
     const editor = await (async () => {
-      const envelope = await encryptField('x', password)
+      const envelope = await encryptField('x', password, { kind: 'block', label: 'Keys' })
       const host = document.createElement('div')
       document.body.appendChild(host)
       const md = '```encrypted type="code_block" label="Keys"\n' + envelope + '\n```'
@@ -146,7 +147,7 @@ describe('encrypted_block', () => {
     await vi.waitFor(async () => {
       const md = editor.getMarkdown()
       const m = md.match(/```encrypted[^\n]*\n([^\n]*)\n```/)
-      expect(await decryptField(m![1]!, password)).toContain('world')
+      expect(await decryptField(m![1]!, password, SECRET)).toContain('world')
     }, { timeout: 10000, interval: 200 })
     reveal.dispatch(reveal.state.tr.insertText(' again'))
     interactionButton().click()
@@ -154,14 +155,37 @@ describe('encrypted_block', () => {
       const inner = await decryptField(
         editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)![1]!,
         password,
+        SECRET,
       )
       expect(inner).toContain('again')
     }, { timeout: 10000, interval: 200 })
     editor.destroy()
   })
 
+  it('saves an open block with the key it unlocked with, deriving nothing per save', async () => {
+    const editor = await editorWithEncrypted('hello')
+    const envelope = editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)![1]!
+    // Saves keep the block's salt, so this key opens every later save.
+    const { key } = await openEnvelope(envelope, password, SECRET)
+    interactionButton().click()
+    await tick()
+    const derive = vi.spyOn(crypto.subtle, 'deriveKey')
+    const reveal = getActiveEncryptedBlockView()!
+    for (const word of [' one', ' two']) {
+      reveal.dispatch(reveal.state.tr.insertText(word))
+      await vi.waitFor(async () => {
+        const m = editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)
+        const opened = await openWithKey(m![1]!, key, SECRET).catch(() => '')
+        expect(opened).toContain(word.trim())
+      }, { timeout: 10000, interval: 200 })
+    }
+    expect(derive).not.toHaveBeenCalled()
+    derive.mockRestore()
+    editor.destroy()
+  })
+
   it('commits edits for blocks with a blank password', async () => {
-    const envelope = await encryptField('hello', '')
+    const envelope = await encryptField('hello', '', SECRET)
     const host = document.createElement('div')
     document.body.appendChild(host)
     const md = '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```\n\nafter'
@@ -176,6 +200,7 @@ describe('encrypted_block', () => {
       const inner = await decryptField(
         (editor.getMarkdown().match(/```encrypted[^\n]*\n([^\n]*)\n```/)!)[1]!,
         '',
+        SECRET,
       )
       expect(inner).toContain('again')
     }, { timeout: 10000, interval: 200 })
@@ -188,7 +213,7 @@ describe('encrypted_block', () => {
     viewBtn.click()
     await tick()
     const validate = vi.mocked(promptForPassword).mock.calls[0]![1]!
-    await expect(validate('wrong-password')).resolves.toBe('Incorrect password')
+    await expect(validate('wrong-password')).resolves.toBe('Incorrect password, or the label was changed after encrypting')
     await expect(validate(password)).resolves.toBe(true)
     editor.destroy()
   })

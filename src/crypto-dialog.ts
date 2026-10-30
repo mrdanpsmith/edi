@@ -1,4 +1,5 @@
 import { validateMaskedLabel } from './node/masked'
+import { passwordStrength } from './passwordStrength'
 
 function createDialog(): {
   overlay: HTMLDivElement
@@ -125,6 +126,34 @@ function dialogActions(box: HTMLElement, okText: string): { cancel: HTMLButtonEl
 }
 
 /**
+ * A meter and one line of advice under `input`, rescored as it is typed. Advice
+ * only — it never blocks the dialog.
+ */
+function addStrengthHint(box: HTMLElement, input: HTMLInputElement): void {
+  const hint = document.createElement('div')
+  hint.className = 'edi-dialog-strength'
+  hint.hidden = true
+  const meter = document.createElement('div')
+  meter.className = 'edi-dialog-strength-meter'
+  const fill = document.createElement('div')
+  fill.className = 'edi-dialog-strength-fill'
+  meter.append(fill)
+  const text = document.createElement('div')
+  text.className = 'edi-dialog-strength-text'
+  text.setAttribute('aria-live', 'polite')
+  hint.append(meter, text)
+  box.append(hint)
+  input.addEventListener('input', () => {
+    const strength = passwordStrength(input.value)
+    hint.hidden = strength === null
+    if (strength === null) return
+    hint.dataset.score = String(strength.score)
+    fill.style.width = `${((strength.score + 1) / 5) * 100}%`
+    text.textContent = strength.warning ? `${strength.label} — ${strength.warning}` : strength.label
+  })
+}
+
+/**
  * The Password / Confirm pair every new password is typed into, and the rule it has
  * to pass: the two entries match, and a blank one is an explicit choice.
  *
@@ -137,6 +166,7 @@ function newPasswordFields(box: HTMLElement, error: HTMLDivElement): {
   read: () => Promise<string | null>
 } {
   const first = labelledInput(box, 'Password', 'password')
+  addStrengthHint(box, first)
   const second = labelledInput(box, 'Confirm password', 'password')
   async function read(): Promise<string | null> {
     if (first.value !== second.value) {

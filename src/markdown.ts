@@ -480,6 +480,15 @@ function indentLines(text: string, indent: string): string {
 }
 
 /** A fenced block: fence, content, fence — with the content indented as well. */
+/**
+ * An encrypted block's label as its fence can carry it: no `"` (it would end the
+ * attribute) and no backtick (a backtick fence's info string may not contain one).
+ * The envelope is bound to this form, so it is applied before encrypting too.
+ */
+export function savedBlockLabel(label: string): string {
+  return label.replace(/["`]/g, '')
+}
+
 function fencedBlock(content: string, info: string, indent: string): string {
   const fence = codeFence(content)
   const lines = [`${fence}${info}`, ...content.split('\n'), fence]
@@ -532,7 +541,8 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
     case 'encrypted_block': {
       const content = node.attrs.content as string
       const typeAttr = node.attrs.type ? ` type="${node.attrs.type as string}"` : ''
-      const labelAttr = node.attrs.label ? ` label="${(node.attrs.label as string).replace(/"/g, '')}"` : ''
+      const label = savedBlockLabel(node.attrs.label as string)
+      const labelAttr = label ? ` label="${label}"` : ''
       return fencedBlock(content, `encrypted${typeAttr}${labelAttr}`, indent)
     }
 

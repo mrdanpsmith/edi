@@ -19,11 +19,11 @@
 import { NodeSelection, type EditorState } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import { showError } from './bridge'
-import { encryptFieldVerified } from './crypto'
+import { deriveSealingKey, sealWithKey } from './crypto'
 import { promptForEncrypt } from './crypto-dialog'
 import { formulaEnvFor } from './formulaDefs'
-import { sliceMarkdown } from './markdown'
-import { containsEncryptedBlock, isEncryptedBlockReveal, unlockEncryptedBlockAt } from './node/encryptedblock'
+import { savedBlockLabel, sliceMarkdown } from './markdown'
+import { blockContext, containsEncryptedBlock, isEncryptedBlockReveal, unlockEncryptedBlockAt } from './node/encryptedblock'
 import { MASKED_TYPE, primeMaskedFieldReveal, promptForNewSecret } from './node/masked'
 
 /** The gesture's one name, wherever it is offered (the Edit menu spells it in `window.py`). */
@@ -140,11 +140,14 @@ async function encryptBlocks(view: EditorView, from: number, to: number): Promis
   if (request === null) return false
   const { state } = view
   const markdown = sliceMarkdown(state.doc.slice(from, to).content, state.schema, formulaEnvFor(state))
-  const envelope = await encryptFieldVerified(markdown, request.password)
-  const encrypted = state.schema.nodes.encrypted_block!.create({ label: request.label, content: envelope })
+  // The envelope is bound to the label as it will be saved.
+  const label = savedBlockLabel(request.label)
+  const key = await deriveSealingKey(request.password)
+  const envelope = await sealWithKey(markdown, key, blockContext(label))
+  const encrypted = state.schema.nodes.encrypted_block!.create({ label, content: envelope })
   view.dispatch(view.state.tr.replaceWith(from, to, encrypted))
   view.focus()
   // A fresh block arrives unlocked unless "Lock immediately" was chosen.
-  if (!request.lockImmediately) unlockEncryptedBlockAt(view, from, request.password)
+  if (!request.lockImmediately) unlockEncryptedBlockAt(view, from, key)
   return true
 }

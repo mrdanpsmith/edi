@@ -24,7 +24,7 @@ async function unlockViaDialog(password: string): Promise<void> {
 
 describe('masked field reveal/copy/hide is not a document change', () => {
   it('revealing and hiding never marks the document dirty', async () => {
-    const envelope = await encryptField('top-s3cret', 'pw')
+    const envelope = await encryptField('top-s3cret', 'pw', { kind: 'field', label: 'Key' })
     const original = `field: !masked[${envelope}]{label="Key"}`
     const onChange = vi.fn()
     const editor = createBlockEditor(document.body, original, { onChange })
@@ -48,7 +48,7 @@ describe('masked field reveal/copy/hide is not a document change', () => {
   })
 
   it('copying a masked field without revealing never marks the document dirty', async () => {
-    const envelope = await encryptField('copy-me', 'pw')
+    const envelope = await encryptField('copy-me', 'pw', { kind: 'field', label: 'Key' })
     const original = `field: !masked[${envelope}]{label="Key"}`
     const onChange = vi.fn()
     const editor = createBlockEditor(document.body, original, { onChange })

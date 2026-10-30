@@ -2245,7 +2245,7 @@ describe('context menu', () => {
     // as well. They now read `interactionLabels(type)`, so the claim is that there is
     // one declaration behind the three, and that is what this reads.
     await boot()
-    const envelope = await encryptField('secret', 'pw')
+    const envelope = await encryptField('secret', 'pw', { kind: 'block', label: 'Secret' })
     const view = await mountDoc(
       '```encrypted type="paragraph" label="Secret"\n' + envelope + '\n```',
     )
