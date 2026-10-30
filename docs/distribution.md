@@ -270,11 +270,12 @@ Windows job calls this same file as its structural gate.
 
 ## macOS build
 
-`scripts/build-macos.sh` is Darwin-only. It builds with the newest Python on
-`PATH` that the PySide6 pin has wheels for (3.10–3.14 for 6.11.x; the bound is
-in the script) rather than whatever `python3` the runner image defaults to,
-and brew-installs Python 3.12 if there is none. Widen that bound when the
-PySide6 pin moves. It mirrors the Linux steps into `dist-app/Edi.app`, ad-hoc code-signs
+`scripts/build-macos.sh` is Darwin-only. It always builds with Python 3.12
+(`BUILD_PYTHON_VERSION`), brew-installing it if needed, never with whatever
+`python3` the runner image defaults to: macos-15's default moved to 3.15,
+which PySide6 6.11.x has no wheels for, and under 3.14 the bundle fails
+`codesign` on `QtWebEngineCore.framework`. Move the version only with a full
+local build, when the PySide6 pin moves. It mirrors the Linux steps into `dist-app/Edi.app`, ad-hoc code-signs
 the bundle (`codesign --force --deep -s -`; arm64 will not launch unsigned),
 asserts the Markdown document type is in the sealed Info.plist, smoke-tests
 a throwaway copy of the bundle (the verdict comes from `EDI_SELFTEST_OUT`; the

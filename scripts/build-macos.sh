@@ -53,25 +53,19 @@ export HOMEBREW_NO_AUTO_UPDATE
 # variants are built once in the frontend job and consumed, so nothing in this
 # script runs npm. Only the Python venv below needs a toolchain check.
 #
-# **An interpreter the PySide6 pin has wheels for, not whatever `python3` is.**
-# The runner image's default moves on its own (macos-15 went to 3.15, which
-# PySide6 6.11.x does not support), and pip then finds no PySide6 at all. The
-# window here is PySide6's `Requires-Python` for the pinned version; widen the
-# upper bound when the pin in requirements.txt moves to a release that allows it.
-supported_python() {
-  "$1" -c 'import sys; exit(0 if (3, 10) <= sys.version_info[:2] < (3, 15) else 1)' 2>/dev/null
-}
-PYTHON=""
-for candidate in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do
-  if command -v "$candidate" >/dev/null 2>&1 && supported_python "$candidate"; then
-    PYTHON="$(command -v "$candidate")"
-    break
-  fi
-done
+# **Python 3.12, exactly — never whatever `python3` is.** The runner image's
+# default moves on its own: macos-15 went to 3.15, which PySide6 6.11.x has no
+# wheels for, so pip found no PySide6 at all. And "any version PySide6 accepts"
+# is not enough either: under 3.14 the bundle fails `codesign` on
+# QtWebEngineCore.framework ("embedded framework contains modified or invalid
+# version"). 3.12 is the version this build is verified with end to end;
+# move it deliberately, with a full build, when the PySide6 pin moves.
+BUILD_PYTHON_VERSION=3.12
+PYTHON="$(command -v "python$BUILD_PYTHON_VERSION" || true)"
 if [ -z "$PYTHON" ]; then
-  echo "Installing python@3.12 via Homebrew..."
-  brew install python@3.12
-  PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
+  echo "Installing python@$BUILD_PYTHON_VERSION via Homebrew..."
+  brew install "python@$BUILD_PYTHON_VERSION"
+  PYTHON="$(brew --prefix "python@$BUILD_PYTHON_VERSION")/bin/python$BUILD_PYTHON_VERSION"
 fi
 echo "using $PYTHON ($("$PYTHON" --version))"
 
