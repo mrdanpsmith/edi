@@ -5,7 +5,8 @@
  * The selection decides what is made, *before* any dialog opens:
  *
  * - **nothing selected, or a range inside one line** → an encrypted field, with the
- *   selected text (if any) offered as its value;
+ *   selected text (if any) offered as its value — unless the range already holds a
+ *   field, which a field's plain-text value cannot carry;
  * - **anything else** → an encrypted block holding every top-level block the
  *   selection touches.
  *
@@ -66,7 +67,15 @@ export function encryptTarget(view: EditorView): EncryptTarget {
   const { state } = view
   const sel = state.selection
   const { $from, $to } = sel
+  // A field's value is plain text, so a range holding a field cannot become one —
+  // `textBetween` would silently drop the inner ciphertext. That range is a block.
+  let holdsField = false
+  state.doc.nodesBetween(sel.from, sel.to, (node) => {
+    if (node.type.name === MASKED_TYPE) holdsField = true
+    return !holdsField
+  })
   const fieldFits = !(sel instanceof NodeSelection)
+    && !holdsField
     && $from.sameParent($to)
     && $from.parent.inlineContent
     && $from.parent.canReplaceWith($from.index(), $to.index(), state.schema.nodes[MASKED_TYPE]!)

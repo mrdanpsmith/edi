@@ -72,6 +72,17 @@ describe('encryptTarget', () => {
     expect(encryptTarget(view)).toMatchObject({ kind: 'field', value: 'pw-secret' })
   })
 
+  it('makes a block, keeping the field, of a one-line range that already holds a field', async () => {
+    const view = open('this is a behavioral test\n\nafter')
+    select(view, 'behavioral', 'behavioral')
+    await encryptSelection(view)
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, view.state.doc.child(0).nodeSize - 1)))
+    expect(encryptTarget(view)).toEqual({ kind: 'block', from: 0, to: view.state.doc.child(0).nodeSize })
+    await encryptSelection(view)
+    const inner = await decryptField(encryptedBlocks(view)[0]!.content, 'pw')
+    expect(inner).toMatch(/^this is a !masked\[[^\]]+\] test$/)
+  })
+
   it('makes a block of every top-level block a multi-block selection touches', () => {
     const view = open('one\n\ntwo two\n\nthree\n\nfour')
     select(view, 'wo two', 'thr')
