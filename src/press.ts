@@ -64,6 +64,7 @@
  * `Shift`/`Ctrl`/`Alt`/`Meta` is a selection being extended or the block-mode toggle.
  */
 import { Plugin, Selection } from 'prosemirror-state'
+import { GapCursor } from 'prosemirror-gapcursor'
 import type { EditorView } from 'prosemirror-view'
 
 
@@ -355,10 +356,15 @@ export function answerPress(view: EditorView, event: MouseEvent, target: PressTa
   const near = Selection.findFrom($at, target.before ? -1 : 1, true) ??
     Selection.findFrom($at, target.before ? 1 : -1, true)
   // **No textblock anywhere in the document** — nothing but tables and code blocks — and then
-  // there is no caret to place. The press does nothing, which is the honest answer, and it is
-  // why a click never creates a block.
-  if (near === null) return false
-  view.dispatch(view.state.tr.setSelection(near))
+  // the caret this document has is a gap cursor on the pressed side of the block. Doing nothing
+  // left whatever block was selected selected, with no press anywhere that could clear it. A
+  // gap cursor creates nothing by itself, which is why a click still never creates a block;
+  // typing at it does.
+  const caret = near ?? (
+    $at.depth === 0 ? new GapCursor($at) : null
+  )
+  if (caret === null) return false
+  view.dispatch(view.state.tr.setSelection(caret))
   // A press this handled focused nothing by itself, and a caret in an unfocused editor is one
   // keystroke away from going nowhere.
   event.preventDefault()

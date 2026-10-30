@@ -78,7 +78,11 @@
   margin-bottom: 0.5em;
 }
 
-.ProseMirror > :first-child {
+.ProseMirror > :first-child,
+/* A gap cursor before the first block is a widget element in front of it, and the
+   block would otherwise lose its first-child margin — and jump — while the caret
+   sits there (`startSelection` puts it there in a document that starts with no text). */
+.ProseMirror > .ProseMirror-gapcursor:first-child + * {
   margin-top: 0;
 }
 

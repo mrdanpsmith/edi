@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { EditorState } from 'prosemirror-state'
+import { EditorState, NodeSelection } from 'prosemirror-state'
+import { GapCursor } from 'prosemirror-gapcursor'
 import { EditorView } from 'prosemirror-view'
 import { schema } from './schema'
 import { markdownToProse } from './markdown'
@@ -110,13 +111,12 @@ function markMargin(view: EditorView, index: number): { margin: HTMLElement; con
 const BLOCKS_DOC = ['> one', '> two', '> three'].join('\n\n')
 
 describe('a press, in a document with nowhere to type', () => {
-  it('does nothing at all — a press never creates a block', () => {
+  it('never creates a block — a press never edits the file', () => {
     // **"Clicking around a document shouldn't create blocks."** This module used to make a
     // paragraph here, marked the file dirty and left one `Ctrl+Z` between a stray click and an
     // undo. The argument for it was that Word and Docs do the same; the argument against it is
     // that here a click *edits the reader's file*, which is not a thing to be told about a
-    // paragraph at a time. So a document of nothing but tables has no place to type, and the
-    // press says so by doing nothing.
+    // paragraph at a time.
     const view = createEditor(TABLE_ONLY)
     const before = view.state.doc.childCount
 
@@ -128,6 +128,21 @@ describe('a press, in a document with nowhere to type', () => {
     // The selection a document of tables can hold at all: a collapsed position between two
     // atoms. What must not happen is a *textblock* appearing, which is the document claim.
     expect(view.state.selection.$from.parent.isTextblock).toBe(false)
+  })
+
+  it('answers a press beside a block with a gap cursor, so a selected table can be let go', () => {
+    // A document of nothing but atoms has no text to put a caret in, and the press used to do
+    // nothing — which left a selected table selected, with no press anywhere that could clear
+    // it. The caret such a document does have is a gap cursor on the side that was pressed.
+    const view = createEditor(TABLE_ONLY)
+    const [, second] = blockOffsets(view)
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, second)))
+    const { margin } = markMargin(view, 1)
+
+    press(margin, -10, 85)
+
+    expect(view.state.selection).toBeInstanceOf(GapCursor)
+    expect(view.state.selection.from).toBe(second)
   })
 
   it('still answers a press in a block\'s margin when there is text to aim at', () => {

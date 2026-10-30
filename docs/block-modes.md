@@ -214,11 +214,43 @@ It reads the outline's **computed** width and offset rather than a number from
 the stylesheet. A diagram in its edit mode is the fixture; whether the dashed
 or solid outline is on screen does not change the answer.
 
-The one place the row sits on the block's edge instead is a revealed encrypted
-block's inner editor. That editor's gutter is `0`, so its strip has no width at
-all, and an 8px gap would put the row where no `:hover` on its block reaches.
-`.encrypted-block-reveal .block-control-pill { left: 0 }` is that exception and
-the whole of it.
+### Blocks inside a revealed encrypted block
+
+A revealed encrypted block's inner editor has a gutter of `0`, but its blocks'
+rows still go in the **page's** gutter, in the same column as every other row.
+`src/styles/encrypted.css` does this in two steps:
+
+- `--edi-reveal-inset` (22px) is the distance from an inner block's edge to the
+  encrypted block's edge: the reveal's padding and border, then the block's. The
+  inner strip is that inset plus the page gutter wide, and the pill stands
+  `inset + 8px` off the inner block. If either padding or border changes, this
+  number changes with it.
+- `.encrypted-block-reveal` is `position: relative; z-index: 4`. The inner editor
+  is its own stacking context, so without this the encrypted block's own strip
+  (`z-index: 3`) was painted over every inner strip in the gutter. The pointer
+  there hovered the outer block rather than the inner one, and an inner row's
+  buttons could not be pressed.
+
+The row used to sit on the inner block's own edge (`left: 0`), inside the
+reveal's frame and half under the outer strip. The gate is
+`tests/window/test_window.py::test_a_revealed_blocks_controls_are_in_the_pages_gutter`.
+
+## The starting caret is never a block selection
+
+`startSelection` in `src/editor.ts` puts a fresh document's caret on its first
+text. A document with no text at all, such as a file of tables or an encrypted
+block holding one table, starts on a gap cursor before its first block.
+ProseMirror's default, `Selection.atStart`, node-selects a leading atom, so such
+a table opened selected.
+
+A press beside a block in a document with no text (`src/press.ts`) answers with
+a gap cursor on the pressed side. That press used to do nothing, which left a
+selected table with no way to deselect it. A gap cursor creates no block; typing
+at it does.
+
+While a gap cursor sits before the first block, its widget is the editor's first
+child, so `editor.css` gives the block after it the first-child zero margin as
+well.
 
 ## The hover band
 

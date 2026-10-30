@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { EditorState } from 'prosemirror-state'
+import { EditorState, TextSelection } from 'prosemirror-state'
+import { GapCursor } from 'prosemirror-gapcursor'
 import { EditorView } from 'prosemirror-view'
 import { createBlockEditor } from './editor'
 import { currentBlockMode, modeFor, toggleSourceMode } from './block-modes'
@@ -63,6 +64,29 @@ describe('editor setMarkdown round-trip', () => {
     expect(result).not.toContain('Welcome')
     expect(result).not.toContain('Hello world')
     view.destroy()
+  })
+})
+
+describe('where a fresh document puts the caret', () => {
+  const TABLE = '| A | B |\n| --- | --- |\n| 1 | 2 |'
+
+  it('on its first text, past a table it starts with — not on the table', () => {
+    // `Selection.atStart` selects a leading atom, so a file opening with a table arrived
+    // with the table selected.
+    const editor = createBlockEditor(document.body, `${TABLE}\n\nAfter the table.`)
+    const { selection } = editor.getView().state
+    expect(selection).toBeInstanceOf(TextSelection)
+    expect(selection.$from.parent.textContent).toBe('After the table.')
+    editor.destroy()
+  })
+
+  it('on a gap cursor when the document has no text at all', () => {
+    // The reveal of an encrypted table is exactly this document, and so is a file of tables.
+    const editor = createBlockEditor(document.body, TABLE)
+    expect(editor.getView().state.selection).toBeInstanceOf(GapCursor)
+    editor.setMarkdown(`${TABLE}\n\n${TABLE}`)
+    expect(editor.getView().state.selection).toBeInstanceOf(GapCursor)
+    editor.destroy()
   })
 })
 

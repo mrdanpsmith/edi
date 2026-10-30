@@ -1,4 +1,4 @@
-import { EditorState, Plugin, PluginKey, TextSelection } from 'prosemirror-state'
+import { EditorState, Plugin, PluginKey, Selection, TextSelection } from 'prosemirror-state'
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
 import { Slice, type Node as ProseNode } from 'prosemirror-model'
 import { history, undo, redo } from 'prosemirror-history'
@@ -6,7 +6,7 @@ import { keymap } from 'prosemirror-keymap'
 import { baseKeymap, toggleMark } from 'prosemirror-commands'
 import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
-import { gapCursor } from 'prosemirror-gapcursor'
+import { GapCursor, gapCursor } from 'prosemirror-gapcursor'
 import { dropCursor } from 'prosemirror-dropcursor'
 import { blockStartKeymap, blockStartRules } from './blockstart'
 import { schema } from './schema'
@@ -279,6 +279,20 @@ const savedPointPlugin = new Plugin<ProseNode>({
   },
 })
 
+/**
+ * **A fresh document's caret is on its first text, never on a block.** ProseMirror's
+ * default, `Selection.atStart`, answers a document that *starts* with an atom with a
+ * `NodeSelection` on it, so a file opening with a table — or an encrypted block whose
+ * whole content is one — arrived with the table selected and painted. In a document of
+ * nothing but atoms there was no press that could undo it either (`press.ts` finds no
+ * text to move to), so the table stayed selected. A gap cursor before the first block is
+ * the caret such a document does have: no block is selected, and typing makes a
+ * paragraph there.
+ */
+function startSelection(doc: ProseNode): Selection {
+  return Selection.findFrom(doc.resolve(0), 1, true) ?? new GapCursor(doc.resolve(0))
+}
+
 export function createBlockEditor(
   parent: HTMLElement,
   initialMarkdown: string,
@@ -398,11 +412,10 @@ export function createBlockEditor(
 
   if (options.insideEncryptedBlock) plugins.push(noNestedEncryptedBlocksPlugin)
 
-  const createState = (markdown: string): EditorState =>
-    EditorState.create({
-      doc: markdownToProse(markdown, schema),
-      plugins: [...plugins, savedPointPlugin],
-    })
+  const createState = (markdown: string): EditorState => {
+    const doc = markdownToProse(markdown, schema)
+    return EditorState.create({ doc, selection: startSelection(doc), plugins: [...plugins, savedPointPlugin] })
+  }
 
   const viewRef: { current: EditorView | null } = { current: null }
   const dispatchTransaction = (transaction: import('prosemirror-state').Transaction) => {

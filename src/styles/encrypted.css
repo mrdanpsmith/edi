@@ -45,6 +45,22 @@
   background: var(--editor-bg);
   font-size: 14px;
   white-space: normal;
+  /* **The inner blocks' strips are painted over the block's own.** The block's
+     strip is `z-index: 3` in the page's gutter, and the reveal's editor is a
+     stacking context of its own (`.ProseMirror` isolates), so every inner strip
+     reaching into that gutter was *underneath* it: the pointer over an inner
+     table's row in the margin was on the encrypted block's strip, the table was
+     not hovered, and its pill went inert under the hand. Lifting the reveal puts
+     its whole stacking context above the block's strip; the block's own strip
+     still answers everywhere no inner row is. */
+  position: relative;
+  z-index: 4;
+  /* **How far an inner block's edge is from the page's gutter**: the reveal's
+     padding and border, then the block's — `10 + 1 + 10 + 1`, restated from the
+     two rules that set them. Captured here, where `--edi-gutter-right` is still the
+     page's, because the editor below redefines it to zero. */
+  --edi-reveal-inset: 22px;
+  --edi-reveal-strip: calc(var(--edi-reveal-inset) + var(--edi-gutter-right, 96px));
 }
 
 /* The reveal editor is a full ProseMirror: strip its outer padding so the
@@ -60,14 +76,20 @@
   font-size: inherit;
 }
 
-/* **A nested editor has no gutter to stand off into.** Its blocks are top-level
-   blocks *of that editor*, so each gets a cluster, but that editor's gutter is 0 —
-   the frame around it is the reveal's own padding — and a strip with no width is
-   no surface at all. A row pushed 8px out into the frame would therefore be
-   unreachable: the pointer crosses the gap over the *frame*, which is not the
-   block, so the reveal is lost and the row goes inert under the hand. It sits on
-   the block's own edge here, which is where the row sat before the standoff
-   existed, and the block itself is the surface that reveals it. */
+/* **An inner block's controls are in the page's gutter, like every other block's.**
+   Its blocks are top-level blocks *of that editor*, so each gets a cluster, but
+   that editor's gutter is 0. A zero-width strip is no surface at all, and the row
+   used to sit on the block's own edge — inside the reveal's frame, 30px left of
+   every other row on the page, half of it under the encrypted block's strip.
+
+   So the strip spans the frames *and* the gutter, and the pill stands its usual
+   8px off the encrypted block's edge: the same column as every other row. The
+   strip is a child of the inner block, so the pointer crossing the frames on its
+   way to the row is still on the block, and the reveal survives the trip. */
+.encrypted-block-reveal .block-controls {
+  width: var(--edi-reveal-strip);
+}
+
 .encrypted-block-reveal .block-control-pill {
-  left: 0;
+  left: calc(var(--edi-reveal-inset) + 8px);
 }

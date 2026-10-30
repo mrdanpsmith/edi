@@ -6675,6 +6675,68 @@ def test_a_sheet_inside_a_reveal_keeps_the_block_open(window):
         f"the block holding the sheet is not where the reader is: {out}")
 
 
+def test_a_revealed_blocks_controls_are_in_the_pages_gutter(window):
+    """An inner block's row is in the same column as every other row, and pressable.
+
+    The reveal's editor has no gutter of its own, so its blocks' strips had no width and
+    the row sat on the inner block's edge — inside the reveal's frame, and half under the
+    encrypted block's own strip, which is painted above the reveal's editor. The second
+    button of an inner table's row was the outer strip, not the button.
+
+    Also asked here, because it is the same reveal: an encrypted table opens **without
+    the table selected**. A document with no text used to start on a `NodeSelection`.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps("Intro.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nThe end.\n"))
+    _wait(window, "(() => ({ p: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("p") is True, timeout=25)
+    _encrypt_block_with(window, "", nth=1)
+    _wait(window, "(() => ({ t: !!document.querySelector('.encrypted-block-reveal .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=10)
+    assert _dump(window, INSTALL_REVEAL).get("rules"), "no reveal rules to install"
+
+    out = _dump(window, r"""(() => {
+      window.ediReveal();
+      for (const el of document.querySelectorAll(
+        '.encrypted-block-reveal .ProseMirror > *, .encrypted-block-reveal .block-controls')) {
+        el.classList.add('edi-reveal');
+      }
+      const box = (el) => el.getBoundingClientRect();
+      const page = document.querySelector('#editor-container > .ProseMirror > :first-child');
+      const inner = document.querySelector('.encrypted-block-reveal .ss-plain');
+      const strip = inner.querySelector(':scope > .block-controls');
+      const pill = strip.querySelector('.block-control-pill');
+      const s = box(strip), b = box(inner);
+      const gutterAt = document.elementFromPoint(s.right - 4, b.top + b.height / 2);
+      const out = {
+        pagePill: box(page.querySelector(':scope > .block-controls > .block-control-pill')).left,
+        pageStrip: box(page.querySelector(':scope > .block-controls')).right,
+        pill: box(pill).left,
+        strip: s.right,
+        gutter: gutterAt === strip || strip.contains(gutterAt),
+        buttons: [...pill.querySelectorAll('button')].map((btn) => {
+          const r = box(btn);
+          const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return at === btn || btn.contains(at);
+        }),
+        selected: inner.classList.contains('ProseMirror-selectednode'),
+      };
+      window.ediUnreveal();
+      return out;
+    })()""")
+
+    assert abs(out["pill"] - out["pagePill"]) <= 1, (
+        f"an inner block's row is not in the column every other row is in: {out}")
+    assert abs(out["strip"] - out["pageStrip"]) <= 1, (
+        f"an inner block's strip does not reach the page's edge: {out}")
+    assert out["gutter"], (
+        f"the gutter beside an inner block is not that block's strip: {out}")
+    assert out["buttons"] and all(out["buttons"]), (
+        f"an inner block's button is not the thing under its own centre: {out}")
+    assert not out["selected"], (
+        f"the encrypted table opened selected: {out}")
+
+
 # A document with one of every kind of draggable block in it, so the gate below can ask
 # each question about the same page: prose text (a word, a whole paragraph, a range across
 # two), and an object the reader picks up whole (a diagram, a table).
@@ -8176,12 +8238,14 @@ def test_a_non_visual_mode_is_a_dashed_outline_whatever_the_mode(window):
 
     accent = _accent_rgb(window)
 
-    # `_render` leaves a `NodeSelection` on the block it inserted, so this diagram
-    # is **selected and being edited at once** — which is the precedence worth
-    # pinning. Selection's solid outline is declared after the mode's dashed one and
-    # deliberately wins: selection is the transient state a next keystroke or Ctrl+X
-    # will act on, where the mode is the standing one. The dashed mark on its own is
-    # checked below, on a block that is only in a mode.
+    # A press on the diagram selects it as a node, so this diagram is **selected and
+    # being edited at once** — which is the precedence worth pinning. Selection's
+    # solid outline is declared after the mode's dashed one and deliberately wins:
+    # selection is the transient state a next keystroke or Ctrl+X will act on, where
+    # the mode is the standing one. The dashed mark on its own is checked below, on a
+    # block that is only in a mode. (A fresh document no longer *starts* with its
+    # leading atom selected — `startSelection` — so the selection is made here.)
+    _dump(window, _CLICK_BLOCK % json.dumps(".mermaid .mermaid-preview"))
     _dump(window, """(() => {
       const el = document.querySelector('.mermaid .mermaid-preview')
         || document.querySelector('.mermaid');
