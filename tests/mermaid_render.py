@@ -10,16 +10,39 @@ import time
 
 import pytest
 
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
+#: How long one idle pass blocks when no event arrives. A page callback wakes the
+#: loop at once, so this bounds only how often ``condition`` is re-read.
+_IDLE_MS = 5
+
+
 def _pump_until(condition, timeout=8.0):
+    """Run the Qt event loop until ``condition()`` holds, or ``timeout`` seconds pass.
+
+    Between checks this *blocks on the event loop* rather than sleeping: a
+    ``time.sleep`` delivers nothing, so every ``runJavaScript`` answer would sit
+    queued for the rest of the nap, and every probe in the suite pays that.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         QApplication.processEvents()
         if condition():
             return True
-        time.sleep(0.02)
+        QTimer.singleShot(_IDLE_MS, lambda: None)
+        QApplication.processEvents(QEventLoop.AllEvents | QEventLoop.WaitForMoreEvents)
     return False
+
+
+def _pump_for(seconds):
+    """Keep the event loop running for ``seconds``: a wait for something that must *not* happen.
+
+    Use it only where there is no condition to wait on, because the claim is that
+    nothing arrives. Never ``time.sleep`` instead: the page's answers would not be
+    delivered during it, so the sleep would not be the wait it looks like.
+    """
+    _pump_until(lambda: False, timeout=seconds)
 
 
 def _dump(win, script):
@@ -173,6 +196,28 @@ def _wait(win, script, predicate, timeout=15):
 
     assert _pump_until(probe, timeout=timeout), f"never satisfied: {seen['v']}"
     return seen["v"]
+
+
+_settle_token = 0
+
+
+def _settle(win, timeout=5):
+    """Wait until the page has run what the last input queued behind it.
+
+    The app defers its follow-up work to the next frames (node views focusing,
+    painters re-reading the selection) and ProseMirror reads a DOM selection on
+    ``selectionchange``, a task of its own. Two frames and then a page timer come
+    after all of that, so waiting for the timer replaces a guessed fixed sleep
+    with the page's own ordering.
+    """
+    global _settle_token
+    _settle_token += 1
+    token = _settle_token
+    _dump(win, "(() => { requestAnimationFrame(() => requestAnimationFrame(() =>"
+               f" setTimeout(() => {{ window.__ediSettled = {token}; }}, 50)));"
+               " return { armed: true }; })()")
+    _wait(win, "(() => ({ s: window.__ediSettled || 0 }))()",
+          lambda d: d.get("s") == token, timeout=timeout)
 
 
 # Unified polling helper (ediWait-style): dumps page state on timeout.

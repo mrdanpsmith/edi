@@ -11,7 +11,6 @@ import pytest
 pytestmark = [pytest.mark.window, pytest.mark.slow]
 
 import sys
-import time
 import base64
 import json
 from pathlib import Path
@@ -89,10 +88,12 @@ from tests.mermaid_render import (  # re-exported: the other test modules import
     _press_enter,
     _press_key,
     _press_source,
+    _pump_for,
     _pump_until,
     _render,
     _set_document,
     _set_scheme,
+    _settle,
     _type,
     _type_and_confirm,
     _wait,
@@ -705,7 +706,7 @@ def test_ctrl_shift_e_reaches_the_page(window):
     window._web.page().runJavaScript(
         "window.ediSetContent('Hello world'); true"
     )
-    time.sleep(0.4)
+    _settle(window)
     entered = _wait(
         window,
         # `Mod` is Cmd on macOS and Ctrl elsewhere, and a press holding both is
@@ -730,7 +731,7 @@ def test_ctrl_shift_e_reaches_the_page(window):
 def test_document_zoom_scales_the_editor_not_the_chrome(visible, qtbot):
     window = visible
     window._web.page().runJavaScript("window.ediSetContent('Hello world'); true")
-    time.sleep(0.4)
+    _settle(window)
 
     # The level is global and persisted, so normalise to 100% first.
     window._menu_command("zoomReset")
@@ -1295,7 +1296,7 @@ def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
         "```"
     )
     js("window.ediSetContent(" + _json.dumps(md) + "); true", None)
-    time.sleep(1.0)
+    _settle(window)
 
     button = {"clicked": False, "click": None}
 
@@ -2906,7 +2907,7 @@ def test_a_double_click_in_a_spreadsheet_cell_stays_a_word_selection(window):
     )
     assert not spot.get("missing"), "no spreadsheet cell to double click in"
 
-    time.sleep(0.3)
+    _settle(window)
     after = _dump(window, "(() => ({ sheet: !!document.querySelector('.spreadsheet'),"
                          " plain: !!document.querySelector('.ss-plain'),"
                          " form: (document.querySelector('.block-control-form') || {}).getAttribute('aria-label') }))()")
@@ -3098,7 +3099,7 @@ def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
     window._web.page().runJavaScript(
         "window.ediSetContent('```python\\nprint(1)\\nprint(2)\\n```'); true"
     )
-    time.sleep(0.5)
+    _settle(window)
 
     installed = _dump(window, INSTALL_REVEAL)
     assert installed["rules"] >= 1, installed
@@ -3122,7 +3123,7 @@ def test_a_code_blocks_copy_lives_in_its_control_cluster(window):
         window._web.page().runJavaScript(
             "window.ediSetContent('```\\n#!/usr/bin/env python3\\nprint(1)\\n```'); true"
         )
-        time.sleep(0.5)
+        _settle(window)
         _dump(window, "(() => window.ediReveal())()")
         runnable = _dump(window, CODE_BLOCK_CONTROLS)
         assert not runnable.get("missing"), runnable
@@ -3505,7 +3506,7 @@ def test_a_blocks_controls_can_be_reached_with_the_pointer(window):
     )
     _wait(window, "(() => ({ m: !!document.querySelector('#editor-container .mermaid svg') }))()",
           lambda d: d.get("m") is True, timeout=25)
-    time.sleep(0.6)
+    _settle(window)
 
     installed = _dump(window, INSTALL_REVEAL)
     assert installed["rules"] >= 1, installed
@@ -4657,12 +4658,8 @@ def test_the_hover_band_is_a_view_option_that_actually_turns_the_band_off(window
         _wait(window, "(() => ({ off: document.documentElement"
                        ".classList.contains('edi-hover-band-off') }))()",
               lambda d: d.get("off") is (not enabled), timeout=10)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if window.preferences()["hoverBand"] is enabled:
-                return
-            QApplication.processEvents()
-            time.sleep(0.02)
+        if _pump_until(lambda: window.preferences()["hoverBand"] is enabled, timeout=10):
+            return
         raise AssertionError(
             "the page asked for hoverBand=%s and the settings store never heard it"
             % enabled
@@ -5172,15 +5169,9 @@ def _band_frame_pixels(window, points):
     first; what is *not* stale is a rule that has been rewritten in the loaded
     sheet, which is what both halves of this comparison turn on.
     """
-    import time
-
     from PySide6.QtGui import QColor
-    from PySide6.QtWidgets import QApplication
 
-    end = time.monotonic() + 0.4
-    while time.monotonic() < end:
-        QApplication.processEvents()
-        time.sleep(0.02)
+    _pump_for(0.4)
     image = window._web.grab().toImage()
     out = {}
     for name, (x, y) in points.items():
@@ -5531,7 +5522,7 @@ def test_the_task_list_button_touches_only_the_block_under_the_caret(window):
       document.querySelector('#editor-container .ProseMirror').focus();
       return { caret: String(sel) };
     })()""")
-    time.sleep(0.4)
+    _settle(window)
     clicked = _dump(window, """(() => {
       const btn = document.querySelector('.toolbar-btn[title="Task list"]');
       if (!btn) return { missing: true };
@@ -5620,7 +5611,7 @@ def test_a_block_marker_typed_in_front_of_a_paragraph_keeps_its_words(window):
           ed.focus();
           return { caret: String(sel) };
         })()""")
-        time.sleep(0.4)
+        _settle(window)
 
     def _type(marker):
         for ch in marker:
@@ -5647,7 +5638,7 @@ def test_a_block_marker_typed_in_front_of_a_paragraph_keeps_its_words(window):
             return kind + ':' + inner.textContent.slice(0, 24);
           }) };
         })()""")
-        time.sleep(0.3)
+        _settle(window)
         return out["blocks"]
 
     # **A heading**, the ordinary case: the words become the heading's words.
@@ -5691,7 +5682,7 @@ def test_a_block_marker_typed_in_front_of_a_paragraph_keeps_its_words(window):
       ed.focus();
       return { caret: String(sel) };
     })()""")
-    time.sleep(0.3)
+    _settle(window)
     alone = _type("```py ")
     assert alone[0].startswith("code:"), (
         f"a fence on a line of its own is still a fence: {alone}")
@@ -6856,10 +6847,7 @@ def _select_text(window, selector, start, end=None, editor=DRAG_EDITOR):
     out = _dump(window, _SELECT_TEXT
                 % (json.dumps(selector), start, stop, json.dumps(editor)))
     assert not out.get("missing") and not out.get("noText"), out
-    end_at = time.monotonic() + 0.5
-    while time.monotonic() < end_at:
-        time.sleep(0.02)
-        _pump_until(lambda: True, timeout=0.05)
+    _settle(window)
     return out
 
 
@@ -6879,10 +6867,7 @@ def _select_across_two_paragraphs(window):
       return { selected: String(sel) };
     })()""")
     assert not out.get("missing"), out
-    end_at = time.monotonic() + 0.5
-    while time.monotonic() < end_at:
-        time.sleep(0.02)
-        _pump_until(lambda: True, timeout=0.05)
+    _settle(window)
     return out
 
 
@@ -7560,7 +7545,7 @@ def test_alt_click_outside_a_working_state_closes_it(window):
     # Give it a beat rather than waiting for a condition it must never reach: the claim
     # is that nothing arrives, and a `_wait` for the sheet closing would pass by timing
     # out rather than by the app doing the right thing.
-    time.sleep(0.5)
+    _pump_for(0.5)
     after = _dump(window, """(() => ({
       plain: !!document.querySelector('#editor-container .ss-plain'),
       sheet: !!document.querySelector('#editor-container .spreadsheet'),
@@ -7726,7 +7711,7 @@ def test_a_source_block_does_not_take_focus_on_load_so_ctrl_a_selects_the_docume
     _dump(window, "(() => { document.querySelector('#editor-container .ProseMirror').focus();"
                   " return { focused: true }; })()")
     # Let the node view's deferred work run before asking where focus is.
-    time.sleep(0.4)
+    _settle(window)
     _dump(window, """(() => {
       for (const type of ['keydown', 'keyup']) {
         document.activeElement.dispatchEvent(new KeyboardEvent(type, {
@@ -8228,7 +8213,7 @@ def test_select_all_in_a_sheet_selects_its_cells_and_in_a_reveal_it_means_the_re
             _dump(window, "(() => { window.ediMenuCommand('selectAll'); return { d: 1 }; })()")
         else:
             _ctrl_key_on(window, "#editor-container .spreadsheet .ss-grid", "a")
-        time.sleep(0.4)
+        _settle(window)
         sheet = _dump(window, sheet_probe)
         assert sheet["stillSheet"], (how, sheet)
         assert sheet["gridFocused"], (
@@ -8258,7 +8243,7 @@ def test_select_all_in_a_sheet_selects_its_cells_and_in_a_reveal_it_means_the_re
 
     before_outer = outer_marks()
     _ctrl_key_on(window, ".encrypted-block-reveal .ProseMirror", "a")
-    time.sleep(0.4)
+    _settle(window)
     reveal = _dump(window, r"""(() => ({
       native: String(getSelection()).slice(0, 120),
       inside: document.activeElement
@@ -8334,41 +8319,6 @@ def test_a_non_visual_mode_is_a_dashed_outline_whatever_the_mode(window):
         f"{source['sourceOwnBorder']}")
 
 
-def test_dbg_shortcut_fires(window, qtbot):
-    """TEMPORARY: does a real key press trigger the QAction, or only clicking it?"""
-    from PySide6.QtCore import Qt
-    fired = []
-    targets = {}
-    for menu in (window._edit_menu,):
-        for item in menu.actions():
-            key = item.text().split("\t")[0]
-            targets[key] = item
-            item.triggered.connect(lambda checked=False, k=key: fired.append(k))
-    print("\n  actions:", {k: (v.shortcut().toString(), v.isEnabled())
-                           for k, v in targets.items()})
-
-    window.raise_()
-    window.activateWindow()
-    _spreadsheets(window)
-
-    qtbot.keyClick(window, Qt.Key_A, Qt.ControlModifier)
-    time.sleep(0.4)
-    print("  after Ctrl+A  -> fired:", fired)
-    qtbot.keyClick(window, Qt.Key_C, Qt.ControlModifier)
-    time.sleep(0.4)
-    print("  after Ctrl+C  -> fired:", fired)
-
-    # And by clicking/triggering the action directly.
-    fired.clear()
-    targets["Cu&t"].trigger() if "Cu&t" in targets else None
-    for k, v in targets.items():
-        if "Copy" in k.replace("&", ""):
-            v.trigger()
-    time.sleep(0.4)
-    print("  after trigger -> fired:", fired)
-    assert True
-
-
 def test_who_owns_each_edit_menu_key(window):
     """The shell's keys are real shortcuts; the document commands are not.
 
@@ -8432,9 +8382,11 @@ def _ctrl_key_on(window, selector, k):
     })()""" % (json.dumps(selector), json.dumps(k), k.upper(), ord(k.upper())))
 
 
-def _clipboard_text():
+def _clipboard_text(timeout=5):
+    """The clipboard once a copy has reached it. Every caller clears it first, so
+    "not empty" is the copy arriving; a copy that never comes reads as ``""``."""
     from PySide6.QtGui import QGuiApplication
-    time.sleep(0.5)
+    _pump_until(lambda: QGuiApplication.clipboard().text() != "", timeout=timeout)
     return QGuiApplication.clipboard().text()
 
 
@@ -8449,12 +8401,8 @@ def _dominant_pixel(window, box, settle=0.4):
     did.
     """
     from PySide6.QtGui import QColor
-    from PySide6.QtWidgets import QApplication
 
-    end = time.monotonic() + settle
-    while time.monotonic() < end:
-        QApplication.processEvents()
-        time.sleep(0.02)
+    _pump_for(settle)
     image = window._web.grab().toImage()
     counts = {}
     for y in range(int(box[1]), int(box[3])):
@@ -8560,10 +8508,7 @@ def _reveal_selection(window, needle):
     })()""", lambda d: d.get("selected") is not None, timeout=10)
     assert not out.get("missing"), out
     assert needle in out["selected"], out
-    end = time.monotonic() + 0.5
-    while time.monotonic() < end:
-        time.sleep(0.02)
-        _pump_until(lambda: True, timeout=0.05)
+    _settle(window)
     focus = _dump(window, """(() => ({
       active: document.activeElement ? String(document.activeElement.className) : null,
       inReveal: !!(document.activeElement && document.activeElement.closest('.encrypted-block-reveal')),
@@ -8812,9 +8757,7 @@ def test_select_all_then_copy_reaches_the_clipboard(window):
           return { sent: true };
         })()""" % (repr(k).replace("'", '"'), k.upper(), ord(k.upper())))
 
-    def clipboard():
-        time.sleep(0.5)
-        return QGuiApplication.clipboard().text()
+    clipboard = _clipboard_text
 
     # 1. The page's own path: select all, then its `copy` handler. The `copy` event
     # is dispatched by hand because Chromium only fires one for a *real* key press,
@@ -8851,38 +8794,6 @@ def test_select_all_then_copy_reaches_the_clipboard(window):
     # The formula block and every table, in order.
     assert text.count("|") > 20, f"the copied text is missing the tables: {text[:80]!r}"
 
-
-def test_dbg_ctrl_c_claim(window):
-    """TEMPORARY: does the page's Ctrl+C handler even see the key?"""
-    from PySide6.QtGui import QGuiApplication
-    _spreadsheets(window)
-    QGuiApplication.clipboard().clear()
-    _ctrl_key(window, "a")
-
-    out = _dump(window, """(() => {
-      const el = document.querySelector('#editor-container .ProseMirror');
-      const seen = [];
-      const spy = (e) => seen.push({ key: e.key, prevented: e.defaultPrevented });
-      window.addEventListener('keydown', spy);
-      const ev = new KeyboardEvent('keydown', Object.assign(
-        { key: 'c', code: 'KeyC', keyCode: 67, bubbles: true, cancelable: true },
-        { ctrlKey: true, metaKey: true }));
-      el.dispatchEvent(ev);
-      window.removeEventListener('keydown', spy);
-      return {
-        prevented: ev.defaultPrevented,
-        seen,
-        active: document.activeElement
-          ? document.activeElement.tagName + '.' + String(document.activeElement.className).slice(0, 24)
-          : null,
-        hasEditor: !!document.querySelector('#editor-container .ProseMirror[contenteditable]'),
-      };
-    })()""")
-    print("\n  prevented:", out["prevented"], " seen:", out["seen"])
-    print("  activeElement:", out["active"], " hasEditable:", out["hasEditor"])
-    time.sleep(0.6)
-    print("  clipboard:", len(QGuiApplication.clipboard().text()), "chars")
-    assert True
 
 def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
     """After `Ctrl+A`, a click that selected nothing drops the paint over every other table.
@@ -8941,7 +8852,7 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
           }
           return { d: 1 };
         })()""")
-        time.sleep(0.35)
+        _settle(window)
 
     def _press(where, index=0, dx=0):
         return _dump(window, """(() => {
@@ -9008,7 +8919,7 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
     assert not page.get("missing"), page
     assert page["at"] == "ss-plain-scroll", (
         f"and further out into the row is the same margin: {page}")
-    time.sleep(0.4)
+    _settle(window)
     picked = _cells()
     assert picked["selectedNodes"] == [], (
         f"and it is not a press on the table, so it selects no block: {picked}")
@@ -9033,7 +8944,7 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
     assert _cells()["cells"] == 27, "select-all again, from a clean slate"
     in_cell = _press('cell', index=1)
     assert not in_cell.get("missing"), in_cell
-    time.sleep(0.4)
+    _settle(window)
     rest = _cells()
     assert rest["cells"] < every["cells"], (
         f"a click that selected nothing drops the document-wide paint: {rest}")
@@ -9045,7 +8956,7 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
     _select_all()
     dragged = _press('cell', index=1, dx=40)
     assert not dragged.get("missing"), dragged
-    time.sleep(0.4)
+    _settle(window)
     untouched = _cells()
     assert untouched["cells"] == 27 and untouched["selectedNodes"] == [], (
         f"a drag is a text selection, not a click to answer: {untouched}")
@@ -9066,7 +8977,7 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
       return { at: String(at.className || at.tagName) };
     })()""")
     assert not modified.get("missing"), modified
-    time.sleep(0.4)
+    _settle(window)
     held = _cells()
     assert held["cells"] == 27, (
         f"Ctrl+click is extending a selection, not dropping one: {held}")
@@ -9148,7 +9059,7 @@ def test_a_press_in_a_document_with_nowhere_to_type_creates_nothing(window):
       }
       return { hit: hit };
     })()""")
-    time.sleep(0.6)
+    _settle(window)
 
     after = _blocks()
     assert after["kinds"] == before_kinds, (
@@ -9310,7 +9221,7 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
     assert hit.get("missing") is not True and hit["at"] == "ss-plain-scroll", (
         f"this press has to land on the block's margin beside the grid to test anything —"
         f" the grid stops at its edge and the block's own row continues: {hit}")
-    time.sleep(0.5)
+    _settle(window)
     beside_out = _read()
     assert beside_out["blockSelected"] is False, (
         f"the space beside a table is not the table: {beside_out}")
@@ -9333,7 +9244,7 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
     # claim here is only that it does not drag the block along with it.
     hit = _click_where(in_grid)
     assert hit.get("missing") is not True, hit
-    time.sleep(0.5)
+    _settle(window)
     cell_out = _read()
     assert cell_out["blockSelected"] is False and cell_out["cellsPainted"] == 0, (
         f"a click in a cell selects no cells and no block: {cell_out}")
@@ -9370,7 +9281,7 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
       block.classList.add('ProseMirror-selectednode');
       return { d: 1 };
     })()""")
-    time.sleep(0.2)
+    _settle(window)
     painted = _read()
     assert painted["blockSelected"] is True, f"the class is on the block: {painted}"
     assert painted["blockPaints"] is False, (
@@ -9391,7 +9302,7 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
                   ".length }))()", lambda d: d.get("t", 0) >= 3, timeout=25)
     hit = _click_where(beside)
     assert hit.get("missing") is not True, hit
-    time.sleep(0.5)
+    _settle(window)
     nowhere = _read()
     assert nowhere["blockSelected"] is False and nowhere["cellsPainted"] == 0, (
         f"nowhere to type, the empty strip is not a request for a selection: {nowhere}")
@@ -9418,7 +9329,7 @@ def test_the_space_beside_a_table_is_white_space_not_part_of_the_table(window):
       }
       return { at: String(at.className || at.id || at.tagName).split(' ')[0] };
     })()""")
-    time.sleep(0.5)
+    _settle(window)
     space = _read()
     assert space["gapCursors"] >= 1, (
         f"the editor's own white space offers the gap cursor — the mark, not the block: {space}")
@@ -9560,7 +9471,7 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
         before = _read()
         hit = _press(where)
         assert not hit.get("missing"), f"nothing to press for a {where}: {hit}"
-        time.sleep(0.4)
+        _settle(window)
         after = _read()
         out.append({"press": where, "hit": hit, "after": after})
         assert after["kinds"] == before["kinds"], (
@@ -9589,7 +9500,7 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
       }
       return { at: String(at.tagName) };
     })()""")
-    time.sleep(0.4)
+    _settle(window)
     in_cell = _read()
     assert cell["at"] == "TD", cell
     assert in_cell["selectedNodes"] == 0 and in_cell["cellsPainted"] == 0, (
@@ -9607,7 +9518,7 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
       return { label: btn.getAttribute('aria-label') };
     })()""")
     assert reopened.get("noButton") is None, f"the fixture can open a sheet: {reopened}"
-    time.sleep(0.8)
+    _pump_until(lambda: "sheet" in _read()["kinds"], timeout=5)
     assert "sheet" in _read()["kinds"], (
         "the sheet is open again, for the control claim")
     control = _dump(window, """(() => {
@@ -9625,7 +9536,7 @@ def test_every_press_in_every_block_classifies_and_the_two_refusals_hold(window)
       btn.click();
       return { label: btn.getAttribute('aria-label'), sheetsBefore: before };
     })()""")
-    time.sleep(0.8)
+    _pump_until(lambda: "sheet" not in _read()["kinds"], timeout=5)
     after_control = _read()
     assert control.get("noButton") is None, f"the cluster has a way out: {control}"
     assert "sheet" not in after_control["kinds"], (

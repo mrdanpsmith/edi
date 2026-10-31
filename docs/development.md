@@ -139,6 +139,30 @@ outgoing document, and its snapshot is discarded when the real page commits.
 A slow first load (a large bundle on a cold QtWebEngine) made the old
 fixed-delay probe flaky.
 
+### Waiting in the real-WebEngine tests
+
+Never `time.sleep` in a WebEngine test. Qt delivers nothing while Python sleeps,
+so a `runJavaScript` answer sits queued, and the renderer (a separate process)
+keeps running on its own clock, so a fixed sleep is not the wait it looks like.
+The helpers in `tests/mermaid_render.py`:
+
+- `_wait` / `_pump_until`: wait for a condition. Use them whenever a condition
+  exists. They block on the Qt event loop, so a page answer ends the wait at once.
+- `_settle(win)`: wait until the page has run what the last input queued behind
+  it (two animation frames, then a 50ms page timer). Use it after a press, a
+  selection change or `ediSetContent`, when the next step is a read.
+- `_pump_for(seconds)`: keep the event loop running for a fixed time. Use it
+  only when the claim is that something must *not* happen, or before a
+  `grab()` screenshot.
+
+The window tests share one window, so page state carries over between tests.
+One leak is handled by an autouse fixture in `tests/window/conftest.py`:
+ProseMirror counts clicks itself, so a mousedown within 500ms and 10px of the
+previous one is a double click and skips `handleClick` (the gap cursor among
+others). The fixture moves the page's `Date.now()` forward a second before
+each test, so the previous test's last press can never become half of a
+double click.
+
 The app boots a home screen (`#app[data-view='home']`) rather than a welcome
 tab. The smoke loads the page with `?selftest=1` (the backend adds the query
 when `EDI_SELFTEST=1`), and `init` in `src/main.ts` opens the Welcome document

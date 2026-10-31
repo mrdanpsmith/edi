@@ -10,7 +10,7 @@ from PySide6.QtCore import QSettings, QSize
 from PySide6.QtWidgets import QApplication
 
 from backend.window import DIST_DIR, MainWindow
-from tests.mermaid_render import _pump_until
+from tests.mermaid_render import _dump, _pump_until
 
 
 @pytest.fixture(scope="session")
@@ -60,6 +60,34 @@ def window(qapp):
 
     yield win
     win.close()
+
+
+#: Moves the page's clock past ProseMirror's double-click window (500ms) and
+#: past its 300ms click guard. Installed once; every call adds another second.
+_FORGET_LAST_CLICK = """(() => {
+  if (window.__ediClockShift === undefined) {
+    const real = Date.now.bind(Date);
+    window.__ediClockShift = 0;
+    Date.now = () => real() + window.__ediClockShift;
+  }
+  window.__ediClockShift += 1000;
+  return { shift: window.__ediClockShift };
+})()"""
+
+
+@pytest.fixture(autouse=True)
+def _forget_the_last_click(request):
+    """Start every window test with ProseMirror's click memory gone stale.
+
+    ProseMirror counts clicks itself: a mousedown within 500ms and 10px of the
+    last one is a ``doubleClick``, which skips the single-click path and so the
+    ``handleClick`` props (the gap cursor among them). The window is shared, so a
+    test pressing where the previous test last pressed would be the second half
+    of a double click it never made. Waiting the 500ms out per test would cost a
+    minute over the suite; moving the page's clock forward costs nothing.
+    """
+    if "window" in request.fixturenames:
+        _dump(request.getfixturevalue("window"), _FORGET_LAST_CLICK)
 
 
 @pytest.fixture
