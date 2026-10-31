@@ -110,6 +110,93 @@ def test_refuses_to_bump_before_changing_files_outside_a_git_work_tree(tmp_path:
     assert _version(path) == old
 
 
+def _commit_something(repo: Path, name: str = "later.txt") -> str:
+    (repo / name).write_text("later\n")
+    _git(repo, "add", name)
+    _git(repo, "commit", "-q", "-m", f"add {name}")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _tagged(repo: Path) -> str:
+    return _git(repo, "rev-parse", f"v{_version(repo)}^{{commit}}")
+
+
+@pytest.fixture
+def remote(repo: Path, tmp_path: Path) -> Path:
+    path = tmp_path / "remote.git"
+    _git(tmp_path, "init", "-q", "--bare", str(path))
+    _git(repo, "remote", "add", "origin", str(path))
+    return path
+
+
+def test_tag_refuses_an_existing_tag_and_points_at_move(repo: Path):
+    assert _run(repo, "tag").returncode == 0
+    first = _tagged(repo)
+    _commit_something(repo)
+
+    result = _run(repo, "tag")
+
+    assert result.returncode != 0
+    assert "already exists" in result.stderr
+    assert "--move" in result.stderr
+    assert _tagged(repo) == first
+
+
+def test_tag_move_moves_a_tag_no_remote_has(repo: Path, remote: Path):
+    assert _run(repo, "tag").returncode == 0
+    head = _commit_something(repo)
+
+    result = _run(repo, "tag", "--move")
+
+    assert result.returncode == 0, result.stderr
+    assert _tagged(repo) == head
+    assert _git(repo, "cat-file", "-t", f"v{_version(repo)}") == "tag", "still annotated"
+    assert "Moved annotated tag" in result.stdout
+
+
+def test_tag_move_refuses_a_pushed_tag(repo: Path, remote: Path):
+    assert _run(repo, "tag").returncode == 0
+    _git(repo, "push", "-q", "origin", f"v{_version(repo)}")
+    first = _tagged(repo)
+    _commit_something(repo)
+
+    result = _run(repo, "tag", "--move")
+
+    assert result.returncode != 0
+    assert "already been pushed to 'origin'" in result.stderr
+    assert _tagged(repo) == first
+
+
+def test_tag_move_refuses_when_a_remote_cannot_be_asked(repo: Path, tmp_path: Path):
+    _git(repo, "remote", "add", "origin", str(tmp_path / "missing.git"))
+    assert _run(repo, "tag").returncode == 0
+    first = _tagged(repo)
+    _commit_something(repo)
+
+    result = _run(repo, "tag", "--move")
+
+    assert result.returncode != 0
+    assert "could not ask remote 'origin'" in result.stderr
+    assert _tagged(repo) == first
+
+
+def test_tag_move_at_head_is_a_no_op(repo: Path, remote: Path):
+    assert _run(repo, "tag").returncode == 0
+
+    result = _run(repo, "tag", "--move")
+
+    assert result.returncode == 0, result.stderr
+    assert "nothing to move" in result.stdout
+
+
+def test_move_is_only_valid_with_tag(repo: Path):
+    result = _run(repo, "bump", "patch", "--move")
+
+    assert result.returncode != 0
+    assert "--move is only valid with tag" in result.stderr
+    assert _git(repo, "log", "-1", "--pretty=%s") == "initial"
+
+
 def test_check_accepts_python_pins_in_the_requirements_files(repo: Path):
     pin = "PySide6==" + "6.11.1"
     (repo / "requirements-build.txt").write_text(pin + "\n")

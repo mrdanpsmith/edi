@@ -14,6 +14,8 @@
 #
 # `set` and `bump` stage the three version files and commit them with a
 # `[skip changelog]` marker. Pass `--no-commit` to leave them uncommitted.
+# `tag --move` re-points an existing tag at HEAD, but only while no remote has
+# it: a pushed tag has started a release, and moving it would rewrite one.
 #
 # Examples:
 #   ./scripts/version.sh current
@@ -22,6 +24,7 @@
 #   ./scripts/version.sh set 1.2.0
 #   ./scripts/version.sh check
 #   ./scripts/version.sh tag
+#   ./scripts/version.sh tag --move
 #
 set -euo pipefail
 
@@ -29,10 +32,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 NO_COMMIT=0
+MOVE=0
 ARGS=()
 for arg in "$@"; do
   case "$arg" in
     --no-commit) NO_COMMIT=1 ;;
+    --move) MOVE=1 ;;
     *) ARGS+=("$arg") ;;
   esac
 done
@@ -53,6 +58,10 @@ Commands:
 Options for set/bump:
   --no-commit        Change the files without staging or committing them
 
+Options for tag:
+  --move             Move an existing v<current-version> tag to HEAD, as long
+                     as no remote has it yet
+
 `set` and `bump` stage the three version files and commit them with a
 `[skip changelog]` marker by default.
 
@@ -63,6 +72,7 @@ Examples:
   ./scripts/version.sh set 1.2.0
   ./scripts/version.sh check
   ./scripts/version.sh tag
+  ./scripts/version.sh tag --move
 EOF
   exit 1
 }
@@ -232,12 +242,40 @@ cmd_tag() {
   fi
   local version
   version="$(get_version)"
-  if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+  if ! git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+    git tag -a "v$version" -m "Edi v$version"
+    echo "Created annotated tag v$version (push it to trigger the release job)"
+    return
+  fi
+  if [ "$MOVE" -eq 0 ]; then
     echo "error: tag v$version already exists" >&2
+    echo "  pass --move to move it to HEAD, if it has not been pushed yet" >&2
     exit 1
   fi
-  git tag -a "v$version" -m "Edi v$version"
-  echo "Created annotated tag v$version (push it to trigger the release job)"
+  refuse_if_pushed "v$version"
+  if [ "$(git rev-parse "v$version^{commit}")" = "$(git rev-parse HEAD)" ]; then
+    echo "Tag v$version already points at HEAD; nothing to move"
+    return
+  fi
+  git tag -f -a "v$version" -m "Edi v$version" >/dev/null
+  echo "Moved annotated tag v$version to HEAD (push it to trigger the release job)"
+}
+
+refuse_if_pushed() {
+  # Every remote is asked, and a remote that cannot be asked counts as having
+  # the tag: "could not check" must never be read as "not pushed".
+  local tag="$1" remote out
+  for remote in $(git remote); do
+    if ! out="$(git ls-remote --tags "$remote" "refs/tags/$tag" 2>/dev/null)"; then
+      echo "error: could not ask remote '$remote' whether it has $tag; refusing to move it" >&2
+      exit 1
+    fi
+    if [ -n "$out" ]; then
+      echo "error: $tag has already been pushed to '$remote'; refusing to move it" >&2
+      echo "  a pushed tag has started a release: bump the version instead" >&2
+      exit 1
+    fi
+  done
 }
 
 if [ $# -eq 0 ]; then
@@ -251,6 +289,11 @@ if [ "$NO_COMMIT" -eq 1 ] &&
   [ "$cmd" != set ] && [ "$cmd" != bump ] &&
   [ "$cmd" != "-h" ] && [ "$cmd" != "--help" ]; then
   echo "error: --no-commit is only valid with set and bump" >&2
+  exit 1
+fi
+
+if [ "$MOVE" -eq 1 ] && [ "$cmd" != tag ]; then
+  echo "error: --move is only valid with tag" >&2
   exit 1
 fi
 

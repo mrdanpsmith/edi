@@ -16,7 +16,13 @@ The version is tracked in three places:
 ./scripts/version.sh bump patch   # or minor / major
 ./scripts/version.sh check        # verify all declarations agree
 ./scripts/version.sh tag          # create annotated tag v<current-version>
+./scripts/version.sh tag --move   # move that tag to HEAD, if not pushed yet
 ```
+
+`tag --move` is for a fix that lands after tagging but before the tag is
+pushed. It asks every configured remote first, and refuses if any of them has
+the tag or cannot be reached: a pushed tag has started a release, so the fix
+needs a new version instead.
 
 `set` and `bump` update all three files, stage them and commit with:
 
