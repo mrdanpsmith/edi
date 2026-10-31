@@ -1083,6 +1083,18 @@ def _composer_js(anchor, expression=False):
     )
 
 
+def _wait_field(win, script, predicate=lambda d: d["v"] is not None):
+    """Wait for the inline field to open, then read its box once it is final.
+
+    A field is fitted to what it stands in on the frame *after* it opens
+    (`DiagramSession`'s ``settle``), so the first snapshot in which it exists can
+    still be the unfitted one: read on that, the box is not the field's.
+    """
+    _wait(win, script, predicate, timeout=10)
+    _settle(win)
+    return _wait(win, script, predicate, timeout=10)
+
+
 def _composer(win, anchor=None, expression=False):
     """Wait for the inline field to open, and read it with its anchor.
 
@@ -1090,9 +1102,7 @@ def _composer(win, anchor=None, expression=False):
     as a selector, which is how a slot that shares one selector with every other
     slot is told apart by its order on the board.
     """
-    return _wait(
-        win, _composer_js(anchor, expression), lambda d: d["v"] is not None, timeout=10
-    )
+    return _wait_field(win, _composer_js(anchor, expression))
 
 
 # The open field and the block it is in, which is what "the editor is tall enough
@@ -1340,11 +1350,10 @@ def _click_kanban_slot(win, index):
         "document.querySelectorAll("
         f"'.mermaid .items > g.node.mermaid-kanban-slot')[{index}]"
     )
-    return _wait(
+    return _wait_field(
         win,
         _composer_js(anchor, expression=True),
         lambda d: d["v"] is not None and d["anchor"] is not None,
-        timeout=10,
     )
 
 
@@ -1369,7 +1378,7 @@ def _click_kanban_column_slot(win):
     )
     assert not out.get("missing"), "the board had no column slot"
     assert out.get("reached"), f"the click inside the column slot reached {out}"
-    return _wait(win, _composer_js(None), lambda d: d["v"] is not None, timeout=10)
+    return _wait_field(win, _composer_js(None))
 
 
 def _altclick_below_document(win):
