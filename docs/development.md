@@ -31,7 +31,7 @@ it is not the app.
 | `npm run build` | Node version check, `tsc --noEmit`, Vite build into `dist/`. |
 | `npm run coverage` | Frontend tests with the Cobertura and HTML coverage reports. |
 | `npm run dupcheck` | `jscpd .` at the 5% threshold in `.jscpd.json`. It scans Python and scripts too, not just `src/`. |
-| `npm run audit` | `npm audit --audit-level=high` (needs network). Clean; the Vitest toolchain is pinned to patched 4.1.11, so do not drift below it. |
+| `npm run audit` | `npm audit --audit-level=high` (needs network). Clean; the Vitest toolchain is pinned to patched 4.1.11, so do not drift below it. `package.json` `overrides` forces `minimatch ^11.0.3` (GHSA-g3hv-75wg-m249) under ESLint, whose releases still ask for `^10`; drop it once they don't. |
 | `.venv/bin/pytest tests/` | Python tests (needs `dist/`; see below). |
 | `./scripts/version.sh check` | Version agreement plus the Python-pin guard (pins only in `requirements*.txt`). |
 
