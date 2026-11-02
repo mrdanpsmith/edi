@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { Plugin } from 'prosemirror-state'
-import { AllSelection, NodeSelection } from 'prosemirror-state'
+import { AllSelection, NodeSelection, TextSelection } from 'prosemirror-state'
 import { history } from 'prosemirror-history'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
@@ -1117,13 +1117,14 @@ describe('TableNodeView grid', () => {
       td.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, ...init }))
     }
 
-    // **A click**: the document-wide selection is gone. What is left is the table selected as
-    // an object — a `table` is an atom with no content, and this document has no textblock at
-    // all, so a caret beside it is not a position that exists (§3.1's wall, from the other
-    // side). Either answer is "the document is no longer selected".
+    // **A click**: the document-wide selection is gone, and the table is not left selected as
+    // an object either — that took a second click to clear. This document has no textblock at
+    // all, so what it gets is a gap cursor beside the table.
     select_all()
     press({ clientX: 10, clientY: 10 })
     expect(view.state.selection).not.toBeInstanceOf(AllSelection)
+    expect(view.state.selection).not.toBeInstanceOf(NodeSelection)
+    expect(view.state.selection.empty).toBe(true)
 
     // **A drag** is not answered: the press at one point, the release 40px away, which is
     // the browser making a text selection rather than a click wanting something done.
@@ -1147,6 +1148,21 @@ describe('TableNodeView grid', () => {
     const before = view.state.selection.from
     press({ clientX: 10, clientY: 10 })
     expect(view.state.selection.from).toBe(before)
+    view.destroy()
+  })
+
+  it('drops its cell paint as soon as the model selection leaves it', () => {
+    // **A press in prose after a drag across prose and table.** The browser's `selectionchange`
+    // fires before ProseMirror commits the caret, so a repaint driven only by that event read the
+    // old range and left the cells lit until a second click. The model's own selection change
+    // has to repaint.
+    const view = createPlainTable('Above.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nBelow.')
+    const lit = (): number => view.dom.querySelectorAll('.ss-cell-in-selection').length
+    view.dispatch(view.state.tr.setSelection(
+      TextSelection.create(view.state.doc, 2, view.state.doc.content.size - 2)))
+    expect(lit()).toBe(4)
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2)))
+    expect(lit()).toBe(0)
     view.destroy()
   })
 

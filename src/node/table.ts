@@ -8,7 +8,7 @@ import {
   setBlockForm,
   setBlockModeAt,
 } from '../block-modes'
-import { TABLE_TYPE, tableFormOf } from './tableShared'
+import { TABLE_TYPE, plainTableViews, tableFormOf } from './tableShared'
 export { tableFormOf, TABLE_TYPE } from './tableShared'
 import { TablePlainView } from './tablePlain'
 import { ContextMenuEntry } from '../contextmenu'
@@ -105,6 +105,16 @@ BLOCK_MODE_HANDLERS[TABLE_TYPE] = {
 }
 
 export const tableNodeViewPlugin = new Plugin({
+  // **Repaint the Visual tables when ProseMirror's selection moves**, not only on the browser's
+  // `selectionchange`. A press in prose fires `selectionchange` *before* ProseMirror commits the
+  // new caret, so each table read the old range from the model and stayed lit; the selection-only
+  // transaction that followed redraws no node view, so nothing repainted until the next click.
+  view: () => ({
+    update(view, prevState) {
+      if (view.state.selection.eq(prevState.selection)) return
+      for (const repaint of [...plainTableViews]) repaint()
+    },
+  }),
   props: {
     nodeViews: {
       [TABLE_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {

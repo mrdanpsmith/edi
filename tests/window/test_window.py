@@ -8835,12 +8835,6 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
             .map((el) => String(el.className).split(' ')[0]),
         }))()""")
 
-    def _cells_in_the_selected_block():
-        return _dump(window, """(() => {
-          const sel = document.querySelector('.ProseMirror-selectednode');
-          return { n: sel ? sel.querySelectorAll('th, td').length : 0 };
-        })()""")["n"]
-
     def _select_all():
         _dump(window, "(() => { document.querySelector('#editor-container .ProseMirror').focus();"
                       " return { d: 1 }; })()")
@@ -8937,19 +8931,18 @@ def test_a_click_with_nothing_to_select_drops_a_visual_tables_fill(window):
     assert every["cells"] == 27, f"three tables, every cell painted: {every}"
     assert every["selectedNodes"] == [], f"and no block is an object yet: {every}"
 
-    # **Half two: a click in a cell drops the paint over every *other* table.** It leaves the
-    # table the click landed on painted, because a selection covering a whole block is what a
-    # selected block looks like (§7.2).
+    # **Half two: one click in a cell drops the paint everywhere, the clicked table included.**
+    # It used to leave the clicked table selected (`Selection.near` answered a press in the
+    # table's upper half with a `NodeSelection` on the table itself), so deselecting took two
+    # clicks. The click now puts a caret beside the table, as a press beside it does.
     _select_all()
     assert _cells()["cells"] == 27, "select-all again, from a clean slate"
     in_cell = _press('cell', index=1)
     assert not in_cell.get("missing"), in_cell
     _settle(window)
     rest = _cells()
-    assert rest["cells"] < every["cells"], (
-        f"a click that selected nothing drops the document-wide paint: {rest}")
-    assert rest["cells"] == _cells_in_the_selected_block(), (
-        f"and only the table the click landed on is still painted: {rest}")
+    assert rest["cells"] == 0 and rest["selectedNodes"] == [], (
+        f"one click in a cell drops the selection, the clicked table included: {rest}")
 
     # **A drag in a cell is not answered**: the browser is making a text selection, and a
     # press that moved is not a click.

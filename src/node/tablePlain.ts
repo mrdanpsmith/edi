@@ -1,4 +1,3 @@
-import { Selection } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { parsePipes, parsePipesAlign, tableToPipes, inlineMarkdownToHtml, type TableAlign } from '../spreadsheet-util'
@@ -16,7 +15,7 @@ import {
   BLOCK_MARGIN_CLASS,
   attachBlockControls,
 } from '../block-modes'
-import { onBlockMargin } from '../press'
+import { caretBeside, onBlockMargin } from '../press'
 import { subscribeFormulaEnv } from '../formulaDefs'
 import {
   CELL_SELECTED_CLASS,
@@ -108,10 +107,15 @@ export class TablePlainView implements NodeView {
     // inside it, so it goes to the nearer edge of the block — above the press it lands
     // before the table, below it after. That is where a press on the white space beside
     // the table already put the caret, so a click in a cell and a click beside it agree.
+    //
+    // **A caret, never the table**: `Selection.near` would answer a press in the upper half
+    // with a `NodeSelection` on this table — still painted — so it took a second click to
+    // actually drop the selection. `caretBeside` asks for text only, like a press beside it.
     const box = this.dom.getBoundingClientRect()
-    const bias = event.clientY < box.top + box.height / 2 ? -1 : 1
-    const $inside = state.doc.resolve(pos + 1)
-    this.view.dispatch(state.tr.setSelection(Selection.near($inside, bias)))
+    const before = event.clientY < box.top + box.height / 2
+    const caret = caretBeside(state.doc, pos, before)
+    if (caret === null) return
+    this.view.dispatch(state.tr.setSelection(caret))
     this.paintSelection()
   }
 

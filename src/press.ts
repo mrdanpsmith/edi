@@ -66,6 +66,7 @@
 import { Plugin, Selection } from 'prosemirror-state'
 import { GapCursor } from 'prosemirror-gapcursor'
 import type { EditorView } from 'prosemirror-view'
+import type { Node as ProseNode } from 'prosemirror-model'
 
 
 /**
@@ -347,22 +348,7 @@ export function answerPress(view: EditorView, event: MouseEvent, target: PressTa
   }
   if (target.kind !== 'margin' && target.kind !== 'space') return false
 
-  const node = view.state.doc.nodeAt(target.pos)
-  if (node === null) return false
-  const $at = view.state.doc.resolve(target.before ? target.pos : target.pos + node.nodeSize)
-  // **The nearest *text*, asked with `textOnly`.** `Selection.near` does not pass it, so it
-  // answers with a `NodeSelection` on the nearest atom — which in a document of tables is the
-  // very thing the press was avoiding.
-  const near = Selection.findFrom($at, target.before ? -1 : 1, true) ??
-    Selection.findFrom($at, target.before ? 1 : -1, true)
-  // **No textblock anywhere in the document** — nothing but tables and code blocks — and then
-  // the caret this document has is a gap cursor on the pressed side of the block. Doing nothing
-  // left whatever block was selected selected, with no press anywhere that could clear it. A
-  // gap cursor creates nothing by itself, which is why a click still never creates a block;
-  // typing at it does.
-  const caret = near ?? (
-    $at.depth === 0 ? new GapCursor($at) : null
-  )
+  const caret = caretBeside(view.state.doc, target.pos, target.before)
   if (caret === null) return false
   view.dispatch(view.state.tr.setSelection(caret))
   // A press this handled focused nothing by itself, and a caret in an unfocused editor is one
@@ -370,6 +356,32 @@ export function answerPress(view: EditorView, event: MouseEvent, target: PressTa
   event.preventDefault()
   view.focus()
   return true
+}
+
+/**
+ * A caret beside the top-level block at `pos` — before it or after it — **never a selection of
+ * a block**, or null when there is nowhere to put one.
+ *
+ * Shared by every press that means "put me beside this block": the white space and margin
+ * presses here, and a click in a Visual table's cell (`TablePlainView`), which has to drop a
+ * selection rather than turn it into a selected table.
+ */
+export function caretBeside(doc: ProseNode, pos: number, before: boolean): Selection | null {
+  const node = doc.nodeAt(pos)
+  if (node === null) return null
+  const $at = doc.resolve(before ? pos : pos + node.nodeSize)
+  // **The nearest *text*, asked with `textOnly`.** `Selection.near` does not pass it, so it
+  // answers with a `NodeSelection` on the nearest atom — which in a document of tables is the
+  // very thing the press was avoiding, and for a press in a table is the table itself.
+  const near = Selection.findFrom($at, before ? -1 : 1, true) ??
+    Selection.findFrom($at, before ? 1 : -1, true)
+  if (near !== null) return near
+  // **No textblock anywhere in the document** — nothing but tables and code blocks — and then
+  // the caret this document has is a gap cursor on the pressed side of the block. Doing nothing
+  // left whatever block was selected selected, with no press anywhere that could clear it. A
+  // gap cursor creates nothing by itself, which is why a click still never creates a block;
+  // typing at it does.
+  return $at.depth === 0 ? new GapCursor($at) : null
 }
 
 /**
