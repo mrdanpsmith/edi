@@ -30,6 +30,9 @@ python3 -m venv .venv
 print_step "Installing npm dependencies"
 npm install
 
+print_step "Installing headless Chromium for the browser tests"
+npx playwright install --only-shell chromium
+
 print_step "Generating app icon"
 node scripts/generate-icon.mjs
 

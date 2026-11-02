@@ -25,7 +25,9 @@ The gate is split over two jobs in both pipelines:
 
 - **`frontend`** runs lint, typecheck, dupcheck and the production build. It
   produces `dist/` plus the `.ico`/`.icns` icons.
-- **`test`** runs Vitest coverage, bandit, pytest and the coverage uploads,
+- **`test`** runs Vitest coverage, the Vitest browser tests (headless
+  Chromium, see [development.md](development.md#browser-tests)), bandit,
+  pytest and the coverage uploads,
   then the network audits (`npm run audit`, `.venv/bin/pip-audit -r
   requirements.txt`) last, so a transient network failure does not burn the
   deterministic gate.
@@ -174,9 +176,17 @@ Most jobs run inside a prebuilt builder image,
 tags, and manually via `workflow_dispatch`. Run it once manually after a fresh
 import so ghcr has the images.
 
-The image bakes the Qt runtime libraries, Node 22 and a venv at
+The image bakes the Qt runtime libraries, Node 22, a venv at
 `/opt/edi/venv` built from `requirements-dev.txt` and
-`requirements-build.txt`. Jobs use it as a `container:` and link the venv with
+`requirements-build.txt`, and Playwright's headless Chromium at
+`/opt/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`). The `PLAYWRIGHT_VERSION`
+build arg must match `playwright` in `package-lock.json`: Playwright only
+finds a browser build made for its own version. When they differ (or the image
+predates the bake), the CI step's `npx playwright install --only-shell
+chromium` downloads the right build at job time; bump the arg to make that a
+no-op again. The image is x86-64; on Apple Silicon build it with `docker
+build --platform linux/amd64`, since PySide6 has no matching arm64 Linux
+wheel. Jobs use it as a `container:` and link the venv with
 `ln -s /opt/edi/venv .venv` (`package-linux.sh` hardcodes `$ROOT/.venv`), and
 run `npm ci` where needed.
 

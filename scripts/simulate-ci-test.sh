@@ -65,6 +65,9 @@ check_bake_tools() {
     for t in $TOOLS; do
       PATH=/opt/edi/venv/bin:\$PATH command -v \"\$t\" >/dev/null 2>&1 || { echo \"baked tool missing from $IMAGE: \$t\" >&2; missing=1; }
     done
+    if [[ $PYTEST_ONLY != 1 ]] && ! compgen -G '/opt/ms-playwright/chromium_headless_shell-*' >/dev/null; then
+      echo \"baked Chromium missing from $IMAGE: /opt/ms-playwright\" >&2; missing=1
+    fi
     exit \$missing
   "
 }
@@ -109,6 +112,8 @@ echo "[sim] npm run dupcheck"
 npm run dupcheck
 echo "[sim] npm run coverage"
 npm run coverage
+echo "[sim] npm run test:browser (baked headless Chromium)"
+npm run test:browser
 echo "[sim] npm run build"
 npm run build
 echo "[sim] python type check (pyright)"

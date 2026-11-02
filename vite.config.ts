@@ -1,6 +1,9 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import { resolve } from 'node:path'
+import { playwright } from '@vitest/browser-playwright'
+
+const TEST_EXCLUDE = ['**/node_modules/**', '**/.cache/**', '**/.npm/**', '**/dist/**', '**/dist-app/**', '**/build/**', '**/coverage-py/**']
 
 export default defineConfig({
   clearScreen: false,
@@ -27,9 +30,40 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'jsdom',
-    setupFiles: ['./src/test-setup.ts'],
-    exclude: ['**/node_modules/**', '**/.cache/**', '**/.npm/**', '**/dist/**', '**/dist-app/**', '**/build/**', '**/coverage-py/**'],
+    exclude: TEST_EXCLUDE,
+    // Two projects (see docs/development.md, "Browser tests"):
+    //   unit    -- src/**/*.test.ts in jsdom: fast, no layout.
+    //   browser -- tests/browser/*.browser.test.ts in headless Chromium via
+    //              Playwright: real layout and trusted input, no Python.
+    // `npm test` and `npm run coverage` run only `unit`; `npm run test:browser`
+    // runs `browser`.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          environment: 'jsdom',
+          setupFiles: ['./src/test-setup.ts'],
+          exclude: [...TEST_EXCLUDE, 'tests/browser/**'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'browser',
+          include: ['tests/browser/**/*.browser.test.ts'],
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
+            // Roughly the shell's default window, not Vitest's phone-sized one.
+            viewport: { width: 1280, height: 900 },
+            instances: [{ browser: 'chromium' }],
+            screenshotFailures: true,
+          },
+        },
+      },
+    ],
     coverage: {
       provider: 'v8',
       // 'html' is the browsable report the CI job ships as an artifact; the

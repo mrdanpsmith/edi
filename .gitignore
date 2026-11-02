@@ -7,6 +7,8 @@ dist-app/
 coverage/
 coverage-py/
 .coverage
+# Vitest browser-mode failure screenshots
+tests/browser/__screenshots__/
 .cache/
 build/
 .npm/

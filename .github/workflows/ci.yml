@@ -105,6 +105,13 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Frontend unit tests + coverage
         run: npm run coverage > /tmp/frontend-cov.txt 2>&1 || { tail -n 200 /tmp/frontend-cov.txt; exit 1; }
+      # Chromium is baked into the image (Dockerfile.ci); `install` is a no-op
+      # then, and downloads it when the image predates the bake or its
+      # Playwright version differs from package-lock.json.
+      - name: Frontend browser tests (headless Chromium)
+        run: |
+          npx playwright install --only-shell chromium
+          npm run test:browser
       - name: Python type check
         run: .venv/bin/pyright
       - name: Bandit (source-security scan)

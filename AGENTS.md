@@ -98,6 +98,8 @@ real application is `run_edi.py`.
 ### Tests
 
 - `npm run check` is the local frontend gate. Run it before backend work.
+- Frontend behaviour that needs real layout or input, but not Python, belongs
+  in `tests/browser/` (`npm run test:browser`), not `tests/window/`.
 - `pytest tests/` needs `dist/`; build it with `npm run build` first.
 - Python tests must run from the repository root (`pythonpath=["."]`).
 - Qt runs offscreen, and PySide6 must not be imported before the environment
@@ -113,6 +115,7 @@ npm run build                                  # build dist/
 
 npm run check                                  # frontend gate
 npm run coverage                               # frontend coverage
+npm run test:browser                           # browser-mode tests (Chromium)
 .venv/bin/pytest tests/                        # backend tests (needs dist/)
 ./scripts/simulate-ci-test.sh                  # local CI test job
 ```

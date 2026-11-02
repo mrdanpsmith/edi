@@ -29,7 +29,8 @@ it is not the app.
 | --- | --- |
 | `npm run check` | Typecheck, ESLint, frontend unit tests and the duplicate-code scan. The local full frontend gate. |
 | `npm run build` | Node version check, `tsc --noEmit`, Vite build into `dist/`. |
-| `npm run coverage` | Frontend tests with the Cobertura and HTML coverage reports. |
+| `npm run coverage` | Frontend unit tests with the Cobertura and HTML coverage reports. |
+| `npm run test:browser` | Browser-mode tests in headless Chromium (see [Browser tests](#browser-tests)). Not part of `npm run check`. |
 | `npm run dupcheck` | `jscpd .` at the 5% threshold in `.jscpd.json`. It scans Python and scripts too, not just `src/`. |
 | `npm run audit` | `npm audit --audit-level=high` (needs network). Clean; the Vitest toolchain is pinned to patched 4.1.11, so do not drift below it. `package.json` `overrides` forces `minimatch ^11.0.3` (GHSA-g3hv-75wg-m249) under ESLint, whose releases still ask for `^10`; drop it once they don't. |
 | `.venv/bin/pytest tests/` | Python tests (needs `dist/`; see below). |
@@ -73,12 +74,72 @@ WebEngine helpers live in `tests/mermaid_render.py`, which is not named
 `test_*.py` so pytest does not collect it. `QTest` mouse injection never
 reaches the page; those tests dispatch JavaScript-synthesised `PointerEvent`s.
 
+## Browser tests
+
+There are three tiers of tests, from cheapest to most faithful:
+
+| Tier | Where | Runs in | Use it for |
+| --- | --- | --- | --- |
+| Unit | `src/**/*.test.ts` | Vitest + jsdom (`unit` project) | Logic, document transforms, anything without layout. |
+| Browser | `tests/browser/*.browser.test.ts` | Vitest browser mode, headless Chromium via Playwright (`browser` project) | Frontend behaviour that needs real layout or input: hit tests (`posAtCoords`), geometry, Mermaid/kanban drawing, real mouse buttons and keys. |
+| Window | `tests/window/` | pytest + real QtWebEngine | Anything that needs the Python shell: the bridge, menus, dialogs, file IO, preferences, QtWebEngine-specific behaviour. |
+
+Prefer the cheapest tier that can observe the behaviour. jsdom has no layout,
+which is why `src/test-setup.ts` stubs `elementFromPoint`, `scrollIntoView`
+and `ResizeObserver`; a test that needs those to be real belongs in the browser
+tier, not in `test_window.py`.
+
+`install-deps.sh` downloads the browser. After a Playwright upgrade, or on a
+checkout set up before this existed, fetch it again:
+
+```sh
+npx playwright install --only-shell chromium   # once per Playwright version
+npm run test:browser
+```
+
+`tests/browser/app.ts` boots the real page: the `index.html` shell markup,
+the shipped stylesheets and `init` from `src/main.ts`. Only Python is
+replaced. It sets `window.bridge` to a fake before `init` runs, so
+`src/bridge.ts` uses it instead of opening a QWebChannel. Use it like this:
+
+```ts
+let app: BootedApp
+beforeEach(async () => {
+  app = bootApp()
+  await app.setDocument('See [the site](https://example.com/) now')
+})
+afterEach(() => app.dispose())
+
+it('opens a link on click', async () => {
+  await userEvent.click(app.editor.querySelector('a')!)   // trusted input
+  await waitFor(() => app.bridge.callsTo('openUrl').length > 0)
+})
+```
+
+- `app.bridge.calls` / `callsTo(method)` record every bridge call.
+  `answer(method, handler)` changes a reply (`confirm` answers `true`, and the
+  list-returning methods `[]`, by default). `notify(event)` pushes a shell
+  event.
+- `userEvent` and `page` come from `vitest/browser`. They drive Playwright, so
+  the events are trusted, unlike the JavaScript-synthesised ones the window
+  tests have to use.
+- Each test file runs in its own iframe, so files are isolated; `bootApp`
+  resets app state and the bridge record for each test.
+- The viewport is 1280×900 (`vite.config.ts`), not Vitest's phone-sized
+  default. A failure saves a screenshot in a `__screenshots__`
+  folder beside the test file (gitignored; it only exists after a failure).
+- `npm run coverage` covers only the unit tier.
+
+Playwright's Chromium is newer than QtWebEngine's. Keep a test in the window
+suite when it depends on engine-specific behaviour, not just on layout.
+
 ## Local CI and the pre-push hook
 
 `./scripts/simulate-ci-test.sh [--pytest-only] [--rebuild-image]` reproduces
 the CI `test` job inside the `edi-builder:jammy` image (built from
 `Dockerfile.ci` on demand). It runs the Python 3.10 `compileall` check, `npm
-ci`, lint, typecheck, dupcheck, frontend coverage, `npm run build`, bandit,
+ci`, lint, typecheck, dupcheck, frontend coverage, the browser tests (against
+the image's baked Chromium), `npm run build`, bandit,
 `/opt/edi/venv/bin/pytest tests/` and the network audits.
 
 Use it before pushing. It catches two classes of failure that a host Python

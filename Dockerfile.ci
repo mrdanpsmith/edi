@@ -6,7 +6,7 @@
 # and referenced as `ghcr.io/<owner>/edi-builder:jammy`.
 #
 # Baked in: the pins from requirements-dev.txt and requirements-build.txt,
-# Node 22, and the Qt runtime libs.
+# Node 22, the Qt runtime libs and Playwright's headless Chromium.
 #
 #   docker build -f Dockerfile.ci -t edi-builder:jammy .
 #
@@ -54,3 +54,14 @@ RUN python3 -m venv /opt/edi/venv \
 RUN /opt/edi/venv/bin/python -c \
         "import PySide6, PyInstaller, pytest, pytestqt, pytest_cov, defusedxml, bandit, pip_audit; print('edi-builder OK', PySide6.__version__)" \
     && /opt/edi/venv/bin/pyright --version
+
+# Headless Chromium (and its apt deps) for the Vitest browser-mode tests
+# (`npm run test:browser`). Playwright keys its browser builds to its own
+# version, so PLAYWRIGHT_VERSION must match `playwright` in package-lock.json;
+# on a mismatch the tests fail with "Executable doesn't exist", and the CI
+# step's `playwright install` downloads the right build at job time instead.
+ARG PLAYWRIGHT_VERSION=1.64.1
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npx --yes "playwright@${PLAYWRIGHT_VERSION}" install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/* /root/.npm \
+    && chmod -R a+rX /opt/ms-playwright
