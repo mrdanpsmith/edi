@@ -18,12 +18,14 @@ def window(qapp):
     if not (DIST_DIR / "index.html").is_file():
         pytest.fail(
             f"frontend build not found at {DIST_DIR / 'index.html'}; "
-            "run `npm run build` before the backend tests"
+            "run `npm run build:test` before the backend tests"
         )
     if not (DIST_DIR / "harness.js").is_file():
+        # `npm run build` makes only the app bundle; the harness is test-only
+        # and kept out of the release artifact.
         pytest.fail(
-            f"frontend build not found at {DIST_DIR / 'harness.js'}; "
-            "run `npm run build` before the backend tests"
+            f"window-test harness not found at {DIST_DIR / 'harness.js'}; "
+            "run `npm run build:test` (or `npm run build:harness`) before the backend tests"
         )
     win = MainWindow()
     win.resize(1280, 800)

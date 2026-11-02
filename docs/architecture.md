@@ -126,4 +126,6 @@ keeps the number of pages small.
 - `dist-app/` — native binaries and installers produced by the build scripts.
 - `coverage/`, `coverage-py/` — test coverage reports.
 
-`dist/` must exist before running the Python tests; `npm run build` creates it.
+`dist/` must exist before running the Python tests, with the window-test
+harness in it; `npm run build:test` creates both (`npm run build` alone is the
+app bundle that ships).

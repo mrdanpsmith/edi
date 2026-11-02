@@ -12,8 +12,9 @@ COPY tsconfig.json vite.config.ts index.html ./
 COPY scripts/ scripts/
 COPY src/ src/
 COPY shared/ shared/
-COPY tests/harness/ tests/harness/
 
+# The app bundle only. The window-test harness (`npm run build:harness`) is
+# built by the CI test jobs, never into an image or a release.
 RUN npm run build
 # dist/ is now at /build/dist
 
@@ -70,7 +71,6 @@ RUN python3 -m venv .venv \
 COPY --from=frontend /build/dist dist/
 COPY backend/ backend/
 COPY run_edi.py .
-COPY tests/ tests/
 COPY scripts/assets/ scripts/assets/
 
 # Run the real app by default: interactive Qt shell over X11. For the

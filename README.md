@@ -300,7 +300,7 @@ The developer guides live in [`docs/`](docs/README.md):
 - [Distribution](docs/distribution.md) — platform builds and packaging.
 - [Releasing](docs/releasing.md) — version bumps, tags and changelogs.
 
-Both `npm run check` and `.venv/bin/pytest tests/` (after `npm run build`) must
+Both `npm run check` and `.venv/bin/pytest tests/` (after `npm run build:test`) must
 be green before a change lands. CI runs the same gate; pushing a `vX.Y.Z` tag
 starts the release.
 

@@ -16,7 +16,7 @@ def harness_js() -> str:
         path = DIST_DIR / "harness.js"
         if not path.is_file():
             raise FileNotFoundError(
-                f"frontend build not found at {path}; run `npm run build`"
+                f"window-test harness not found at {path}; run `npm run build:test`"
             )
         _HARNESS_JS = path.read_text(encoding="utf-8")
     return _HARNESS_JS

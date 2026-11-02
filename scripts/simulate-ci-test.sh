@@ -119,8 +119,8 @@ echo "[sim] npm run coverage"
 npm run coverage
 echo "[sim] npm run test:browser (baked headless Chromium)"
 npm run test:browser
-echo "[sim] npm run build"
-npm run build
+echo "[sim] npm run build:test (app bundle + window-test harness)"
+npm run build:test
 echo "[sim] python type check (pyright)"
 /opt/edi/venv/bin/pyright
 echo "[sim] bandit (backend security, all findings)"

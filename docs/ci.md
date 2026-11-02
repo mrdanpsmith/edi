@@ -39,7 +39,10 @@ declarations agree and that PySide6/PyInstaller pins appear only in
 `requirements*.txt`.
 
 `test` needs `dist/` because the backend tests load `dist/index.html`. The
-`frontend` job builds it and `test` downloads the artifact.
+`frontend` job builds it and `test` downloads the artifact. The window tests
+also need the test harness, `dist/harness.js`; `test` builds it itself (`npm
+run build:harness`) on top of the downloaded `dist/`, so the `edi-web`
+artifact, which every binary job packages, holds only the app.
 
 QtWebEngine hangs in containers with a small `/dev/shm` or no GPU. The
 workflows set:

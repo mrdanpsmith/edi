@@ -79,7 +79,9 @@ jobs:
 
   # The quality gate: frontend unit tests (coverage) + backend pytest (coverage
   # via pytest-cov) + audits. Consumes dist/ from the frontend job (pytest loads
-  # it). Network audits run last, after the deterministic gate.
+  # it) and adds the window-test harness (dist/harness.js) to it here, so the
+  # edi-web artifact the binaries are packaged from never carries test code.
+  # Network audits run last, after the deterministic gate.
   test:
     needs: frontend
     runs-on: ubuntu-24.04
@@ -116,6 +118,8 @@ jobs:
         run: .venv/bin/pyright
       - name: Bandit (source-security scan)
         run: .venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py run_edi.py -q
+      - name: Build the window-test harness (dist/harness.js)
+        run: npm run build:harness
       - name: Backend tests + coverage
         run: .venv/bin/pytest tests/ > /tmp/backend-cov.txt 2>&1 || { tail -n 200 /tmp/backend-cov.txt; exit 1; }
       # One artifact carries the whole coverage story: the browsable HTML

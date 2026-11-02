@@ -28,12 +28,14 @@ it is not the app.
 | Command | Purpose |
 | --- | --- |
 | `npm run check` | Typecheck, ESLint, frontend unit tests and the duplicate-code scan. The local full frontend gate. |
-| `npm run build` | Node version check, `tsc --noEmit`, Vite build into `dist/`. |
+| `npm run build` | Node version check, `tsc --noEmit`, Vite build of the app into `dist/`. This is what ships. |
+| `npm run build:harness` | Adds the window-test harness, `dist/harness.js` (`tests/harness/index.ts`), to an existing `dist/`. Test-only. |
+| `npm run build:test` | `build` then `build:harness`: everything `pytest tests/` needs. |
 | `npm run coverage` | Frontend unit tests with the Cobertura and HTML coverage reports. |
 | `npm run test:browser` | Browser-mode tests in headless Chromium (see [Browser tests](#browser-tests)). Not part of `npm run check`. |
 | `npm run dupcheck` | `jscpd .` at the 5% threshold in `.jscpd.json`. It scans Python and scripts too, not just `src/`. |
 | `npm run audit` | `npm audit --audit-level=high` (needs network). Clean; the Vitest toolchain is pinned to patched 4.1.11, so do not drift below it. `package.json` `overrides` forces `minimatch ^11.0.3` (GHSA-g3hv-75wg-m249) under ESLint, whose releases still ask for `^10`; drop it once they don't. |
-| `.venv/bin/pytest tests/` | Python tests (needs `dist/`; see below). |
+| `.venv/bin/pytest tests/` | Python tests (needs `npm run build:test`; see below). |
 | `./scripts/version.sh check` | Version agreement plus the Python-pin guard (pins only in `requirements*.txt`). |
 
 ### Static analysis
@@ -68,8 +70,12 @@ also reports coverage from `pyproject.toml`'s `addopts`:
 - `coverage-py/cobertura-coverage.xml`;
 - browsable HTML at `coverage-py/html/index.html`.
 
-`tests/window/test_window.py` is the real-WebEngine suite. It needs `dist/` and fails
-fast with a clear message if the frontend has not been built. The shared
+`tests/window/test_window.py` is the real-WebEngine suite. It needs `dist/` and
+the harness the tests inject into the page, `dist/harness.js`; `npm run
+build:test` builds both, and the suite fails fast with a clear message if
+either is missing. `npm run build` alone does not build the harness: it is
+test code, so it stays out of the `edi-web` artifact the releases are packaged
+from and out of the Docker images. CI builds it inside the `test` jobs. The shared
 WebEngine helpers live in `tests/mermaid_render.py`, which is not named
 `test_*.py` so pytest does not collect it. `QTest` mouse injection never
 reaches the page; those tests dispatch JavaScript-synthesised `PointerEvent`s.
@@ -157,7 +163,7 @@ suite when it depends on engine-specific behaviour, not just on layout.
 the CI `test` job inside the `edi-builder:jammy` image (built from
 `Dockerfile.ci` on demand). It runs the Python 3.10 `compileall` check, `npm
 ci`, lint, typecheck, dupcheck, frontend coverage, the browser tests (against
-the image's baked Chromium), `npm run build`, bandit,
+the image's baked Chromium), `npm run build:test`, bandit,
 `/opt/edi/venv/bin/pytest tests/` and the network audits.
 
 Use it before pushing. It catches two classes of failure that a host Python
