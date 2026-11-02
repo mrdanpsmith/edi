@@ -107,12 +107,19 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Frontend unit tests + coverage
         run: npm run coverage > /tmp/frontend-cov.txt 2>&1 || { tail -n 200 /tmp/frontend-cov.txt; exit 1; }
-      # Chromium is baked into the image (Dockerfile.ci); `install` is a no-op
-      # then, and downloads it when the image predates the bake or its
-      # Playwright version differs from package-lock.json.
+      # Chromium and its system libraries are baked into the image
+      # (Dockerfile.ci sets PLAYWRIGHT_BROWSERS_PATH). With that image `install`
+      # is a no-op, or fetches just the browser when package-lock.json's
+      # Playwright differs from the baked one. An image that predates the bake
+      # (images.yml rebuilds only on main) has neither the browser nor its apt
+      # libraries (libatk & co.), so install both; the job runs as root.
       - name: Frontend browser tests (headless Chromium)
         run: |
-          npx playwright install --only-shell chromium
+          if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
+            npx playwright install --only-shell chromium
+          else
+            npx playwright install --with-deps --only-shell chromium
+          fi
           npm run test:browser
       - name: Python type check
         run: .venv/bin/pyright

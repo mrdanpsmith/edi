@@ -111,11 +111,15 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Frontend unit tests + coverage
         run: npm run coverage > /tmp/frontend-cov.txt 2>&1 || { tail -n 200 /tmp/frontend-cov.txt; exit 1; }
-      # Same as ci.yml: Chromium is baked into the image; `install` is a no-op
-      # then, and fetches it when the image's Playwright version differs.
+      # Same as ci.yml: a no-op with the baked image, and the browser plus its
+      # apt libraries with an image that predates the bake.
       - name: Frontend browser tests (headless Chromium)
         run: |
-          npx playwright install --only-shell chromium
+          if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
+            npx playwright install --only-shell chromium
+          else
+            npx playwright install --with-deps --only-shell chromium
+          fi
           npm run test:browser
       - name: Python type check
         run: .venv/bin/pyright

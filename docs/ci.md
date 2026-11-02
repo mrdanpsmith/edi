@@ -184,10 +184,14 @@ The image bakes the Qt runtime libraries, Node 22, a venv at
 `requirements-build.txt`, and Playwright's headless Chromium at
 `/opt/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`). The `PLAYWRIGHT_VERSION`
 build arg must match `playwright` in `package-lock.json`: Playwright only
-finds a browser build made for its own version. When they differ (or the image
-predates the bake), the CI step's `npx playwright install --only-shell
-chromium` downloads the right build at job time; bump the arg to make that a
-no-op again. The image is x86-64 only: PySide6's arm64 Linux wheels need glibc
+finds a browser build made for its own version. When they differ, the CI step's `npx playwright install --only-shell chromium`
+downloads the right build at job time; bump the arg to make that a no-op
+again. An image that predates the bake has no `PLAYWRIGHT_BROWSERS_PATH` and
+none of Chromium's apt libraries either (the failure is `libatk-1.0.so.0:
+cannot open shared object file`), so the step installs with `--with-deps`
+instead. Because `images.yml` rebuilds only on `main`, that is what a branch
+run sees after a `Dockerfile.ci` change until the image is rebuilt (run
+`images.yml` by hand with `workflow_dispatch` to skip the wait). The image is x86-64 only: PySide6's arm64 Linux wheels need glibc
 2.39, newer than jammy's 2.35. `simulate-ci-test.sh` passes `--platform
 linux/amd64` to every `docker build`/`docker run`, so on Apple Silicon it runs
 under emulation; do the same for a manual build. Jobs use it as a `container:` and link the venv with
