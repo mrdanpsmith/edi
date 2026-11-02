@@ -56,7 +56,11 @@ function inlineMarkRules(): InputRule[] {
     return stopMarking(
       new InputRule(pattern, (state, match, start, end) => {
         if (match[1]) {
-          return state.tr.replaceWith(start, end, state.schema.text(match[1], [markType.create()]))
+          // The span keeps the marks it was typed in: a code span typed in bold
+          // is bold code, not a hole in the bold. They are the opening
+          // delimiter's own marks, not the text's before it.
+          const around = state.doc.nodeAt(start)?.marks ?? []
+          return state.tr.replaceWith(start, end, state.schema.text(match[1], markType.create().addToSet(around)))
         }
         return state.tr
       }),

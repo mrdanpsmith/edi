@@ -23,6 +23,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 IMAGE="${EDI_BUILDER_IMAGE:-edi-builder:jammy}"
+# The builder image is x86-64 only (x64 Node tarball; PySide6's arm64 Linux
+# wheels need glibc 2.39, newer than jammy's 2.35). Pin the platform so an
+# Apple Silicon host builds and runs it under emulation instead of failing to
+# pip-install PySide6 for arm64.
+PLATFORM=(--platform linux/amd64)
 PYTEST_ONLY=0
 REBUILD=0
 
@@ -51,7 +56,7 @@ fi
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1 || [[ "$REBUILD" == 1 ]]; then
   print_step "Building $IMAGE from Dockerfile.ci (one-time; subsequent runs reuse it)"
-  docker build -f Dockerfile.ci -t "$IMAGE" "$ROOT"
+  docker build "${PLATFORM[@]}" -f Dockerfile.ci -t "$IMAGE" "$ROOT"
 fi
 
 # A stale local image (built before a tool was baked into /opt/edi/venv) fails
@@ -60,7 +65,7 @@ fi
 TOOLS='python pytest'
 [[ "$PYTEST_ONLY" == 1 ]] || TOOLS="$TOOLS bandit pip-audit pyright"
 check_bake_tools() {
-  docker run --rm "$IMAGE" bash -euc "
+  docker run --rm "${PLATFORM[@]}" "$IMAGE" bash -euc "
     missing=0
     for t in $TOOLS; do
       PATH=/opt/edi/venv/bin:\$PATH command -v \"\$t\" >/dev/null 2>&1 || { echo \"baked tool missing from $IMAGE: \$t\" >&2; missing=1; }
@@ -73,7 +78,7 @@ check_bake_tools() {
 }
 if ! check_bake_tools; then
   print_step "Stale $IMAGE (missing a baked tool); rebuilding from Dockerfile.ci"
-  docker build -f Dockerfile.ci -t "$IMAGE" "$ROOT"
+  docker build "${PLATFORM[@]}" -f Dockerfile.ci -t "$IMAGE" "$ROOT"
   check_bake_tools
 fi
 
@@ -138,7 +143,7 @@ rm -rf "$CONFIG_DIR" "$CACHE_DIR"
 mkdir -p "$CONFIG_DIR" "$CACHE_DIR"
 
 print_step "Running CI \`test\` job simulation in $IMAGE (Python 3.10, headless, no gsettings)"
-docker run --rm \
+docker run --rm "${PLATFORM[@]}" \
   -v "$ROOT:/builds/edi" \
   -w /builds/edi \
   -u "$(id -u):$(id -g)" \

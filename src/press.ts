@@ -63,7 +63,7 @@
  * the block's business (§3.1), a `control` press is the button's, and any of
  * `Shift`/`Ctrl`/`Alt`/`Meta` is a selection being extended or the block-mode toggle.
  */
-import { Plugin, Selection } from 'prosemirror-state'
+import { Plugin, Selection, TextSelection } from 'prosemirror-state'
 import { GapCursor } from 'prosemirror-gapcursor'
 import type { EditorView } from 'prosemirror-view'
 import type { Node as ProseNode } from 'prosemirror-model'
@@ -344,7 +344,7 @@ export function answerPress(view: EditorView, event: MouseEvent, target: PressTa
     const hit = view.posAtCoords({ left: event.clientX, top: event.clientY })
     const inside = hit === null ? null : hit.inside >= 0 ? hit.inside : hit.pos
     const node = inside === null ? null : view.state.doc.nodeAt(inside)
-    if (node === null || node.isTextblock) return false
+    if (node === null || node.isTextblock) return pressBesideLine(view, event, target.pos)
   }
   if (target.kind !== 'margin' && target.kind !== 'space') return false
 
@@ -353,6 +353,38 @@ export function answerPress(view: EditorView, event: MouseEvent, target: PressTa
   view.dispatch(view.state.tr.setSelection(caret))
   // A press this handled focused nothing by itself, and a caret in an unfocused editor is one
   // keystroke away from going nowhere.
+  event.preventDefault()
+  view.focus()
+  return true
+}
+
+/**
+ * **A press in a block's control strip, beside its text, is a press at the end of that line.**
+ *
+ * The strip (`.block-controls`) is the block's right margin and sits *inside* the block's DOM,
+ * outside its content and not editable. Handed to ProseMirror, a press there fell through to the
+ * browser's own caret placement for a non-editable box, which put the caret at the start of the
+ * **next** block — so pressing beside line three of a paragraph typed into the paragraph below
+ * it, while the same press in the left gutter lands on line three. This answers it the way the
+ * left gutter is answered: the position at the block's own right edge, at the press's height.
+ *
+ * Only for prose. A code block is a textblock too, but its text is a CodeMirror editor's, and an
+ * atom never reaches here; both keep the answer they had. Returns whether it answered.
+ */
+function pressBesideLine(view: EditorView, event: MouseEvent, pos: number): boolean {
+  const target = event.target
+  if (!(target instanceof Element) || target.closest(`.${BLOCK_CONTROLS_CLASS}`) === null) {
+    return false
+  }
+  const dom = view.nodeDOM(pos)
+  if (!(dom instanceof HTMLElement)) return false
+  const box = dom.getBoundingClientRect()
+  const top = Math.min(Math.max(event.clientY, box.top + 1), box.bottom - 1)
+  const hit = view.posAtCoords({ left: box.right - 1, top })
+  if (hit === null) return false
+  const $hit = view.state.doc.resolve(hit.pos)
+  if (!$hit.parent.isTextblock || $hit.parent.type.spec.code === true) return false
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, hit.pos)))
   event.preventDefault()
   view.focus()
   return true

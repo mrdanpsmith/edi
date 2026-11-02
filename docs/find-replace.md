@@ -30,13 +30,16 @@ would corrupt the row.
 The document focus follows the search:
 
 - typing or toggling a flag jumps the caret and scroll to the first match
-  while the panel keeps keyboard focus;
+  while the panel keeps keyboard focus. ProseMirror's own `scrollIntoView()`
+  does nothing while the DOM selection is in the find field, so
+  `selectSearchMatch` scrolls the painted `.edi-search-match-current` itself;
 - plain document edits do **not** reset the active match;
 - `SearchPanel.refresh()` re-applies only after a document swap;
 - Enter and Shift+Enter step through matches;
 - spreadsheet and plain-view tables scroll the cell under the match into view
   (`onSearchChange`/`scrollActiveCellIntoView` in `src/node/table.ts`).
 
-Esc closes the bar. `Ctrl+F` opens find, `Ctrl+H` opens find and replace. The
+Esc closes the bar. `Ctrl+F` opens find (the replace row hidden),
+`Ctrl+H` opens find and replace. The
 bindings are wired in `src/main.ts` and `src/menus.ts`, and the Edit menu in
 `backend/window.py` mirrors them.

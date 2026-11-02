@@ -120,12 +120,30 @@ it('opens a link on click', async () => {
   `answer(method, handler)` changes a reply (`confirm` answers `true`, and the
   list-returning methods `[]`, by default). `notify(event)` pushes a shell
   event.
+- `app.markdown()` serialises the live ProseMirror document (`app.doc()`),
+  `app.menu(command, argument)` runs a menu command the way the shell's menu
+  bar does, and `bootApp({ preferences })` injects the preference snapshot the
+  shell would (for example `{ hoverBand: false }` or `{ zoomFactor: 1.5 }`).
 - `userEvent` and `page` come from `vitest/browser`. They drive Playwright, so
   the events are trusted, unlike the JavaScript-synthesised ones the window
   tests have to use.
+- `pointer` is for input that is about *where*: `press(at, { button,
+  modifiers: ['Alt'] })`, `move`, `wheel`, and a drag that can be inspected
+  before it lands (`startDrag`, `dragTo`, `release`). Read coordinates with
+  `getBoundingClientRect` or `center(element)`. It is backed by the `input`
+  command in `tests/browser/commands.ts`, which runs Playwright's
+  `page.mouse`/`page.keyboard` on the Node side and translates the test
+  iframe's coordinates into page coordinates.
+- `settle()` waits two frames and a short timer after input, like the window
+  suite's `_settle`; `waitFor(condition)` polls a condition every frame.
+  Never use fixed sleeps.
 - Each test file runs in its own iframe, so files are isolated; `bootApp`
   resets app state and the bridge record for each test.
-- The viewport is 1280×900 (`vite.config.ts`), not Vitest's phone-sized
+- Test configuration lives in `vitest.config.ts`, which merges in
+  `vite.config.ts`. Keep test code and test-only imports out of
+  `vite.config.ts`: `vite build` loads it, and the Docker frontend stages copy
+  only the build's inputs, so a test import there breaks the image build.
+- The viewport is 1280×900 (`vitest.config.ts`), not Vitest's phone-sized
   default. A failure saves a screenshot in a `__screenshots__`
   folder beside the test file (gitignored; it only exists after a failure).
 - `npm run coverage` covers only the unit tier.

@@ -185,6 +185,11 @@ The pill being inert at rest is the other half of the rule: an invisible
 control must not be pressable. `src/press.ts` answers a press on the strip that
 is not on a button as `space`, so a press where a button would be before it is
 shown is a caret beside the block, exactly like the page past the margin.
+Beside a line of prose that caret is at the end of the line pressed beside,
+the mirror of a press in the left gutter (`pressBesideLine`). Left to
+ProseMirror, the strip is a non-editable box inside the block, and the
+browser put the caret at the start of the *next* block
+(`tests/browser/block-caret.browser.test.ts`).
 
 `attachBlockControls`'s `mousedown` swallow is scoped to the buttons for the
 same reason: it exists to keep the caret out of a control's own label, and
@@ -355,3 +360,15 @@ verbatim:
 2. Source commits;
 3. `editing` goes to Done;
 4. it returns false, so every other handler is unaffected.
+
+Inside a source form's own CodeMirror, Escape commits and leaves unless an
+emoji card is on screen, which takes the first Escape. The binding is
+`Prec.highest` and asks `completionStatus(...) === 'active'`, because the
+completion keymap also claims Escape for the ~100ms a completion is merely
+*pending* after each keystroke, so Escape straight after typing did nothing.
+
+A live sheet's grid runs its own ladder (`onGridKeydown` in
+`src/node/tableSheet.ts`): the suggestion list, then the cell edit, then a
+pending cut, and the last rung leaves the sheet. Leaving puts the caret beside
+the table (after it, via `caretBeside`) and focuses the editor, as Alt+click
+does; the grid that held focus is torn down with the sheet.

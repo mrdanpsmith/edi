@@ -85,6 +85,14 @@ without it.
 `session.start(phase, finish)` claims the phase and returns the release.
 `session.finish(accept)` resolves whatever holds it.
 
+A field opened while another is open (a click on a second label, a slot, or
+**Rename column**) offers the open one its commit first, in `openField`, and
+discards it only if it refuses. Its blur cannot do it: a press on the drawing
+has its `mousedown` cancelled (so it starts no ProseMirror node selection), the
+focus never leaves the open field, and the new field's claim on the `text` phase
+used to take the old one away unaccepted, dropping what was typed.
+`tests/browser/kanban-labels.browser.test.ts` pins it with real clicks.
+
 The failure this replaces was an open field whose phase was never given back,
 so `hasField` stayed true and **no card drag could arm again**. That is why
 `hasField` is `this.field !== null` rather than a phase, and why `close()`
@@ -128,6 +136,14 @@ it outlives the render.
 If the subject is still there, the field is re-homed, re-anchored, re-placed
 and given the caret back, with what was typed. If it is not, the field is
 **finished rather than abandoned**.
+
+A render swaps the drawing in with `session.replaceDrawing`, not a bare
+`innerHTML`. The field is a child of the preview, and Chromium (QtWebEngine 140
+included) fires `blur` on a focused element synchronously *as it is removed*.
+Taken as a click away, that blur committed and closed the field before
+`reanchor` could put it back, so the swap tells the field's blur handler to
+ignore it, and `reanchor` returns the focus. jsdom fires no such blur, which is
+why only the browser tier sees it.
 
 A field is the one thing about a diagram that survives something the user did
 not do to it. A re-render nobody asked for — a theme change, a magnification, a

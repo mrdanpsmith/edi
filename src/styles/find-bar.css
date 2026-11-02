@@ -19,6 +19,12 @@
   flex-wrap: wrap;
 }
 
+/* `display: flex` above outranks the UA's `[hidden]`, which left the replace row
+   showing under plain Find and made its toggle do nothing. */
+.edi-search-row[hidden] {
+  display: none;
+}
+
 .edi-search-input {
   font: inherit;
   font-size: 13px;

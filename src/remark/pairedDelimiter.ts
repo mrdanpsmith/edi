@@ -199,7 +199,10 @@ export function createPairedDelimiterMark({
     return new InputRule(pattern, (state, match, start, end) => {
       const tr = state.tr
       if (match[1]) {
-        tr.replaceWith(start, end, state.schema.text(match[1], [markType.create()]))
+        // Keep the marks the span was typed in (the opening delimiter's), as
+        // `inlineMarkRules` in `src/editor.ts` does.
+        const around = state.doc.nodeAt(start)?.marks ?? []
+        tr.replaceWith(start, end, state.schema.text(match[1], markType.create().addToSet(around)))
       }
       return tr
     })

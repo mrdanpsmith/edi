@@ -1,3 +1,5 @@
+import { labelControl } from './utils'
+
 export interface LinkPrompt {
   text: string
   url: string
@@ -139,6 +141,7 @@ export function promptForLink(
         urlInput.type = 'url'
         urlInput.placeholder = 'https://'
         urlInput.value = existingUrl
+        labelControl(urlLabel, urlInput)
         box.append(urlInput)
 
         let textInput: HTMLInputElement | null = null
@@ -153,6 +156,7 @@ export function promptForLink(
           textInput.type = 'text'
           textInput.placeholder = 'https://'
           textInput.value = existingUrl
+          labelControl(textLabel, textInput)
           box.append(textInput)
         }
 
@@ -244,6 +248,7 @@ export function promptForRename(currentName: string): Promise<string | null> {
         field.type = 'text'
         field.spellcheck = false
         field.value = currentName
+        labelControl(label, field)
         box.append(field)
 
         const error = document.createElement('div')
@@ -310,6 +315,7 @@ export function promptForKanbanColumns(): Promise<string[] | null> {
         field.rows = 6
         field.spellcheck = false
         field.value = DEFAULT_KANBAN_COLUMNS
+        labelControl(label, field)
         box.append(field)
 
         const error = document.createElement('div')

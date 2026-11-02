@@ -1,5 +1,6 @@
 import { validateMaskedLabel } from './node/masked'
 import { passwordStrength } from './passwordStrength'
+import { labelControl } from './utils'
 
 function createDialog(): {
   overlay: HTMLDivElement
@@ -105,6 +106,7 @@ function labelledInput(box: HTMLElement, text: string, type: 'text' | 'password'
   input.className = 'edi-dialog-input'
   input.type = type
   input.autocomplete = 'off'
+  labelControl(label, input)
   box.append(input)
   return input
 }
@@ -275,6 +277,7 @@ export function promptForPassword(
     input.className = 'edi-dialog-input'
     input.type = 'password'
     input.autocomplete = 'off'
+    labelControl(label, input)
     row.append(input)
 
     const toggle = document.createElement('button')
@@ -411,6 +414,7 @@ export function promptForEncrypt(request: EncryptRequest): Promise<EncryptResult
       input.autocomplete = 'off'
       input.placeholder = 'value stored encrypted'
       input.value = request.initialValue ?? ''
+      labelControl(valueText, input)
       row.append(input)
       const toggle = document.createElement('button')
       toggle.type = 'button'

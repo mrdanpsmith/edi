@@ -120,10 +120,16 @@ function insertFence(state: EditorState, blockFrom: number, blockTo: number, inf
   }
 
   // code_block is a textblock: park the caret on its first content position so
-  // the next keystroke goes into the block.
+  // the next keystroke goes into the block. A block CodeMirror draws has no DOM
+  // caret for that selection, so the tag tells `codeBlockNodeViewPlugin`
+  // (`node/execblock.ts`) to hand it the focus once the block is drawn.
   tr.setSelection(TextSelection.create(tr.doc, blockFrom + 1))
+  tr.setMeta(FENCE_OPENED_META, blockFrom)
   return tr
 }
+
+/** Transaction meta: a typed fence just opened the code block at this position. */
+export const FENCE_OPENED_META = 'ediFenceOpened'
 
 // Caret position inside `list[item[para[...]]]` right after `textLen` chars,
 // where the list starts at `from`. A paragraph's content starts at from+3: one

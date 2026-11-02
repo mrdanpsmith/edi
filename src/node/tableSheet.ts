@@ -19,6 +19,7 @@ import {
   type InlineCellHost,
   type InlineCellKind,
 } from '../inline-format'
+import { caretBeside } from '../press'
 import { maskedFieldToMarkdown, primeMaskedFieldReveal, promptForNewSecret } from './masked'
 import { ContextMenu, type ContextMenuEntry } from '../contextmenu'
 import { TableSelection } from './tableSelection'
@@ -827,7 +828,17 @@ export class TableNodeView implements NodeView, InlineCellHost {
       }
       const at = this.getPos()
       if (at === undefined) return
-      leaveBlockMode(this.view, at)
+      const view = this.view
+      if (!leaveBlockMode(view, at)) return
+      // **And the caret comes back to the document.** Leaving tears this grid down, and
+      // the focus it held went with it — to `<body>`, where the next key does nothing.
+      // Alt+click never had that problem (the press focuses the editor it lands in), so
+      // the two ways out disagreed. The caret goes beside the table, after it, which is
+      // where Visual's own `enterPlainMode` puts it; a selection-only transaction is not
+      // a document edit and never enters the history.
+      const caret = caretBeside(view.state.doc, at, false)
+      if (caret !== null) view.dispatch(view.state.tr.setSelection(caret))
+      view.focus()
       return
     }
     if (key === 'Enter' || key === 'F2') {

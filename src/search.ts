@@ -276,6 +276,17 @@ export function selectSearchMatch(view: EditorView, index: number): boolean {
     tr = tr.setSelection(NodeSelection.create(view.state.doc, match.pos))
   }
   view.dispatch(tr.setMeta(SEARCH_KEY, { current: clamped }).scrollIntoView())
+  // `scrollIntoView()` above is ProseMirror's, which scrolls only when the DOM
+  // selection is in the editor — and while the find bar is open the focus (and
+  // so the DOM selection) is in its input, so a match below the fold stayed
+  // there. The current match's decoration was painted by that dispatch: scroll
+  // it in directly. Atom matches are left to their node views (tables scroll
+  // their own cell, see `onSearchChange`).
+  if (match.kind === 'doc') {
+    view.dom
+      .querySelector('.edi-search-match-current')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }
   return true
 }
 

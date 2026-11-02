@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, type Extension } from '@codemirror/state'
+import { EditorState, EditorSelection, Prec, type Extension } from '@codemirror/state'
 import {
   EditorView,
   keymap,
@@ -9,6 +9,7 @@ import {
 import { history, historyKeymap } from '@codemirror/commands'
 import {
   autocompletion,
+  completionStatus,
   type CompletionContext,
   type CompletionResult,
 } from '@codemirror/autocomplete'
@@ -136,21 +137,31 @@ export function createBlockCodeMirror(
       doc,
       extensions: [
         history(),
-        // Before the Escape exit below, so an open emoji card owns Escape
-        // instead of the card closing *and* the source editor exiting.
+        // **Escape leaves the source form unless an emoji card is open.** The
+        // completion keymap is `Prec.highest` and its Escape (`closeCompletion`)
+        // claims the key whenever a source is not inactive — including the
+        // ~100ms *pending* state after every keystroke, while the `:` source is
+        // still being asked and no card is on screen. So Escape typed straight
+        // after a word did nothing. This binding runs first, and gives the key
+        // to the card only when the card is actually showing.
+        Prec.highest(
+          keymap.of([
+            {
+              key: 'Escape',
+              run: () => {
+                if (completionStatus(view.state) === 'active') return false
+                onExit(view.state.doc.toString())
+                return true
+              },
+            },
+          ]),
+        ),
         autocompletion({ override: [emojiCompletion] }),
         keymap.of([
           ...arrowExitBindings(onArrowOut),
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,
-          {
-            key: 'Escape',
-            run: () => {
-              onExit(view.state.doc.toString())
-              return true
-            },
-          },
         ]),
         markdown({ codeLanguages: languages }),
         syntaxHighlighting(highlight),

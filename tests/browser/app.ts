@@ -11,97 +11,31 @@
 // needs the real shell (menus, dialogs, file IO, preferences) stays in
 // `tests/window/`.
 
+// First, before any `src/` module loads: see the header of fake-bridge.ts.
+import { fakeBridge, type FakeBridge } from './fake-bridge'
+
 import 'prosemirror-view/style/prosemirror.css'
 import 'prosemirror-gapcursor/style/gapcursor.css'
 import '../../src/styles.css'
 
+import { commands } from 'vitest/browser'
+import type { Node as ProseNode } from 'prosemirror-model'
 import indexHtml from '../../index.html?raw'
-import type { BridgeObject } from '../../src/bridge'
-import type { BridgeMethod } from '../../src/contract'
+import type { MenuCommand, PreferenceName } from '../../src/contract'
 import { rootsFromDocument } from '../../src/appContext'
 import { init } from '../../src/main'
+import { proseToMarkdown } from '../../src/markdown'
 import { resetPreferences } from '../../src/preferences'
 import { resetState } from '../../src/state'
+import type { InputStep } from './commands'
 
-export interface BridgeCall {
-  method: BridgeMethod
-  payload: Record<string, unknown>
-}
-
-type Handler = (payload: Record<string, unknown>) => unknown
-
-/** What the fake shell answers when a test has not said otherwise. */
-const DEFAULT_ANSWERS: Partial<Record<BridgeMethod, Handler>> = {
-  confirm: () => true,
-  getPendingFiles: () => [],
-  getRecentFiles: () => [],
-  getPreferences: () => ({}),
-  ping: () => 'pong',
-}
-
-export interface FakeBridge {
-  /** Every call the page made, in order. */
-  readonly calls: BridgeCall[]
-  /** The calls made to one method. */
-  callsTo(method: BridgeMethod): BridgeCall[]
-  /** Answer `method` with `handler` from now on. A thrown error is a failed call. */
-  answer(method: BridgeMethod, handler: Handler): void
-  /** Push a shell event (`notify`) to the page, as the backend would. */
-  notify(event: unknown): void
-}
-
-function createFakeBridge(): { bridge: BridgeObject; fake: FakeBridge } {
-  const calls: BridgeCall[] = []
-  const answers = new Map<BridgeMethod, Handler>(
-    Object.entries(DEFAULT_ANSWERS) as Array<[BridgeMethod, Handler]>,
-  )
-  const resultListeners: Array<(payload: string) => void> = []
-  const notifyListeners = new Set<(payload: string) => void>()
-
-  const reply = (message: unknown): void => {
-    const text = JSON.stringify(message)
-    for (const listener of resultListeners) listener(text)
+declare module 'vitest/browser' {
+  interface BrowserCommands {
+    input: (steps: InputStep[]) => Promise<void>
   }
-
-  const bridge: BridgeObject = {
-    invoke(method, id, payload) {
-      const call = { method: method as BridgeMethod, payload: JSON.parse(payload) }
-      calls.push(call)
-      // Answer asynchronously, as the real QWebChannel does.
-      queueMicrotask(() => {
-        try {
-          const handler = answers.get(call.method)
-          reply({ id, ok: true, data: handler ? handler(call.payload) ?? null : null })
-        } catch (error) {
-          reply({ id, ok: false, error: String(error) })
-        }
-      })
-    },
-    result: { connect: (callback) => void resultListeners.push(callback) },
-    stream: { connect: () => undefined },
-    notify: {
-      connect: (callback) => void notifyListeners.add(callback),
-      disconnect: (callback) => void notifyListeners.delete(callback),
-    },
-  }
-
-  const fake: FakeBridge = {
-    calls,
-    callsTo: (method) => calls.filter((call) => call.method === method),
-    answer: (method, handler) => void answers.set(method, handler),
-    notify: (event) => {
-      const text = JSON.stringify(event)
-      for (const listener of notifyListeners) listener(text)
-    },
-  }
-  return { bridge, fake }
 }
 
-// `src/bridge.ts` connects to `window.bridge` once per module load and keeps
-// that connection, so one fake serves the whole test file (each file runs in
-// its own iframe). `bootApp` clears its record for every test.
-const shared = createFakeBridge()
-window.bridge = shared.bridge
+export type { BridgeCall, FakeBridge } from './fake-bridge'
 
 /** The app shell markup from `index.html`, without its module script. */
 function appMarkup(): string {
@@ -116,33 +50,141 @@ export interface BootedApp {
   editor: HTMLElement
   /** Load `markdown` the way the shell does, and wait for the editor to show it. */
   setDocument(markdown: string): Promise<void>
+  /** The document ProseMirror holds right now (not the last saved snapshot). */
+  doc(): ProseNode
+  /** The current document serialised as markdown, as a save would write it. */
+  markdown(): string
+  /** Run a native menu command, as the shell's menu bar does. */
+  menu(command: MenuCommand, argument?: string): void
   /** Tear the app down; call it from `afterEach`. */
   dispose(): void
 }
 
-export function bootApp(): BootedApp {
-  shared.fake.calls.length = 0
+export interface BootOptions {
+  /** The preference snapshot the shell would inject before the bundle runs. */
+  preferences?: Partial<Record<PreferenceName, unknown>>
+}
+
+export function bootApp(options: BootOptions = {}): BootedApp {
+  fakeBridge.reset()
+  window.ediPreferences = { ...(options.preferences ?? {}) }
   resetState()
   resetPreferences()
   document.body.innerHTML = appMarkup()
   const dispose = init(rootsFromDocument())
 
   const app = document.querySelector<HTMLElement>('#app')!
+  const editorElement = (): HTMLElement =>
+    document.querySelector<HTMLElement>('#editor-container .ProseMirror')!
+  const doc = (): ProseNode =>
+    (editorElement() as HTMLElement & { pmViewDesc: { node: ProseNode } }).pmViewDesc.node
   return {
-    bridge: shared.fake,
+    bridge: fakeBridge,
     get editor() {
-      return document.querySelector<HTMLElement>('#editor-container .ProseMirror')!
+      return editorElement()
     },
     async setDocument(markdown) {
       window.ediSetContent!(markdown)
       await waitFor(() => app.dataset.view === 'editor')
-      await nextFrames()
+      await settle()
+    },
+    doc,
+    markdown: () => proseToMarkdown(doc()),
+    menu(command, argument) {
+      window.ediMenuCommand!(command, argument)
     },
     dispose() {
       dispose()
       document.body.innerHTML = ''
+      delete window.ediPreferences
     },
   }
+}
+
+// --- Geometry and input ------------------------------------------------------
+
+export interface Point {
+  x: number
+  y: number
+}
+
+/** The centre of `element`'s box, in viewport coordinates. */
+export function center(element: Element): Point {
+  const r = element.getBoundingClientRect()
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+}
+
+export interface PressOptions {
+  button?: 'left' | 'right' | 'middle'
+  /** Modifier keys held across the press, e.g. `['Alt']` or `['Shift']`. */
+  modifiers?: string[]
+}
+
+/**
+ * Trusted mouse input at viewport coordinates (see `tests/browser/commands.ts`).
+ *
+ * Use `userEvent` when a locator or element is enough; use these when the
+ * test is about *where* the pointer is (a gutter, the gap beside a table, a
+ * band edge) or a drag has to be inspected before it is released.
+ */
+export const pointer = {
+  /** Move the mouse to `at`, in `steps` intermediate moves. */
+  async move(at: Point, steps = 1): Promise<void> {
+    await commands.input([{ type: 'move', x: at.x, y: at.y, steps }])
+  },
+
+  /** A full click at `at`. */
+  async press(at: Point, options: PressOptions = {}): Promise<void> {
+    const modifiers = options.modifiers ?? []
+    const button = options.button ?? 'left'
+    await commands.input([
+      ...modifiers.map((key): InputStep => ({ type: 'keyDown', key })),
+      { type: 'move', x: at.x, y: at.y },
+      { type: 'down', button },
+      { type: 'up', button },
+      ...modifiers.map((key): InputStep => ({ type: 'keyUp', key })),
+    ])
+  },
+
+  /** Press at `from` and move to `to`, but do not release: call `release`. */
+  async startDrag(from: Point, to: Point, steps = 12): Promise<void> {
+    await commands.input([
+      { type: 'move', x: from.x, y: from.y },
+      { type: 'down' },
+      // A few small moves first, so a drag threshold is crossed the way a hand
+      // crosses it rather than in one jump.
+      { type: 'move', x: from.x + 3, y: from.y + 3, steps: 3 },
+      { type: 'move', x: to.x, y: to.y, steps },
+    ])
+  },
+
+  /** Move a held drag on to `to`. */
+  async dragTo(to: Point, steps = 8): Promise<void> {
+    await commands.input([{ type: 'move', x: to.x, y: to.y, steps }])
+  },
+
+  async release(button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
+    await commands.input([{ type: 'up', button }])
+  },
+
+  /** A whole drag, released at `to`. */
+  async drag(from: Point, to: Point, steps = 12): Promise<void> {
+    await pointer.startDrag(from, to, steps)
+    await pointer.release()
+  },
+
+  async wheel(dy: number, dx = 0): Promise<void> {
+    await commands.input([{ type: 'wheel', dx, dy }])
+  },
+}
+
+/**
+ * Wait until the page has run what the last input queued behind it: two
+ * animation frames, then a short timer (the window suite's `_settle`).
+ */
+export async function settle(): Promise<void> {
+  await nextFrames(2)
+  await new Promise((resolve) => setTimeout(resolve, 50))
 }
 
 /** Resolve once `condition` holds, polling every animation frame. */

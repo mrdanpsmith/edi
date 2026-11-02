@@ -13,8 +13,23 @@ Neither the delimiter path nor the arrow path touches the document:
   writes `storedMarks`;
 - `markExitPlugin` does the same for `ArrowRight`/`ArrowLeft`.
 
+A span keeps the marks it was typed in: the rule gives the new text the
+opening delimiter's own marks plus its mark, so `` `x` `` typed inside bold is
+bold code, not a hole in the bold.
+
 This started as a code-span rule and was generalized. The tests are in
-`src/markExit.test.ts`.
+`src/markExit.test.ts`, and the same paths typed with real keys are in
+`tests/browser/edit-marks.browser.test.ts`.
+
+## Typed spaces
+
+The editor is `white-space: normal` (see `src/styles/editor.css`), so Blink
+types a space that would collapse (end of line, edge of an inline element) as
+U+00A0, and ProseMirror keeps it. Two known consequences are pinned as
+`it.fails` in `tests/browser/edit-whitespace.browser.test.ts`: a U+00A0 after an
+inline span reaches the saved markdown, and a mark toggled right after a space
+(`a `, `Mod+B`, `bold`) takes the space into the mark (`a** bold**`, which is
+not strong emphasis on reload).
 
 ## Why `storedMarks`
 

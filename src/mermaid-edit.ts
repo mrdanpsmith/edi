@@ -217,7 +217,7 @@ export async function renderDiagram(
     // on, and the newer one will draw it.
     if (!commit) session.setEditing(false, true)
     if (!session.isCurrent(ticket)) return
-    container.innerHTML = svg
+    session.replaceDrawing(container, svg)
     const svgEl = container.querySelector<SVGSVGElement>('svg')
     if (!svgEl) return
     const natural = responsifySvg(svgEl)

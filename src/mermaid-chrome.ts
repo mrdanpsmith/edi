@@ -145,7 +145,26 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
     for (const type of ['pointerdown', 'mousedown'] as const) {
       list.addEventListener(type, (event) => event.stopPropagation())
     }
+    // On the list as well as on the `⋯`: opening the menu puts the focus on its
+    // first item, so the items are what the arrow keys are pressed in.
+    list.addEventListener('keydown', onMenuKey)
     return list
+  }
+
+  /** Escape closes the menu; the arrows move the focus between its items. */
+  const onMenuKey = (event: Event): void => {
+    const key = (event as KeyboardEvent).key
+    if (key !== 'Escape' && key !== 'ArrowDown' && key !== 'ArrowUp') return
+    event.preventDefault()
+    event.stopPropagation()
+    if (key === 'Escape') {
+      dismissMenu()
+      return
+    }
+    const items = [...layer.querySelectorAll<HTMLElement>(`.${MENU_ITEM_CLASS}`)]
+    const at = items.indexOf(document.activeElement as HTMLElement)
+    const step = key === 'ArrowDown' ? 1 : -1
+    items[(at + step + items.length) % items.length]?.focus()
   }
 
   // The board is drawn with its slots, and this is what says which of the things
@@ -284,20 +303,7 @@ export function attachKanbanChrome(session: DiagramSession, scope: RenderScope):
       openMenuFor = menu
       ;(list.firstElementChild as HTMLElement | null)?.focus()
     })
-    menu.addEventListener('keydown', (event) => {
-      const key = (event as KeyboardEvent).key
-      if (key !== 'Escape' && key !== 'ArrowDown' && key !== 'ArrowUp') return
-      event.preventDefault()
-      event.stopPropagation()
-      if (key === 'Escape') {
-        dismissMenu()
-        return
-      }
-      const items = [...layer.querySelectorAll<HTMLElement>(`.${MENU_ITEM_CLASS}`)]
-      const at = items.indexOf(document.activeElement as HTMLElement)
-      const step = key === 'ArrowDown' ? 1 : -1
-      items[(at + step + items.length) % items.length]?.focus()
-    })
+    menu.addEventListener('keydown', onMenuKey)
   })
 
   // ── the two drawn slots ──

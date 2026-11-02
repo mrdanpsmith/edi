@@ -262,6 +262,8 @@ interface OpenField {
   input: HTMLInputElement | HTMLTextAreaElement
   state: EditState
   close(): void
+  /** Resolve it: offer its value (`true`) or drop it. */
+  finish(accept: boolean): void
 }
 
 /**
@@ -287,6 +289,8 @@ export class DiagramSession {
   private ended = false
   private editingOn = false
   private field: OpenField | null = null
+  /** True while a render is replacing the preview's contents (`replaceDrawing`). */
+  private replacing = false
 
   constructor(binding: DiagramBinding) {
     this.block = binding.block
@@ -313,6 +317,24 @@ export class DiagramSession {
   bind(commit: ((drawn: string) => void) | undefined, preview: HTMLElement): void {
     this.preview = preview
     this.commitTo = commit ?? ((): void => undefined)
+  }
+
+  /**
+   * Put a new drawing in the preview. The open field is a child of the preview,
+   * so it goes with the old contents, and Chromium (QtWebEngine included) fires
+   * `blur` on a focused element *as it is removed*. That blur is the render's,
+   * not the user's: taken as a click away it would commit the field and close
+   * it, and `reanchor` would have nothing left to put back. So it is ignored
+   * for the length of the swap, and `reanchor` re-homes the field and gives it
+   * the focus back.
+   */
+  replaceDrawing(container: HTMLElement, html: string): void {
+    this.replacing = true
+    try {
+      container.innerHTML = html
+    } finally {
+      this.replacing = false
+    }
   }
 
   /**
@@ -612,10 +634,25 @@ export class DiagramSession {
     const found = spec.subject.locate(this.render)
     if (found === null) return
 
+    // A field opened while another is open is the user moving on from that one,
+    // which is a click away like any other, so it is offered its commit first.
+    // Its blur cannot do it: the press that opened this field landed on the
+    // drawing, whose `mousedown` is cancelled, so the focus never left it — and
+    // the claim below would otherwise take it away unaccepted, dropping what was
+    // typed. A value it refuses is discarded, as leaving edit mode does.
+    const previous = this.field
+    if (previous !== null) {
+      previous.finish(true)
+      previous.close()
+    }
+
     const element = document.createElement('div')
     element.className = spec.tone === 'new' ? `${FIELD_CLASS} ${FIELD_NEW_CLASS}` : FIELD_CLASS
     const input = document.createElement(spec.multiline ? 'textarea' : 'input')
     if (input instanceof HTMLInputElement) input.type = 'text'
+    // A textarea's own height is two rows, which is a line more than a short
+    // title has; the card's height is the field's floor instead (`min-height`).
+    else input.rows = 1
     input.className = spec.multiline ? `${INPUT_CLASS} ${INPUT_WRAP_CLASS}` : INPUT_CLASS
     input.value = spec.value
     if (spec.placeholder) input.placeholder = spec.placeholder
@@ -729,7 +766,11 @@ export class DiagramSession {
     })
     input.addEventListener('pointerdown', (event) => event.stopPropagation())
     // Clicking away commits, as a click anywhere else in the editor does.
-    input.addEventListener('blur', () => finish(true))
+    // Not the blur a render's own swap fires as it detaches the field (see
+    // `replaceDrawing`): the field outlives the render.
+    input.addEventListener('blur', () => {
+      if (!this.replacing) finish(true)
+    })
 
     if (spec.multiline) {
       // Sized by what is being typed, not by the slot it replaced: a card title
@@ -759,7 +800,7 @@ export class DiagramSession {
 
     element.appendChild(input)
     this.preview.appendChild(element)
-    this.field = { spec, element, input, state, close }
+    this.field = { spec, element, input, state, close, finish }
     release = this.start('text', finish)
 
     unplace = this.overlay(

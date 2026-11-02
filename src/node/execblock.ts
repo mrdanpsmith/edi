@@ -8,6 +8,8 @@ import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
 import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
 import { exitCodeBlock } from '../codeBlockExit'
+import { EditorView as CMEditorView } from '@codemirror/view'
+import { FENCE_OPENED_META } from '../blockstart'
 import { codeLanguageFor, shebangLanguage } from '../codeLanguages'
 import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../formulaDefs'
 import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
@@ -570,8 +572,41 @@ export function isRunnableCodeBlock(node: ProseNode): boolean {
   return node.type.name === 'code_block' && shebangOf(node.textContent) !== null
 }
 
-export const codeBlockNodeViewPlugin = new Plugin({
-  key: new PluginKey('EDI_CODEBLOCK_NODEVIEW'),
+const codeBlockNodeViewKey = new PluginKey<number | null>('EDI_CODEBLOCK_NODEVIEW')
+
+/**
+ * **A fence typed in prose puts the caret in the new block's CodeMirror.**
+ *
+ * The fence rule (`blockstart.ts`) parks ProseMirror's selection inside the new
+ * `code_block`, but a block shown by CodeMirror has no contentDOM, so that
+ * selection has no DOM caret to become and the next keystrokes went nowhere.
+ * The rule tags its transaction with {@link FENCE_OPENED_META}; once the view
+ * has drawn the block, this hands the focus to that block's CodeMirror, once.
+ *
+ * Deliberately not a node view `setSelection`: ProseMirror calls that on every
+ * update while it counts as focused, and a document's opening selection often
+ * sits in a leading code block, so it took the focus from a sheet grid, from
+ * Select All, from anything else inside the editor.
+ */
+function focusOpenedFence(view: EditorView): void {
+  const pos = codeBlockNodeViewKey.getState(view.state)
+  if (pos === null || pos === undefined) return
+  const dom = view.nodeDOM(pos)
+  const host = dom instanceof HTMLElement ? dom.querySelector<HTMLElement>('.cm-editor') : null
+  const cm = host ? CMEditorView.findFromDOM(host) : null
+  cm?.focus()
+}
+
+export const codeBlockNodeViewPlugin = new Plugin<number | null>({
+  key: codeBlockNodeViewKey,
+  state: {
+    init: () => null,
+    apply: (tr) => {
+      const pos = tr.getMeta(FENCE_OPENED_META) as number | undefined
+      return typeof pos === 'number' ? pos : null
+    },
+  },
+  view: () => ({ update: focusOpenedFence }),
   props: {
     nodeViews: {
       code_block(node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView {

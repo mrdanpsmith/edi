@@ -49,9 +49,7 @@ describe('clicking a link', () => {
 
     await editItem.click()
     await expect.element(page.getByText('Edit link', { exact: true })).toBeVisible()
-    // The dialog's "URL" <label> is not associated with its input, so the field
-    // has no accessible name; find it by placeholder instead.
-    const url = page.getByPlaceholder('https://')
+    const url = page.getByRole('textbox', { name: 'URL' })
     await expect.element(url).toHaveValue('https://example.com/')
     await url.fill('https://example.org/edited')
     await page.getByRole('button', { name: 'Update' }).click()

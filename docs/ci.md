@@ -184,9 +184,10 @@ build arg must match `playwright` in `package-lock.json`: Playwright only
 finds a browser build made for its own version. When they differ (or the image
 predates the bake), the CI step's `npx playwright install --only-shell
 chromium` downloads the right build at job time; bump the arg to make that a
-no-op again. The image is x86-64; on Apple Silicon build it with `docker
-build --platform linux/amd64`, since PySide6 has no matching arm64 Linux
-wheel. Jobs use it as a `container:` and link the venv with
+no-op again. The image is x86-64 only: PySide6's arm64 Linux wheels need glibc
+2.39, newer than jammy's 2.35. `simulate-ci-test.sh` passes `--platform
+linux/amd64` to every `docker build`/`docker run`, so on Apple Silicon it runs
+under emulation; do the same for a manual build. Jobs use it as a `container:` and link the venv with
 `ln -s /opt/edi/venv .venv` (`package-linux.sh` hardcodes `$ROOT/.venv`), and
 run `npm ci` where needed.
 

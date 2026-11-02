@@ -334,6 +334,10 @@ the menu wraps inside the popover instead of widening it off the board, which
 stops a column with a 60-character name pushing a control past the edge of its
 own column.
 
+Opening the menu focuses its first item, and the arrow keys move between items.
+The key handler is on the list as well as on the `⋯`, because the items are what
+hold the focus; on the `⋯` alone the arrows did nothing.
+
 Escape and a pointer off the menu or the board take it away. **The menu is its
 list *and* the `⋯` it hangs off**: `isOnMenu(target)` whitelists both, using
 the `openMenuFor` that already answers "which `⋯` is this".
@@ -722,6 +726,13 @@ one keypress away from being committed as the whole of it.
 
 An empty composer is left alone, so opening one still does not resize the card
 it replaces.
+
+Nor does a title that fits the card. `cardSubject`'s `grow` reads the *title's*
+height, with the field's `min-height` and `height` taken off for the reading, and
+the textarea is built with `rows = 1`. Read inside the field (which is the card's
+height at least) or at a textarea's two-row default, a one-word title measured
+taller than the card and grew it out of the bottom of its column on the first
+keystroke. `tests/browser/kanban-compose.browser.test.ts` pins it.
 
 **Enter is the commit key and Shift+Enter is refused, not committed.**
 Shift+Enter is how a textarea normally starts a new line, and a mermaid card

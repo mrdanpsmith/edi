@@ -198,7 +198,18 @@ function cardSubject(card: number): EditSubject {
     grow: (el, input) => {
       const was = heights.get(el)
       if (was === undefined) return
-      const at = Math.ceil(input.scrollHeight) + 8
+      // The title's own height, not the field's: the field is the card's height
+      // at least (its `min-height`, and the `height` sized from that), and a
+      // `scrollHeight` read inside that box is the box itself, so the card's
+      // padding added to it grew the card past its column on the first
+      // keystroke of a one-word title.
+      const { minHeight, height } = input.style
+      input.style.minHeight = '0'
+      input.style.height = 'auto'
+      const content = input.scrollHeight
+      input.style.minHeight = minHeight
+      input.style.height = height
+      const at = Math.ceil(content) + 8
       if (at <= was.at) return
       was.rect.setAttribute('height', String(at))
       was.frame?.setAttribute('height', String(at))
