@@ -27,6 +27,37 @@
   border-color: var(--border);
 }
 
+/* Tabs slide aside for a dragged tab, and a dropped tab glides into its slot.
+   The dragged tab itself follows the pointer exactly, so it has no transition. */
+.tab {
+  transition: transform 160ms ease-out;
+}
+
+.tab.dragging,
+.tab.settling {
+  position: relative;
+  z-index: 1;
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--border);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.18);
+}
+
+.tab.dragging {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab {
+    transition: none;
+  }
+}
+
+.tab-dragging,
+.tab-dragging .tab {
+  cursor: grabbing;
+}
+
 .tab-title {
   min-width: 0;
   overflow: hidden;

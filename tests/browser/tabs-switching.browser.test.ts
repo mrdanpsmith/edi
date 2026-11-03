@@ -151,3 +151,59 @@ describe('an unlocked block when its document is left', () => {
     expect(md(app)).toBe('A different document entirely.')
   })
 })
+
+describe('reordering tabs by dragging', () => {
+  const titles = (): string[] => tabs().map((t) => t.dataset.sessionId!)
+
+  async function threeTabs(): Promise<string[]> {
+    await emptyDocument(app)
+    await type('first')
+    await press('n', MOD)
+    await waitFor(() => tabs().length === 2, { message: 'second tab' })
+    await type('second')
+    await press('n', MOD)
+    await waitFor(() => tabs().length === 3, { message: 'third tab' })
+    await type('third')
+    await settle()
+    return titles()
+  }
+
+  it('dropping a tab past another moves it there, without switching to it', async () => {
+    const [a, b, c] = await threeTabs()
+    const first = tabs()[0]!.getBoundingClientRect()
+    const last = tabs()[2]!.getBoundingClientRect()
+    await pointer.startDrag(center(tabs()[0]!.querySelector('.tab-title')!), {
+      x: last.right - 2,
+      y: first.top + first.height / 2,
+    })
+    expect(tabs()[0]!.classList.contains('dragging')).toBe(true)
+    // Mid-drag nothing is re-ordered in the DOM: the neighbours slide aside.
+    await waitFor(() => tabs()[1]!.style.transform.startsWith('translateX(-'), {
+      message: 'the neighbour never slid aside',
+    })
+    expect(titles()).toEqual([a, b, c])
+    await pointer.release()
+    await settle()
+
+    expect(titles()).toEqual([b, c, a])
+    // The third tab is still the one in view, and still holds its own text.
+    expect(tabs()[activeIndex()]!.dataset.sessionId).toBe(c)
+    expect(md(app)).toBe('third')
+    await clickTab(2)
+    expect(md(app)).toBe('first')
+  })
+
+  it('Escape during a drag puts the tab back', async () => {
+    const before = await threeTabs()
+    const last = tabs()[2]!.getBoundingClientRect()
+    await pointer.startDrag(center(tabs()[0]!.querySelector('.tab-title')!), {
+      x: last.right - 2,
+      y: last.top + last.height / 2,
+    })
+    await press('Escape')
+    await pointer.release()
+    await settle()
+    expect(titles()).toEqual(before)
+    expect(activeIndex()).toBe(2)
+  })
+})

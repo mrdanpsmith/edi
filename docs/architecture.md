@@ -46,6 +46,15 @@ A tab is dirty when its document is not the one on disk. The editor keeps the
 last-saved document as plugin state (`savedPoint` in `src/editor.ts`), so it
 travels with each tab's state, and undoing back to it makes the tab clean.
 
+Tabs reorder by dragging them along the strip (Escape cancels a drag), or with
+Alt+Shift+Left/Right on a focused tab. The drag uses pointer events, not HTML5
+drag and drop, so it never meets the window's file drops. Nothing in the DOM
+moves mid-drag: the dragged tab follows the pointer by transform and its
+neighbours slide aside (a transition on `.tab`), measured against the layout at
+drag start. `moveSession` in `src/state.ts` changes the order only on release,
+and the re-rendered tab glides from the release point into its slot. A reorder
+never touches the editor or switches tabs.
+
 ## What a document can make the machine do
 
 A markdown file can come from anywhere, so two features that reach outside the

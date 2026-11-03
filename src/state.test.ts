@@ -9,6 +9,7 @@ import {
   getState,
   isAnyDirty,
   markSaved,
+  moveSession,
   setActiveDirty,
   setActivePath,
   subscribe,
@@ -112,5 +113,34 @@ describe('state session store', () => {
     off()
     createSession()
     expect(count).toBe(2)
+  })
+})
+
+describe('moveSession', () => {
+  const order = (): string[] => getState().sessions.map((session) => session.id)
+
+  it('moves a session to a new index and keeps the active tab', () => {
+    const a = createSession()
+    const b = createSession()
+    const c = createSession()
+    let emits = 0
+    const off = subscribe(() => emits++)
+    expect(moveSession(c, 0)).toBe(true)
+    off()
+    expect(order()).toEqual([c, a, b])
+    expect(getActive()?.id).toBe(c)
+    expect(emits).toBe(1)
+    expect(moveSession(c, 2)).toBe(true)
+    expect(order()).toEqual([a, b, c])
+  })
+
+  it('clamps the index and reports when nothing moved', () => {
+    const a = createSession()
+    const b = createSession()
+    expect(moveSession(a, 99)).toBe(true)
+    expect(order()).toEqual([b, a])
+    expect(moveSession(a, 1)).toBe(false)
+    expect(moveSession(b, -5)).toBe(false)
+    expect(moveSession('missing', 0)).toBe(false)
   })
 })

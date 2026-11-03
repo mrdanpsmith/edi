@@ -4,6 +4,7 @@ import {
   createSession,
   getActive,
   getState,
+  moveSession,
   setActivePath,
   subscribe,
 } from './state'
@@ -43,7 +44,53 @@ export interface TabContent {
   setScroll?(value: number): void
 }
 
+/** How far the pointer must travel before a press on a tab becomes a drag. */
+const DRAG_THRESHOLD = 4
+/** Within this many pixels of the strip's edge a drag scrolls the strip. */
+const DRAG_SCROLL_EDGE = 24
+const DRAG_SCROLL_STEP = 12
+
+/** Fallback for a glide whose `transitionend` never comes (reduced motion, a detached tab). */
+const SETTLE_MS = 250
+
+interface TabSlot {
+  tab: HTMLElement
+  /** Position in the strip's scroll content, measured once when the drag starts. */
+  left: number
+  width: number
+}
+
+interface TabDrag {
+  id: string
+  tab: HTMLElement
+  pointerId: number
+  startX: number
+  startScroll: number
+  lastX: number
+  moved: boolean
+  /** The pending animation frame, or 0. */
+  frame: number
+  /** The strip as it was laid out at drag start; filled when the drag starts moving. */
+  layout: TabSlot[]
+  gap: number
+  from: number
+  target: number
+}
+
 export class Tabs {
+  /**
+   * The press on a tab that may become a reorder.
+   *
+   * **Nothing in the DOM moves while a drag is in flight; only transforms do.** The
+   * dragged tab is translated to follow the pointer and its neighbours slide aside
+   * (a CSS transition on `.tab`) to show where it would land, all measured against
+   * the layout taken when the drag started. So a cancel is just clearing the
+   * transforms, and only a drop changes anything: `moveSession` re-renders in the
+   * new order and the dropped tab glides from where it was let go into its slot.
+   */
+  private drag: TabDrag | null = null
+  /** A drag just ended on this tab: the click its release produces is not a click. */
+  private suppressClick = false
   private readonly snapshots = new Map<string, string>()
   private readonly states = new Map<string, unknown>()
   private readonly scrolls = new Map<string, number>()
@@ -116,6 +163,7 @@ export class Tabs {
 
   /** Stop listening to state changes and to tab-strip resizes. */
   destroy(): void {
+    this.endDrag()
     this.unsubscribe()
     this.resizeObserver?.disconnect()
   }
@@ -364,10 +412,14 @@ export class Tabs {
   }
 
   private render(): void {
+    // Anything that re-renders the strip replaces the element being dragged, so
+    // a drag in progress ends here, uncommitted, rather than steering a ghost.
+    this.endDrag()
     const { sessions, activeId } = getState()
     const nodes: HTMLElement[] = sessions.map((session) => {
       const tab = document.createElement('div')
       tab.className = session.id === activeId ? 'tab active' : 'tab'
+      tab.dataset.sessionId = session.id
       tab.setAttribute('role', 'tab')
       tab.tabIndex = 0
       tab.title = session.path ?? ''
@@ -388,11 +440,25 @@ export class Tabs {
         this.callbacks.onCloseTab(session.id)
       })
 
-      tab.addEventListener('click', () => this.activate(session.id))
+      tab.addEventListener('click', () => {
+        if (this.suppressClick) {
+          this.suppressClick = false
+          return
+        }
+        this.activate(session.id)
+      })
+      tab.addEventListener('pointerdown', (event) => this.beginDrag(event, session.id, tab))
       tab.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           this.activate(session.id)
+        } else if (
+          event.altKey &&
+          event.shiftKey &&
+          (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+        ) {
+          event.preventDefault()
+          this.moveByKey(session.id, event.key === 'ArrowLeft' ? -1 : 1)
         }
       })
 
@@ -411,6 +477,204 @@ export class Tabs {
     this.scroll.replaceChildren(...nodes, add)
     this.scrollActiveIntoView()
     this.updateArrows()
+  }
+
+  /** Alt+Shift+Arrow on a focused tab: the keyboard's way of dragging it. */
+  private moveByKey(id: string, delta: number): void {
+    const index = getState().sessions.findIndex((session) => session.id === id)
+    if (index < 0 || !moveSession(id, index + delta)) return
+    this.tabElement(id)?.focus()
+  }
+
+  private tabElement(id: string): HTMLElement | null {
+    return [...this.scroll.querySelectorAll<HTMLElement>('.tab')].find(
+      (tab) => tab.dataset.sessionId === id,
+    ) ?? null
+  }
+
+  private beginDrag(event: PointerEvent, id: string, tab: HTMLElement): void {
+    // A fresh press: a click left over from a drag that never produced one is stale.
+    this.suppressClick = false
+    if (event.button !== 0 || (event.target as Element | null)?.closest('.tab-close')) return
+    this.endDrag()
+    this.drag = {
+      id,
+      tab,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScroll: this.scroll.scrollLeft,
+      lastX: event.clientX,
+      moved: false,
+      frame: 0,
+      layout: [],
+      gap: 0,
+      from: 0,
+      target: 0,
+    }
+    window.addEventListener('pointermove', this.onDragMove)
+    window.addEventListener('pointerup', this.onDragEnd)
+    window.addEventListener('pointercancel', this.onDragCancel)
+    window.addEventListener('keydown', this.onDragKey, true)
+  }
+
+  private readonly onDragMove = (event: PointerEvent): void => {
+    const drag = this.drag
+    if (!drag || event.pointerId !== drag.pointerId) return
+    drag.lastX = event.clientX
+    if (!drag.moved) {
+      if (Math.abs(event.clientX - drag.startX) < DRAG_THRESHOLD) return
+      this.startMoving(drag)
+    }
+    event.preventDefault()
+    // Pointer moves arrive faster than frames; lay out once per frame.
+    if (drag.frame === 0) drag.frame = requestAnimationFrame(() => this.dragFrame())
+  }
+
+  private startMoving(drag: TabDrag): void {
+    drag.moved = true
+    drag.layout = [...this.scroll.querySelectorAll<HTMLElement>('.tab')].map((tab) => ({
+      tab,
+      left: tab.offsetLeft,
+      width: tab.offsetWidth,
+    }))
+    drag.from = drag.target = drag.layout.findIndex((slot) => slot.tab === drag.tab)
+    drag.gap = parseFloat(getComputedStyle(this.scroll).columnGap) || 0
+    drag.tab.classList.add('dragging')
+    this.tabbar.classList.add('tab-dragging')
+  }
+
+  private dragFrame(): void {
+    const drag = this.drag
+    if (!drag) return
+    drag.frame = 0
+    const scrolled = this.autoScroll(drag.lastX)
+    this.layoutDrag(drag)
+    // Held at the edge, the strip keeps scrolling without the pointer moving.
+    if (scrolled) drag.frame = requestAnimationFrame(() => this.dragFrame())
+  }
+
+  /**
+   * Translate the dragged tab under the pointer (kept within the strip) and slide
+   * every tab between its old and its would-be slot over by its width. The
+   * target is how many other tabs' midpoints the dragged tab's centre has passed,
+   * measured on the layout from drag start, so a still pointer never oscillates.
+   */
+  private layoutDrag(drag: TabDrag): void {
+    const { layout, from } = drag
+    const self = layout[from]
+    const first = layout[0]
+    const last = layout.at(-1)
+    if (!self || !first || !last) return
+    const dx = drag.lastX - drag.startX + this.scroll.scrollLeft - drag.startScroll
+    const offset = Math.max(
+      first.left - self.left,
+      Math.min(last.left + last.width - self.left - self.width, dx),
+    )
+    // From the unclamped position: clamped, the tab's centre at either end only
+    // reaches the end tab's midpoint and could never pass it.
+    const centre = self.left + dx + self.width / 2
+    let target = 0
+    layout.forEach((slot, i) => {
+      if (i !== from && slot.left + slot.width / 2 < centre) target++
+    })
+    const shift = self.width + drag.gap
+    layout.forEach((slot, i) => {
+      if (i === from) return
+      const by = from < i && i <= target ? -shift : target <= i && i < from ? shift : 0
+      slot.tab.style.transform = by ? `translateX(${by}px)` : ''
+    })
+    drag.tab.style.transform = `translateX(${offset}px)`
+    drag.target = target
+  }
+
+  /** Scroll the strip when the pointer is at its edge; whether it moved. */
+  private autoScroll(x: number): boolean {
+    const { left, right } = this.scroll.getBoundingClientRect()
+    const before = this.scroll.scrollLeft
+    if (x < left + DRAG_SCROLL_EDGE) this.scroll.scrollLeft -= DRAG_SCROLL_STEP
+    else if (x > right - DRAG_SCROLL_EDGE) this.scroll.scrollLeft += DRAG_SCROLL_STEP
+    return this.scroll.scrollLeft !== before
+  }
+
+  private readonly onDragEnd = (event: PointerEvent): void => {
+    const drag = this.drag
+    if (!drag || event.pointerId !== drag.pointerId) return
+    if (!drag.moved) {
+      this.endDrag()
+      return
+    }
+    // Lay out at the release point, not wherever the last frame left it.
+    drag.lastX = event.clientX
+    this.layoutDrag(drag)
+    // The release lands on the tab, and its click must not switch to it. The
+    // click comes in this same task if it comes at all (the re-render below can
+    // detach its target), so the flag does not outlive the task.
+    this.suppressClick = true
+    setTimeout(() => { this.suppressClick = false }, 0)
+    if (drag.target === drag.from) {
+      this.endDrag(true)
+      return
+    }
+    const releasedAt = drag.tab.getBoundingClientRect().left
+    this.endDrag()
+    moveSession(drag.id, drag.target)
+    this.glideFrom(drag.id, releasedAt)
+  }
+
+  private readonly onDragCancel = (event: PointerEvent): void => {
+    if (!this.drag || event.pointerId !== this.drag.pointerId) return
+    this.endDrag(true)
+  }
+
+  private readonly onDragKey = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.drag?.moved) return
+    event.preventDefault()
+    event.stopPropagation()
+    // The button is still down; the click its release makes is not a click.
+    // The next press clears this if the release lands somewhere else.
+    this.suppressClick = true
+    this.endDrag(true)
+  }
+
+  /**
+   * The dropped tab has been re-rendered in its new slot: start it where the
+   * reader let go of it and let the `.tab` transition carry it home.
+   */
+  private glideFrom(id: string, left: number): void {
+    const tab = this.tabElement(id)
+    if (!tab) return
+    const delta = left - tab.getBoundingClientRect().left
+    if (Math.abs(delta) < 0.5) return
+    tab.style.transition = 'none'
+    tab.style.transform = `translateX(${delta}px)`
+    void tab.offsetWidth
+    tab.style.transition = ''
+    tab.style.transform = ''
+    this.lift(tab)
+  }
+
+  /** Keep a gliding tab above its neighbours until it has landed. */
+  private lift(tab: HTMLElement): void {
+    tab.classList.add('settling')
+    const land = (): void => tab.classList.remove('settling')
+    tab.addEventListener('transitionend', land, { once: true })
+    setTimeout(land, SETTLE_MS)
+  }
+
+  /** `animate`: let every tab glide back to its own slot rather than jump. */
+  private endDrag(animate = false): void {
+    const drag = this.drag
+    if (!drag) return
+    this.drag = null
+    if (drag.frame) cancelAnimationFrame(drag.frame)
+    if (animate && drag.moved) this.lift(drag.tab)
+    drag.tab.classList.remove('dragging')
+    this.tabbar.classList.remove('tab-dragging')
+    for (const slot of drag.layout) slot.tab.style.transform = ''
+    window.removeEventListener('pointermove', this.onDragMove)
+    window.removeEventListener('pointerup', this.onDragEnd)
+    window.removeEventListener('pointercancel', this.onDragCancel)
+    window.removeEventListener('keydown', this.onDragKey, true)
   }
 
   private scrollTabs(direction: number): void {

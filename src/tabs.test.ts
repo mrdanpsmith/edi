@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { Tabs, type TabContent, type TabCallbacks } from './tabs'
 import { createBlockEditor } from './editor'
 import { redo, undo } from 'prosemirror-history'
-import { activateSession, getState } from './state'
+import { activateSession, closeSession, getState } from './state'
 
 let markdownReturn = ''
 
@@ -464,5 +464,49 @@ describe('Tabs reports a desynced view instead of skipping quietly', () => {
     tabs.snapshotActive()
     expect(error).toHaveBeenCalledWith(expect.stringContaining('is active but the view holds'))
     error.mockRestore()
+  })
+})
+
+describe('Tabs reordering', () => {
+  beforeEach(() => {
+    for (const session of getState().sessions) closeSession(session.id)
+  })
+
+  const tabIds = (tabbar: HTMLElement): string[] =>
+    [...tabbar.querySelectorAll<HTMLElement>('.tab')].map((tab) => tab.dataset.sessionId!)
+
+  it('Alt+Shift+Arrow moves the focused tab and keeps it focused', () => {
+    const tabbar = createTabbar()
+    const setMarkdown = vi.fn()
+    const tabs = new Tabs(tabbar, { getMarkdown: () => '', setMarkdown }, makeCallbacks())
+    tabs.addSession('one')
+    tabs.addSession('two')
+    const [first, second] = getState().sessions.map((session) => session.id)
+    const swaps = setMarkdown.mock.calls.length
+
+    const tab = tabbar.querySelector<HTMLElement>(`[data-session-id="${second}"]`)!
+    tab.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }),
+    )
+
+    expect(tabIds(tabbar)).toEqual([second, first])
+    expect(document.activeElement).toBe(tabbar.querySelector(`[data-session-id="${second}"]`))
+    // Order only: the editor is not touched and the active tab does not change.
+    expect(setMarkdown.mock.calls.length).toBe(swaps)
+    expect(tabs.activeId).toBe(second)
+    tabs.destroy()
+  })
+
+  it('moving past either end does nothing', () => {
+    const tabbar = createTabbar()
+    const tabs = new Tabs(tabbar, { getMarkdown: () => '', setMarkdown: vi.fn() }, makeCallbacks())
+    tabs.addSession('one')
+    tabs.addSession('two')
+    const before = tabIds(tabbar)
+    tabbar.querySelector<HTMLElement>('.tab')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }),
+    )
+    expect(tabIds(tabbar)).toEqual(before)
+    tabs.destroy()
   })
 })

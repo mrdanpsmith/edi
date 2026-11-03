@@ -73,6 +73,23 @@ export function closeSession(id: string): string | null {
   return activeId.value
 }
 
+/**
+ * Move session `id` to position `index` in the tab order (clamped to the ends).
+ *
+ * Order only: the active tab, every path and every dirty flag are untouched, so
+ * nothing about the editor has to change. Returns whether the order changed.
+ */
+export function moveSession(id: string, index: number): boolean {
+  const from = sessions.findIndex((session) => session.id === id)
+  if (from < 0) return false
+  const to = Math.max(0, Math.min(sessions.length - 1, Math.trunc(index)))
+  if (to === from) return false
+  const [session] = sessions.splice(from, 1)
+  sessions.splice(to, 0, session!)
+  emit()
+  return true
+}
+
 export function setActivePath(path: string | null): void {
   const active = getActive()
   if (active) {
