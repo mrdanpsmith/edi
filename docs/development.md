@@ -213,6 +213,18 @@ end, not at import, so a real crash mid-run still propagates as a signal.
 Run pytest from the repository root. `pyproject.toml` sets `pythonpath=["."]`,
 so running it elsewhere breaks `import backend`.
 
+### Tests never touch your real settings
+
+`tests/conftest.py` points every `QSettings()` the tests create at INI files in
+a throwaway directory (`QSettings.setDefaultFormat(IniFormat)` plus
+`QSettings.setPath`), removed at the end of the run.
+`QStandardPaths.setTestModeEnabled(True)` alone is not enough: it redirects the
+INI files Linux uses, but not the macOS plist
+(`~/Library/Preferences/com.edi.Edi.plist`) or the Windows registry, which are
+`QSettings`' native formats there. Without the redirect, a local run on macOS
+emptied the developer's recent documents and left the fixtures' `/docs/a.md`
+in their place. Keep both, and keep them ahead of any PySide6 import.
+
 ### QtWebEngine does not await promises
 
 `runJavaScript` does not await Promises. The packaged-binary smoke test

@@ -15,9 +15,27 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-dev-shm-usage --d
 
 # Isolate QSettings/QStandardPaths from the developer's real config: test mode
 # must be enabled before any PySide6 module (or QSettings) is first used.
-from PySide6.QtCore import QStandardPaths
+import shutil
+import tempfile
+
+from PySide6.QtCore import QSettings, QStandardPaths
 
 QStandardPaths.setTestModeEnabled(True)
+
+# Test mode alone is not enough. It redirects QStandardPaths, which is where
+# QSettings' INI files live on Linux, but QSettings' *native* format is a plist
+# on macOS (~/Library/Preferences/com.edi.Edi.plist) and the registry on
+# Windows, and test mode moves neither. `test_main.py` names the shared app
+# Edi/Edi, so a bare `QSettings()` in the tests then read and wrote the
+# developer's real settings: `stored_recents` emptied their recent documents
+# and left the fixtures' `/docs/a.md` in their place. So every test-run
+# `QSettings()` is an INI file in a throwaway directory, on every platform.
+_SETTINGS_DIR = tempfile.mkdtemp(prefix="edi-test-settings-")
+QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+for _scope in (QSettings.Scope.UserScope, QSettings.Scope.SystemScope):
+    QSettings.setPath(QSettings.Format.IniFormat, _scope, _SETTINGS_DIR)
+# Removed at exit; `pytest_sessionfinish`'s hard exit removes it itself.
+atexit.register(shutil.rmtree, _SETTINGS_DIR, ignore_errors=True)
 
 import pytest
 
@@ -41,6 +59,9 @@ def pytest_sessionfinish(session, exitstatus) -> None:
     def _hard_exit() -> None:
         sys.stdout.flush()
         sys.stderr.flush()
+        # os._exit skips the atexit handlers still queued (atexit runs last-in,
+        # first-out), the settings directory's removal among them.
+        shutil.rmtree(_SETTINGS_DIR, ignore_errors=True)
         os._exit(status)
 
     atexit.register(_hard_exit)
