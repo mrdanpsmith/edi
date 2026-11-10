@@ -9,13 +9,15 @@
 # Frontend + test jobs also exist (byte-identical copies) in release.yml so a
 # tag run gets the same gate; the shared job bodies are duplicated on purpose.
 #
-# Jobs run in pre-built images pushed to ghcr.io by images.yml:
-#   * <owner>/edi-builder:jammy — Ubuntu 22.04 (glibc 2.35) + Qt runtime libs,
-#     Node 22, venv at /opt/edi/venv built from requirements-dev.txt and
+# Container jobs run in the builder image from images.yml, called below as the
+# `images` job:
+#   * <owner>/edi-builder:jammy-<hash> — Ubuntu 22.04 (glibc 2.35) + Qt runtime
+#     libs, Node 22, venv at /opt/edi/venv built from requirements-dev.txt and
 #     requirements-build.txt. Used by the test job.
+# <hash> digests the image inputs, and `images` builds the tag first if ghcr
+# lacks it, so a dependency change is always tested against its own image.
 # The venv is a read-only image layer — never pip-install at job time; bake
-# changes into the images (images.yml). Nodes: images must exist in ghcr before
-# the first CI run (run images.yml manually once after import).
+# changes into Dockerfile.ci / requirements files.
 
 name: CI
 
@@ -45,6 +47,14 @@ env:
 # backend tests load dist/index.html, so produce dist/ once and hand it to the
 # test job. Also gates style (lint) + typecheck + duplicate-code scan.
 jobs:
+  # Resolves (and if needed builds) the builder image for this commit's
+  # Dockerfile.ci + requirements files. Every container job needs it.
+  images:
+    uses: ./.github/workflows/images.yml
+    permissions:
+      contents: read
+      packages: write
+
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -83,10 +93,10 @@ jobs:
   # edi-web artifact the binaries are packaged from never carries test code.
   # Network audits run last, after the deterministic gate.
   test:
-    needs: frontend
+    needs: [frontend, images]
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/${{ github.repository_owner }}/edi-builder:jammy
+      image: ${{ needs.images.outputs.image }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -108,18 +118,12 @@ jobs:
       - name: Frontend unit tests + coverage
         run: npm run coverage > /tmp/frontend-cov.txt 2>&1 || { tail -n 200 /tmp/frontend-cov.txt; exit 1; }
       # Chromium and its system libraries are baked into the image
-      # (Dockerfile.ci sets PLAYWRIGHT_BROWSERS_PATH). With that image `install`
-      # is a no-op, or fetches just the browser when package-lock.json's
-      # Playwright differs from the baked one. An image that predates the bake
-      # (images.yml rebuilds only on main) has neither the browser nor its apt
-      # libraries (libatk & co.), so install both; the job runs as root.
+      # (Dockerfile.ci sets PLAYWRIGHT_BROWSERS_PATH). `install` is then a
+      # no-op, or fetches just the browser when package-lock.json's Playwright
+      # differs from the baked PLAYWRIGHT_VERSION.
       - name: Frontend browser tests (headless Chromium)
         run: |
-          if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
-            npx playwright install --only-shell chromium
-          else
-            npx playwright install --with-deps --only-shell chromium
-          fi
+          npx playwright install --only-shell chromium
           npm run test:browser
       - name: Python type check
         run: .venv/bin/pyright

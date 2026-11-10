@@ -8,7 +8,9 @@ The workflows live in `.github/workflows/`:
 - **`release.yml` (name `Release`)** is the full tag-gated DAG. It runs on `v*`
   tags or manual `workflow_dispatch` (`VER` defaults to `0.0.0`) and adds the
   platform builds, packaging and publishing.
-- **`images.yml`** builds the builder images.
+- **`images.yml`** builds the builder image. It is a reusable workflow that
+  both pipelines call as their first job, `images`; see
+  [Builder image](#builder-image).
 
 The `frontend`/`test` job bodies are **deliberately mirrored** across `ci.yml`
 and `release.yml`, so each pipeline stays self-contained. That is why
@@ -172,12 +174,29 @@ contradict the README's "GPLv3 (or later)".
 
 ## Builder image
 
-Most jobs run inside a prebuilt builder image,
-`ghcr.io/<owner>/edi-builder:jammy`, built from `Dockerfile.ci` by
-`images.yml`. It is rebuilt on `main` when `Dockerfile.ci`, a
-`requirements*.txt` file or `.github/workflows/images.yml` changes, never on
-tags, and manually via `workflow_dispatch`. Run it once manually after a fresh
-import so ghcr has the images.
+Most jobs run inside a builder image,
+`ghcr.io/<owner>/edi-builder:jammy-<hash>`, built from `Dockerfile.ci` by
+`images.yml`. `<hash>` is the first 16 hex digits of `hashFiles()` over
+`Dockerfile.ci`, `requirements.txt`, `requirements-dev.txt` and
+`requirements-build.txt`, so each tag names exactly one dependency set. If
+`Dockerfile.ci` gains a `COPY` input, add it to that hash.
+
+`ci.yml` and `release.yml` call `images.yml` as an `images` job, and every
+container job `needs: images` and runs `image: ${{ needs.images.outputs.image }}`.
+The job checks ghcr for the tag. If the tag exists, the job finishes in seconds.
+Otherwise it builds and pushes the tag (reusing layers from the
+`edi-builder:cache` registry cache) before any container job starts. A commit
+that changes a dependency is therefore always tested, built and packaged in an
+image made from its own files, on a PR, on `main` and on a tag, with no race
+against a separate image build. There is no mutable `:jammy` tag and no
+one-off manual run after a fresh import. The first run builds the image.
+
+The calling job grants `packages: write`. A fork PR's token is read-only, so
+when a fork PR changes the image inputs, the `images` job fails with an
+explanation. A maintainer has to push the same changes from a branch in this
+repository first. Running `images.yml` by hand (`workflow_dispatch`, `force`
+defaults to true) rebuilds and re-pushes the current tag, for example to pick
+up base-image updates.
 
 The image bakes the Qt runtime libraries, Node 22, a venv at
 `/opt/edi/venv` built from `requirements-dev.txt` and
@@ -186,12 +205,7 @@ The image bakes the Qt runtime libraries, Node 22, a venv at
 build arg must match `playwright` in `package-lock.json`: Playwright only
 finds a browser build made for its own version. When they differ, the CI step's `npx playwright install --only-shell chromium`
 downloads the right build at job time; bump the arg to make that a no-op
-again. An image that predates the bake has no `PLAYWRIGHT_BROWSERS_PATH` and
-none of Chromium's apt libraries either (the failure is `libatk-1.0.so.0:
-cannot open shared object file`), so the step installs with `--with-deps`
-instead. Because `images.yml` rebuilds only on `main`, that is what a branch
-run sees after a `Dockerfile.ci` change until the image is rebuilt (run
-`images.yml` by hand with `workflow_dispatch` to skip the wait). The image is x86-64 only: PySide6's arm64 Linux wheels need glibc
+again. The image is x86-64 only: PySide6's arm64 Linux wheels need glibc
 2.39, newer than jammy's 2.35. `simulate-ci-test.sh` passes `--platform
 linux/amd64` to every `docker build`/`docker run`, so on Apple Silicon it runs
 under emulation; do the same for a manual build. Jobs use it as a `container:` and link the venv with
@@ -241,6 +255,9 @@ run.
 
 The release DAG:
 
+0. `images` runs in parallel with `frontend`. `test`, `build-linux` and
+   `package-linux` also need it, so none of them starts before the builder
+   image for the tagged commit exists.
 1. `frontend` → `test` (dist artifact).
 2. `frontend` → `build-linux`, `build-windows`, `build-macos` in parallel. All
    three consume the one `edi-web` artifact and none recompiles the frontend.
