@@ -1,3 +1,23 @@
+/**
+ * The document's file was changed (or deleted) on disk by something else while
+ * Edi had it open: the marker on its tab and in the status bar, until the
+ * reader is done with it (`src/diskChanges.ts`).
+ */
+export interface DiskNote {
+  kind: 'changed' | 'deleted'
+  /** When the latest change was noticed, in milliseconds since the epoch. */
+  at: number
+  /** How many changes since the marker was last dismissed. */
+  count: number
+}
+
+/** "Changed on disk at 14:32 (3 changes)": the marker's words, for the tab and the status bar. */
+export function describeDiskNote(note: DiskNote): string {
+  const time = new Date(note.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const what = note.kind === 'deleted' ? 'Deleted on disk' : 'Changed on disk'
+  return note.count > 1 ? `${what} at ${time} (${note.count} changes)` : `${what} at ${time}`
+}
+
 export interface SessionMeta {
   id: string
   path: string | null
@@ -5,6 +25,7 @@ export interface SessionMeta {
   /** Bumped on every edit, so a save can tell whether the document it wrote is
    * still the document (see `markSaved`). */
   revision: number
+  diskNote: DiskNote | null
 }
 
 export interface StateSnapshot {
@@ -21,7 +42,13 @@ const activeId = { value: '' }
 const nextId = { value: 1 }
 
 export function getState(): StateSnapshot {
-  return { sessions: sessions.map((session) => ({ ...session })), activeId: activeId.value }
+  return {
+    sessions: sessions.map((session) => ({
+      ...session,
+      diskNote: session.diskNote ? { ...session.diskNote } : null,
+    })),
+    activeId: activeId.value,
+  }
 }
 
 export function getActive(): SessionMeta | undefined {
@@ -39,7 +66,7 @@ export function subscribe(listener: Listener): () => void {
 
 export function createSession(): string {
   const id = `tab-${nextId.value++}`
-  sessions.push({ id, path: null, dirty: false, revision: 0 })
+  sessions.push({ id, path: null, dirty: false, revision: 0, diskNote: null })
   activeId.value = id
   emit()
   return id
@@ -122,6 +149,14 @@ export function markSaved(id: string, path: string, revision: number): void {
   if (!session) return
   session.path = path
   if (session.revision === revision) session.dirty = false
+  emit()
+}
+
+/** Set or clear session `id`'s changed-on-disk marker. */
+export function setDiskNote(id: string, note: DiskNote | null): void {
+  const session = sessions.find((entry) => entry.id === id)
+  if (!session || (session.diskNote === null && note === null)) return
+  session.diskNote = note
   emit()
 }
 

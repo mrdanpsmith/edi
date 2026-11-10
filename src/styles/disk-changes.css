@@ -37,3 +37,36 @@
   flex-direction: column;
   gap: 4px;
 }
+
+/* The marker on a tab whose file changed on disk while open. */
+.tab-disk-badge {
+  flex: none;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.tab-disk-badge.tab-disk-deleted {
+  color: var(--danger);
+}
+
+/* The same marker in the status bar, for the tab in view. */
+.status-disk {
+  flex: none;
+  padding: 0 6px;
+  font: inherit;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.status-disk:hover {
+  background: var(--surface-raised);
+}
+
+.status-disk[hidden] {
+  display: none;
+}

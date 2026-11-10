@@ -23,6 +23,7 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -179,6 +180,85 @@ def move(old_path: str, new_path: str) -> None:
         record(new_path, f"Renamed from {old_name}")
     except Exception:  # noqa: BLE001 — history never fails a rename
         log.exception("Could not move the history of %s to %s", old_path, new_path)
+
+
+def clear(path: str) -> None:
+    """Forget every saved version of a document, keeping the file as it is now
+    as the first version of a fresh history (if the file still exists), so the
+    next change can still be compared with something."""
+    with _lock:
+        _remove(repo_dir(path))
+    if os.path.isfile(path):
+        record(path, "History cleared")
+
+
+def stored_documents() -> list[dict]:
+    """Every document the store holds a history for: ``{path, exists}``."""
+    store = root()
+    if not store.is_dir():
+        return []
+    documents = []
+    with _lock:
+        for folder in sorted(store.iterdir()):
+            if not (folder / "HEAD").is_file():
+                continue
+            try:
+                recorded = (folder / PATH_FILE).read_text(encoding="utf-8").strip()
+            except OSError:
+                recorded = ""
+            documents.append({"path": recorded, "exists": bool(recorded) and os.path.exists(recorded)})
+    return documents
+
+
+def remove_missing() -> int:
+    """Remove the history of every document whose file is no longer on disk.
+
+    That includes a file renamed or moved outside Edi whose history would
+    otherwise be reattached when it is next opened (``_reattach``).
+    Returns how many histories were removed."""
+    removed = 0
+    store = root()
+    if not store.is_dir():
+        return 0
+    with _lock:
+        for folder in list(store.iterdir()):
+            if not folder.is_dir():
+                continue
+            try:
+                recorded = (folder / PATH_FILE).read_text(encoding="utf-8").strip()
+            except OSError:
+                recorded = ""
+            if not recorded or not os.path.exists(recorded):
+                _remove(folder)
+                removed += 1
+    return removed
+
+
+def clear_all(keep: list[str] | None = None) -> int:
+    """Remove every history. The documents in ``keep`` (those open in Edi) get
+    their current file back as a first version, as ``clear`` does for one.
+    Returns how many histories were removed."""
+    store = root()
+    removed = 0
+    with _lock:
+        if store.is_dir():
+            for folder in list(store.iterdir()):
+                if folder.is_dir():
+                    _remove(folder)
+                    removed += 1
+    for path in keep or []:
+        if os.path.isfile(path):
+            record(path, "History cleared")
+    return removed
+
+
+def _remove(folder: Path) -> None:
+    """Delete a repository folder; it must be inside the store."""
+    store = root().resolve()
+    target = folder.resolve()
+    if target.parent != store:
+        raise ValueError(f"Not a history folder: {folder}")
+    shutil.rmtree(target, ignore_errors=True)
 
 
 def _reattach(path: str) -> None:

@@ -1048,6 +1048,24 @@ def test_a_rename_carries_the_history_along(bridge, tmp_path, history_store):
     assert [v["message"] for v in versions] == ["Renamed from notes.md", "Saved"]
 
 
+def test_clear_history_forgets_a_documents_versions(bridge, tmp_path, history_store):
+    bridge_obj, _window, result = bridge
+    doc = tmp_path / "notes.md"
+    bridge_obj.grants.allow_write(str(doc))
+    for i, text in enumerate(("one", "two")):
+        _invoke(bridge_obj, "writeTextFile", {"path": str(doc), "content": text, "history": True}, 130 + i)
+        assert _wait_for(lambda i=i: result.get(130 + i))["ok"] is True
+
+    _invoke(bridge_obj, "clearHistory", {"path": str(doc)}, 132)
+    assert _wait_for(lambda: result.get(132))["ok"] is True
+    assert [v["message"] for v in _versions(bridge_obj, result, doc, 133)] == ["History cleared"]
+
+    secret = tmp_path / "secret.md"
+    secret.write_text("x", encoding="utf-8")
+    _invoke(bridge_obj, "clearHistory", {"path": str(secret)}, 134)
+    assert _refused(_wait_for(lambda: result.get(134)))
+
+
 def test_history_is_only_read_for_documents_the_user_gave_edi(bridge, tmp_path, history_store):
     bridge_obj, _window, result = bridge
     secret = tmp_path / "secret.md"

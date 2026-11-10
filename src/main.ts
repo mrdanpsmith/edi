@@ -351,7 +351,10 @@ export function init(roots: AppRoots): () => void {
   ctx.blockEditor = createBlockEditor(roots.editorContainer, '', {
     onOpenLink: (href, text) => openLink(files, href, text),
     // Dirty means "not the document on disk", so undoing back to it is clean.
-    onChange: () => setActiveDirty(!(ctx.blockEditor?.isAtSavedPoint() ?? false)),
+    onChange: () => {
+      setActiveDirty(!(ctx.blockEditor?.isAtSavedPoint() ?? false))
+      ctx.disk?.edited()
+    },
     onModeChange: (mode) => ctx.renderModeChip(mode),
     resolveImageSrc: resolveImageFileUrl,
   })
@@ -538,6 +541,7 @@ export function init(roots: AppRoots): () => void {
     nativeBridge?.notify?.disconnect?.(files.onNativeEvent)
     stopTheme()
     ctx.contextMenu?.hide()
+    ctx.disk?.destroy()
     ctx.blockEditor?.destroy()
     ctx.tabs.destroy()
     if (window.ediSetContent === setContent) delete window.ediSetContent

@@ -83,6 +83,40 @@ describe('openHistoryDialog', () => {
     await expect(second.promise).resolves.toBeNull()
   })
 
+  it('Clear History… clears through the caller and shows the fresh history', async () => {
+    let versionsNow = versions
+    const clear = vi.fn(async () => {
+      versionsNow = [{ id: 'c'.repeat(40), time: 1_700_000_200, message: 'History cleared' }]
+      return true
+    })
+    openHistoryDialog({
+      name: 'notes.md',
+      current: 'now\n',
+      list: async () => versionsNow,
+      read: async () => 'now\n',
+      clear,
+    })
+    await flush()
+    expect(items()).toHaveLength(2)
+    document.querySelector<HTMLButtonElement>('.edi-history-clear')!.click()
+    await flush()
+    await flush()
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(items().map((item) => item.querySelector('.edi-history-message')!.textContent)).toEqual([
+      'History cleared',
+    ])
+  })
+
+  it('keeps the history when the caller declines to clear it', async () => {
+    const list = vi.fn(async () => versions)
+    openHistoryDialog({ name: 'n.md', current: '', list, read: async () => '', clear: async () => false })
+    await flush()
+    document.querySelector<HTMLButtonElement>('.edi-history-clear')!.click()
+    await flush()
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(items()).toHaveLength(2)
+  })
+
   it('says so when there are no versions', async () => {
     openHistoryDialog({ name: 'n.md', current: '', list: async () => [], read: vi.fn() })
     await flush()

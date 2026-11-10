@@ -91,6 +91,11 @@ class DiskWatcher(QObject):
             self._missing.discard(path)
         self._unwatch.emit(path)
 
+    def watched(self) -> list[str]:
+        """The documents Edi has read or written this run."""
+        with self._lock:
+            return list(self._seen)
+
     def changed_since_seen(self, path: str) -> bool:
         """Whether ``path`` holds something other than what Edi last read or
         wrote. A file Edi never read, or one that is gone, has nothing to lose."""

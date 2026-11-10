@@ -79,6 +79,11 @@ export async function listHistory(path: string): Promise<HistoryVersion[]> {
   return invoke<HistoryVersion[]>('listHistory', { path })
 }
 
+/** Forget a document's saved versions; its current file becomes the first version. */
+export async function clearHistory(path: string): Promise<void> {
+  await invoke('clearHistory', { path })
+}
+
 /** The markdown of one saved version. */
 export async function readHistoryVersion(path: string, id: string): Promise<string> {
   return invoke<string>('readHistoryVersion', { path, id })

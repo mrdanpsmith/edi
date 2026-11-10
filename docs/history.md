@@ -112,11 +112,40 @@ never its plaintext.
 - `src/historyDialog.test.ts` and `src/editor-replacemarkdown.test.ts` cover
   the page.
 
+## Clearing history
+
+There are two ways to clear history:
+
+- **One document.** **Clear History…** in the Version History dialog asks for
+  confirmation, then calls `clearHistory({path})`, which checks
+  `grants.check_read` like the other history methods. `history.clear` deletes
+  the document's repository and records the file as it is on disk now as a
+  fresh first version, "History cleared", so the next change can still be
+  compared with something. A document whose file is gone keeps nothing.
+- **The whole store.** **File › Clear Version History…** is a native dialog
+  (`MainWindow._clear_all_history`) that says how many documents have history
+  and how many of those are no longer on disk. It offers two actions:
+  - **Remove Deleted Documents' History** (`history.remove_missing`) removes
+    every history whose recorded path no longer exists. That includes
+    documents renamed or moved outside Edi, which would otherwise be
+    reattached the next time they're opened, and the dialog says so.
+  - **Clear All History** (`history.clear_all`) removes everything. The
+    documents Edi has open (the watcher's `watched()`) get a fresh "History
+    cleared" first version, as `clear` gives a single document.
+
+  The outcome is reported in the status bar through a `flashStatus` native
+  event.
+
+The store-wide actions run in the shell's own dialog and have no page command
+or bridge method, so nothing running in the page can wipe every history. Every
+deletion goes through `history._remove`, which refuses a folder that isn't
+directly inside the store.
+
 ## Not yet
 
 These are not implemented yet:
 
-- pruning or deleting history;
+- automatic pruning (by age or by count);
 - version messages the reader writes;
 - remotes;
 - history for documents outside the grants.

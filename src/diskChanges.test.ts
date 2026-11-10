@@ -7,7 +7,14 @@ vi.mock('./files', async (importOriginal) => ({
 
 import { readTextFile } from './files'
 import { createDiskController, openCompareDialog } from './diskChanges'
-import { createSession, getActive, resetState, setActiveDirty, setActivePath } from './state'
+import {
+  createSession,
+  getActive,
+  getState,
+  resetState,
+  setActiveDirty,
+  setActivePath,
+} from './state'
 import type { AppContext } from './appContext'
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -16,7 +23,10 @@ function fakeContext() {
   const workspace = document.createElement('main')
   const editorContainer = document.createElement('section')
   workspace.append(editorContainer)
-  document.body.append(workspace)
+  const statusbar = document.createElement('footer')
+  const statusLeft = document.createElement('span')
+  statusbar.append(statusLeft)
+  document.body.append(workspace, statusbar)
   let markdown = 'mine\n'
   const blockEditor = {
     flushReveals: vi.fn(async () => undefined),
@@ -28,7 +38,7 @@ function fakeContext() {
     getView: () => ({ state: { doc: {} } }),
   }
   const ctx = {
-    roots: { editorContainer },
+    roots: { editorContainer, statusLeft },
     blockEditor,
     updateTitle: vi.fn(),
     syncDirty: vi.fn(),
@@ -180,6 +190,80 @@ describe('a document changed on disk', () => {
     expect(blockEditor.replaceMarkdown).toHaveBeenCalledWith('theirs\n')
     // The file was read once, for the dialog; the choice used that text.
     expect(readTextFile).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the changed-on-disk marker', () => {
+  const statusNote = () => document.querySelector<HTMLButtonElement>('.status-disk')!
+
+  it('marks a tab out of view, and counts each change', () => {
+    const { ctx } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/a.md')
+    const a = getActive()!.id
+    openTab('/docs/b.md')
+
+    disk.onEvent('diskChanged', '/docs/a.md')
+    disk.onEvent('diskChanged', '/docs/a.md')
+
+    const note = getState().sessions.find((s) => s.id === a)!.diskNote!
+    expect(note).toMatchObject({ kind: 'changed', count: 2 })
+    // Only the tab in view has its note in the status bar.
+    expect(statusNote().hidden).toBe(true)
+  })
+
+  it('survives the reload it caused, and shows in the status bar', async () => {
+    const { ctx, blockEditor } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/a.md')
+    // The editor reports its own rewrite as an edit, as the real one does.
+    blockEditor.replaceMarkdown.mockImplementation(() => disk.edited())
+    vi.mocked(readTextFile).mockResolvedValue('theirs\n')
+
+    disk.onEvent('diskChanged', '/docs/a.md')
+    await flush()
+
+    expect(getActive()!.diskNote).toMatchObject({ kind: 'changed', count: 1 })
+    expect(statusNote().hidden).toBe(false)
+    expect(statusNote().textContent).toMatch(/^Changed on disk at /)
+  })
+
+  it('clears when the reader edits', () => {
+    const { ctx } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/a.md', true)
+    disk.onEvent('diskChanged', '/docs/a.md')
+    disk.edited()
+    expect(getActive()!.diskNote).toBeNull()
+    expect(statusNote().hidden).toBe(true)
+  })
+
+  it('clears on a click in the status bar, on a save, and on a choice', async () => {
+    const { ctx } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/a.md', true)
+
+    disk.onEvent('diskChanged', '/docs/a.md')
+    statusNote().click()
+    expect(getActive()!.diskNote).toBeNull()
+
+    disk.onEvent('diskChanged', '/docs/a.md')
+    disk.noteDiskText('/docs/a.md', 'saved\n')
+    expect(getActive()!.diskNote).toBeNull()
+
+    disk.onEvent('diskChanged', '/docs/a.md')
+    vi.mocked(readTextFile).mockResolvedValue('theirs\n')
+    clickBar('Keep mine')
+    await flush()
+    expect(getActive()!.diskNote).toBeNull()
+  })
+
+  it('says deleted for a deleted file', () => {
+    const { ctx } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/a.md')
+    disk.onEvent('diskDeleted', '/docs/a.md')
+    expect(statusNote().textContent).toMatch(/^Deleted on disk at /)
   })
 })
 

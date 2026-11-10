@@ -221,6 +221,37 @@ def test_alert_dialog_shows_single_ok_button(visible, qtbot):
     _dismiss_box(box, qtbot, box.button(QMessageBox.StandardButton.Ok))
 
 
+def test_clear_version_history_removes_only_deleted_documents_history(visible, qtbot, tmp_path, monkeypatch):
+    import os
+
+    from backend import history
+
+    monkeypatch.setenv(history.ROOT_ENV, str(tmp_path / "history"))
+    kept = tmp_path / "kept.md"
+    gone = tmp_path / "gone.md"
+    for doc in (kept, gone):
+        doc.write_text(doc.name, encoding="utf-8")
+        history.record(str(doc))
+    gone.unlink()
+
+    visible._clear_all_history()
+    box = _wait_modal(qtbot)
+    assert "2 documents" in box.text() and "1 of them is no longer on disk" in box.text()
+    remove = next(b for b in box.buttons() if b.text() == "Remove Deleted Documents' History")
+    _dismiss_box(box, qtbot, remove)
+    assert [d["path"] for d in history.stored_documents()] == [os.path.realpath(kept)]
+
+
+def test_clear_version_history_with_nothing_stored_says_so(visible, qtbot, tmp_path, monkeypatch):
+    from backend import history
+
+    monkeypatch.setenv(history.ROOT_ENV, str(tmp_path / "empty-history"))
+    visible._clear_all_history()
+    box = _wait_modal(qtbot)
+    assert box.text() == "No document has any version history yet."
+    _dismiss_box(box, qtbot, box.button(QMessageBox.StandardButton.Ok))
+
+
 def test_close_clean_exits_without_prompt(visible, qtbot):
     window = visible
     window.close()

@@ -2,10 +2,12 @@ import {
   activateSession,
   closeSession,
   createSession,
+  describeDiskNote,
   getActive,
   getState,
   moveSession,
   setActivePath,
+  setDiskNote,
   subscribe,
 } from './state'
 
@@ -462,7 +464,23 @@ export class Tabs {
         }
       })
 
-      tab.append(title, close)
+      if (session.diskNote) {
+        // The file changed on disk while open (`src/diskChanges.ts`). A
+        // marker, not a question: clicking it only dismisses it.
+        const badge = document.createElement('span')
+        badge.className = `tab-disk-badge tab-disk-${session.diskNote.kind}`
+        badge.textContent = session.diskNote.kind === 'deleted' ? '⊘' : '↻'
+        badge.title = `${describeDiskNote(session.diskNote)} — click to dismiss`
+        badge.setAttribute('role', 'img')
+        badge.ariaLabel = describeDiskNote(session.diskNote)
+        badge.addEventListener('click', (event) => {
+          event.stopPropagation()
+          setDiskNote(session.id, null)
+        })
+        tab.append(title, badge, close)
+      } else {
+        tab.append(title, close)
+      }
       return tab
     })
 

@@ -184,6 +184,56 @@ def test_concurrent_saves_each_land_once(store, docs):
     assert {history.read_version(str(doc), v["id"]) for v in versions} <= set(texts)
 
 
+def test_clear_keeps_the_document_as_it_is_now_as_the_first_version(store, docs):
+    doc = docs / "notes.md"
+    _save(doc, "one\n")
+    _save(doc, "two\n")
+    history.clear(str(doc))
+    versions = history.list_versions(str(doc))
+    assert [v["message"] for v in versions] == ["History cleared"]
+    assert history.read_version(str(doc), versions[0]["id"]) == "two\n"
+
+
+def test_clear_of_a_deleted_document_leaves_nothing(store, docs):
+    doc = docs / "notes.md"
+    _save(doc, "one\n")
+    doc.unlink()
+    history.clear(str(doc))
+    assert history.stored_documents() == []
+
+
+def test_removing_the_history_of_deleted_documents_keeps_the_rest(store, docs):
+    kept = docs / "kept.md"
+    gone = docs / "gone.md"
+    _save(kept, "kept\n")
+    _save(gone, "gone\n")
+    gone.unlink()
+    assert sorted(
+        (d["path"], d["exists"]) for d in history.stored_documents()
+    ) == sorted([(os.path.realpath(kept), True), (os.path.realpath(gone), False)])
+
+    assert history.remove_missing() == 1
+    assert [d["path"] for d in history.stored_documents()] == [os.path.realpath(kept)]
+
+
+def test_clear_all_keeps_only_a_fresh_start_for_the_open_documents(store, docs):
+    open_doc = docs / "open.md"
+    closed_doc = docs / "closed.md"
+    _save(open_doc, "one\n")
+    _save(open_doc, "two\n")
+    _save(closed_doc, "x\n")
+
+    assert history.clear_all(keep=[str(open_doc)]) == 2
+    assert [v["message"] for v in history.list_versions(str(open_doc))] == ["History cleared"]
+    assert [d["path"] for d in history.stored_documents()] == [os.path.realpath(open_doc)]
+
+
+def test_nothing_outside_the_store_is_ever_removed(store, docs):
+    with pytest.raises(ValueError):
+        history._remove(docs)
+    assert docs.is_dir()
+
+
 def test_a_failure_to_record_is_logged_not_raised(store, docs, caplog):
     history.record(str(docs / "missing.md"))
     assert "Could not record a version" in caplog.text

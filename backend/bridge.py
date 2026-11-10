@@ -145,6 +145,7 @@ class Bridge(QObject):
             "renameTextFile": self._rename_text_file,
             "listHistory": self._list_history,
             "readHistoryVersion": self._read_history_version,
+            "clearHistory": self._clear_history,
             "writeBinaryFile": self._write_binary_file,
             "parseTableFile": self._parse_table_file,
             "copyTable": self._copy_table,
@@ -445,6 +446,26 @@ class Bridge(QObject):
                 self._reply_error(request_id, str(exc))
             else:
                 self._reply(request_id, versions)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _clear_history(self, request_id: int, args: dict) -> None:
+        """Forget a document's saved versions, keeping the file as it is now as
+        the first version. The whole store is cleared from the native menu
+        (``MainWindow._clear_all_history``), never from the page."""
+        path = args.get("path")
+        if not path:
+            self._reply_error(request_id, "Missing path")
+            return
+        self.grants.check_read(str(path))
+
+        def work() -> None:
+            try:
+                history.clear(str(path))
+            except Exception as exc:  # noqa: BLE001
+                self._reply_error(request_id, str(exc))
+            else:
+                self._reply(request_id, None)
 
         threading.Thread(target=work, daemon=True).start()
 

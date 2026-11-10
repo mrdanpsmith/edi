@@ -86,6 +86,32 @@ will write it again, with a Dismiss button.
 tab is shown: `afterActivate` calls `disk.refresh()`. A refused save raises the
 same bar and flashes "Not saved: … changed on disk".
 
+## The marker
+
+A reload is easy to miss, and a reload in a tab out of view happens later, so
+every change on disk also leaves a **marker**. It only informs and asks
+nothing; the bar is where decisions are made.
+
+- **Where it shows.** A `↻` badge on the tab (`⊘` once the file has been
+  deleted), and a note in the status bar while that tab is in view: "Changed on
+  disk at 14:32", or "… (3 changes)" when several arrived before it was
+  dismissed.
+- **Where it lives.** It's `SessionMeta.diskNote` in `src/state.ts`, so the
+  tab strip draws it on its own.
+- **When it clears.** The reader is evidently done with it when any of these
+  happens, so a document that's only read, never edited, doesn't keep a stale
+  marker:
+  - an edit;
+  - a save, open or revert (`noteDiskText`);
+  - opening Version History;
+  - any choice on the bar or in Compare;
+  - a click on the badge or the status note;
+  - closing the tab.
+
+The reload Edi makes itself is not an edit by the reader. The controller sets
+`applying` while it rewrites the document, so the `onChange` that rewrite fires
+does not clear the marker it has just earned.
+
 ## Not yet
 
 These are not implemented yet:

@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { Tabs, type TabContent, type TabCallbacks } from './tabs'
 import { createBlockEditor } from './editor'
 import { redo, undo } from 'prosemirror-history'
-import { activateSession, closeSession, getState } from './state'
+import { activateSession, closeSession, getState, setDiskNote } from './state'
 
 let markdownReturn = ''
 
@@ -507,6 +507,27 @@ describe('Tabs reordering', () => {
       new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }),
     )
     expect(tabIds(tabbar)).toEqual(before)
+    tabs.destroy()
+  })
+})
+
+describe('the changed-on-disk badge', () => {
+  it('marks the tab, says when, and a click on it only dismisses it', () => {
+    const tabbar = createTabbar()
+    const tabs = new Tabs(tabbar, { getMarkdown: () => '', setMarkdown: vi.fn() }, makeCallbacks())
+    tabs.addSession('one', '/docs/one.md')
+    tabs.addSession('two', '/docs/two.md')
+    const [first, second] = getState().sessions.slice(-2).map((session) => session.id)
+
+    setDiskNote(first!, { kind: 'changed', at: Date.now(), count: 2 })
+    const badge = tabbar.querySelector<HTMLElement>(`[data-session-id="${first}"] .tab-disk-badge`)!
+    expect(badge.title).toMatch(/^Changed on disk at .* \(2 changes\) — click to dismiss$/)
+    expect(tabbar.querySelectorAll('.tab-disk-badge')).toHaveLength(1)
+
+    badge.click()
+    expect(tabbar.querySelector('.tab-disk-badge')).toBeNull()
+    // Dismissing is not switching to the tab.
+    expect(tabs.activeId).toBe(second)
     tabs.destroy()
   })
 })

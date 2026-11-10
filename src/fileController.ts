@@ -1,6 +1,7 @@
 import type { Node as ProseNode } from 'prosemirror-model'
 import { confirmAction, isChangedOnDisk, isNotPermitted } from './bridge'
 import {
+  clearHistory,
   dirname,
   fileName,
   getPendingFiles,
@@ -62,6 +63,7 @@ interface NativeEvent {
   type?: unknown
   paths?: unknown
   path?: unknown
+  message?: unknown
 }
 
 /** What a save writes, and which tab, edit and document it was read from. */
@@ -133,6 +135,11 @@ export function createFileController(ctx: AppContext): FileController {
     // A document changed or vanished on disk (`backend/watcher.py`).
     if ((event.type === 'diskChanged' || event.type === 'diskDeleted') && typeof event.path === 'string') {
       ctx.disk?.onEvent(event.type, event.path)
+      return
+    }
+    // The shell reporting the outcome of one of its own dialogs.
+    if (event.type === 'flashStatus' && typeof event.message === 'string') {
+      ctx.flashStatus(event.message)
       return
     }
     if (event.type !== 'openFiles' || !Array.isArray(event.paths)) return
@@ -327,12 +334,29 @@ export function createFileController(ctx: AppContext): FileController {
     const session = getActive()
     const path = session?.path
     if (!session || !path) return
+    // Looking at the history is looking at what changed: the marker has done its job.
+    ctx.disk?.dismiss(path)
     await ctx.blockEditor?.flushReveals()
+    const name = path.split('/').pop() ?? path
     const restored = await openHistoryDialog({
-      name: path.split('/').pop() ?? path,
+      name,
       current: ctx.blockEditor?.getMarkdown() ?? '',
       list: () => listHistory(path),
       read: (id) => readHistoryVersion(path, id),
+      clear: async () => {
+        const confirmed = await confirmAction(
+          `Delete every saved version of ${name}?\n\nThe document as it is on disk is kept as the first version of a new history. This cannot be undone.`,
+        )
+        if (!confirmed) return false
+        try {
+          await clearHistory(path)
+        } catch (error) {
+          ctx.reportError(`Failed to clear the history of ${name}`, error)
+          return false
+        }
+        ctx.flashStatus(`Cleared the history of ${name}`)
+        return true
+      },
     })
     if (restored === null || getActive()?.id !== session.id) return
     await ctx.blockEditor?.flushReveals()

@@ -1,6 +1,13 @@
 import { readTextFile } from './files'
 import { renderDiff } from './historyDialog'
-import { getActive, setActiveDirty } from './state'
+import {
+  describeDiskNote,
+  findSessionByPath,
+  getActive,
+  setActiveDirty,
+  setDiskNote,
+  subscribe,
+} from './state'
 import type { AppContext } from './appContext'
 
 /**
@@ -21,6 +28,12 @@ import type { AppContext } from './appContext'
  *
  * Reading the file is what tells the backend the reader has now seen it, so a
  * choice made here never needs a separate "overwrite anyway".
+ *
+ * Either way the tab gets a **marker** (a badge on the tab, and a note in the
+ * status bar while it is in view) saying the file changed on disk and when. It
+ * asks nothing. It clears when the reader is evidently done with it: an edit or
+ * a save, opening Version History, any choice on the bar, or a click on the
+ * marker itself.
  */
 export interface DiskController {
   /** `text` is now the file at `path` as Edi read or wrote it: the base. */
@@ -33,6 +46,11 @@ export interface DiskController {
   saveRefused(path: string): void
   /** The tab in view changed, or its state did: show or act on what is pending. */
   refresh(): void
+  /** The reader edited the document in view: its marker has done its job. */
+  edited(): void
+  /** Clear the marker of the document at `path`. */
+  dismiss(path: string): void
+  destroy(): void
 }
 
 type Pending = 'changed' | 'deleted' | null
@@ -45,6 +63,39 @@ interface Entry {
 export function createDiskController(ctx: AppContext): DiskController {
   const entries = new Map<string, Entry>()
   let bar: HTMLElement | null = null
+  // Set while this controller itself rewrites the document, so that edit is
+  // not taken for the reader's and does not clear the marker it just earned.
+  let applying = false
+
+  function mark(path: string, kind: 'changed' | 'deleted'): void {
+    const session = findSessionByPath(path)
+    if (!session) return
+    const count = session.diskNote ? session.diskNote.count + 1 : 1
+    setDiskNote(session.id, { kind, at: Date.now(), count })
+  }
+
+  function dismiss(path: string): void {
+    const session = findSessionByPath(path)
+    if (session) setDiskNote(session.id, null)
+  }
+
+  // The status-bar half of the marker: the tab in view's note, while it has one.
+  const statusNote = document.createElement('button')
+  statusNote.type = 'button'
+  statusNote.className = 'status-disk'
+  statusNote.hidden = true
+  statusNote.title = 'Click to dismiss'
+  statusNote.addEventListener('click', () => {
+    const path = getActive()?.path
+    if (path) dismiss(path)
+  })
+  ctx.roots.statusLeft?.after(statusNote)
+  const renderStatusNote = (): void => {
+    const note = getActive()?.diskNote ?? null
+    statusNote.hidden = note === null
+    statusNote.textContent = note ? describeDiskNote(note) : ''
+  }
+  const unsubscribe = subscribe(renderStatusNote)
 
   const entry = (path: string): Entry => {
     let found = entries.get(path)
@@ -114,9 +165,14 @@ export function createDiskController(ctx: AppContext): DiskController {
     if (session?.path !== path || !ctx.blockEditor) return false
     await ctx.blockEditor.flushReveals()
     if (getActive()?.id !== session.id) return false
-    if (ctx.blockEditor.getMarkdown() !== text) ctx.blockEditor.replaceMarkdown(text)
-    ctx.blockEditor.markSavedPoint(ctx.blockEditor.getView().state.doc)
-    setActiveDirty(false)
+    applying = true
+    try {
+      if (ctx.blockEditor.getMarkdown() !== text) ctx.blockEditor.replaceMarkdown(text)
+      ctx.blockEditor.markSavedPoint(ctx.blockEditor.getView().state.doc)
+      setActiveDirty(false)
+    } finally {
+      applying = false
+    }
     ctx.updateTitle()
     ctx.syncDirty()
     return true
@@ -143,6 +199,7 @@ export function createDiskController(ctx: AppContext): DiskController {
   }
 
   async function takeTheirs(path: string, known?: string): Promise<void> {
+    dismiss(path)
     const text = known ?? (await readTheirs(path))
     if (text === null) return
     if (await applyToActive(path, text)) {
@@ -152,6 +209,7 @@ export function createDiskController(ctx: AppContext): DiskController {
   }
 
   async function keepMine(path: string, known?: string): Promise<void> {
+    dismiss(path)
     const text = known ?? (await readTheirs(path))
     if (text === null) return
     settled(path, text)
@@ -159,6 +217,7 @@ export function createDiskController(ctx: AppContext): DiskController {
   }
 
   async function compare(path: string): Promise<void> {
+    dismiss(path)
     const theirs = await readTheirs(path)
     if (theirs === null || !ctx.blockEditor) return
     await ctx.blockEditor.flushReveals()
@@ -190,7 +249,9 @@ export function createDiskController(ctx: AppContext): DiskController {
 
   return {
     noteDiskText(path, text) {
+      // Read or written by Edi just now (open, save, revert): nothing pending.
       settled(path, text)
+      dismiss(path)
     },
     renamed(oldPath, newPath) {
       const found = entries.get(oldPath)
@@ -198,15 +259,30 @@ export function createDiskController(ctx: AppContext): DiskController {
       if (found) entries.set(newPath, found)
     },
     onEvent(type, path) {
-      entry(path).pending = type === 'diskDeleted' ? 'deleted' : 'changed'
+      const kind = type === 'diskDeleted' ? 'deleted' : 'changed'
+      entry(path).pending = kind
+      mark(path, kind)
       if (getActive()?.path === path) refresh()
     },
     saveRefused(path) {
       entry(path).pending = 'changed'
+      // Usually the watcher has marked it already; this covers a missed event.
+      if (!findSessionByPath(path)?.diskNote) mark(path, 'changed')
       refresh()
       ctx.flashStatus(`Not saved: ${nameOf(path)} changed on disk`)
     },
     refresh,
+    edited() {
+      if (applying) return
+      const session = getActive()
+      if (session?.diskNote) setDiskNote(session.id, null)
+    },
+    dismiss,
+    destroy() {
+      unsubscribe()
+      statusNote.remove()
+      hideBar()
+    },
   }
 }
 

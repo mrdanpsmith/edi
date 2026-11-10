@@ -39,6 +39,7 @@
   "bridgeMethods": {
     "addRecentFile": true,
     "alert": true,
+    "clearHistory": true,
     "confirm": true,
     "copyContent": true,
     "copyImage": true,

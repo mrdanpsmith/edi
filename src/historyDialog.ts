@@ -11,12 +11,18 @@ export interface HistoryDialogOptions {
   current: string
   list: () => Promise<HistoryVersion[]>
   read: (id: string) => Promise<string>
+  /**
+   * Forget the document's saved versions, after the caller has asked. Resolves
+   * whether it did; the dialog then shows the (fresh) history again.
+   */
+  clear?: () => Promise<boolean>
 }
 
 /**
  * The Version History dialog: the document's saved versions on the left, and on
- * the right the one selected, as a diff from the document as it is now. Resolves with the selected version's markdown when the reader restores
- * it, or `null` when they close the dialog.
+ * the right the one selected, as a diff from the document as it is now.
+ * Resolves with the selected version's markdown when the reader restores it, or
+ * `null` when they close the dialog.
  *
  * The dialog only reads; restoring is the caller's edit to make.
  */
@@ -65,6 +71,18 @@ export function openHistoryDialog(options: HistoryDialogOptions): Promise<string
     restore.className = 'toolbar-btn toolbar-primary'
     restore.textContent = 'Restore'
     restore.disabled = true
+    if (options.clear) {
+      const clear = document.createElement('button')
+      clear.type = 'button'
+      clear.className = 'toolbar-btn edi-history-clear'
+      clear.textContent = 'Clear History…'
+      clear.addEventListener('click', () => {
+        void options.clear!().then((cleared) => {
+          if (cleared) load()
+        })
+      })
+      actions.append(clear)
+    }
     actions.append(close, restore)
 
     box.append(title, body, note, actions)
@@ -125,35 +143,45 @@ export function openHistoryDialog(options: HistoryDialogOptions): Promise<string
       }
     })
 
-    show('Loading…')
-    options.list().then(
-      (versions) => {
-        if (versions.length === 0) {
-          show('No saved versions yet. Each save of this document records one.')
-          return
-        }
-        for (const version of versions) {
-          const item = document.createElement('button')
-          item.type = 'button'
-          item.className = 'edi-history-item'
-          item.setAttribute('role', 'option')
-          item.setAttribute('aria-selected', 'false')
-          const when = document.createElement('span')
-          when.className = 'edi-history-time'
-          when.textContent = new Date(version.time * 1000).toLocaleString()
-          const what = document.createElement('span')
-          what.className = 'edi-history-message'
-          what.textContent = version.message
-          item.append(when, what)
-          item.addEventListener('click', () => void select(version, item))
-          list.append(item)
-        }
-        void select(versions[0]!, list.firstElementChild as HTMLElement)
-      },
-      (error: unknown) => {
-        show(`Could not read the history: ${error instanceof Error ? error.message : String(error)}`)
-      },
-    )
+    const load = (): void => {
+      selected = null
+      restore.disabled = true
+      request++
+      list.replaceChildren()
+      show('Loading…')
+      options.list().then(
+        (versions) => listVersions(versions),
+        (error: unknown) => {
+          show(`Could not read the history: ${error instanceof Error ? error.message : String(error)}`)
+        },
+      )
+    }
+
+    const listVersions = (versions: HistoryVersion[]): void => {
+      if (versions.length === 0) {
+        show('No saved versions yet. Each save of this document records one.')
+        return
+      }
+      for (const version of versions) {
+        const item = document.createElement('button')
+        item.type = 'button'
+        item.className = 'edi-history-item'
+        item.setAttribute('role', 'option')
+        item.setAttribute('aria-selected', 'false')
+        const when = document.createElement('span')
+        when.className = 'edi-history-time'
+        when.textContent = new Date(version.time * 1000).toLocaleString()
+        const what = document.createElement('span')
+        what.className = 'edi-history-message'
+        what.textContent = version.message
+        item.append(when, what)
+        item.addEventListener('click', () => void select(version, item))
+        list.append(item)
+      }
+      void select(versions[0]!, list.firstElementChild as HTMLElement)
+    }
+
+    load()
   })
 }
 
