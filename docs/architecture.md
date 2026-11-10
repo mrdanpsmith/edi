@@ -42,6 +42,10 @@ byte-order mark, and a write takes the line ending and BOM of the file it
 replaces (or, for a rename, the file it moves). A new file gets the platform's
 line ending, as it always has.
 
+A document's saved versions are kept out of its folder too: each save is
+committed into a git repository for that document in Edi's app-data folder
+(`backend/history.py`, [history.md](history.md)), never into a sidecar beside it.
+
 A tab is dirty when its document is not the one on disk. The editor keeps the
 last-saved document as plugin state (`savedPoint` in `src/editor.ts`), so it
 travels with each tab's state, and undoing back to it makes the tab clean.
@@ -109,7 +113,7 @@ bridge methods and preference defaults are declared in
 | --- | --- |
 | `src/` | TypeScript frontend. `entry.ts` is the page entry point; `main.ts` boots from `init(roots)`; `node/` holds node views. |
 | `src/appContext.ts` | The shared `AppContext`, roots and app-chrome updates (title, status, menu state). |
-| `src/fileController.ts` | File lifecycle: open, save, rename, revert, import and export. |
+| `src/fileController.ts` | File lifecycle: open, save, rename, revert, version history, import and export. |
 | `src/editController.ts` | Clipboard, paste, select-all and menu undo/redo. |
 | `src/contextMenuController.ts` | Document, input, source-editor and block context menus. |
 | `src/zoomController.ts` | Document zoom commands, wheel handling and the status indicator. |
@@ -117,7 +121,7 @@ bridge methods and preference defaults are declared in
 | `src/styles.css` | Application stylesheet entry; imports the component sheets in cascade order. |
 | `src/styles/` | One stylesheet per component (`tabs`, `toolbar`, `block-controls`, `tables`, `mermaid`, …). |
 | `src/docs/` | Markdown used by the in-app Help guide. |
-| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, code execution, table import, printing, preferences and theming. |
+| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, version history (`history.py`), code execution, table import, printing, preferences and theming. |
 | `shared/edi-contract.json` | Single source of truth for menu-command, bridge-method and preference names. |
 | `tests/` | Python tests, including the real-WebEngine tests in `tests/window/test_window.py` and helpers in `tests/mermaid_render.py`. |
 | `scripts/` | Developer, build, packaging and release scripts. |

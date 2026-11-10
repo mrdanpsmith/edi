@@ -33,6 +33,7 @@ real application is `run_edi.py`.
 | [docs/find-replace.md](docs/find-replace.md) | Search matching, decorations or the find panel. |
 | [docs/contract.md](docs/contract.md) | Menu commands, bridge methods or preference names. |
 | [docs/preferences.md](docs/preferences.md) | Persisted app state or the preferences bridge. |
+| [docs/history.md](docs/history.md) | Per-document version history, its store, restore and the diff dialog. |
 | [docs/spreadsheets.md](docs/spreadsheets.md) | Formulas, the evaluator, document-local functions. |
 | [docs/mermaid.md](docs/mermaid.md) | Diagram rendering, label editing, `DiagramSession`. |
 | [docs/mermaid-kanban.md](docs/mermaid-kanban.md) | Kanban authoring, drag/drop, the bin, composers. |

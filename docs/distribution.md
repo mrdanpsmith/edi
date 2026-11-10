@@ -401,3 +401,12 @@ runs at 1000, and XLSX cell positions at 1000 columns and 10000 rows. `defusedxm
 every PyInstaller build venv gets it through `requirements-build.txt`:
 `Dockerfile.pyzip`, `scripts/build-windows.ps1` and
 `scripts/build-macos.sh` all install that file.
+
+`backend/history.py` writes each document's version history with **`dulwich`**,
+a pure-Python git implementation (see [history.md](history.md)), so a packaged
+Edi needs no git on the host. It reaches the builds through the same
+`requirements.txt` chain. dulwich's compiled speedups (`_objects`, `_pack`,
+`_diff_tree`) are optional: dulwich falls back to pure Python without them, so
+a build that misses them is slower but still correct. `backend/bridge.py`
+imports the module at startup, so a build missing dulwich entirely fails the
+frozen smoke test rather than shipping.

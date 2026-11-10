@@ -37,6 +37,12 @@ for _scope in (QSettings.Scope.UserScope, QSettings.Scope.SystemScope):
 # Removed at exit; `pytest_sessionfinish`'s hard exit removes it itself.
 atexit.register(shutil.rmtree, _SETTINGS_DIR, ignore_errors=True)
 
+# The same for document version history (`backend/history.py`): a test save
+# must never commit into the developer's real history store.
+_HISTORY_DIR = tempfile.mkdtemp(prefix="edi-test-history-")
+os.environ["EDI_HISTORY_DIR"] = _HISTORY_DIR
+atexit.register(shutil.rmtree, _HISTORY_DIR, ignore_errors=True)
+
 import pytest
 
 
@@ -62,6 +68,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:
         # os._exit skips the atexit handlers still queued (atexit runs last-in,
         # first-out), the settings directory's removal among them.
         shutil.rmtree(_SETTINGS_DIR, ignore_errors=True)
+        shutil.rmtree(_HISTORY_DIR, ignore_errors=True)
         os._exit(status)
 
     atexit.register(_hard_exit)

@@ -53,8 +53,35 @@ export async function readAnyTextFile(path: string): Promise<string> {
   return invoke<string>('readAnyTextFile', { path })
 }
 
-export async function writeTextFile(path: string, content: string): Promise<void> {
-  await invoke('writeTextFile', { path, content })
+/**
+ * Write `content` to `path`. `history` asks the backend to record the written
+ * file as a version of the document (`backend/history.py`): a document save
+ * does, an export of some other format does not.
+ */
+export async function writeTextFile(
+  path: string,
+  content: string,
+  options: { history?: boolean } = {},
+): Promise<void> {
+  await invoke('writeTextFile', { path, content, history: options.history ?? false })
+}
+
+/** One saved version of a document, as `listHistory` reports it. */
+export interface HistoryVersion {
+  id: string
+  /** Seconds since the epoch. */
+  time: number
+  message: string
+}
+
+/** A document's saved versions, newest first. */
+export async function listHistory(path: string): Promise<HistoryVersion[]> {
+  return invoke<HistoryVersion[]>('listHistory', { path })
+}
+
+/** The markdown of one saved version. */
+export async function readHistoryVersion(path: string, id: string): Promise<string> {
+  return invoke<string>('readHistoryVersion', { path, id })
 }
 
 /**

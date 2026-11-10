@@ -995,6 +995,69 @@ def test_rename_text_file_error_keeps_the_recents(bridge, tmp_path):
     assert old.exists()
 
 
+# ── version history ───────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def history_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("EDI_HISTORY_DIR", str(tmp_path / "history"))
+
+
+def _versions(bridge_obj, result, path, request_id):
+    _invoke(bridge_obj, "listHistory", {"path": str(path)}, request_id)
+    message = _wait_for(lambda: result.get(request_id))
+    assert message["ok"] is True, message
+    return message["data"]
+
+
+def test_a_save_asked_to_keep_a_version_records_one_and_an_export_does_not(
+    bridge, tmp_path, history_store
+):
+    bridge_obj, _window, result = bridge
+    doc = tmp_path / "notes.md"
+    export = tmp_path / "notes.html"
+    bridge_obj.grants.allow_write(str(doc))
+    bridge_obj.grants.allow_write(str(export))
+
+    _invoke(bridge_obj, "writeTextFile", {"path": str(doc), "content": "# One", "history": True}, 120)
+    assert _wait_for(lambda: result.get(120))["ok"] is True
+    _invoke(bridge_obj, "writeTextFile", {"path": str(export), "content": "<html>"}, 121)
+    assert _wait_for(lambda: result.get(121))["ok"] is True
+
+    versions = _versions(bridge_obj, result, doc, 122)
+    assert len(versions) == 1
+    assert _versions(bridge_obj, result, export, 123) == []
+
+    _invoke(bridge_obj, "readHistoryVersion", {"path": str(doc), "id": versions[0]["id"]}, 124)
+    message = _wait_for(lambda: result.get(124))
+    assert message == {"id": 124, "ok": True, "data": "# One"}
+
+
+def test_a_rename_carries_the_history_along(bridge, tmp_path, history_store):
+    bridge_obj, _window, result = bridge
+    old = tmp_path / "notes.md"
+    new = tmp_path / "ideas.md"
+    bridge_obj.grants.allow_write(str(old))
+    _invoke(bridge_obj, "writeTextFile", {"path": str(old), "content": "one", "history": True}, 125)
+    assert _wait_for(lambda: result.get(125))["ok"] is True
+
+    _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(new), "content": "two"}, 126)
+    assert _wait_for(lambda: result.get(126))["ok"] is True
+
+    versions = _versions(bridge_obj, result, new, 127)
+    assert [v["message"] for v in versions] == ["Renamed from notes.md", "Saved"]
+
+
+def test_history_is_only_read_for_documents_the_user_gave_edi(bridge, tmp_path, history_store):
+    bridge_obj, _window, result = bridge
+    secret = tmp_path / "secret.md"
+    secret.write_text("x", encoding="utf-8")
+    _invoke(bridge_obj, "listHistory", {"path": str(secret)}, 128)
+    assert _refused(_wait_for(lambda: result.get(128)))
+    _invoke(bridge_obj, "readHistoryVersion", {"path": str(secret), "id": "0" * 40}, 129)
+    assert _refused(_wait_for(lambda: result.get(129)))
+
+
 # ── what the page may touch ───────────────────────────────────────────────
 
 

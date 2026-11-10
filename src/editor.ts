@@ -183,6 +183,13 @@ export interface BlockEditor {
    */
   setMarkdown(markdown: string): void | Promise<void>
   insertMarkdown(markdown: string): void
+  /**
+   * Replace the whole document with `markdown` as one ordinary, undoable edit —
+   * unlike {@link setMarkdown}, which starts a fresh state. Restoring a saved
+   * version uses it, so the restore is a change the reader can undo and save.
+   * Call {@link flushReveals} first: an open encrypted block is replaced too.
+   */
+  replaceMarkdown(markdown: string): void
   commitSource(): boolean
   // Per-tab editor state: each document owns its own ProseMirror EditorState
   // (doc, undo/redo history, selection). Tabs swap whole states into the view.
@@ -552,6 +559,14 @@ export function createBlockEditor(
       const inline = parsed.childCount === 1 && parsed.firstChild!.type.name === 'paragraph'
       const slice = inline ? new Slice(parsed.content, 1, 1) : new Slice(parsed.content, 0, 0)
       view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
+      view.focus()
+    },
+    replaceMarkdown(markdown: string) {
+      commitSourceMode(view)
+      const parsed = markdownToProse(markdown, view.state.schema)
+      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, parsed.content)
+      tr.setSelection(startSelection(tr.doc))
+      view.dispatch(tr.scrollIntoView())
       view.focus()
     },
     commitSource(): boolean {

@@ -446,6 +446,7 @@ export function init(roots: AppRoots): () => void {
     saveAs: () => void files.saveFileAs(),
     rename: () => void files.renameFile(),
     revert: () => void files.revertFile(),
+    versionHistory: () => void files.showHistory(),
     importTable: () => void files.importTable(),
     importText: () => void files.importTextFile(),
     insertImage: () => void files.insertImage(),

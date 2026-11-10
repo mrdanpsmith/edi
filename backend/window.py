@@ -294,6 +294,7 @@ class MainWindow(QMainWindow):
         self._export_action = None
         self._print_action = None
         self._copy_path_action = None
+        self._history_action = None
         self._rename_action = None
         self._toolbar_action = None
         self._hover_band_action = None
@@ -478,6 +479,13 @@ class MainWindow(QMainWindow):
         self._revert_action.setEnabled(False)
         self._link_command(self._revert_action, "revert")
         file_menu.addAction(self._revert_action)
+
+        # A document's saved versions (`backend/history.py`). Enabled with Copy
+        # File Path below: both need only that the document has a path.
+        self._history_action = QAction("Version &History…", self)
+        self._history_action.setEnabled(False)
+        self._link_command(self._history_action, "versionHistory")
+        file_menu.addAction(self._history_action)
 
         # Enabled by the frontend only while the document in view has a path.
         # `setShortcut` rather than a `\t` in the label, for the reason
@@ -702,6 +710,8 @@ class MainWindow(QMainWindow):
             self._revert_action.setEnabled(can_revert)
         if self._copy_path_action is not None:
             self._copy_path_action.setEnabled(can_copy_path)
+        if self._history_action is not None:
+            self._history_action.setEnabled(can_copy_path)
         if self._rename_action is not None:
             self._rename_action.setEnabled(can_rename)
         if self._toolbar_action is not None:

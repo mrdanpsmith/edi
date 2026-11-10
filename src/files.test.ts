@@ -7,6 +7,7 @@ import {
   imageReference,
   isAbsolutePath,
   isSupportedFile,
+  listHistory,
   pickExportPath,
   pickImageImportPath,
   pickImportPath,
@@ -15,6 +16,7 @@ import {
   pickTextImportPath,
   printHtml,
   readAnyTextFile,
+  readHistoryVersion,
   readTextFile,
   renameTextFile,
   UNTITLED,
@@ -47,7 +49,33 @@ describe('bridge wrappers', () => {
   it('writeTextFile passes the path and content to the bridge', async () => {
     vi.mocked(invoke).mockResolvedValue(undefined)
     await expect(writeTextFile('/tmp/a.md', 'body')).resolves.toBeUndefined()
-    expect(invoke).toHaveBeenCalledWith('writeTextFile', { path: '/tmp/a.md', content: 'body' })
+    expect(invoke).toHaveBeenCalledWith('writeTextFile', {
+      path: '/tmp/a.md',
+      content: 'body',
+      history: false,
+    })
+  })
+
+  it('writeTextFile asks for a version only when told to', async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined)
+    await writeTextFile('/tmp/a.md', 'body', { history: true })
+    expect(invoke).toHaveBeenCalledWith('writeTextFile', {
+      path: '/tmp/a.md',
+      content: 'body',
+      history: true,
+    })
+  })
+
+  it('listHistory and readHistoryVersion pass the path (and version) to the bridge', async () => {
+    const versions = [{ id: 'a'.repeat(40), time: 1, message: 'Saved' }]
+    vi.mocked(invoke).mockResolvedValueOnce(versions).mockResolvedValueOnce('old text')
+    await expect(listHistory('/tmp/a.md')).resolves.toEqual(versions)
+    await expect(readHistoryVersion('/tmp/a.md', 'a'.repeat(40))).resolves.toBe('old text')
+    expect(invoke).toHaveBeenNthCalledWith(1, 'listHistory', { path: '/tmp/a.md' })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'readHistoryVersion', {
+      path: '/tmp/a.md',
+      id: 'a'.repeat(40),
+    })
   })
 
   it('renameTextFile hands the old name, the new one and the body over in one call', async () => {

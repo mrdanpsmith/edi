@@ -24,6 +24,7 @@ import threading
 from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage
 
+from . import history
 from .exec import kill_process_tree, run_code_block, run_code_block_streamed
 from .files import read_any_text_file, read_text_file, rename_text_file, write_text_file
 from .tables import parse_table_file
@@ -127,6 +128,8 @@ class Bridge(QObject):
             "readAnyTextFile": self._read_any_text_file,
             "writeTextFile": self._write_text_file,
             "renameTextFile": self._rename_text_file,
+            "listHistory": self._list_history,
+            "readHistoryVersion": self._read_history_version,
             "writeBinaryFile": self._write_binary_file,
             "parseTableFile": self._parse_table_file,
             "copyTable": self._copy_table,
@@ -340,6 +343,9 @@ class Bridge(QObject):
             self._reply_error(request_id, "Missing path")
             return
         self.grants.check_write(str(path))
+        # Only a document save asks for a version; an HTML export writes
+        # through this same method and is not the document's history.
+        keep_version = bool(args.get("history"))
 
         def work() -> None:
             try:
@@ -347,6 +353,8 @@ class Bridge(QObject):
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
+                if keep_version:
+                    history.record(str(path))
                 self._reply(request_id, None)
 
         threading.Thread(target=work, daemon=True).start()
@@ -377,7 +385,44 @@ class Bridge(QObject):
                 # The old name no longer names anything, so it is not something
                 # the recent list should offer a click away.
                 self._window.forget_recent_file(str(old_path))
+                history.move(str(old_path), str(new_path))
                 self._reply(request_id, None)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _list_history(self, request_id: int, args: dict) -> None:
+        """The saved versions of a document the user gave Edi, newest first."""
+        path = args.get("path")
+        if not path:
+            self._reply_error(request_id, "Missing path")
+            return
+        self.grants.check_read(str(path))
+
+        def work() -> None:
+            try:
+                versions = history.list_versions(str(path))
+            except Exception as exc:  # noqa: BLE001
+                self._reply_error(request_id, str(exc))
+            else:
+                self._reply(request_id, versions)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _read_history_version(self, request_id: int, args: dict) -> None:
+        path = args.get("path")
+        version_id = args.get("id")
+        if not path or not version_id:
+            self._reply_error(request_id, "Missing path or version")
+            return
+        self.grants.check_read(str(path))
+
+        def work() -> None:
+            try:
+                content = history.read_version(str(path), str(version_id))
+            except Exception as exc:  # noqa: BLE001
+                self._reply_error(request_id, str(exc))
+            else:
+                self._reply(request_id, content)
 
         threading.Thread(target=work, daemon=True).start()
 

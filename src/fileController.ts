@@ -6,6 +6,7 @@ import {
   getPendingFiles,
   imageReference,
   isSupportedFile,
+  listHistory,
   pickExportPath,
   pickImageImportPath,
   pickImportPath,
@@ -14,6 +15,7 @@ import {
   pickTextImportPath,
   printHtml,
   readAnyTextFile,
+  readHistoryVersion,
   readTextFile,
   renameTextFile,
   UNTITLED,
@@ -32,6 +34,7 @@ import {
   setActiveDirty,
 } from './state'
 import { promptForRename } from './urlDialog'
+import { openHistoryDialog } from './historyDialog'
 import type { AppContext } from './appContext'
 
 export interface FileController {
@@ -44,6 +47,7 @@ export interface FileController {
   saveFileAs(): Promise<void>
   renameFile(): Promise<void>
   revertFile(): Promise<void>
+  showHistory(): Promise<void>
   copyFilePath(): void
   rememberRecent(path: string): Promise<void>
   refreshRecents(): void
@@ -190,7 +194,7 @@ export function createFileController(ctx: AppContext): FileController {
     try {
       const snapshot = await snapshotForSave()
       if (snapshot === null) return
-      await writeTextFile(path, snapshot.markdown)
+      await writeTextFile(path, snapshot.markdown, { history: true })
       afterSave(path, snapshot)
     } catch (error) {
       if (isNotPermitted(error) && !confirmed) {
@@ -290,6 +294,30 @@ export function createFileController(ctx: AppContext): FileController {
     } catch (error) {
       ctx.reportError(`Failed to revert ${path}`, error)
     }
+  }
+
+  /**
+   * File › Version History: browse the document's saved versions and restore one.
+   *
+   * A restore replaces the document as an ordinary edit — undoable, and leaving
+   * the tab dirty — rather than as a revert, so nothing is lost until the reader
+   * saves, and that save records the restored text as the newest version.
+   */
+  async function showHistory(): Promise<void> {
+    const session = getActive()
+    const path = session?.path
+    if (!session || !path) return
+    await ctx.blockEditor?.flushReveals()
+    const restored = await openHistoryDialog({
+      name: path.split('/').pop() ?? path,
+      current: ctx.blockEditor?.getMarkdown() ?? '',
+      list: () => listHistory(path),
+      read: (id) => readHistoryVersion(path, id),
+    })
+    if (restored === null || getActive()?.id !== session.id) return
+    await ctx.blockEditor?.flushReveals()
+    ctx.blockEditor?.replaceMarkdown(restored)
+    ctx.flashStatus('Restored a saved version')
   }
 
   /** Copy the path of the document in view; a no-op for an unsaved one. */
@@ -417,6 +445,7 @@ export function createFileController(ctx: AppContext): FileController {
     saveFileAs,
     renameFile,
     revertFile,
+    showHistory,
     copyFilePath,
     rememberRecent,
     refreshRecents,

@@ -1057,7 +1057,10 @@ describe('open and save', () => {
     await flushAsync()
     menu('save')
     await flushAsync()
-    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/notes.md', 'hello file')
+    // A document save is also a version of the document (`backend/history.py`).
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/notes.md', 'hello file', {
+      history: true,
+    })
     expect(activeTabTitle()).toBe('notes.md')
   })
 
@@ -1085,7 +1088,9 @@ describe('open and save', () => {
     menu('save')
     await flushAsync()
     expect(mainState.pickSavePath).toHaveBeenCalledWith('Untitled')
-    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/new.md', 'Welcome to Edi')
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/new.md', 'Welcome to Edi', {
+      history: true,
+    })
     expect(document.title).toBe('new.md — Edi')
   })
 
@@ -1098,7 +1103,9 @@ describe('open and save', () => {
     mainState.pickSavePath.mockResolvedValue('/tmp/copy.md')
     menu('saveAs')
     await flushAsync()
-    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/copy.md', 'hello file')
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/copy.md', 'hello file', {
+      history: true,
+    })
     expect(document.title).toBe('copy.md — Edi')
   })
 
@@ -1109,7 +1116,9 @@ describe('open and save', () => {
     menu('save')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(expect.stringContaining('/tmp/out.csv'))
-    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/out.csv', expect.any(String))
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/out.csv', expect.any(String), {
+      history: true,
+    })
   })
 
   it('does not save to an unsupported extension when the user declines', async () => {
@@ -1132,7 +1141,9 @@ describe('open and save', () => {
     press('n')
     menu('save')
     await flushAsync()
-    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/new.md', 'with the latest secret')
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/new.md', 'with the latest secret', {
+      history: true,
+    })
   })
 
   it('stays dirty when the document is edited while the write is in flight', async () => {
@@ -1453,6 +1464,8 @@ describe('export', () => {
       '/tmp/out.html',
       expect.stringContaining('<html'),
     )
+    // An export is not a version of the document: no history option is passed.
+    expect(mainState.writeTextFile.mock.calls[0]).toHaveLength(2)
     expect(statusLeft().textContent).toBe('Exported /tmp/out.html')
   })
 

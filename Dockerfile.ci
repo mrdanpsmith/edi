@@ -52,7 +52,7 @@ RUN python3 -m venv /opt/edi/venv \
 
 # Sanity: the whole point is that imports resolve at job time.
 RUN /opt/edi/venv/bin/python -c \
-        "import PySide6, PyInstaller, pytest, pytestqt, pytest_cov, defusedxml, bandit, pip_audit; print('edi-builder OK', PySide6.__version__)" \
+        "import PySide6, PyInstaller, pytest, pytestqt, pytest_cov, defusedxml, dulwich, bandit, pip_audit; print('edi-builder OK', PySide6.__version__)" \
     && /opt/edi/venv/bin/pyright --version
 
 # Headless Chromium (and its apt deps) for the Vitest browser-mode tests

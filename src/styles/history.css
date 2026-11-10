@@ -1,0 +1,89 @@
+/* File › Version History (`src/historyDialog.ts`). */
+
+.edi-dialog.edi-history-dialog {
+  width: min(900px, calc(100vw - 48px));
+  height: min(600px, calc(100vh - 48px));
+}
+
+.edi-history-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+
+.edi-history-list {
+  flex: none;
+  width: 210px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+}
+
+.edi-history-item {
+  font: inherit;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.edi-history-item:hover {
+  background: var(--block-hover);
+}
+
+.edi-history-item[aria-selected='true'] {
+  background: var(--selection);
+}
+
+.edi-history-time {
+  font-size: 13px;
+}
+
+.edi-history-message {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.edi-history-diff {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.edi-history-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 0 10px;
+  color: var(--text-primary);
+}
+
+.edi-history-added {
+  background: color-mix(in srgb, #2da44e 18%, transparent);
+}
+
+.edi-history-removed {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.edi-history-fold,
+.edi-history-empty {
+  padding: 2px 10px;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
