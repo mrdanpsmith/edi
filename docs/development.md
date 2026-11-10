@@ -185,6 +185,21 @@ was added. So the script labels the image `edi.inputs=<sha256 of Dockerfile.ci
 and requirements*.txt>` and rebuilds whenever the label doesn't match. An image
 built before the label existed has none, so it is rebuilt once.
 
+The simulation never touches the checkout's `.venv`, which on the host is the
+host's own venv:
+
+- **Every tool by path.** The baked tools run from `/opt/edi/venv` directly.
+- **pyright.** It finds packages through `pyrightconfig.json`'s `.venv`, so it
+  is pointed at the image's venv with `--venvpath /tmp/edi-pyright`, a folder
+  whose `.venv` links to `/opt/edi/venv`. The command-line value overrides the
+  config's `venvPath` and keeps its `venv` name.
+- **Why.** The script used to copy CI's `ln -sfn /opt/edi/venv .venv`, but a
+  real directory can't be replaced that way: `ln` puts a `venv` link inside
+  it. So pyright silently checked against the host's venv, and a dependency
+  the host venv lacked failed as an unresolved import.
+- **Real CI is unaffected.** It runs in a fresh checkout, where the link is
+  the only `.venv`.
+
 Stopping the script stops the container. That covers Ctrl+C, including during
 the `git push` that triggered it, a closed terminal, or git stopping the hook.
 Before this, a cancelled push left the simulation running: `docker run`

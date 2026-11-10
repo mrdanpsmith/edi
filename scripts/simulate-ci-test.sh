@@ -97,19 +97,26 @@ if ! check_bake_tools; then
 fi
 
 # The exact `test` job steps (.github/workflows/ci.yml), minus the `.venv`
-# symlink: the
-# host checkout already has a real .venv, and /opt/edi/venv/bin/pytest is the
-# same interpreter the job would resolve through the link.
+# symlink. The job links `.venv` to /opt/edi/venv in a fresh checkout; here the
+# checkout is the host's, whose `.venv` is a real directory — the host's own
+# venv. `ln -sfn` cannot replace a directory (it puts a link *inside* it), so
+# the old copy of that step silently left pyright, which finds packages
+# through `pyrightconfig.json`'s `.venv`, checking against the *host's* venv:
+# a dependency the image has but the host venv lacks (dulwich, once) failed as
+# an unresolved import. Every tool is therefore called from /opt/edi/venv by
+# path, and pyright is pointed at it with `--venvpath`, which overrides the
+# config's `venvPath` and keeps its `venv` name. Nothing in the checkout's
+# `.venv` is touched.
+PYRIGHT='mkdir -p /tmp/edi-pyright && ln -sfn /opt/edi/venv /tmp/edi-pyright/.venv && /opt/edi/venv/bin/pyright --venvpath /tmp/edi-pyright'
 if [[ "$PYTEST_ONLY" == 1 ]]; then
   STEPS='
 set -euo pipefail
 echo "[sim] python 3.10 source check"
 /opt/edi/venv/bin/python -m compileall -q backend tests scripts run_edi.py
-ln -sfn /opt/edi/venv .venv
 echo "[sim] version and dependency-pin check"
 ./scripts/version.sh check
 echo "[sim] python type check (pyright)"
-/opt/edi/venv/bin/pyright
+'"$PYRIGHT"'
 echo "[sim] pytest tests/ (backend only)"
 /opt/edi/venv/bin/pytest tests/
 echo "[sim] SIMULATED PYTEST PASSED"'
@@ -118,7 +125,6 @@ else
 set -euo pipefail
 echo "[sim] python 3.10 source check"
 /opt/edi/venv/bin/python -m compileall -q backend tests scripts run_edi.py
-ln -sfn /opt/edi/venv .venv
 echo "[sim] version and dependency-pin check"
 ./scripts/version.sh check
 echo "[sim] npm ci"
@@ -136,7 +142,7 @@ npm run test:browser
 echo "[sim] npm run build:test (app bundle + window-test harness)"
 npm run build:test
 echo "[sim] python type check (pyright)"
-/opt/edi/venv/bin/pyright
+'"$PYRIGHT"'
 echo "[sim] bandit (backend security, all findings)"
 /opt/edi/venv/bin/bandit -c pyproject.toml -r backend scripts/color-scheme-probe.py scripts/dark-mode-forensics.py run_edi.py -q
 echo "[sim] pytest tests/"
