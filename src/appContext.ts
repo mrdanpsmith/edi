@@ -8,6 +8,7 @@ import { getActive, getState, isAnyDirty } from './state'
 import { canZoomIn, canZoomOut, DEFAULT_ZOOM } from './zoom'
 import type { BlockEditor } from './editor'
 import type { ContextMenu } from './contextmenu'
+import type { DiskController } from './diskChanges'
 import type { HomeScreen } from './home'
 import type { SearchPanel } from './searchPanel'
 import type { Tabs } from './tabs'
@@ -41,6 +42,8 @@ export interface AppContext {
   homeScreen: HomeScreen | null
   contextMenu: ContextMenu | null
   searchPanel: SearchPanel | null
+  /** Documents changed on disk by something else (`src/diskChanges.ts`). */
+  disk: DiskController | null
   tabs: Tabs
   documentZoom: number
   lastNativeTitle: string
@@ -192,6 +195,8 @@ function afterActivate(ctx: AppContext): void {
   updateStatus(ctx)
   syncDirty()
   syncMenuState(ctx)
+  // A tab shown again may have changed on disk while it was out of view.
+  ctx.disk?.refresh()
 }
 
 function flashStatus(ctx: AppContext, message: string): void {
@@ -213,6 +218,7 @@ export function createAppContext(roots: AppRoots, selftest: boolean): AppContext
     homeScreen: null,
     contextMenu: null,
     searchPanel: null,
+    disk: null,
     // Assigned by `init` before any controller can be used.
     tabs: undefined as unknown as Tabs,
     documentZoom: DEFAULT_ZOOM,

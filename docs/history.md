@@ -37,13 +37,18 @@ document, and a folder of notes should not pick up sidecars.
 
 ## What records a version, and what doesn't
 
-The page asks for a version explicitly: `writeTextFile` takes `history: true`.
+A save asks for a version explicitly: `writeTextFile` takes `history: true`.
 Only `fileController.saveTo` (Save and Save As) sends it. Export HTML writes
 through the same bridge method but sends no flag, so an export is never
 recorded as a version of anything.
 
+Changes Edi didn't make are recorded too, because the documents Edi opens are
+often written by agents:
+
 | Event | What happens |
 | --- | --- |
+| **Opening a document** | `Bridge._read_text_file` calls `history.record_opened`. A document new to the history is recorded as "Opened in Edi". One that differs from its newest version is recorded as "Changed outside Edi", since only another writer could have changed it. Reattach is tried first, so opening a file renamed outside Edi adopts its history instead of starting a new one. |
+| **A change on disk while Edi has the document** | `backend/watcher.py` records it as "Changed outside Edi" ([disk-changes.md](disk-changes.md)). |
 | **Rename in Edi** | `Bridge._rename_text_file` calls `history.move` after the rename succeeds. The repository folder is re-keyed to the new path and a `Renamed from …` commit is recorded if the text changed. If a stale repository already sits at the new name, it is renamed aside with a `-replaced-<time>` suffix rather than deleted. |
 | **Rename or move outside Edi** | The history is found again the first time it is listed (`_reattach`). A repository is adopted only if its newest version is byte-for-byte the file's current content **and** the path it recorded no longer exists. It is only adopted when exactly one repository qualifies: a copy of a document is a second document, and must not take the original's history. A file edited after it was moved outside Edi isn't matched. |
 

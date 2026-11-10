@@ -143,6 +143,24 @@ def record(path: str, message: str = "Saved") -> None:
         log.exception("Could not record a version of %s", path)
 
 
+def record_opened(path: str) -> None:
+    """Edi has just read the document: record it if it is new to the history, or
+    changed since the last version, which can only be another writer's change.
+    So a file an agent wrote has a version from the first time Edi opens it.
+
+    A document with no history is first offered its history from before a rename
+    outside Edi (``_reattach``); a fresh repository made first would hide it."""
+    try:
+        with _lock:
+            if not (repo_dir(path) / "HEAD").is_file():
+                _reattach(path)
+            known = (repo_dir(path) / "HEAD").is_file()
+    except Exception:  # noqa: BLE001 — history never fails an open
+        log.exception("Could not look up the history of %s", path)
+        return
+    record(path, "Changed outside Edi" if known else "Opened in Edi")
+
+
 def move(old_path: str, new_path: str) -> None:
     """Carry a renamed document's history to its new name, then record it. Never raises."""
     try:

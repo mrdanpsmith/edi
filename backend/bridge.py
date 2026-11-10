@@ -28,10 +28,23 @@ from . import history
 from .exec import kill_process_tree, run_code_block, run_code_block_streamed
 from .files import read_any_text_file, read_text_file, rename_text_file, write_text_file
 from .tables import parse_table_file
+from .watcher import DiskWatcher
 
 # The error code a refused file access replies with (`shared/edi-contract.json`
 # → `errorCodes`), so the page can tell "not yours to write" from a failure.
 NOT_PERMITTED = "notPermitted"
+# A save refused because the file changed on disk since Edi last read it: the
+# page shows what changed rather than overwriting it (`backend/watcher.py`).
+CHANGED_ON_DISK = "changedOnDisk"
+
+
+class ChangedOnDisk(Exception):
+    """A write that would replace text Edi has never shown the reader."""
+
+
+def _file_bytes(path: str) -> bytes:
+    with open(os.path.realpath(path), "rb") as handle:
+        return handle.read()
 
 
 class NotPermitted(Exception):
@@ -114,6 +127,8 @@ class Bridge(QObject):
         # over the notify signal, which would be lost before the page listens.
         self._frontend_ready = False
         self._procs: dict[int, subprocess.Popen] = {}
+        # Created here, on the main thread, which is where its watcher must live.
+        self.disk = DiskWatcher(self.emit_event)
         self._handlers = {
             "confirm": self._confirm,
             "alert": self._alert,
@@ -313,9 +328,14 @@ class Bridge(QObject):
         def work() -> None:
             try:
                 content = read_text_file(str(path))
+                data = _file_bytes(str(path))
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
+                # What the reader is now shown is the file's known state: a
+                # later change by anything else is reported against it.
+                self.disk.seen(str(path), data)
+                history.record_opened(str(path))
                 self._reply(request_id, content)
 
         threading.Thread(target=work, daemon=True).start()
@@ -349,11 +369,16 @@ class Bridge(QObject):
 
         def work() -> None:
             try:
+                if keep_version and self.disk.changed_since_seen(str(path)):
+                    raise ChangedOnDisk(f"The file changed on disk since Edi read it: {path}")
                 write_text_file(str(path), str(args.get("content") or ""))
+            except ChangedOnDisk as exc:
+                self._reply_error(request_id, str(exc), code=CHANGED_ON_DISK)
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
                 if keep_version:
+                    self._seen_written(str(path))
                     history.record(str(path))
                 self._reply(request_id, None)
 
@@ -375,9 +400,15 @@ class Bridge(QObject):
 
         def work() -> None:
             try:
+                # A rename deletes the old file, so it must not delete a
+                # change the reader was never shown either.
+                if self.disk.changed_since_seen(str(old_path)):
+                    raise ChangedOnDisk(f"The file changed on disk since Edi read it: {old_path}")
                 rename_text_file(
                     str(old_path), str(new_path), str(args.get("content") or "")
                 )
+            except ChangedOnDisk as exc:
+                self._reply_error(request_id, str(exc), code=CHANGED_ON_DISK)
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
@@ -385,10 +416,19 @@ class Bridge(QObject):
                 # The old name no longer names anything, so it is not something
                 # the recent list should offer a click away.
                 self._window.forget_recent_file(str(old_path))
+                self.disk.forget(str(old_path))
+                self._seen_written(str(new_path))
                 history.move(str(old_path), str(new_path))
                 self._reply(request_id, None)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _seen_written(self, path: str) -> None:
+        """Edi wrote ``path``: what is there now is Edi's, not news to report."""
+        try:
+            self.disk.seen(path, _file_bytes(path))
+        except OSError:
+            pass
 
     def _list_history(self, request_id: int, args: dict) -> None:
         """The saved versions of a document the user gave Edi, newest first."""

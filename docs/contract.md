@@ -9,9 +9,11 @@ the Python ↔ TypeScript boundary as bare strings:
   `Bridge._handlers` in `backend/bridge.py`;
 - **the three preference defaults**;
 - **bridge error codes** — the `code` an error reply may carry beside its
-  message (`errorCodes`), read on the page as `BridgeError.code`. The one code
-  is `notPermitted`, a file access the user never handed to Edi (see
-  [architecture.md](architecture.md)).
+  message (`errorCodes`), read on the page as `BridgeError.code`.
+  `notPermitted` is a file access the user never handed to Edi (see
+  [architecture.md](architecture.md)), and `changedOnDisk` is a save refused
+  because the file changed on disk since Edi read it (see
+  [disk-changes.md](disk-changes.md)).
 
 The first three used to drift silently: a rename on one side left a menu item
 that did nothing, a call that answered `Unknown method`, or a store disagreeing

@@ -34,6 +34,7 @@ real application is `run_edi.py`.
 | [docs/contract.md](docs/contract.md) | Menu commands, bridge methods or preference names. |
 | [docs/preferences.md](docs/preferences.md) | Persisted app state or the preferences bridge. |
 | [docs/history.md](docs/history.md) | Per-document version history, its store, restore and the diff dialog. |
+| [docs/disk-changes.md](docs/disk-changes.md) | Watching open documents, the changed-on-disk bar, Compare, and the save guard. |
 | [docs/spreadsheets.md](docs/spreadsheets.md) | Formulas, the evaluator, document-local functions. |
 | [docs/mermaid.md](docs/mermaid.md) | Diagram rendering, label editing, `DiagramSession`. |
 | [docs/mermaid-kanban.md](docs/mermaid-kanban.md) | Kanban authoring, drag/drop, the bin, composers. |
@@ -86,6 +87,15 @@ real application is `run_edi.py`.
   `QWebEngineProfile` is off-the-record and discards web storage on exit.
 - Details: [docs/contract.md](docs/contract.md),
   [docs/preferences.md](docs/preferences.md).
+
+### Documents on disk
+
+- A save must never overwrite a change Edi has not shown the reader: the
+  bridge refuses with `changedOnDisk`, and the page offers Compare, Take
+  theirs and Keep mine. Reading a file is what marks it as seen.
+- History never fails a save, and nothing is ever written beside a document.
+- Details: [docs/disk-changes.md](docs/disk-changes.md),
+  [docs/history.md](docs/history.md).
 
 ### Distribution
 

@@ -17,6 +17,7 @@
 @import './styles/preview.css';
 @import './styles/dialogs.css';
 @import './styles/history.css';
+@import './styles/disk-changes.css';
 @import './styles/menus.css';
 @import './styles/autocomplete.css';
 @import './styles/encrypted.css';

@@ -184,10 +184,12 @@ export interface BlockEditor {
   setMarkdown(markdown: string): void | Promise<void>
   insertMarkdown(markdown: string): void
   /**
-   * Replace the whole document with `markdown` as one ordinary, undoable edit —
-   * unlike {@link setMarkdown}, which starts a fresh state. Restoring a saved
-   * version uses it, so the restore is a change the reader can undo and save.
-   * Call {@link flushReveals} first: an open encrypted block is replaced too.
+   * Make the document `markdown` as one ordinary, undoable edit — unlike
+   * {@link setMarkdown}, which starts a fresh state. Restoring a saved version and
+   * taking a file changed on disk use it, so either is a change the reader can
+   * undo. Only the part that differs is replaced, so the selection and scroll
+   * position outside it are kept. Call {@link flushReveals} first: an open
+   * encrypted block is replaced too.
    */
   replaceMarkdown(markdown: string): void
   commitSource(): boolean
@@ -564,10 +566,23 @@ export function createBlockEditor(
     replaceMarkdown(markdown: string) {
       commitSourceMode(view)
       const parsed = markdownToProse(markdown, view.state.schema)
-      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, parsed.content)
-      tr.setSelection(startSelection(tr.doc))
-      view.dispatch(tr.scrollIntoView())
-      view.focus()
+      const current = view.state.doc
+      // Only the stretch that differs is replaced, so the caret and the scroll
+      // position survive a document reloaded under the reader (an agent's edit
+      // further down does not throw them back to the top), and the undo step is
+      // that change, not the whole document.
+      const start = current.content.findDiffStart(parsed.content)
+      if (start === null) return
+      const end = current.content.findDiffEnd(parsed.content)!
+      let endA = end.a
+      let endB = end.b
+      // Repeated content can make the two ends cross; push them past the start.
+      const overlap = start - Math.min(endA, endB)
+      if (overlap > 0) {
+        endA += overlap
+        endB += overlap
+      }
+      view.dispatch(view.state.tr.replace(start, endA, parsed.slice(start, endB)))
     },
     commitSource(): boolean {
       return commitSourceMode(view)

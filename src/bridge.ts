@@ -77,6 +77,11 @@ export function isNotPermitted(error: unknown): boolean {
   return error instanceof BridgeError && error.code === 'notPermitted'
 }
 
+/** The shell refused a save because the file changed on disk since Edi read it. */
+export function isChangedOnDisk(error: unknown): boolean {
+  return error instanceof BridgeError && error.code === 'changedOnDisk'
+}
+
 interface ResultMessage {
   id: number
   ok: boolean

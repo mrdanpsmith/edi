@@ -27,6 +27,7 @@ import { createAppContext, type AppContext, type AppRoots } from './appContext'
 import { createContextMenuController } from './contextMenuController'
 import { createEditController, type EditController } from './editController'
 import { createFileController, type FileController } from './fileController'
+import { createDiskController } from './diskChanges'
 import { createZoomController, type ZoomController } from './zoomController'
 
 function openNewTab(ctx: AppContext): void {
@@ -323,6 +324,7 @@ export function init(roots: AppRoots): () => void {
     roots,
     new URLSearchParams(window.location.search).has('selftest'),
   )
+  ctx.disk = createDiskController(ctx)
   const files = createFileController(ctx)
   const edit = createEditController(ctx)
   const menus = createContextMenuController(ctx, edit)

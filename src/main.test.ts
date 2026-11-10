@@ -94,6 +94,7 @@ vi.mock('./bridge', async (importOriginal) => ({
   // The real error type and its check: a refused write is told apart by them.
   BridgeError: (await importOriginal<typeof import('./bridge')>()).BridgeError,
   isNotPermitted: (await importOriginal<typeof import('./bridge')>()).isNotPermitted,
+  isChangedOnDisk: (await importOriginal<typeof import('./bridge')>()).isChangedOnDisk,
   hasBridge: () => mainState.hasBridge(),
   invoke: mainState.invoke,
   confirmAction: mainState.confirmAction,
@@ -1183,6 +1184,23 @@ describe('open and save', () => {
     expect(mainState.showError).not.toHaveBeenCalledWith(expect.stringContaining('linked.md'))
     const state = await stateModule()
     expect(state.isAnyDirty()).toBe(false)
+  })
+
+  it('does not overwrite a file changed on disk: it raises the changed-on-disk bar', async () => {
+    const { BridgeError } = await import('./bridge')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/agent.md'])
+    mainState.readTextFile.mockResolvedValue('from the agent')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.editorOptions!.onChange!()
+    mainState.writeTextFile.mockRejectedValueOnce(new BridgeError('changed', 'changedOnDisk'))
+    menu('save')
+    await flushAsync()
+    expect(document.querySelector('.edi-disk-bar')!.textContent).toContain('changed on disk')
+    expect(mainState.showError).not.toHaveBeenCalledWith(expect.stringContaining('agent.md'))
+    const state = await stateModule()
+    expect(state.getActive()!.dirty).toBe(true)
   })
 
   it('reports a failed save', async () => {

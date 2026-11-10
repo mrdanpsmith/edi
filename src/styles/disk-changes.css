@@ -1,0 +1,39 @@
+/* A document changed on disk by something else (`src/diskChanges.ts`). */
+
+.edi-disk-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-bottom: 1px solid var(--border);
+}
+
+.edi-disk-bar-message {
+  flex: 1 1 260px;
+}
+
+.edi-disk-bar-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.edi-compare-panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edi-compare-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

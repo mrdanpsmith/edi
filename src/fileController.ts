@@ -1,5 +1,5 @@
 import type { Node as ProseNode } from 'prosemirror-model'
-import { confirmAction, isNotPermitted } from './bridge'
+import { confirmAction, isChangedOnDisk, isNotPermitted } from './bridge'
 import {
   dirname,
   fileName,
@@ -61,6 +61,7 @@ export interface FileController {
 interface NativeEvent {
   type?: unknown
   paths?: unknown
+  path?: unknown
 }
 
 /** What a save writes, and which tab, edit and document it was read from. */
@@ -129,6 +130,11 @@ export function createFileController(ctx: AppContext): FileController {
     }
     if (typeof parsed !== 'object' || parsed === null) return
     const event = parsed as NativeEvent
+    // A document changed or vanished on disk (`backend/watcher.py`).
+    if ((event.type === 'diskChanged' || event.type === 'diskDeleted') && typeof event.path === 'string') {
+      ctx.disk?.onEvent(event.type, event.path)
+      return
+    }
     if (event.type !== 'openFiles' || !Array.isArray(event.paths)) return
     const paths = event.paths.filter((path): path is string => typeof path === 'string')
     void openPaths(paths)
@@ -150,6 +156,7 @@ export function createFileController(ctx: AppContext): FileController {
     openingPaths.add(path)
     try {
       const content = await readTextFile(path)
+      ctx.disk?.noteDiskText(path, content)
       // The path is set before the content is rendered so that relative image
       // references in opened documents resolve against the document's directory.
       ctx.tabs.addSession(content, path)
@@ -197,6 +204,12 @@ export function createFileController(ctx: AppContext): FileController {
       await writeTextFile(path, snapshot.markdown, { history: true })
       afterSave(path, snapshot)
     } catch (error) {
+      if (isChangedOnDisk(error)) {
+        // Something else wrote the file since Edi read it. Not overwritten:
+        // the bar this raises offers Compare, Take theirs and Keep mine.
+        ctx.disk?.saveRefused(path)
+        return
+      }
       if (isNotPermitted(error) && !confirmed) {
         // The shell only writes files the user named outside the page (see
         // `PathGrants` in backend/bridge.py) — a document opened by following
@@ -232,6 +245,7 @@ export function createFileController(ctx: AppContext): FileController {
 
   /** The document is on disk under `path`: everything that follows. */
   function afterSave(path: string, snapshot: SaveSnapshot): void {
+    ctx.disk?.noteDiskText(path, snapshot.markdown)
     markSaved(snapshot.id, path, snapshot.revision)
     // The editor's saved point is the document the save read. Only for the tab
     // in view: another tab's state is stored away, and is not this editor's.
@@ -266,9 +280,14 @@ export function createFileController(ctx: AppContext): FileController {
       const snapshot = await snapshotForSave()
       if (snapshot === null) return
       await renameTextFile(oldPath, newPath, snapshot.markdown)
+      ctx.disk?.renamed(oldPath, newPath)
       afterSave(newPath, snapshot)
       ctx.flashStatus(`Renamed to ${name}`)
     } catch (error) {
+      if (isChangedOnDisk(error)) {
+        ctx.disk?.saveRefused(oldPath)
+        return
+      }
       ctx.reportError(`Failed to rename ${oldPath}`, error)
     }
   }
@@ -288,6 +307,7 @@ export function createFileController(ctx: AppContext): FileController {
     }
     try {
       const content = await readTextFile(path)
+      ctx.disk?.noteDiskText(path, content)
       ctx.tabs.setActiveContent(content)
       setActiveDirty(false)
       ctx.tabs.snapshotActive()
@@ -317,6 +337,7 @@ export function createFileController(ctx: AppContext): FileController {
     if (restored === null || getActive()?.id !== session.id) return
     await ctx.blockEditor?.flushReveals()
     ctx.blockEditor?.replaceMarkdown(restored)
+    ctx.blockEditor?.focus()
     ctx.flashStatus('Restored a saved version')
   }
 
