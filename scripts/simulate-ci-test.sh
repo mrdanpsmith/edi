@@ -54,9 +54,23 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# What the image is built from. A new pin in a requirements file (a runtime
+# dependency such as dulwich) leaves every baked *tool* in place, so the check
+# below cannot see it: the run then fails much later with an unresolved import.
+# The image is labelled with a hash of its inputs instead, and rebuilt when
+# they change.
+INPUTS_HASH="$(cat Dockerfile.ci requirements*.txt | shasum -a 256 | cut -d' ' -f1)"
+build_image() {
+  docker build "${PLATFORM[@]}" -f Dockerfile.ci -t "$IMAGE" \
+    --label "edi.inputs=$INPUTS_HASH" "$ROOT"
+}
+
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1 || [[ "$REBUILD" == 1 ]]; then
   print_step "Building $IMAGE from Dockerfile.ci (one-time; subsequent runs reuse it)"
-  docker build "${PLATFORM[@]}" -f Dockerfile.ci -t "$IMAGE" "$ROOT"
+  build_image
+elif [[ "$(docker image inspect -f '{{ index .Config.Labels "edi.inputs" }}' "$IMAGE" 2>/dev/null)" != "$INPUTS_HASH" ]]; then
+  print_step "Dockerfile.ci or a requirements file changed since $IMAGE was built; rebuilding"
+  build_image
 fi
 
 # A stale local image (built before a tool was baked into /opt/edi/venv) fails
@@ -65,7 +79,7 @@ fi
 TOOLS='python pytest'
 [[ "$PYTEST_ONLY" == 1 ]] || TOOLS="$TOOLS bandit pip-audit pyright"
 check_bake_tools() {
-  docker run --rm "${PLATFORM[@]}" "$IMAGE" bash -euc "
+  docker run --rm --init "${PLATFORM[@]}" "$IMAGE" bash -euc "
     missing=0
     for t in $TOOLS; do
       PATH=/opt/edi/venv/bin:\$PATH command -v \"\$t\" >/dev/null 2>&1 || { echo \"baked tool missing from $IMAGE: \$t\" >&2; missing=1; }
@@ -78,7 +92,7 @@ check_bake_tools() {
 }
 if ! check_bake_tools; then
   print_step "Stale $IMAGE (missing a baked tool); rebuilding from Dockerfile.ci"
-  docker build "${PLATFORM[@]}" -f Dockerfile.ci -t "$IMAGE" "$ROOT"
+  build_image
   check_bake_tools
 fi
 
@@ -143,7 +157,37 @@ rm -rf "$CONFIG_DIR" "$CACHE_DIR"
 mkdir -p "$CONFIG_DIR" "$CACHE_DIR"
 
 print_step "Running CI \`test\` job simulation in $IMAGE (Python 3.10, headless, no gsettings)"
-docker run --rm "${PLATFORM[@]}" \
+
+# Stopping the run must stop the container. Without this, Ctrl+C during a
+# `git push` cancelled the push but left the simulation running: `docker run`
+# proxies the signal to the container's PID 1, which was `bash`, and PID 1
+# ignores SIGINT/SIGTERM that it has no handler for, so the container ran on
+# and the CLI kept waiting for it. Two fixes, each enough on its own path:
+# - `--init` makes PID 1 a tiny init that forwards signals, and
+#   TINI_KILL_PROCESS_GROUP sends them to the whole tree (npm, pytest, …);
+# - `docker run` runs in the background, so this script's own trap fires at
+#   once on Ctrl+C, a closed terminal or git stopping the hook, and removes
+#   the named container whatever state the CLI is in.
+CONTAINER="edi-ci-sim-$$"
+DOCKER_PID=""
+stop_container() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+}
+on_signal() {
+  trap - INT TERM HUP
+  echo >&2
+  echo "simulate-ci-test: interrupted — stopping container $CONTAINER" >&2
+  stop_container
+  [[ -n "$DOCKER_PID" ]] && kill "$DOCKER_PID" 2>/dev/null || true
+  exit "$1"
+}
+trap stop_container EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
+
+docker run --rm --init --name "$CONTAINER" "${PLATFORM[@]}" \
+  -e "TINI_KILL_PROCESS_GROUP=1" \
   -v "$ROOT:/builds/edi" \
   -w /builds/edi \
   -u "$(id -u):$(id -g)" \
@@ -155,4 +199,8 @@ docker run --rm "${PLATFORM[@]}" \
   -e "QTWEBENGINE_DISABLE_SANDBOX=1" \
   -e "QTWEBENGINE_CHROMIUM_FLAGS=--disable-dev-shm-usage --disable-gpu" \
   -e "PYTHONUNBUFFERED=1" \
-  "$IMAGE" bash -euc "$STEPS"
+  "$IMAGE" bash -euc "$STEPS" </dev/null &
+DOCKER_PID=$!
+# `wait` returns as soon as a trapped signal arrives (the trap then runs), and
+# otherwise with the container's exit status, which `set -e` passes on.
+wait "$DOCKER_PID"

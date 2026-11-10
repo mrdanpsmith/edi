@@ -178,6 +178,25 @@ directory". The script preflights the baked venv for exactly the tools its
 steps reference and rebuilds on demand; the Docker layer cache keeps that a
 no-op when `Dockerfile.ci` is current.
 
+A new pin in a requirements file is invisible to that tool check: every tool is
+still there, and the run fails much later on an unresolved import. For example,
+pyright reported `Import "dulwich.objects" could not be resolved` when dulwich
+was added. So the script labels the image `edi.inputs=<sha256 of Dockerfile.ci
+and requirements*.txt>` and rebuilds whenever the label doesn't match. An image
+built before the label existed has none, so it is rebuilt once.
+
+Stopping the script stops the container. That covers Ctrl+C, including during
+the `git push` that triggered it, a closed terminal, or git stopping the hook.
+Before this, a cancelled push left the simulation running: `docker run`
+proxied the signal to the container's PID 1, which was `bash`, and PID 1
+ignores signals it has no handler for. The container now runs with `--init`
+and `TINI_KILL_PROCESS_GROUP=1`, so signals reach the whole tree inside it. It
+also has a per-run name (`edi-ci-sim-<pid>`), and `docker run` is started in
+the background and waited on, so the script's trap fires at once and runs
+`docker rm -f` on the container. The run's exit status still passes through
+unchanged. A run left over from before this change can be stopped with `docker
+ps` and `docker rm -f`.
+
 `scripts/install-hooks.sh` points `core.hooksPath` at the versioned
 `.githooks/` directory; git hooks in `.git/hooks` are not shared between
 clones. `install-deps.sh` runs it.
