@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 
 import pytest
@@ -23,7 +24,10 @@ def store(tmp_path, monkeypatch):
 @pytest.fixture
 def watcher(qapp):
     events: list[dict] = []
-    return DiskWatcher(events.append), events
+    disk = DiskWatcher(events.append)
+    yield disk, events
+    # On this (the main) thread, where its Qt objects live: see the module docstring.
+    disk.close()
 
 
 def _settle(seconds: float = 0.8) -> None:
@@ -114,6 +118,40 @@ def test_a_forgotten_file_is_not_watched(watcher, tmp_path):
     _settle()
     assert events == []
     assert disk.changed_since_seen(str(doc)) is False
+
+
+def test_a_closed_watcher_reports_nothing_and_ignores_late_news(watcher, tmp_path):
+    disk, events = watcher
+    doc = tmp_path / "notes.md"
+    doc.write_text("mine\n", encoding="utf-8")
+    disk.seen(str(doc), doc.read_bytes())
+    _settle(0.1)
+    disk.close()
+    # A worker still finishing when the bridge shuts down.
+    disk.seen(str(doc), doc.read_bytes())
+    _settle(0.1)
+    _replace(doc, "theirs\n")
+    _settle()
+    assert events == []
+    assert disk.watched() == []
+    assert disk.changed_since_seen(str(doc)) is False
+
+
+def test_a_bridge_shutdown_waits_for_its_workers(qapp, tmp_path):
+    from backend.bridge import Bridge
+
+    bridge = Bridge(StubWindow())
+    finished = threading.Event()
+
+    def slow() -> None:
+        time.sleep(0.2)
+        finished.set()
+
+    bridge._spawn(slow)
+    bridge.shutdown()
+    # Joined: no worker is left holding the bridge, so it is freed here, on
+    # the main thread, and never on a worker's.
+    assert finished.is_set()
 
 
 # ── through the bridge ────────────────────────────────────────────────────

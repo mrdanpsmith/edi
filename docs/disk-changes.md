@@ -44,6 +44,41 @@ A check compares the file's bytes on disk with the known state:
 Paths are matched exactly as the page spells them, which is how they reached
 the bridge.
 
+## Lifetime: the bridge is freed on the main thread
+
+The watcher, its `QFileSystemWatcher` and its settle timers are Qt objects that
+live on the main thread. They are children of the `Bridge`, so they are
+destroyed when the bridge is, and the bridge must therefore be shut down and
+freed on the main thread. Destroying them on another thread is undefined
+behaviour in Qt. On Linux it segfaulted the test suite, because inotify's
+socket notifier went with them; macOS happened to tolerate it.
+
+How a bridge ends up freed on the wrong thread:
+
+- Every bridge request runs on a worker thread whose closure holds the bridge.
+- The bridge also sits in reference cycles: its handler table, and the
+  watcher's `notify`.
+- So it is freed either by the last worker to finish or by the cycle collector,
+  and both can happen on any thread.
+
+How each owner handles it:
+
+- **The app** has one bridge, owned by the window for the whole run.
+  `Bridge.shutdown`, run on quit, calls `DiskWatcher.close()`, which stops
+  every watch on the main thread and ignores any late `seen` from a finishing
+  worker. It then calls `join_workers()`, which waits up to 2 s in all.
+- **The tests** make a bridge per test, so the autouse `_retire_bridges`
+  fixture in `tests/conftest.py` tracks each one. At teardown it shuts each
+  down and runs `gc.collect()` on the main thread. Bridges owned by a
+  `MainWindow` are left to their window.
+
+Workers are started through `Bridge._spawn`, which records them so they can be
+joined.
+
+Polling with a plain thread, holding no Qt objects, was tried and dropped. It
+avoided the problem rather than fixing the lifetime, lost the immediate native
+notifications, and brought timing flakiness of its own.
+
 ## Saves never overwrite an unseen change
 
 `writeTextFile` with `history: true`, and `renameTextFile`, refuse to write when

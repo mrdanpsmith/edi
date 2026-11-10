@@ -54,6 +54,44 @@ def qapp():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def _retire_bridges(monkeypatch):
+    """Shut down and free every ``Bridge`` a test made — on the main thread.
+
+    A bridge owns main-thread Qt objects (its disk watcher, `backend/watcher.py`)
+    and sits in reference cycles (its handler table, the watcher's ``notify``),
+    so it is freed by the cycle collector, on whichever thread happens to
+    trigger it — often a bridge worker. Destroying Qt objects off their thread
+    segfaulted the Linux suite. So each bridge is shut down here (which closes
+    the watcher and joins its workers) and collected with an explicit
+    ``gc.collect()``, on this thread, before the next test starts.
+
+    The app has one bridge, owned by its window for the whole run, so this is
+    the tests' problem only. A bridge a ``MainWindow`` owns is the window's to
+    shut down and is left alone.
+    """
+    import gc
+
+    from PySide6.QtWidgets import QMainWindow
+
+    from backend import bridge as bridge_module
+
+    created = []
+    original_init = bridge_module.Bridge.__init__
+
+    def tracking_init(self, window, *args, **kwargs):
+        original_init(self, window, *args, **kwargs)
+        created.append(self)
+
+    monkeypatch.setattr(bridge_module.Bridge, "__init__", tracking_init)
+    yield
+    for made in created:
+        if not isinstance(made._window, QMainWindow):
+            made.shutdown()
+    created.clear()
+    gc.collect()
+
+
 def pytest_sessionfinish(session, exitstatus) -> None:
     # QtWebEngine segfaults at interpreter exit in headless/container runs: its
     # Chromium teardown fires after pytest is fully done and segfaults, which

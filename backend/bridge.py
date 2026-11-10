@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 
 from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage
@@ -127,8 +128,12 @@ class Bridge(QObject):
         # over the notify signal, which would be lost before the page listens.
         self._frontend_ready = False
         self._procs: dict[int, subprocess.Popen] = {}
-        # Created here, on the main thread, which is where its watcher must live.
-        self.disk = DiskWatcher(self.emit_event)
+        # Worker threads, so `shutdown` can wait for them (see `_spawn`).
+        self._workers: set[threading.Thread] = set()
+        self._workers_lock = threading.Lock()
+        # Documents changed on disk by something else (`backend/watcher.py`).
+        # A child of this bridge: its Qt objects go with it, on the main thread.
+        self.disk = DiskWatcher(self.emit_event, parent=self)
         self._handlers = {
             "confirm": self._confirm,
             "alert": self._alert,
@@ -256,7 +261,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, result)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _copy_table(self, request_id: int, args: dict) -> None:
         mime = QMimeData()
@@ -339,7 +344,7 @@ class Bridge(QObject):
                 history.record_opened(str(path))
                 self._reply(request_id, content)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _read_any_text_file(self, request_id: int, args: dict) -> None:
         path = args.get("path")
@@ -356,7 +361,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, content)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _write_text_file(self, request_id: int, args: dict) -> None:
         path = args.get("path")
@@ -383,7 +388,7 @@ class Bridge(QObject):
                     history.record(str(path))
                 self._reply(request_id, None)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _rename_text_file(self, request_id: int, args: dict) -> None:
         """Save a document under a new name and delete the old file, in one step.
@@ -422,7 +427,7 @@ class Bridge(QObject):
                 history.move(str(old_path), str(new_path))
                 self._reply(request_id, None)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _seen_written(self, path: str) -> None:
         """Edi wrote ``path``: what is there now is Edi's, not news to report."""
@@ -447,7 +452,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, versions)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _clear_history(self, request_id: int, args: dict) -> None:
         """Forget a document's saved versions, keeping the file as it is now as
@@ -467,7 +472,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, None)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _read_history_version(self, request_id: int, args: dict) -> None:
         path = args.get("path")
@@ -485,7 +490,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, content)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _write_binary_file(self, request_id: int, args: dict) -> None:
         """Persist a base64-encoded blob (e.g. a rasterized diagram PNG).
@@ -517,7 +522,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, None)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _run_code_block(self, request_id: int, args: dict) -> None:
         shebang = str(args.get("shebang") or "")
@@ -531,7 +536,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, result)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _stream_code_block(self, request_id: int, args: dict) -> None:
         """Start a code block run whose output streams over ``stream``.
@@ -575,7 +580,7 @@ class Bridge(QObject):
                 self._send_stream({"id": request_id, "kind": "done", "ok": True})
                 self._reply(request_id, result)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._spawn(work)
 
     def _stop_code_block(self, request_id: int, args: dict) -> None:
         run_id = int(args.get("id", request_id))
@@ -594,6 +599,37 @@ class Bridge(QObject):
             proc = self._procs.pop(run_id, None)
             if proc is not None:
                 kill_process_tree(proc)
+        self.disk.close()
+        self.join_workers()
+
+    def _spawn(self, work) -> None:
+        """Run a request's blocking ``work`` on a worker thread.
+
+        Tracked so ``join_workers`` can wait for them. That matters for more
+        than tidiness: a worker's closure holds this bridge, so a worker that
+        outlives every other reference frees the bridge — and its Qt children,
+        the disk watcher among them — on the worker's thread, which is not
+        allowed. Whoever frees a bridge joins its workers first, on the main
+        thread (``shutdown``, and the test fixtures).
+        """
+        thread = threading.Thread(target=work, daemon=True)
+        with self._workers_lock:
+            self._workers = {t for t in self._workers if t.is_alive()}
+            self._workers.add(thread)
+        thread.start()
+
+    def join_workers(self, timeout: float = 2.0) -> None:
+        """Wait, up to ``timeout`` seconds in all, for every worker still running.
+
+        Bounded so quitting never hangs on a stuck read; code-block runs are
+        killed before this in ``shutdown``, so their workers end promptly."""
+        with self._workers_lock:
+            workers = list(self._workers)
+        deadline = time.monotonic() + timeout
+        for thread in workers:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        with self._workers_lock:
+            self._workers = {t for t in self._workers if t.is_alive()}
 
     def _open_url(self, request_id: int, args: dict) -> None:
         url = str(args.get("url") or "")

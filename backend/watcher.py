@@ -20,7 +20,14 @@ editors and agents save (write a temporary file, rename it over the target). So
 every check re-adds the file, and the parent folder is watched too, which is
 what reports a file that is briefly gone and then back. Bursts of writes are
 coalesced: a document is checked once its file has been quiet for ``SETTLE_MS``.
-See ``docs/disk-changes.md``.
+
+**Lifetime.** The watcher and its timers are Qt objects living on the main
+thread, children of the ``Bridge`` that owns them, so they go when it goes — and
+the bridge must therefore be shut down and freed on the main thread. Freeing it
+from a worker thread (the last reference dropped by a finished bridge request)
+destroys inotify's socket notifier and the timers off their thread, which
+segfaulted the Linux test suite. ``Bridge.shutdown`` calls ``close`` and waits
+for the bridge's workers; see ``docs/disk-changes.md``.
 """
 
 from __future__ import annotations
@@ -51,15 +58,17 @@ def _read(path: str) -> bytes | None:
 
 class DiskWatcher(QObject):
     """Watch documents for changes Edi did not make. Lives on the main thread;
-    ``seen``, ``forget`` and ``changed_since_seen`` may be called from any."""
+    ``seen``, ``forget``, ``watched`` and ``changed_since_seen`` may be called
+    from any thread."""
 
     _watch = Signal(str)
     _unwatch = Signal(str)
 
-    def __init__(self, notify: Callable[[dict], None]) -> None:
-        super().__init__()
+    def __init__(self, notify: Callable[[dict], None], parent: QObject | None = None) -> None:
+        super().__init__(parent)
         self._notify = notify
         self._lock = threading.Lock()
+        self._closed = False
         # Path (as the page spells it) → digest of the bytes Edi last read or wrote.
         self._seen: dict[str, str] = {}
         # Path → digest last reported to the page, so one change is one event.
@@ -73,12 +82,29 @@ class DiskWatcher(QObject):
         self._watch.connect(self._start_watching, queued)
         self._unwatch.connect(self._stop_watching, queued)
 
+    def close(self) -> None:
+        """Stop watching everything. Main thread only (``Bridge.shutdown``).
+
+        The Qt objects are not deleted here: they belong to the bridge and go
+        with it. A late ``seen`` from a worker still finishing is ignored."""
+        with self._lock:
+            self._closed = True
+            self._seen.clear()
+        for timer in self._timers.values():
+            timer.stop()
+        self._timers.clear()
+        watched = self._watcher.files() + self._watcher.directories()
+        if watched:
+            self._watcher.removePaths(watched)
+
     # ── called by the bridge, from any thread ─────────────────────────────
 
     def seen(self, path: str, data: bytes) -> None:
         """Edi has just read or written ``data`` as ``path``: that is the file's
         known state, and the one a later change is measured against."""
         with self._lock:
+            if self._closed:
+                return
             self._seen[path] = digest(data)
             self._reported.pop(path, None)
             self._missing.discard(path)
@@ -86,6 +112,8 @@ class DiskWatcher(QObject):
 
     def forget(self, path: str) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._seen.pop(path, None)
             self._reported.pop(path, None)
             self._missing.discard(path)
@@ -110,6 +138,9 @@ class DiskWatcher(QObject):
 
     @Slot(str)
     def _start_watching(self, path: str) -> None:
+        with self._lock:
+            if self._closed or path not in self._seen:
+                return
         folder = os.path.dirname(os.path.abspath(path))
         if os.path.exists(path) and path not in self._watcher.files():
             self._watcher.addPath(path)
