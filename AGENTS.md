@@ -88,15 +88,6 @@ real application is `run_edi.py`.
 - Details: [docs/contract.md](docs/contract.md),
   [docs/preferences.md](docs/preferences.md).
 
-### Documents on disk
-
-- A save must never overwrite a change Edi has not shown the reader: the
-  bridge refuses with `changedOnDisk`, and the page offers Compare, Take
-  theirs and Keep mine. Reading a file is what marks it as seen.
-- History never fails a save, and nothing is ever written beside a document.
-- Details: [docs/disk-changes.md](docs/disk-changes.md),
-  [docs/history.md](docs/history.md).
-
 ### Distribution
 
 - The shipped Linux binary **must** be built on Ubuntu 22.04 (glibc 2.35).
