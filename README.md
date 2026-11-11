@@ -161,7 +161,7 @@ remembered between runs (`~/.config/Edi/Edi.conf`).
 
 | Menu | Items |
 | --- | --- |
-| **File** | New, Open, Open Recent, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Print…, Quit |
+| **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Print…, Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
 | **View** | Toolbar, Hover Band, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
@@ -184,6 +184,7 @@ shortcut would shadow exactly that.
 | `Ctrl+N` | New tab |
 | `Ctrl+W` | Close tab |
 | `Ctrl+O` | Open file (in a new tab) |
+| `Ctrl+Shift+O` | Open a typed file path (`~`, `$VARS` and paths relative to the current document work) |
 | `Ctrl+S` | Save |
 | `Ctrl+Shift+S` | Save As |
 | `Ctrl+Shift+C` | Copy selection as Markdown |

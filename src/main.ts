@@ -51,6 +51,7 @@ function buildHomeScreen(ctx: AppContext, files: FileController): HomeScreen {
   return new HomeScreen(ctx.roots.homeScreen, {
     onNew: () => openNewTab(ctx),
     onOpen: () => void files.openFile(),
+    onOpenPath: () => void files.openTypedPath(),
     onOpenWelcome: () => openWelcome(ctx),
     onExit: () => requestQuit(),
     onOpenRecent: (path) => void files.openDocument(path),
@@ -227,6 +228,9 @@ function registerShortcuts(
     } else if (key === 'w') {
       event.preventDefault()
       void closeTab(ctx, ctx.tabs.activeId)
+    } else if (key === 'o' && event.shiftKey) {
+      event.preventDefault()
+      void files.openTypedPath()
     } else if (key === 'o') {
       event.preventDefault()
       void files.openFile()
@@ -447,6 +451,7 @@ export function init(roots: AppRoots): () => void {
   bindMenuCommands({
     new: () => openNewTab(ctx),
     open: () => void files.openFile(),
+    openPath: () => void files.openTypedPath(),
     save: () => void files.saveFile(),
     saveAs: () => void files.saveFileAs(),
     rename: () => void files.renameFile(),

@@ -320,6 +320,32 @@ def test_pick_open_path_cancel_returns_none(bridge):
     assert message["data"] is None
 
 
+def test_pick_typed_open_path_grants_write(bridge):
+    bridge_obj, window, result = bridge
+    seen = {}
+
+    def pick(base_dir, callback):
+        seen["base_dir"] = base_dir
+        callback("/tmp/notes/typed.md")
+
+    window.pick_typed_open_path = pick
+    _invoke(bridge_obj, "pickTypedOpenPath", {"baseDir": "/tmp/notes"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == "/tmp/notes/typed.md"
+    assert seen["base_dir"] == "/tmp/notes"
+    assert bridge_obj.grants.may_write("/tmp/notes/typed.md")
+
+
+def test_pick_typed_open_path_cancel_returns_none(bridge):
+    bridge_obj, window, result = bridge
+    window.pick_typed_open_path = lambda base_dir, callback: callback(None)
+    _invoke(bridge_obj, "pickTypedOpenPath", {"baseDir": None})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] is None
+
+
 def test_pick_text_import_path(bridge):
     bridge_obj, _window, result = bridge
     _invoke(bridge_obj, "pickTextImportPath")

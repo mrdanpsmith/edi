@@ -110,6 +110,15 @@ export async function pickOpenPath(): Promise<string[] | null> {
   return invoke<string[] | null>('pickOpenPath', {})
 }
 
+/**
+ * Ask the shell for a typed file path. The shell resolves `~`, `$VARS`, quotes
+ * and relative paths (against `baseDir`, or home when it is `null`), and only
+ * answers with a supported file that exists; `null` is a cancel.
+ */
+export async function pickTypedOpenPath(baseDir: string | null): Promise<string | null> {
+  return invoke<string | null>('pickTypedOpenPath', { baseDir })
+}
+
 export async function pickSavePath(defaultName: string): Promise<string | null> {
   return invoke<string | null>('pickSavePath', { defaultName })
 }

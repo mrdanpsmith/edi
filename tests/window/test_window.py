@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFileSystemModel,
+    QInputDialog,
     QLabel,
     QListView,
     QMessageBox,
@@ -338,6 +339,51 @@ def test_pick_open_path_cancel_returns_none(visible, qtbot):
     assert result["value"] == "null"
 
 
+def _wait_input_dialog(qtbot, previous=None):
+    found = {}
+
+    def active():
+        widget = QApplication.activeModalWidget()
+        if isinstance(widget, QInputDialog) and widget is not previous:
+            found["value"] = widget
+            return True
+        return False
+
+    qtbot.waitUntil(active, timeout=3000)
+    return found["value"]
+
+
+def test_pick_typed_open_path_reprompts_until_the_file_exists(visible, qtbot, tmp_path):
+    window = visible
+    (tmp_path / "real.md").write_text("hi", encoding="utf-8")
+    chosen = []
+    window.pick_typed_open_path(str(tmp_path), chosen.append)
+
+    first = _wait_input_dialog(qtbot)
+    first.setTextValue("missing.md")
+    first.accept()
+
+    # The reason is shown above the prompt and the typed text is kept to fix.
+    second = _wait_input_dialog(qtbot, previous=first)
+    assert "No such file" in second.labelText()
+    assert second.textValue() == "missing.md"
+    assert chosen == []
+    second.setTextValue(" 'real.md' ")
+    second.accept()
+
+    qtbot.waitUntil(lambda: chosen != [], timeout=3000)
+    assert chosen == [str(tmp_path / "real.md")]
+
+
+def test_pick_typed_open_path_cancel_returns_none(visible, qtbot):
+    window = visible
+    chosen = []
+    window.pick_typed_open_path(None, chosen.append)
+    _wait_input_dialog(qtbot).reject()
+    qtbot.waitUntil(lambda: chosen != [], timeout=3000)
+    assert chosen == [None]
+
+
 def test_pick_open_path_returns_multiple_files(visible, qtbot, tmp_path):
     window = visible
     first = tmp_path / "one.md"
@@ -469,6 +515,7 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert "&Quit" in file_labels
     # Open Recent belongs directly under Open.
     assert file_labels.index("Open &Recent") == file_labels.index("&Open…") + 1
+    assert file_labels.index("Open &Path…") == file_labels.index("Open &Recent") + 1
 
     insert_labels = [action.text() for action in window._insert_menu.actions()]
     assert insert_labels == [

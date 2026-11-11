@@ -1,6 +1,7 @@
 export interface HomeActions {
   onNew(): void
   onOpen(): void
+  onOpenPath(): void
   onOpenWelcome(): void
   onExit(): void
   onOpenRecent(path: string): void
@@ -23,6 +24,7 @@ export class HomeScreen {
     this.actions = actions
     element(root, '#home-new').addEventListener('click', () => actions.onNew())
     element(root, '#home-open').addEventListener('click', () => actions.onOpen())
+    element(root, '#home-open-path').addEventListener('click', () => actions.onOpenPath())
     element(root, '#home-welcome').addEventListener('click', () => actions.onOpenWelcome())
     element(root, '#home-exit').addEventListener('click', () => actions.onExit())
     this.toggle = element(root, '#home-recent-toggle') as HTMLButtonElement

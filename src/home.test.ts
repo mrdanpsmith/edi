@@ -7,6 +7,7 @@ const HOME_TEMPLATE = `
   <div class="home-action-row">
     <button type="button" class="home-btn home-primary" id="home-new">New</button>
     <button type="button" class="home-btn home-primary" id="home-open">Open…</button>
+    <button type="button" class="home-btn home-primary" id="home-open-path">Open Path…</button>
   </div>
   <div class="home-recent-box">
     <button type="button" class="home-btn" id="home-recent-toggle">Recent documents</button>
@@ -23,6 +24,7 @@ function makeActions(): HomeActions {
   return {
     onNew: vi.fn(),
     onOpen: vi.fn(),
+    onOpenPath: vi.fn(),
     onOpenWelcome: vi.fn(),
     onExit: vi.fn(),
     onOpenRecent: vi.fn(),
@@ -50,6 +52,7 @@ describe('HomeScreen buttons', () => {
   it('renders buttons and the hint', () => {
     expect(button('#home-new').textContent).toBe('New')
     expect(button('#home-open').textContent).toBe('Open…')
+    expect(button('#home-open-path').textContent).toBe('Open Path…')
     expect(button('#home-welcome').textContent).toBe('Open Welcome')
     expect(button('#home-exit').textContent).toBe('Exit')
     expect(button('#home-recent-toggle').textContent).toBe('Recent documents')
@@ -60,10 +63,12 @@ describe('HomeScreen buttons', () => {
     build()
     button('#home-new').click()
     button('#home-open').click()
+    button('#home-open-path').click()
     button('#home-welcome').click()
     button('#home-exit').click()
     expect(actions.onNew).toHaveBeenCalledTimes(1)
     expect(actions.onOpen).toHaveBeenCalledTimes(1)
+    expect(actions.onOpenPath).toHaveBeenCalledTimes(1)
     expect(actions.onOpenWelcome).toHaveBeenCalledTimes(1)
     expect(actions.onExit).toHaveBeenCalledTimes(1)
   })

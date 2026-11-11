@@ -14,6 +14,7 @@ import {
   pickOpenPath,
   pickSavePath,
   pickTextImportPath,
+  pickTypedOpenPath,
   printHtml,
   readAnyTextFile,
   readHistoryVersion,
@@ -40,6 +41,7 @@ import type { AppContext } from './appContext'
 
 export interface FileController {
   openFile(): Promise<void>
+  openTypedPath(): Promise<void>
   openPendingFiles(): Promise<void>
   openPaths(paths: string[]): Promise<void>
   openDocument(path: string): Promise<void>
@@ -92,6 +94,17 @@ export function createFileController(ctx: AppContext): FileController {
     for (const path of paths) {
       await openDocument(path)
     }
+  }
+
+  /**
+   * Open a document by a path the user types (File → Open Path…). A relative
+   * path resolves against the active document's folder; an untitled document
+   * has none, so the shell falls back to the home directory.
+   */
+  async function openTypedPath(): Promise<void> {
+    const activePath = getActive()?.path
+    const path = await pickTypedOpenPath(activePath ? dirname(activePath) : null)
+    if (path) await openDocument(path)
   }
 
   /**
@@ -482,6 +495,7 @@ export function createFileController(ctx: AppContext): FileController {
 
   return {
     openFile,
+    openTypedPath,
     openPendingFiles,
     openPaths,
     openDocument,

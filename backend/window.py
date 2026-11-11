@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__, history
 from .bridge import Bridge
+from .files import check_typed_open_path, resolve_typed_path
 from .preferences import Preferences
 from .printing import PrintJob
 
@@ -463,6 +465,7 @@ class MainWindow(QMainWindow):
         self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
 
         for label, command in (
+            ("Open &Path…\tCtrl+Shift+O", "openPath"),
             ("&Save\tCtrl+S", "save"),
             ("Save &As…\tCtrl+Shift+S", "saveAs"),
         ):
@@ -927,6 +930,44 @@ class MainWindow(QMainWindow):
         dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dialog.setNameFilter("Markdown documents (*.md *.markdown *.txt *.mermaid);;All files (*)")
         self._run_dialog(dialog, callback, multiple=True)
+
+    def pick_typed_open_path(
+        self, base_dir: str | None, callback=None, *, text: str = "", error: str = ""
+    ) -> None:
+        """Ask for a document path as text and report it once it can be opened.
+
+        ``callback(path: str | None)`` gets the resolved absolute path, or
+        ``None`` on cancel. A path that does not name a supported, existing file
+        reopens the prompt with the reason above it and the typed text kept, so a
+        typo is corrected rather than retyped. Relative paths resolve against
+        ``base_dir`` (see :func:`resolve_typed_path`).
+        """
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Open Path")
+        prompt = "File path (absolute, ~, or relative to the current document):"
+        dialog.setLabelText(f"{error}\n\n{prompt}" if error else prompt)
+        dialog.setTextValue(text)
+        dialog.setOkButtonText("Open")
+        dialog.resize(max(dialog.width(), 560), dialog.height())
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        def done(result) -> None:
+            typed = dialog.textValue()
+            dialog.deleteLater()
+            if not result:
+                if callback is not None:
+                    callback(None)
+                return
+            path = resolve_typed_path(typed, base_dir)
+            problem = check_typed_open_path(path)
+            if problem is not None:
+                self.pick_typed_open_path(base_dir, callback, text=typed, error=problem)
+                return
+            if callback is not None:
+                callback(path)
+
+        dialog.finished.connect(done)
+        dialog.open()
 
     def pick_save_path(self, default_name, callback=None) -> None:
         dialog = QFileDialog(self, "Save document")

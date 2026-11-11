@@ -54,6 +54,7 @@ const mainState = vi.hoisted(() => {
     confirmAction: vi.fn().mockResolvedValue(true),
     showError: vi.fn().mockResolvedValue(undefined),
     pickOpenPath: vi.fn(),
+    pickTypedOpenPath: vi.fn(),
     getPendingFiles: vi.fn().mockResolvedValue([]),
     notifyHandlers: [] as Array<(payload: string) => void>,
     readTextFile: vi.fn(),
@@ -116,6 +117,7 @@ vi.mock('./files', async () => {
   return {
     ...actual,
     pickOpenPath: mainState.pickOpenPath,
+    pickTypedOpenPath: mainState.pickTypedOpenPath,
     getPendingFiles: mainState.getPendingFiles,
     readTextFile: mainState.readTextFile,
     pickSavePath: mainState.pickSavePath,
@@ -277,6 +279,7 @@ const DOM_TEMPLATE = `
         <div class="home-action-row">
           <button type="button" class="home-btn home-primary" id="home-new">New</button>
           <button type="button" class="home-btn home-primary" id="home-open">Open…</button>
+          <button type="button" class="home-btn home-primary" id="home-open-path">Open Path…</button>
         </div>
         <div class="home-recent-box">
           <button type="button" class="home-btn" id="home-recent-toggle">Recent documents</button>
@@ -443,6 +446,7 @@ function matchMediaStub(): typeof window.matchMedia {
 
 const FILE_MOCKS = [
   mainState.pickOpenPath,
+  mainState.pickTypedOpenPath,
   mainState.readTextFile,
   mainState.pickSavePath,
   mainState.writeTextFile,
@@ -934,6 +938,42 @@ describe('open and save', () => {
     const state = await stateModule()
     expect(state.getState().sessions).toHaveLength(1)
     expect(mainState.readTextFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens a typed path from Open Path', async () => {
+    mainState.pickTypedOpenPath.mockResolvedValue('/tmp/typed.md')
+    mainState.readTextFile.mockResolvedValue('typed file')
+    await loadMain()
+    menu('openPath')
+    await flushAsync()
+    const state = await stateModule()
+    expect(mainState.pickTypedOpenPath).toHaveBeenCalledWith(null)
+    expect(state.getState().sessions).toHaveLength(1)
+    expect(mainState.readTextFile).toHaveBeenCalledWith('/tmp/typed.md')
+  })
+
+  it('resolves a typed path against the active document folder', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes/a.md'])
+    mainState.readTextFile.mockResolvedValue('content')
+    mainState.pickTypedOpenPath.mockResolvedValue(null)
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    menu('openPath')
+    await flushAsync()
+    expect(mainState.pickTypedOpenPath).toHaveBeenCalledWith('/tmp/notes')
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(1)
+  })
+
+  it('Ctrl+Shift+O asks for a typed path, not the file picker', async () => {
+    mainState.pickTypedOpenPath.mockResolvedValue(null)
+    await loadMain()
+    press('O', { shiftKey: true })
+    await flushAsync()
+    expect(mainState.pickTypedOpenPath).toHaveBeenCalledTimes(1)
+    expect(mainState.pickOpenPath).not.toHaveBeenCalled()
+    expect(mainState.readTextFile).not.toHaveBeenCalled()
   })
 
   it('does nothing when the open dialog is cancelled', async () => {

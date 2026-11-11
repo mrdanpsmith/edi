@@ -6,14 +6,55 @@ import os
 from pathlib import Path
 
 from backend.files import (
+    check_typed_open_path,
     is_supported_extension,
     read_any_text_file,
     read_text_file,
     rename_text_file,
+    resolve_typed_path,
     write_text_file,
 )
 
 import pytest
+
+
+def test_resolve_typed_path_keeps_absolute_paths(tmp_path):
+    assert resolve_typed_path(f"  {tmp_path}/a/../b.md  ", None) == str(tmp_path / "b.md")
+
+
+def test_resolve_typed_path_strips_one_pair_of_quotes(tmp_path):
+    assert resolve_typed_path(f'"{tmp_path}/my notes.md"', None) == str(tmp_path / "my notes.md")
+    assert resolve_typed_path(f"'{tmp_path}/a.md'", None) == str(tmp_path / "a.md")
+
+
+def test_resolve_typed_path_expands_home_and_variables(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("EDI_NOTES", "notes")
+    assert resolve_typed_path("~/a.md", None) == str(tmp_path / "a.md")
+    assert resolve_typed_path("$HOME/$EDI_NOTES/a.md", None) == str(tmp_path / "notes" / "a.md")
+
+
+def test_resolve_typed_path_relative_to_base_or_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert resolve_typed_path("../x.md", str(tmp_path / "docs")) == str(tmp_path / "x.md")
+    assert resolve_typed_path("x.md", None) == str(tmp_path / "home" / "x.md")
+
+
+def test_resolve_typed_path_blank_is_empty():
+    assert resolve_typed_path("   ", "/tmp") == ""
+    assert resolve_typed_path('""', "/tmp") == ""
+
+
+def test_check_typed_open_path(tmp_path):
+    doc = tmp_path / "a.md"
+    doc.write_text("x", encoding="utf-8")
+    other = tmp_path / "a.py"
+    other.write_text("x", encoding="utf-8")
+    assert check_typed_open_path(str(doc)) is None
+    assert check_typed_open_path("") == "Enter a file path."
+    assert "No such file" in (check_typed_open_path(str(tmp_path / "nope.md")) or "")
+    assert "Not a file" in (check_typed_open_path(str(tmp_path)) or "")
+    assert "Unsupported file type" in (check_typed_open_path(str(other)) or "")
 
 
 def test_read_any_text_file_reads_unknown_extensions(tmp_path):

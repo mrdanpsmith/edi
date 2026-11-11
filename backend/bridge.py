@@ -143,6 +143,7 @@ class Bridge(QObject):
             "pickImageSavePath": self._pick_image_save_path,
             "pickImportPath": self._pick_import_path,
             "pickTextImportPath": self._pick_text_import_path,
+            "pickTypedOpenPath": self._pick_typed_open_path,
             "pickImageImportPath": self._pick_image_import_path,
             "readTextFile": self._read_text_file,
             "readAnyTextFile": self._read_any_text_file,
@@ -218,6 +219,16 @@ class Bridge(QObject):
 
     def _pick_open_path(self, request_id: int, _args: dict) -> None:
         self._window.pick_open_path(self._granting(request_id, self.grants.allow_write))
+
+    def _pick_typed_open_path(self, request_id: int, args: dict) -> None:
+        # The page supplies only the folder a relative path resolves against;
+        # the path itself is typed by the user into the shell's own prompt, so
+        # it grants write access the same way the file picker does.
+        base_dir = args.get("baseDir")
+        self._window.pick_typed_open_path(
+            str(base_dir) if base_dir else None,
+            self._granting(request_id, self.grants.allow_write),
+        )
 
     def _pick_save_path(self, request_id: int, args: dict) -> None:
         self._window.pick_save_path(

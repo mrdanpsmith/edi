@@ -14,6 +14,41 @@ def is_supported_extension(path: str) -> bool:
     return Path(path).suffix.lstrip(".").lower() in SUPPORTED_EXTENSIONS
 
 
+def resolve_typed_path(text: str, base_dir: str | None) -> str:
+    """Turn a path the user typed into an absolute, normalised path.
+
+    Surrounding whitespace and one pair of matching quotes are dropped, so a
+    path pasted from a terminal works. ``~`` and ``$VARS`` are expanded. A
+    relative path is resolved against ``base_dir`` (the active document's
+    folder), or the home directory when there is none. Returns ``""`` for
+    blank input. Nothing is checked on disk; see :func:`check_typed_open_path`.
+    """
+    value = text.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        value = value[1:-1].strip()
+    if not value:
+        return ""
+    value = os.path.expanduser(os.path.expandvars(value))
+    if not os.path.isabs(value):
+        value = os.path.join(base_dir or os.path.expanduser("~"), value)
+    return os.path.normpath(value)
+
+
+def check_typed_open_path(path: str) -> str | None:
+    """Why ``path`` cannot be opened as a document, or ``None`` if it can."""
+    if not path:
+        return "Enter a file path."
+    if not os.path.exists(path):
+        return f"No such file:\n{path}"
+    if not os.path.isfile(path):
+        return f"Not a file:\n{path}"
+    if not is_supported_extension(path):
+        return "Unsupported file type (expected one of {}):\n{}".format(
+            ", ".join(f".{ext}" for ext in SUPPORTED_EXTENSIONS), path
+        )
+    return None
+
+
 def read_text_file(path: str) -> str:
     target = Path(path)
     if not target.is_file():
