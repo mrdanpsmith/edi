@@ -161,15 +161,21 @@ remembered between runs (`~/.config/Edi/Edi.conf`).
 
 | Menu | Items |
 | --- | --- |
-| **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename…, Revert, Copy File Path, Export HTML…, Print…, Quit |
+| **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename or Move…, Revert, Copy File Path, Export HTML…, Print…, Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
 | **View** | Toolbar, Hover Band, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
 | **Help** | Edi Guide…, Formula Reference…, About Edi… |
 
-`Revert` and `Rename…` need a document that has been saved somewhere; renaming
-asks for a new name in the same folder, writes the document under it and deletes
-the old file in one step, so it is never left under both names.
+`Revert` and `Rename or Move…` need a document that has been saved somewhere.
+Rename or Move opens on the current name with the stem selected, so typing
+renames in place. A path moves the document instead: relative to its folder,
+`~` or absolute. A folder on its own keeps the name (`../archive/`). The
+destination folder must exist, and an existing file there is never replaced.
+The document is written to its new path and the old file deleted in one step,
+so it is never left under both names. When it moves to another folder, relative
+images, links and link definitions are rewritten so they still point at the
+same files.
 
 ## Keyboard shortcuts
 

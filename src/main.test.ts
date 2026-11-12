@@ -61,7 +61,8 @@ const mainState = vi.hoisted(() => {
     pickSavePath: vi.fn(),
     writeTextFile: vi.fn(),
     renameTextFile: vi.fn(),
-    promptForRename: vi.fn(),
+    pickRenamePath: vi.fn(),
+    rebaseLinks: vi.fn().mockReturnValue(null),
     promptForLink: vi.fn(),
     pickExportPath: vi.fn(),
     pickImageImportPath: vi.fn(),
@@ -123,6 +124,7 @@ vi.mock('./files', async () => {
     pickSavePath: mainState.pickSavePath,
     writeTextFile: mainState.writeTextFile,
     renameTextFile: mainState.renameTextFile,
+    pickRenamePath: mainState.pickRenamePath,
     pickExportPath: mainState.pickExportPath,
     pickImageImportPath: mainState.pickImageImportPath,
     pickImportPath: mainState.pickImportPath,
@@ -163,6 +165,7 @@ vi.mock('./editor', async (importOriginal) => ({
         options?.onChange?.()
       },
       commitSource: vi.fn(),
+      rebaseLinks: (fromPath: string, toPath: string) => mainState.rebaseLinks(fromPath, toPath),
       createState: (markdown: string) => ({ _md: markdown }),
       getState: () => ({ _md: mainState.markdown }),
       applyState: (state: { _md: string }) => { mainState.markdown = state._md },
@@ -253,7 +256,6 @@ vi.mock('./urlDialog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./urlDialog')>()
   return {
     ...actual,
-    promptForRename: mainState.promptForRename,
     promptForLink: mainState.promptForLink,
   }
 })
@@ -451,7 +453,7 @@ const FILE_MOCKS = [
   mainState.pickSavePath,
   mainState.writeTextFile,
   mainState.renameTextFile,
-  mainState.promptForRename,
+  mainState.pickRenamePath,
   mainState.promptForLink,
   mainState.pickExportPath,
   mainState.pickImageImportPath,
@@ -492,6 +494,7 @@ beforeEach(() => {
   for (const mock of FILE_MOCKS) {
     mock.mockReset()
   }
+  mainState.rebaseLinks.mockReset().mockReturnValue(null)
   vi.restoreAllMocks()
 })
 
@@ -1304,7 +1307,7 @@ describe('rename', () => {
 
   it('renames in place through a single call, and the document follows', async () => {
     await openNotes()
-    mainState.promptForRename.mockResolvedValue('ideas.md')
+    mainState.pickRenamePath.mockResolvedValue('/tmp/ideas.md')
     menu('rename')
     await flushAsync()
     // One call, carrying the old name, the new one and the body: the old file
@@ -1317,20 +1320,63 @@ describe('rename', () => {
     expect(statusLeft().textContent).toContain('Renamed to ideas.md')
   })
 
-  it('offers the current name and remembers the new one', async () => {
+  it('asks the shell about the current document and remembers the new path', async () => {
     await openNotes()
-    mainState.promptForRename.mockResolvedValue('ideas.md')
+    mainState.pickRenamePath.mockResolvedValue('/tmp/ideas.md')
     menu('rename')
     await flushAsync()
-    expect(mainState.promptForRename).toHaveBeenCalledWith('notes.md')
+    expect(mainState.pickRenamePath).toHaveBeenCalledWith('/tmp/notes.md')
     expect(mainState.addRecentFile).toHaveBeenCalledWith('/tmp/ideas.md')
+  })
+
+  it('moves the document to another folder', async () => {
+    await openNotes()
+    mainState.pickRenamePath.mockResolvedValue('/tmp/archive/notes.md')
+    menu('rename')
+    await flushAsync()
+    expect(mainState.renameTextFile).toHaveBeenCalledWith('/tmp/notes.md', '/tmp/archive/notes.md', 'hello file')
+    expect(activeTabTitle()).toBe('notes.md')
+    expect(statusLeft().textContent).toContain('Moved to /tmp/archive/notes.md')
+  })
+
+  it('writes the rebased links, and gives them to the editor only once the move is on disk', async () => {
+    await openNotes()
+    const order: string[] = []
+    const apply = vi.fn(() => {
+      order.push('apply')
+      return true
+    })
+    mainState.rebaseLinks.mockReturnValue({ doc: {}, markdown: '![](../img.png)', apply })
+    mainState.renameTextFile.mockImplementation(async () => {
+      order.push('rename')
+    })
+    mainState.pickRenamePath.mockResolvedValue('/tmp/archive/notes.md')
+    menu('rename')
+    await flushAsync()
+    expect(mainState.rebaseLinks).toHaveBeenCalledWith('/tmp/notes.md', '/tmp/archive/notes.md')
+    expect(mainState.renameTextFile).toHaveBeenCalledWith('/tmp/notes.md', '/tmp/archive/notes.md', '![](../img.png)')
+    expect(order).toEqual(['rename', 'apply'])
+    const state = await stateModule()
+    expect(state.isAnyDirty()).toBe(false)
+  })
+
+  it('does not rebase the editor when the move fails', async () => {
+    await openNotes()
+    const apply = vi.fn(() => true)
+    mainState.rebaseLinks.mockReturnValue({ doc: {}, markdown: '![](../img.png)', apply })
+    mainState.renameTextFile.mockRejectedValue(new Error('No such folder'))
+    mainState.pickRenamePath.mockResolvedValue('/tmp/archive/notes.md')
+    menu('rename')
+    await flushAsync()
+    expect(apply).not.toHaveBeenCalled()
+    expect(document.title).toBe('notes.md — Edi')
   })
 
   it('clears the dirty flag: the bytes are on disk under the new name', async () => {
     await openNotes()
     mainState.markdown = 'edited'
     mainState.editorOptions?.onChange?.()
-    mainState.promptForRename.mockResolvedValue('ideas.md')
+    mainState.pickRenamePath.mockResolvedValue('/tmp/ideas.md')
     menu('rename')
     await flushAsync()
     const state = await stateModule()
@@ -1339,7 +1385,7 @@ describe('rename', () => {
 
   it('keeps the document where it was when the prompt is cancelled', async () => {
     await openNotes()
-    mainState.promptForRename.mockResolvedValue(null)
+    mainState.pickRenamePath.mockResolvedValue(null)
     menu('rename')
     await flushAsync()
     expect(mainState.renameTextFile).not.toHaveBeenCalled()
@@ -1349,16 +1395,16 @@ describe('rename', () => {
   it('does nothing for a document that has no path yet', async () => {
     await loadMain()
     press('n')
-    mainState.promptForRename.mockResolvedValue('ideas.md')
+    mainState.pickRenamePath.mockResolvedValue('/tmp/ideas.md')
     menu('rename')
     await flushAsync()
-    expect(mainState.promptForRename).not.toHaveBeenCalled()
+    expect(mainState.pickRenamePath).not.toHaveBeenCalled()
     expect(mainState.renameTextFile).not.toHaveBeenCalled()
   })
 
   it('asks before renaming to an unsupported extension', async () => {
     await openNotes()
-    mainState.promptForRename.mockResolvedValue('out.csv')
+    mainState.pickRenamePath.mockResolvedValue('/tmp/out.csv')
     menu('rename')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledWith(expect.stringContaining('out.csv'))
@@ -1367,7 +1413,7 @@ describe('rename', () => {
 
   it('keeps the old name when the user declines an unsupported extension', async () => {
     await openNotes()
-    mainState.promptForRename.mockResolvedValue('out.csv')
+    mainState.pickRenamePath.mockResolvedValue('/tmp/out.csv')
     mainState.confirmAction.mockResolvedValue(false)
     menu('rename')
     await flushAsync()
@@ -1377,7 +1423,7 @@ describe('rename', () => {
 
   it('reports a failed rename, leaving the document on its old name', async () => {
     await openNotes()
-    mainState.promptForRename.mockResolvedValue('ideas.md')
+    mainState.pickRenamePath.mockResolvedValue('/tmp/ideas.md')
     mainState.renameTextFile.mockRejectedValue(new Error('permission denied'))
     menu('rename')
     await flushAsync()

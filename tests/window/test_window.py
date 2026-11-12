@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QFileSystemModel,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListView,
     QMessageBox,
 )
@@ -379,6 +380,62 @@ def test_pick_typed_open_path_cancel_returns_none(visible, qtbot):
     window = visible
     chosen = []
     window.pick_typed_open_path(None, chosen.append)
+    _wait_input_dialog(qtbot).reject()
+    qtbot.waitUntil(lambda: chosen != [], timeout=3000)
+    assert chosen == [None]
+
+
+def test_pick_rename_path_selects_the_stem_and_reprompts_until_usable(visible, qtbot, tmp_path):
+    window = visible
+    old = tmp_path / "notes.md"
+    old.write_text("hi", encoding="utf-8")
+    (tmp_path / "taken.md").write_text("theirs", encoding="utf-8")
+    chosen = []
+    window.pick_rename_path(str(old), chosen.append)
+
+    first = _wait_input_dialog(qtbot)
+    assert first.textValue() == "notes.md"
+    field = first.findChild(QLineEdit)
+    assert field.selectedText() == "notes"
+    first.setTextValue("missing/notes.md")
+    first.accept()
+
+    second = _wait_input_dialog(qtbot, previous=first)
+    assert "No such folder" in second.labelText()
+    assert second.textValue() == "missing/notes.md"
+    second.setTextValue("taken.md")
+    second.accept()
+
+    third = _wait_input_dialog(qtbot, previous=second)
+    assert "already exists" in third.labelText()
+    assert chosen == []
+    third.setTextValue("ideas.md")
+    third.accept()
+
+    qtbot.waitUntil(lambda: chosen != [], timeout=3000)
+    assert chosen == [str(tmp_path / "ideas.md")]
+
+
+def test_pick_rename_path_into_a_folder_keeps_the_name(visible, qtbot, tmp_path):
+    window = visible
+    old = tmp_path / "notes.md"
+    old.write_text("hi", encoding="utf-8")
+    (tmp_path / "archive").mkdir()
+    chosen = []
+    window.pick_rename_path(str(old), chosen.append)
+
+    dialog = _wait_input_dialog(qtbot)
+    dialog.setTextValue("archive/")
+    dialog.accept()
+
+    qtbot.waitUntil(lambda: chosen != [], timeout=3000)
+    assert chosen == [str(tmp_path / "archive" / "notes.md")]
+
+
+def test_pick_rename_path_cancel_returns_none(visible, qtbot, tmp_path):
+    window = visible
+    chosen = []
+    window.pick_rename_path(str(tmp_path / "notes.md"), chosen.append)
     _wait_input_dialog(qtbot).reject()
     qtbot.waitUntil(lambda: chosen != [], timeout=3000)
     assert chosen == [None]

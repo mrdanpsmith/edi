@@ -31,6 +31,7 @@ import { codeBlockExitPlugin } from './codeBlockExit'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import { formulaDefsPlugin, formulaEnvFor } from './formulaDefs'
+import { rebaseLinksTransaction } from './relink'
 import { maskedFieldNodeViewPlugin } from './node/masked'
 import {
   discardOpenReveals,
@@ -192,6 +193,14 @@ export interface BlockEditor {
    * encrypted block is replaced too.
    */
   replaceMarkdown(markdown: string): void
+  /**
+   * The document as it reads once moved from `fromPath` to `toPath`: every
+   * relative image, link and definition rebased to name the same file from the
+   * new folder (`src/relink.ts`). Computed, not dispatched — a move writes
+   * `markdown` and only then calls `apply`, so a move that fails leaves the
+   * editor as it was. `null` when the move rewrites nothing.
+   */
+  rebaseLinks(fromPath: string, toPath: string): RebasedLinks | null
   commitSource(): boolean
   // Per-tab editor state: each document owns its own ProseMirror EditorState
   // (doc, undo/redo history, selection). Tabs swap whole states into the view.
@@ -223,6 +232,20 @@ export interface BlockEditor {
    */
   discardPending(): void
   destroy(): void
+}
+
+/** What {@link BlockEditor.rebaseLinks} computed. */
+export interface RebasedLinks {
+  /** The rebased document, and its markdown, as the move writes them. */
+  doc: ProseNode
+  markdown: string
+  /**
+   * Make the editor's document the rebased one, outside the undo history.
+   * Returns whether it applied to the very document `doc` was computed from;
+   * after an edit in between, that edit's document is rebased instead and the
+   * result is `false`.
+   */
+  apply(): boolean
 }
 
 export interface BlockEditorOptions {
@@ -614,6 +637,25 @@ export function createBlockEditor(
         endB += overlap
       }
       view.dispatch(view.state.tr.replace(start, endA, parsed.slice(start, endB)).setMeta(markdownSourceKey, source))
+    },
+    rebaseLinks(fromPath: string, toPath: string): RebasedLinks | null {
+      const before = view.state
+      const tr = rebaseLinksTransaction(before, fromPath, toPath)
+      if (!tr) return null
+      const after = before.apply(tr)
+      return {
+        doc: tr.doc,
+        markdown: proseToMarkdown(tr.doc, formulaEnvFor(after), markdownSourceKey.getState(after)),
+        apply() {
+          if (view.state === before) {
+            view.dispatch(tr)
+            return true
+          }
+          const again = rebaseLinksTransaction(view.state, fromPath, toPath)
+          if (again) view.dispatch(again)
+          return false
+        },
+      }
     },
     commitSource(): boolean {
       return commitSourceMode(view)

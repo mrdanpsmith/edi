@@ -388,13 +388,16 @@ function mdastToProse(node: MdastNode, schema: Schema, ctx: ParseContext): Prose
 /** An image from an `image` node, or an `imageReference` resolved through its
  * definition. mdast exposes the destination on `url`, not `src`. */
 function imageNode(node: MdastNode, schema: Schema, ctx?: ParseContext, marks: readonly Mark[] = []): ProseNode {
-  const target =
-    node.type === 'imageReference' && node.identifier
-      ? ctx?.definitions.get(node.identifier)
-      : { url: node.url ?? node.src ?? '', title: node.title ?? null }
+  const isReference = node.type === 'imageReference' && Boolean(node.identifier)
+  const target = isReference
+    ? ctx?.definitions.get(node.identifier!)
+    : { url: node.url ?? node.src ?? '', title: node.title ?? null }
+  const reference = isReference
+    ? { type: node.referenceType ?? 'full', label: node.label ?? '', url: target?.url ?? '' }
+    : null
   return schema.node(
     'image',
-    { src: target?.url ?? '', alt: node.alt ?? '', title: target?.title ?? null },
+    { src: target?.url ?? '', alt: node.alt ?? '', title: target?.title ?? null, reference },
     undefined,
     marks,
   )
@@ -587,9 +590,17 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
       return '  \n'
 
     case 'image': {
-      const alt = ((node.attrs.alt as string) ?? '').replace(/[\\[\]]/g, '\\$&')
-      const target = linkDestination((node.attrs.src as string) ?? '') + linkTitle(node.attrs.title)
-      return `![${alt}](${target})`
+      const rawAlt = (node.attrs.alt as string) ?? ''
+      const alt = rawAlt.replace(/[\\[\]]/g, '\\$&')
+      const src = (node.attrs.src as string) ?? ''
+      // Written back as the reference it was read from while it still points
+      // where its definition does, as a link is (`markCloseDelimiter`).
+      const ref = node.attrs.reference as LinkReference | null
+      if (ref && ref.url === src) {
+        if (ref.type === 'full') return `![${alt}][${ref.label}]`
+        if (normalizeLabel(rawAlt) === normalizeLabel(ref.label)) return ref.type === 'collapsed' ? `![${alt}][]` : `![${alt}]`
+      }
+      return `![${alt}](${linkDestination(src) + linkTitle(node.attrs.title)})`
     }
 
     case 'masked_field':
@@ -1104,25 +1115,57 @@ export function proseToMarkdown(
   // Pair the blocks still written as they were, in order, so an inserted or
   // deleted block does not stop the ones around it from keeping their text.
   const matched: Array<number | null> = current.map(() => null)
+  // Where each block stands in the original, for the text around it: a block
+  // still written as it was, or one edited in place — the same kind of block,
+  // in a run of edits that replaced as many blocks as it removed. An edited
+  // block keeps the blank lines around it, so rewriting one link definition in
+  // a run of them does not pull it apart from its neighbours.
+  const slot: Array<number | null> = current.map(() => null)
   let a = 0
   let b = 0
+  let removedAt = -1
+  let removedCount = 0
   for (const part of diffArrays(original, written)) {
     const count = part.count ?? part.value.length
-    if (part.added) b += count
-    else if (part.removed) a += count
-    else for (let k = 0; k < count; k++) matched[b++] = a++
+    if (part.added) {
+      if (removedCount === count && removedAt + count === a) {
+        for (let k = 0; k < count; k++) {
+          if (source.blocks[removedAt + k]!.node.type === current[b + k]!.type) slot[b + k] = removedAt + k
+        }
+      }
+      b += count
+      removedCount = 0
+    } else if (part.removed) {
+      removedAt = a
+      removedCount = count
+      a += count
+    } else {
+      removedCount = 0
+      for (let k = 0; k < count; k++) {
+        slot[b] = a
+        matched[b++] = a++
+      }
+    }
+  }
+  // The text between two blocks: theirs when they are still neighbours. Next to
+  // an edited block only when it is blank lines, which any two blocks of the
+  // same kinds can be separated by.
+  const gapAt = (from: number, ...blocks: number[]): string | null => {
+    const gap = source.gaps[from]!
+    return blocks.every((k) => matched[k] != null) || /^\s*$/.test(gap) ? gap : null
   }
   const last = source.blocks.length - 1
   let out = ''
   for (let k = 0; k < current.length; k++) {
-    const from = matched[k]
-    const before = k === 0 ? null : matched[k - 1]
-    if (k === 0) out += from === 0 ? source.gaps[0] : ''
-    else out += from != null && before != null && from === before + 1 ? source.gaps[from] : '\n\n'
-    out += from != null ? source.blocks[from]!.source : written[k]
+    const from = slot[k]
+    const before = k === 0 ? null : slot[k - 1]
+    if (k === 0) out += from === 0 ? (gapAt(0, k) ?? '') : ''
+    else out += (from != null && before != null && from === before + 1 ? gapAt(from, k - 1, k) : null) ?? '\n\n'
+    out += matched[k] != null ? source.blocks[matched[k]!]!.source : written[k]
   }
-  const tail = matched[current.length - 1]
-  return out + (tail != null && tail === last ? source.gaps[last + 1] : '\n')
+  const end = current.length - 1
+  const tail = slot[end]
+  return out + ((tail != null && tail === last ? gapAt(last + 1, end) : null) ?? '\n')
 }
 
 export function serializeBlock(node: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {

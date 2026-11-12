@@ -188,10 +188,14 @@ const nodes: SchemaSpec['nodes'] = {
     group: 'inline',
     inline: true,
     atom: true,
+    // `reference` as on a link: set on an image read from a reference
+    // (`![alt][label]`, …), so it is written back in that form while `src`
+    // still matches its definition.
     attrs: {
       src: { default: '' },
       alt: { default: '' },
       title: { default: null },
+      reference: { default: null },
     },
     parseDOM: [{
       tag: 'img',

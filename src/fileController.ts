@@ -12,6 +12,7 @@ import {
   pickImageImportPath,
   pickImportPath,
   pickOpenPath,
+  pickRenamePath,
   pickSavePath,
   pickTextImportPath,
   pickTypedOpenPath,
@@ -35,7 +36,6 @@ import {
   markSaved,
   setActiveDirty,
 } from './state'
-import { promptForRename } from './urlDialog'
 import { openHistoryDialog } from './historyDialog'
 import type { AppContext } from './appContext'
 
@@ -278,18 +278,23 @@ export function createFileController(ctx: AppContext): FileController {
   }
 
   /**
-   * Rename the document in place: the same folder, a new name, and the old file
-   * gone. The write and the delete are one backend call, so the document is never
-   * left on disk under both names or under neither — a rename is not a Save As
-   * plus a delete the page can fail between.
+   * Rename or move the document: a new name, a new folder or both, and the old
+   * file gone. The write and the delete are one backend call, so the document is
+   * never left on disk under both names or under neither — a rename is not a
+   * Save As plus a delete the page can fail between.
+   *
+   * The new path is typed into the shell's own prompt (`pickRenamePath`), which
+   * is what lets it name another folder: the shell trusts a path the user typed
+   * there, not one the page sends. Relative images and links are rebased so they
+   * still name the same files from the new folder; the editor takes that rewrite
+   * only once the file is on disk, so a refused move changes nothing.
    */
   async function renameFile(): Promise<void> {
     const oldPath = getActive()?.path
     if (!oldPath) return
-    const currentName = oldPath.split('/').pop() ?? oldPath
-    const name = await promptForRename(currentName)
-    if (name === null) return
-    const newPath = oldPath.includes('/') ? `${dirname(oldPath)}/${name}` : name
+    const newPath = await pickRenamePath(oldPath)
+    if (!newPath) return
+    const name = newPath.split('/').pop() ?? newPath
     if (
       !isSupportedFile(newPath) &&
       !(await confirmAction(`"${name}" does not have a supported extension.\n\nContinue anyway?`))
@@ -297,12 +302,26 @@ export function createFileController(ctx: AppContext): FileController {
       return
     }
     try {
-      const snapshot = await snapshotForSave()
+      let snapshot = await snapshotForSave()
       if (snapshot === null) return
-      await renameTextFile(oldPath, newPath, snapshot.markdown)
+      const rebased = ctx.blockEditor?.rebaseLinks(oldPath, newPath) ?? null
+      const markdown = rebased?.markdown ?? snapshot.markdown
+      await renameTextFile(oldPath, newPath, markdown)
       ctx.disk?.renamed(oldPath, newPath)
+      if (rebased) {
+        // Only the editor in view can take the rewrite. A tab switched away
+        // from mid-move keeps its stored state's old links (the file on disk
+        // has the new ones), so it is left dirty rather than marked saved.
+        if (getActive()?.id === snapshot.id && rebased.apply()) {
+          // Nothing was typed during the move: the editor holds exactly what
+          // was written, including the revision the rebase itself made.
+          snapshot = { ...snapshot, markdown, doc: rebased.doc, revision: getActive()!.revision }
+        } else {
+          snapshot = { ...snapshot, markdown, doc: rebased.doc, revision: -1 }
+        }
+      }
       afterSave(newPath, snapshot)
-      ctx.flashStatus(`Renamed to ${name}`)
+      ctx.flashStatus(dirname(newPath) === dirname(oldPath) ? `Renamed to ${name}` : `Moved to ${newPath}`)
     } catch (error) {
       if (isChangedOnDisk(error)) {
         ctx.disk?.saveRefused(oldPath)

@@ -57,6 +57,7 @@
     "pickImageSavePath": true,
     "pickImportPath": true,
     "pickOpenPath": true,
+    "pickRenamePath": true,
     "pickSavePath": true,
     "pickTextImportPath": true,
     "pickTypedOpenPath": true,

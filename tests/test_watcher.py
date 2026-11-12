@@ -230,6 +230,7 @@ def test_a_rename_over_an_unseen_change_is_refused(bridge, tmp_path):
     _replace(old, "the agent's\n")
 
     new = tmp_path / "ideas.md"
+    bridge_obj.grants.allow_write(str(new))
     _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(new), "content": "mine"}, 9)
     refused = _wait_for(lambda: result.get(9))
     assert refused["code"] == "changedOnDisk"

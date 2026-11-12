@@ -102,12 +102,15 @@ class PathGrants:
             raise NotPermitted(f"Edi was not given this file to read: {path}")
 
     def check_rename(self, old_path: str, new_path: str) -> None:
-        """A rename moves a writable document to a new name *in its own folder*:
-        the new name is typed into the page, so it is the folder that is trusted."""
+        """A rename or move takes a writable document to a path the user named
+        outside the page — the shell's Rename or Move prompt grants it — so the
+        page cannot move a document anywhere it likes, nor onto a file of its
+        choosing."""
         self.check_write(old_path)
-        same_folder = os.path.dirname(self._key(new_path)) == os.path.dirname(self._key(old_path))
-        if not same_folder or os.path.basename(new_path) in ("", ".", ".."):
-            raise NotPermitted(f"A rename stays in the document's folder: {new_path}")
+        if os.path.basename(new_path) in ("", ".", ".."):
+            raise NotPermitted(f"Not a file name: {new_path}")
+        if not self.may_write(new_path):
+            raise NotPermitted(f"Edi was not given this destination: {new_path}")
 
 
 class Bridge(QObject):
@@ -144,6 +147,7 @@ class Bridge(QObject):
             "pickImportPath": self._pick_import_path,
             "pickTextImportPath": self._pick_text_import_path,
             "pickTypedOpenPath": self._pick_typed_open_path,
+            "pickRenamePath": self._pick_rename_path,
             "pickImageImportPath": self._pick_image_import_path,
             "readTextFile": self._read_text_file,
             "readAnyTextFile": self._read_any_text_file,
@@ -229,6 +233,16 @@ class Bridge(QObject):
             str(base_dir) if base_dir else None,
             self._granting(request_id, self.grants.allow_write),
         )
+
+    def _pick_rename_path(self, request_id: int, args: dict) -> None:
+        # Only a document Edi may write can be renamed; the destination is typed
+        # into the shell's own prompt, so it is granted like a file picker's.
+        path = args.get("path")
+        if not path:
+            self._reply_error(request_id, "Missing path")
+            return
+        self.grants.check_write(str(path))
+        self._window.pick_rename_path(str(path), self._granting(request_id, self.grants.allow_write))
 
     def _pick_save_path(self, request_id: int, args: dict) -> None:
         self._window.pick_save_path(

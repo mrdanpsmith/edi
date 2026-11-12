@@ -7,6 +7,9 @@ the preview renders it live — and a few block types go much further.
 
 - Documents open in tabs: `Ctrl+N` new, `Ctrl+W` close, `Ctrl+O` open,
   `Ctrl+Shift+O` open a typed path, `Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+Q` quit.
+- `File → Rename or Move…` takes a new name or a path (`../archive/`
+  keeps the name). Relative images and links are rewritten so they still
+  point at the same files.
 - File actions also live as toolbar buttons; hide that row with
   `View → Toolbar`.
 - Hovering a block puts a faint band behind it, marking which block

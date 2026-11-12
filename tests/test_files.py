@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from backend.files import (
+    check_rename_target,
     check_typed_open_path,
     is_supported_extension,
     read_any_text_file,
@@ -227,14 +228,43 @@ def test_rename_text_file_leaves_nothing_behind_when_the_delete_fails(tmp_path, 
     assert old.read_text(encoding="utf-8") == "mine"
 
 
-def test_rename_text_file_writes_a_destination_in_another_directory(tmp_path):
-    """The new name is the only thing that changes; the folder is the caller's."""
+def test_rename_text_file_moves_into_another_directory(tmp_path):
     old = tmp_path / "notes.md"
     old.write_text("mine", encoding="utf-8")
     target = tmp_path / "archive"
+    target.mkdir()
     new = target / "notes.md"
 
     rename_text_file(str(old), str(new), "kept")
 
     assert new.read_text(encoding="utf-8") == "kept"
     assert not old.exists()
+
+
+def test_rename_text_file_does_not_create_a_missing_directory(tmp_path):
+    old = tmp_path / "notes.md"
+    old.write_text("mine", encoding="utf-8")
+    new = tmp_path / "archive" / "notes.md"
+
+    with pytest.raises(FileNotFoundError, match="No such folder"):
+        rename_text_file(str(old), str(new), "kept")
+
+    assert old.read_text(encoding="utf-8") == "mine"
+    assert not (tmp_path / "archive").exists()
+
+
+def test_check_rename_target(tmp_path):
+    old = tmp_path / "notes.md"
+    old.write_text("mine", encoding="utf-8")
+    (tmp_path / "taken.md").write_text("theirs", encoding="utf-8")
+    (tmp_path / "archive").mkdir()
+    (tmp_path / "plain").write_text("not a folder", encoding="utf-8")
+
+    assert check_rename_target(str(old), str(tmp_path / "ideas.md")) is None
+    assert check_rename_target(str(old), str(tmp_path / "archive" / "notes.md")) is None
+    assert "Enter" in check_rename_target(str(old), "")
+    assert "current name" in check_rename_target(str(old), str(old))
+    assert "current name" in check_rename_target(str(old), str(tmp_path / "." / "notes.md"))
+    assert "already exists" in check_rename_target(str(old), str(tmp_path / "taken.md"))
+    assert "No such folder" in check_rename_target(str(old), str(tmp_path / "missing" / "notes.md"))
+    assert "Not a folder" in check_rename_target(str(old), str(tmp_path / "plain" / "notes.md"))

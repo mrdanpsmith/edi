@@ -63,7 +63,37 @@ describe('an edit rewrites only the block it touched', () => {
   }
 
   it('keeps its unedited neighbours and the gaps between them', () => {
-    expect(editSecondBlock('An edited paragraph.')).toBe('* kept star\n\nAn edited paragraph.\n\n1) kept paren\n')
+    expect(editSecondBlock('An edited paragraph.')).toBe('* kept star\n\n\nAn edited paragraph.\n\n1) kept paren\n')
+  })
+
+  it('keeps the gaps around a block edited in place, down to a single newline', () => {
+    const defs = '[a]: one.md\n[b]: two.md\n[c]: three.md\n'
+    const { doc, source } = parseMarkdown(defs, schema)
+    const edited = doc.copy(doc.content.replaceChild(1, schema.node('source_block', { markdown: '[b]: moved.md' })))
+    expect(proseToMarkdown(edited, undefined, source)).toBe('[a]: one.md\n[b]: moved.md\n[c]: three.md\n')
+  })
+
+  it('writes an image read from a reference back as that reference', () => {
+    const { doc, source } = parseMarkdown('See ![logo][] and ![x][logo].\n\n[logo]: logo.png\n', schema)
+    const paragraph = doc.child(0)
+    const edited = doc.copy(
+      doc.content.replaceChild(0, paragraph.copy(paragraph.content.addToStart(schema.text('Now: ')))),
+    )
+    expect(proseToMarkdown(edited, undefined, source)).toBe('Now: See ![logo][] and ![x][logo].\n\n[logo]: logo.png\n')
+  })
+
+  it('keeps the end of the file when the last block is edited', () => {
+    const { doc, source } = parseMarkdown('First.\n\nLast.', schema)
+    const edited = doc.copy(doc.content.replaceChild(1, schema.node('paragraph', null, [schema.text('Changed.')])))
+    expect(proseToMarkdown(edited, undefined, source)).toBe('First.\n\nChanged.')
+  })
+
+  // A paragraph straight under a heading is fine; straight under another
+  // paragraph it would join it. The gap is kept only for the same kind of block.
+  it('does not keep a gap for a block that changed kind', () => {
+    const { doc, source } = parseMarkdown('# Heading\nParagraph straight under it.\n', schema)
+    const edited = doc.copy(doc.content.replaceChild(0, schema.node('paragraph', null, [schema.text('Now a paragraph.')])))
+    expect(proseToMarkdown(edited, undefined, source)).toBe('Now a paragraph.\n\nParagraph straight under it.\n')
   })
 
   it('keeps the blocks around an inserted one', () => {

@@ -32,15 +32,17 @@ editor's `markdownSource` plugin state, never in the document). A save writes a
 block as it was read whenever Edi would still write it exactly as it would have
 written the original, and keeps the gap between two such blocks that are still
 neighbours; only blocks that were edited, inserted or moved are written in
-Edi's own style. A table with formulas is always written fresh, so its computed
+Edi's own style. A block edited in place (the same kind of block, where an edit
+replaced as many blocks as it removed) keeps the blank lines around it, so a
+rewritten link definition stays next to its neighbours. A table with formulas is always written fresh, so its computed
 values cannot go stale. `replaceMarkdown` (a change on disk, a restored version)
 adopts the new text's record even when it parses to the same document.
 `src/markdown-source.test.ts` covers this. Within an edited block, `src/markdown.ts` keeps what the
 editor has no model for as the markdown it was written as: HTML blocks, link and
 footnote definitions and YAML front matter become a `source_block`, and inline
-HTML and footnote references an `inline_source` atom. Reference links are
-ordinary links that are written back in reference form while their target is
-unchanged. Text is escaped only where a character could start a construct, so a
+HTML and footnote references an `inline_source` atom. Reference links and
+reference images are ordinary links and images that are written back in
+reference form while their target is unchanged. Text is escaped only where a character could start a construct, so a
 lone `*` or `snake_case` is written as typed. Table cells are escaped the same
 way, except a formula cell, which is written raw because it is the formula's
 source. `src/markdown-roundtrip.test.ts` holds the files that must survive a
@@ -86,8 +88,10 @@ page have explicit limits:
   command line, the OS opening a document, or a document reopened
   from the backend's own recent list (which in turn only takes paths already
   granted). Reading an arbitrary file needs an import dialog; a document type
-  may be read without one, so a link to another note still opens. A rename
-  stays in the document's folder. Anything else is refused with the
+  may be read without one, so a link to another note still opens. A rename or
+  move goes only to a destination typed into the shell's Rename or Move prompt
+  (`pickRenamePath`: the page sends the document's path, and the shell grants
+  the answer). Anything else is refused with the
   `notPermitted` error code, and the page answers a refused save by opening the
   Save dialog on that file — which is how a document opened from a link is
   saved the first time.
@@ -125,7 +129,8 @@ bridge methods and preference defaults are declared in
 | --- | --- |
 | `src/` | TypeScript frontend. `entry.ts` is the page entry point; `main.ts` boots from `init(roots)`; `node/` holds node views. |
 | `src/appContext.ts` | The shared `AppContext`, roots and app-chrome updates (title, status, menu state). |
-| `src/fileController.ts` | File lifecycle: open, save, rename, revert, version history, import and export. |
+| `src/fileController.ts` | File lifecycle: open, save, rename or move, revert, version history, import and export. |
+| `src/relink.ts` | Rebases a moved document's relative images, links and link definitions so they still name the same files. |
 | `src/editController.ts` | Clipboard, paste, select-all and menu undo/redo. |
 | `src/contextMenuController.ts` | Document, input, source-editor and block context menus. |
 | `src/zoomController.ts` | Document zoom commands, wheel handling and the status indicator. |

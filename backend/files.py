@@ -49,6 +49,31 @@ def check_typed_open_path(path: str) -> str | None:
     return None
 
 
+def check_rename_target(old_path: str, new_path: str) -> str | None:
+    """Why the document at ``old_path`` cannot be renamed or moved to
+    ``new_path``, or ``None`` if it can.
+
+    The same refusals :func:`rename_text_file` makes, asked before the prompt
+    closes so a typo is corrected there: a folder that does not exist is not
+    created, a file already at the destination is not replaced, and the
+    document's own path is not a move (a change of case only is).
+    """
+    if not new_path:
+        return "Enter a new name or a path."
+    old = Path(old_path)
+    new = Path(new_path)
+    if os.path.realpath(old) == os.path.realpath(new):
+        return "That is the document's current name."
+    folder = new.parent
+    if not folder.exists():
+        return f"No such folder:\n{folder}"
+    if not folder.is_dir():
+        return f"Not a folder:\n{folder}"
+    if (new.exists() or new.is_symlink()) and not _is_case_only_rename(old, new):
+        return f"A file already exists there:\n{new_path}"
+    return None
+
+
 def read_text_file(path: str) -> str:
     target = Path(path)
     if not target.is_file():
@@ -152,7 +177,8 @@ def rename_text_file(old_path: str, new_path: str, content: str) -> None:
 
     An existing destination is refused rather than overwritten — a different
     document is not something the user asked to lose — and so is a "rename" onto
-    the same file (a symlink to it, or a path spelled differently).
+    the same file (a symlink to it, or a path spelled differently). The new path
+    may be in another folder (a move), but that folder must already exist.
     """
     old = Path(old_path)
     new = Path(new_path)
@@ -169,6 +195,10 @@ def rename_text_file(old_path: str, new_path: str, content: str) -> None:
         return
     if new.exists() or new.is_symlink():
         raise FileExistsError(f"A file already exists: {new_path}")
+    # A move goes into a folder that is there; it does not create one (a typo
+    # in the folder would otherwise become a new tree of folders).
+    if not new.parent.is_dir():
+        raise FileNotFoundError(f"No such folder: {new.parent}")
     write_text_file(new_path, content, like=old_path)
     try:
         old.unlink()

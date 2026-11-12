@@ -975,6 +975,7 @@ def test_rename_text_file_renames_and_drops_the_old_recent(bridge, tmp_path):
     new = tmp_path / "ideas.md"
     window.recent_files_list = [str(old), "/other.md"]
     bridge_obj.grants.allow_write(str(old))
+    bridge_obj.grants.allow_write(str(new))
 
     _invoke(
         bridge_obj,
@@ -1007,6 +1008,7 @@ def test_rename_text_file_error_keeps_the_recents(bridge, tmp_path):
     window.recent_files_list = [str(old)]
     # Granted, so what fails is the existing destination, not the permission.
     bridge_obj.grants.allow_write(str(old))
+    bridge_obj.grants.allow_write(str(taken))
 
     _invoke(
         bridge_obj,
@@ -1064,6 +1066,7 @@ def test_a_rename_carries_the_history_along(bridge, tmp_path, history_store):
     old = tmp_path / "notes.md"
     new = tmp_path / "ideas.md"
     bridge_obj.grants.allow_write(str(old))
+    bridge_obj.grants.allow_write(str(new))
     _invoke(bridge_obj, "writeTextFile", {"path": str(old), "content": "one", "history": True}, 125)
     assert _wait_for(lambda: result.get(125))["ok"] is True
 
@@ -1179,20 +1182,60 @@ def test_a_link_opened_document_is_readable_but_not_writable(bridge, tmp_path):
     assert _refused(_wait_for(lambda: result.get(89)))
 
 
-def test_a_rename_stays_in_the_documents_folder(bridge, tmp_path):
+def test_a_rename_goes_only_where_the_user_named(bridge, tmp_path):
+    """The destination comes from the shell's prompt, not the page: an
+    ungranted one is refused even in the document's own folder."""
     bridge_obj, _window, result = bridge
     old = tmp_path / "notes.md"
     old.write_text("n", encoding="utf-8")
     bridge_obj.grants.allow_write(str(old))
+    (tmp_path / "sub").mkdir()
     elsewhere = tmp_path / "sub" / "notes.md"
-    _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(elsewhere), "content": "x"}, 90)
-    assert _refused(_wait_for(lambda: result.get(90)))
+    sibling = tmp_path / "ideas.md"
+    for request_id, target in ((90, elsewhere), (91, sibling)):
+        _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(target), "content": "x"}, request_id)
+        assert _refused(_wait_for(lambda: result.get(request_id)))
     assert old.exists()
 
-    renamed = tmp_path / "ideas.md"
-    _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(renamed), "content": "x"}, 91)
-    assert _wait_for(lambda: result.get(91))["ok"] is True
-    assert bridge_obj.grants.may_write(str(renamed))
+    bridge_obj.grants.allow_write(str(elsewhere))
+    _invoke(bridge_obj, "renameTextFile", {"oldPath": str(old), "newPath": str(elsewhere), "content": "x"}, 92)
+    assert _wait_for(lambda: result.get(92))["ok"] is True
+    assert elsewhere.read_text(encoding="utf-8") == "x"
+    assert not old.exists()
+
+
+def test_pick_rename_path_grants_the_destination(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    old = tmp_path / "notes.md"
+    bridge_obj.grants.allow_write(str(old))
+    seen = {}
+
+    def pick(path, callback):
+        seen["path"] = path
+        callback(str(tmp_path / "sub" / "ideas.md"))
+
+    window.pick_rename_path = pick
+    _invoke(bridge_obj, "pickRenamePath", {"path": str(old)}, 93)
+    message = _wait_for(lambda: result.get(93))
+    assert message == {"id": 93, "ok": True, "data": str(tmp_path / "sub" / "ideas.md")}
+    assert seen["path"] == str(old)
+    assert bridge_obj.grants.may_write(str(tmp_path / "sub" / "ideas.md"))
+
+
+def test_pick_rename_path_refuses_a_document_edi_may_not_write(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    window.pick_rename_path = lambda path, callback: pytest.fail("prompted for an ungranted document")
+    _invoke(bridge_obj, "pickRenamePath", {"path": str(tmp_path / "notes.md")}, 94)
+    assert _refused(_wait_for(lambda: result.get(94)))
+
+
+def test_pick_rename_path_cancel_returns_none(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    old = tmp_path / "notes.md"
+    bridge_obj.grants.allow_write(str(old))
+    window.pick_rename_path = lambda path, callback: callback(None)
+    _invoke(bridge_obj, "pickRenamePath", {"path": str(old)}, 95)
+    assert _wait_for(lambda: result.get(95)) == {"id": 95, "ok": True, "data": None}
 
 
 def test_parse_shebang_env_without_interpreter_returns_none():

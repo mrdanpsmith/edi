@@ -12,6 +12,7 @@ import {
   pickImageImportPath,
   pickImportPath,
   pickOpenPath,
+  pickRenamePath,
   pickTypedOpenPath,
   pickSavePath,
   pickTextImportPath,
@@ -107,6 +108,12 @@ describe('bridge wrappers', () => {
     vi.mocked(invoke).mockResolvedValue('/tmp/notes/a.md')
     await expect(pickTypedOpenPath('/tmp/notes')).resolves.toBe('/tmp/notes/a.md')
     expect(invoke).toHaveBeenCalledWith('pickTypedOpenPath', { baseDir: '/tmp/notes' })
+  })
+
+  it('pickRenamePath passes the document being renamed', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/archive/a.md')
+    await expect(pickRenamePath('/tmp/notes/a.md')).resolves.toBe('/tmp/archive/a.md')
+    expect(invoke).toHaveBeenCalledWith('pickRenamePath', { path: '/tmp/notes/a.md' })
   })
 
   it('pickSavePath passes the default name', async () => {

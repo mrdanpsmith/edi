@@ -33,7 +33,7 @@ describe('image parsing and rendering', () => {
     doc.descendants((node) => {
       if (node.type.name === 'image') image = node.attrs
     })
-    expect(image).toEqual({ src: './images/cat.png', alt: 'A cat', title: null })
+    expect(image).toEqual({ src: './images/cat.png', alt: 'A cat', title: null, reference: null })
   })
 
   it('renders the image using the resolved src from resolveImageSrc', () => {

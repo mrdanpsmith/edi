@@ -119,6 +119,17 @@ export async function pickTypedOpenPath(baseDir: string | null): Promise<string 
   return invoke<string | null>('pickTypedOpenPath', { baseDir })
 }
 
+/**
+ * Ask the shell where the document at `path` should be renamed or moved to.
+ * The shell's prompt takes a new name, a path relative to the document's
+ * folder, `~` or an absolute path (a folder keeps the name), and only answers
+ * with a destination in a folder that exists and holds no file of that name;
+ * `null` is a cancel. The answer is granted for the rename that follows.
+ */
+export async function pickRenamePath(path: string): Promise<string | null> {
+  return invoke<string | null>('pickRenamePath', { path })
+}
+
 export async function pickSavePath(defaultName: string): Promise<string | null> {
   return invoke<string | null>('pickSavePath', { defaultName })
 }

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QVBoxLayout,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__, history
 from .bridge import Bridge
-from .files import check_typed_open_path, resolve_typed_path
+from .files import check_rename_target, check_typed_open_path, resolve_typed_path
 from .preferences import Preferences
 from .printing import PrintJob
 
@@ -473,7 +474,7 @@ class MainWindow(QMainWindow):
 
         # No shortcut: F2 is the spreadsheet cell editor's key to edit in place,
         # and a menubar shortcut wins over the page, so one would cost that.
-        self._rename_action = QAction("Re&name…", self)
+        self._rename_action = QAction("Re&name or Move…", self)
         self._rename_action.setEnabled(False)
         self._link_command(self._rename_action, "rename")
         file_menu.addAction(self._rename_action)
@@ -968,6 +969,53 @@ class MainWindow(QMainWindow):
 
         dialog.finished.connect(done)
         dialog.open()
+
+    def pick_rename_path(self, old_path: str, callback=None, *, text: str | None = None, error: str = "") -> None:
+        """Ask where the document at ``old_path`` should be renamed or moved to.
+
+        ``callback(path: str | None)`` gets the resolved absolute destination,
+        or ``None`` on cancel. The prompt opens on the current name with its
+        stem selected, so typing renames in place; a path moves the document
+        (relative to its folder, ``~`` or absolute), and a folder keeps the
+        name. A destination that cannot be used — a missing folder, a file
+        already there, the document itself — reopens the prompt with the reason
+        and the typed text kept (see :func:`check_rename_target`).
+        """
+        name = os.path.basename(old_path)
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Rename or Move")
+        prompt = "New name, or a path to move it to (relative to its folder, ~, or absolute):"
+        dialog.setLabelText(f"{error}\n\n{prompt}" if error else prompt)
+        dialog.setTextValue(name if text is None else text)
+        dialog.setOkButtonText("Rename")
+        dialog.resize(max(dialog.width(), 560), dialog.height())
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        def done(result) -> None:
+            typed = dialog.textValue()
+            dialog.deleteLater()
+            if not result:
+                if callback is not None:
+                    callback(None)
+                return
+            path = resolve_typed_path(typed, os.path.dirname(old_path))
+            if path and os.path.isdir(path):
+                path = os.path.join(path, name)
+            problem = check_rename_target(old_path, path)
+            if problem is not None:
+                self.pick_rename_path(old_path, callback, text=typed, error=problem)
+                return
+            if callback is not None:
+                callback(path)
+
+        dialog.finished.connect(done)
+        dialog.open()
+        # After `open`: showing the dialog selects all of its text. The stem is
+        # what a rename changes, so typing replaces it and keeps the extension.
+        field = dialog.findChild(QLineEdit)
+        if field is not None and text is None:
+            dot = name.rfind(".")
+            field.setSelection(0, dot if dot > 0 else len(name))
 
     def pick_save_path(self, default_name, callback=None) -> None:
         dialog = QFileDialog(self, "Save document")
