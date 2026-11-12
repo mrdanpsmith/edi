@@ -130,6 +130,15 @@ export async function pickRenamePath(path: string): Promise<string | null> {
   return invoke<string | null>('pickRenamePath', { path })
 }
 
+/**
+ * Ask the user, in the shell's own prompt, whether Edi may save the document
+ * at `path`: one it opened by following a link, which was never handed to it
+ * to write. `true` grants the path for the save that follows.
+ */
+export async function confirmWritePath(path: string): Promise<boolean> {
+  return invoke<boolean>('confirmWritePath', { path })
+}
+
 export async function pickSavePath(defaultName: string): Promise<string | null> {
   return invoke<string | null>('pickSavePath', { defaultName })
 }

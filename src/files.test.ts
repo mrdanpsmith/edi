@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  confirmWritePath,
   dirname,
   fileExtension,
   fileName,
@@ -114,6 +115,12 @@ describe('bridge wrappers', () => {
     vi.mocked(invoke).mockResolvedValue('/tmp/archive/a.md')
     await expect(pickRenamePath('/tmp/notes/a.md')).resolves.toBe('/tmp/archive/a.md')
     expect(invoke).toHaveBeenCalledWith('pickRenamePath', { path: '/tmp/notes/a.md' })
+  })
+
+  it('confirmWritePath passes the document to be saved', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(true)
+    await expect(confirmWritePath('/tmp/notes/linked.md')).resolves.toBe(true)
+    expect(invoke).toHaveBeenCalledWith('confirmWritePath', { path: '/tmp/notes/linked.md' })
   })
 
   it('pickSavePath passes the default name', async () => {

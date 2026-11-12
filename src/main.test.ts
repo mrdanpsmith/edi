@@ -59,6 +59,7 @@ const mainState = vi.hoisted(() => {
     notifyHandlers: [] as Array<(payload: string) => void>,
     readTextFile: vi.fn(),
     pickSavePath: vi.fn(),
+    confirmWritePath: vi.fn(),
     writeTextFile: vi.fn(),
     renameTextFile: vi.fn(),
     pickRenamePath: vi.fn(),
@@ -122,6 +123,7 @@ vi.mock('./files', async () => {
     getPendingFiles: mainState.getPendingFiles,
     readTextFile: mainState.readTextFile,
     pickSavePath: mainState.pickSavePath,
+    confirmWritePath: mainState.confirmWritePath,
     writeTextFile: mainState.writeTextFile,
     renameTextFile: mainState.renameTextFile,
     pickRenamePath: mainState.pickRenamePath,
@@ -451,6 +453,7 @@ const FILE_MOCKS = [
   mainState.pickTypedOpenPath,
   mainState.readTextFile,
   mainState.pickSavePath,
+  mainState.confirmWritePath,
   mainState.writeTextFile,
   mainState.renameTextFile,
   mainState.pickRenamePath,
@@ -1208,7 +1211,7 @@ describe('open and save', () => {
     expect(state.getActive()).toMatchObject({ path: '/tmp/new.md', dirty: true })
   })
 
-  it('asks where to save a document the shell was not given, instead of failing', async () => {
+  it('asks once before saving a document the shell was not given, instead of a Save dialog', async () => {
     const { BridgeError } = await import('./bridge')
     mainState.pickOpenPath.mockResolvedValue(['/tmp/linked.md'])
     mainState.readTextFile.mockResolvedValue('linked')
@@ -1218,15 +1221,49 @@ describe('open and save', () => {
     mainState.writeTextFile
       .mockRejectedValueOnce(new BridgeError('not given', 'notPermitted'))
       .mockResolvedValueOnce(undefined)
-    mainState.pickSavePath.mockResolvedValue('/tmp/linked.md')
+    mainState.confirmWritePath.mockResolvedValue(true)
     menu('save')
     await flushAsync()
-    // The Save dialog opens on the same file, and the write is retried there.
-    expect(mainState.pickSavePath).toHaveBeenCalledWith('/tmp/linked.md')
+    // The shell asks about that file, and the write is retried to the same path.
+    expect(mainState.confirmWritePath).toHaveBeenCalledWith('/tmp/linked.md')
+    expect(mainState.pickSavePath).not.toHaveBeenCalled()
     expect(mainState.writeTextFile).toHaveBeenCalledTimes(2)
+    expect(mainState.writeTextFile).toHaveBeenLastCalledWith('/tmp/linked.md', expect.any(String), { history: true })
     expect(mainState.showError).not.toHaveBeenCalledWith(expect.stringContaining('linked.md'))
     const state = await stateModule()
     expect(state.isAnyDirty()).toBe(false)
+  })
+
+  it('leaves a link-opened document unsaved when the save prompt is cancelled', async () => {
+    const { BridgeError } = await import('./bridge')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/linked.md'])
+    mainState.readTextFile.mockResolvedValue('linked')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.editorOptions!.onChange!()
+    mainState.writeTextFile.mockRejectedValueOnce(new BridgeError('not given', 'notPermitted'))
+    mainState.confirmWritePath.mockResolvedValue(false)
+    menu('save')
+    await flushAsync()
+    expect(mainState.writeTextFile).toHaveBeenCalledTimes(1)
+    expect(mainState.showError).not.toHaveBeenCalledWith(expect.stringContaining('linked.md'))
+    const state = await stateModule()
+    expect(state.getActive()!.dirty).toBe(true)
+  })
+
+  it('reports a save the shell will not ask about', async () => {
+    const { BridgeError } = await import('./bridge')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/linked.md'])
+    mainState.readTextFile.mockResolvedValue('linked')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.writeTextFile.mockRejectedValueOnce(new BridgeError('not given', 'notPermitted'))
+    mainState.confirmWritePath.mockRejectedValueOnce(new BridgeError('not opened', 'notPermitted'))
+    menu('save')
+    await flushAsync()
+    expect(mainState.showError).toHaveBeenCalledWith(expect.stringContaining('linked.md'))
   })
 
   it('does not overwrite a file changed on disk: it raises the changed-on-disk bar', async () => {

@@ -23,6 +23,8 @@ class StubWindow(QObject):
         self.closed = False
         self.confirm_messages: list[str] = []
         self.alert_messages: list[str] = []
+        self.write_confirmations: list[str] = []
+        self.write_confirmation_answer = True
         self.can_revert = False
         self.can_rename = False
         self.toolbar_visible = True
@@ -85,6 +87,11 @@ class StubWindow(QObject):
     def pick_open_path(self, callback=None) -> None:
         if callback is not None:
             callback(None)
+
+    def confirm_write_path(self, path, callback=None) -> None:
+        self.write_confirmations.append(path)
+        if callback is not None:
+            callback(self.write_confirmation_answer)
 
     def pick_save_path(self, default_name, callback=None) -> None:
         if callback is not None:
@@ -1180,6 +1187,40 @@ def test_a_link_opened_document_is_readable_but_not_writable(bridge, tmp_path):
     assert _wait_for(lambda: result.get(88))["ok"] is True
     _invoke(bridge_obj, "writeTextFile", {"path": str(linked), "content": "x"}, 89)
     assert _refused(_wait_for(lambda: result.get(89)))
+
+
+def test_saving_a_link_opened_document_asks_once_in_the_shell(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    linked = tmp_path / "linked.md"
+    linked.write_text("l", encoding="utf-8")
+    _invoke(bridge_obj, "readTextFile", {"path": str(linked)}, 140)
+    assert _wait_for(lambda: result.get(140))["ok"] is True
+
+    window.write_confirmation_answer = False
+    _invoke(bridge_obj, "confirmWritePath", {"path": str(linked)}, 141)
+    assert _wait_for(lambda: result.get(141))["data"] is False
+    assert not bridge_obj.grants.may_write(str(linked))
+
+    window.write_confirmation_answer = True
+    _invoke(bridge_obj, "confirmWritePath", {"path": str(linked)}, 142)
+    assert _wait_for(lambda: result.get(142))["data"] is True
+    _invoke(bridge_obj, "writeTextFile", {"path": str(linked), "content": "mine", "history": True}, 143)
+    assert _wait_for(lambda: result.get(143))["ok"] is True
+    assert linked.read_text(encoding="utf-8") == "mine"
+
+    # Granted now: asking again needs no second prompt.
+    _invoke(bridge_obj, "confirmWritePath", {"path": str(linked)}, 144)
+    assert _wait_for(lambda: result.get(144))["data"] is True
+    assert window.write_confirmations == [str(linked), str(linked)]
+
+
+def test_the_page_cannot_ask_to_save_a_file_edi_never_opened(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    target = tmp_path / ".zshrc"
+    _invoke(bridge_obj, "confirmWritePath", {"path": str(target)}, 145)
+    assert _refused(_wait_for(lambda: result.get(145)))
+    assert window.write_confirmations == []
+    assert not bridge_obj.grants.may_write(str(target))
 
 
 def test_a_rename_goes_only_where_the_user_named(bridge, tmp_path):

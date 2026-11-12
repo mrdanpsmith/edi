@@ -42,6 +42,7 @@
     "alert": true,
     "clearHistory": true,
     "confirm": true,
+    "confirmWritePath": true,
     "copyContent": true,
     "copyImage": true,
     "copyTable": true,

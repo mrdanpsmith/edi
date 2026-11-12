@@ -92,9 +92,12 @@ page have explicit limits:
   move goes only to a destination typed into the shell's Rename or Move prompt
   (`pickRenamePath`: the page sends the document's path, and the shell grants
   the answer). Anything else is refused with the
-  `notPermitted` error code, and the page answers a refused save by opening the
-  Save dialog on that file — which is how a document opened from a link is
-  saved the first time.
+  `notPermitted` error code. The page answers a refused save with
+  `confirmWritePath`: the shell asks "Save changes to …?" in its own prompt,
+  naming the file, and a yes grants it — which is how a document opened from a
+  link is saved the first time. The shell only asks about a document it opened
+  through `readTextFile`, so the page cannot put an arbitrary path in front of
+  the user.
 - **Runnable code blocks** (`backend/exec.py`). On POSIX each run leads its own
   process group, and Stop, the 30-second timeout and quitting the app
   (`Bridge.shutdown`, on `aboutToQuit`) kill the whole group; Windows uses

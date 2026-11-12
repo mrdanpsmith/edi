@@ -70,6 +70,9 @@ class PathGrants:
     def __init__(self) -> None:
         self._writable: set[str] = set()
         self._readable: set[str] = set()
+        # Documents Edi has opened without a write grant (a followed link):
+        # the only paths the shell will ask the user about saving.
+        self._opened: set[str] = set()
         self._lock = threading.Lock()
 
     @staticmethod
@@ -84,9 +87,20 @@ class PathGrants:
         with self._lock:
             self._readable.add(self._key(path))
 
+    def note_opened(self, path: str) -> None:
+        with self._lock:
+            self._opened.add(self._key(path))
+
     def may_write(self, path: str) -> bool:
         with self._lock:
             return self._key(path) in self._writable
+
+    def check_confirmable(self, path: str) -> None:
+        """Only a document Edi opened may be offered to the user for saving,
+        so the page cannot put an arbitrary path in front of them."""
+        with self._lock:
+            if self._key(path) not in self._opened:
+                raise NotPermitted(f"Edi has not opened this document: {path}")
 
     def may_read(self, path: str) -> bool:
         key = self._key(path)
@@ -148,6 +162,7 @@ class Bridge(QObject):
             "pickTextImportPath": self._pick_text_import_path,
             "pickTypedOpenPath": self._pick_typed_open_path,
             "pickRenamePath": self._pick_rename_path,
+            "confirmWritePath": self._confirm_write_path,
             "pickImageImportPath": self._pick_image_import_path,
             "readTextFile": self._read_text_file,
             "readAnyTextFile": self._read_any_text_file,
@@ -243,6 +258,26 @@ class Bridge(QObject):
             return
         self.grants.check_write(str(path))
         self._window.pick_rename_path(str(path), self._granting(request_id, self.grants.allow_write))
+
+    def _confirm_write_path(self, request_id: int, args: dict) -> None:
+        # A document opened by following a link is readable but not writable.
+        # Saving it asks the user in a native prompt naming the file, which the
+        # page cannot draw or answer, so a yes grants it like a Save dialog.
+        path = args.get("path")
+        if not path:
+            self._reply_error(request_id, "Missing path")
+            return
+        if self.grants.may_write(str(path)):
+            self._reply(request_id, True)
+            return
+        self.grants.check_confirmable(str(path))
+
+        def reply(accepted: bool) -> None:
+            if accepted:
+                self.grants.allow_write(str(path))
+            self._reply(request_id, bool(accepted))
+
+        self._window.confirm_write_path(str(path), reply)
 
     def _pick_save_path(self, request_id: int, args: dict) -> None:
         self._window.pick_save_path(
@@ -351,8 +386,9 @@ class Bridge(QObject):
             return
         # A document type may be read without a grant — a link to another note
         # opens it — but only the backend's own recent list makes it writable:
-        # a document opened by following a link is saved through the Save
-        # dialog the first time (see `fileController.saveTo`).
+        # a document opened by following a link asks the user once, in the
+        # shell's own prompt, before its first save (`confirmWritePath`, and
+        # `fileController.saveTo`).
         if str(path) in self._window.recent_files():
             self.grants.allow_write(str(path))
 
@@ -367,6 +403,7 @@ class Bridge(QObject):
                 # later change by anything else is reported against it.
                 self.disk.seen(str(path), data)
                 history.record_opened(str(path))
+                self.grants.note_opened(str(path))
                 self._reply(request_id, content)
 
         self._spawn(work)

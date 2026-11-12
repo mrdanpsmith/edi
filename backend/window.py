@@ -883,6 +883,38 @@ class MainWindow(QMainWindow):
         box.finished.connect(done)
         box.open()
 
+    def confirm_write_path(self, path: str, callback=None) -> None:
+        """Ask whether Edi may save the document at ``path``, which was opened
+        by following a link and so was never handed to Edi to write.
+
+        ``callback(accepted: bool)`` runs when the user answers. The prompt is
+        the shell's own, so the page cannot answer it (see ``PathGrants``).
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Edi")
+        box.setText(f"Save changes to “{os.path.basename(path)}”?")
+        box.setInformativeText(
+            f"This document was opened from a link, so Edi asks once before saving it.\n\n{path}"
+        )
+        save = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(save)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.adjustSize()
+        frame = box.frameGeometry()
+        frame.moveCenter(self.frameGeometry().center())
+        box.move(frame.topLeft())
+
+        def done(_result) -> None:
+            accepted = box.clickedButton() == save
+            box.deleteLater()
+            if callback is not None:
+                callback(accepted)
+
+        box.finished.connect(done)
+        box.open()
+
     def alert(self, message: str) -> None:
         """Show a non-blocking centered message box with a single OK button.
 

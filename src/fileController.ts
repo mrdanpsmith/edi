@@ -2,6 +2,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import { confirmAction, isChangedOnDisk, isNotPermitted } from './bridge'
 import {
   clearHistory,
+  confirmWritePath,
   dirname,
   fileName,
   getPendingFiles,
@@ -233,10 +234,16 @@ export function createFileController(ctx: AppContext): FileController {
       if (isNotPermitted(error) && !confirmed) {
         // The shell only writes files the user named outside the page (see
         // `PathGrants` in backend/bridge.py) — a document opened by following
-        // a link was not. The Save dialog, opened on that same file, is how the
-        // user names it: one dialog, the first time.
-        const chosen = await pickSavePath(path)
-        if (chosen) await saveTo(chosen, true)
+        // a link was not. The shell asks about that one file in its own
+        // prompt, once; a yes grants it and the save goes ahead.
+        let allowed: boolean
+        try {
+          allowed = await confirmWritePath(path)
+        } catch (confirmError) {
+          ctx.reportError(`Failed to save ${path}`, confirmError)
+          return
+        }
+        if (allowed) await saveTo(path, true)
         return
       }
       ctx.reportError(`Failed to save ${path}`, error)
