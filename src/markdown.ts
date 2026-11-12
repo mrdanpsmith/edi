@@ -1,3 +1,4 @@
+import { diffArrays } from 'diff'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
@@ -130,9 +131,22 @@ function tableRowsAndAlign(
 }
 
 /** Map mdast children to prose nodes, folding any table's immediately
- * following carrier comment back into that table's formulas. */
-function mapChildrenWithCarriers(children: MdastNode[], schema: Schema, ctx: ParseContext): ProseNode[] {
+ * following carrier comment back into that table's formulas.
+ *
+ * With `spans`, each output node's `[start, end)` source offsets are pushed to
+ * it in step (`null` where the parser gave no position). */
+function mapChildrenWithCarriers(
+  children: MdastNode[],
+  schema: Schema,
+  ctx: ParseContext,
+  spans?: Array<[number, number] | null>,
+): ProseNode[] {
   const out: ProseNode[] = []
+  const span = (first: MdastNode, last: MdastNode): [number, number] | null => {
+    const start = first.position?.start.offset
+    const end = last.position?.end.offset
+    return start == null || end == null ? null : [start, end]
+  }
   let i = 0
   while (i < children.length) {
     const child = children[i]!
@@ -147,11 +161,13 @@ function mapChildrenWithCarriers(children: MdastNode[], schema: Schema, ctx: Par
             _resolved: true,
           }),
         )
+        spans?.push(span(child, next!))
         i += 2
         continue
       }
     }
     out.push(mdastToProse(child, schema, ctx))
+    spans?.push(span(child, child))
     i++
   }
   return out
@@ -981,7 +997,35 @@ function serializeListItemContent(
  * Without the `key:` line it is a rule and a setext heading, as CommonMark says. */
 const FRONT_MATTER = /^---[ \t]*\n[A-Za-z0-9_-]+[ \t]*:.*\n(?:.*\n)*?(?:---|\.\.\.)[ \t]*(?:\n|$)/
 
+/**
+ * The text a document was parsed from, kept per top-level block, so a save
+ * writes the blocks nobody changed exactly as they were written.
+ *
+ * The editor has no model for a file's own layout: how far a wrapped list line
+ * is indented, `*` or `-` bullets, how many blank lines separate two blocks.
+ * Serializing writes all of that in Edi's own style, so without this record
+ * opening and saving a file in any other style rewrote it, every block of it,
+ * though nothing had been edited. The record is the editor's plugin state
+ * (`editor.ts`), never document content.
+ *
+ * `gaps[i]` is the text before `blocks[i]` (so `gaps[0]` leads the file) and
+ * `gaps[blocks.length]` is the text after the last block.
+ */
+export interface MarkdownSource {
+  readonly blocks: ReadonlyArray<{ readonly node: ProseNode; readonly source: string }>
+  readonly gaps: readonly string[]
+}
+
 export function markdownToProse(markdown: string, mdSchema: Schema): ProseNode {
+  return parseMarkdown(markdown, mdSchema).doc
+}
+
+/** {@link markdownToProse}, plus the record a save needs to keep unedited
+ * blocks as written (`null` when the parser gave a block no position). */
+export function parseMarkdown(
+  markdown: string,
+  mdSchema: Schema,
+): { doc: ProseNode; source: MarkdownSource | null } {
   // One line ending throughout: a CRLF file would otherwise keep `\r` inside
   // soft breaks and code while the blocks between them are written with `\n`.
   const normalized = markdown.replace(/\r\n?/g, '\n')
@@ -990,19 +1034,95 @@ export function markdownToProse(markdown: string, mdSchema: Schema): ProseNode {
   const tree = createProcessor().parse(body) as MdastNode
   const ctx: ParseContext = { source: body, definitions: new Map() }
   collectDefinitions(tree, ctx.definitions)
-  const doc = mdastToProse(tree, mdSchema, ctx)
+  const bodySpans: Array<[number, number] | null> = []
+  const children = mapChildrenWithCarriers(tree.children ?? [], mdSchema, ctx, bodySpans)
+  const spans = bodySpans.map((s) => (s ? ([s[0] + frontMatter.length, s[1] + frontMatter.length] as [number, number]) : null))
   if (frontMatter) {
-    const block = mdSchema.node('source_block', { markdown: frontMatter.replace(/\n$/, '') })
-    const rest = doc.childCount === 1 && doc.firstChild!.type.name === 'paragraph' && doc.firstChild!.childCount === 0
-      ? []
-      : collectChildren(doc)
-    return mdSchema.node('doc', {}, [block, ...rest])
+    const markdownOfBlock = frontMatter.replace(/\n$/, '')
+    children.unshift(mdSchema.node('source_block', { markdown: markdownOfBlock }))
+    spans.unshift([0, markdownOfBlock.length])
+  } else if (children.length === 0) {
+    // A document always holds a block; an empty file's is written nowhere.
+    children.push(mdSchema.node('paragraph'))
   }
-  return doc
+  const doc = mdSchema.node('doc', {}, children)
+  return { doc, source: sourceRecord(normalized, children, spans) }
 }
 
-export function proseToMarkdown(doc: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {
-  return serializeNode(doc, '', env)
+function sourceRecord(
+  text: string,
+  nodes: readonly ProseNode[],
+  spans: ReadonlyArray<[number, number] | null>,
+): MarkdownSource | null {
+  if (spans.length !== nodes.length) return null
+  const blocks: Array<{ node: ProseNode; source: string }> = []
+  const gaps: string[] = []
+  let at = 0
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i]
+    if (!span || span[0] < at) return null
+    gaps.push(text.slice(at, span[0]))
+    blocks.push({ node: nodes[i]!, source: text.slice(span[0], span[1]) })
+    at = span[1]
+  }
+  gaps.push(text.slice(at))
+  return { blocks, gaps }
+}
+
+/** A table whose cells hold formulas is written with freshly computed values,
+ * so its saved text can change while the node does not: never kept as written. */
+function writtenFromEnv(node: ProseNode): boolean {
+  let computed = node.type.name === 'table' && Boolean(node.attrs._resolved)
+  if (!computed) {
+    node.descendants((child) => {
+      if (child.type.name === 'table' && child.attrs._resolved) computed = true
+      return !computed
+    })
+  }
+  return computed
+}
+
+/**
+ * Markdown for `doc`. With `source` (the record of the text it was parsed
+ * from), a top-level block that would still be written exactly as the block it
+ * was read from is written as it was read, and so is the text between two such
+ * blocks that are still neighbours. Everything else is written in Edi's style.
+ */
+export function proseToMarkdown(
+  doc: ProseNode,
+  env: FormulaEnv = BUILTIN_ENV,
+  source: MarkdownSource | null = null,
+): string {
+  if (!source) return serializeNode(doc, '', env)
+  const current = collectChildren(doc)
+  const written = current.map((child) => serializeNode(child, '', env))
+  const original = source.blocks.map((block) =>
+    // A block written from the formula environment never matches, so it is
+    // always written fresh. `\0` cannot appear in serialized markdown.
+    writtenFromEnv(block.node) ? '\0' : serializeNode(block.node, '', env),
+  )
+  // Pair the blocks still written as they were, in order, so an inserted or
+  // deleted block does not stop the ones around it from keeping their text.
+  const matched: Array<number | null> = current.map(() => null)
+  let a = 0
+  let b = 0
+  for (const part of diffArrays(original, written)) {
+    const count = part.count ?? part.value.length
+    if (part.added) b += count
+    else if (part.removed) a += count
+    else for (let k = 0; k < count; k++) matched[b++] = a++
+  }
+  const last = source.blocks.length - 1
+  let out = ''
+  for (let k = 0; k < current.length; k++) {
+    const from = matched[k]
+    const before = k === 0 ? null : matched[k - 1]
+    if (k === 0) out += from === 0 ? source.gaps[0] : ''
+    else out += from != null && before != null && from === before + 1 ? source.gaps[from] : '\n\n'
+    out += from != null ? source.blocks[from]!.source : written[k]
+  }
+  const tail = matched[current.length - 1]
+  return out + (tail != null && tail === last ? source.gaps[last + 1] : '\n')
 }
 
 export function serializeBlock(node: ProseNode, env: FormulaEnv = BUILTIN_ENV): string {

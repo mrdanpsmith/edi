@@ -25,7 +25,17 @@ markdown; a resolved table or diagram is stored in its node's `attrs.value`.
 The markdown file remains the source of truth. Undo, save, export and search
 all operate on the document, not on a separate model that could drift from it.
 
-Opening and saving a file must not change it. `src/markdown.ts` keeps what the
+Opening and saving a file must not change it. The editor models the document,
+not the file's layout, so a parse also records each top-level block's exact
+source text and the text between blocks (`MarkdownSource`, kept per tab as the
+editor's `markdownSource` plugin state, never in the document). A save writes a
+block as it was read whenever Edi would still write it exactly as it would have
+written the original, and keeps the gap between two such blocks that are still
+neighbours; only blocks that were edited, inserted or moved are written in
+Edi's own style. A table with formulas is always written fresh, so its computed
+values cannot go stale. `replaceMarkdown` (a change on disk, a restored version)
+adopts the new text's record even when it parses to the same document.
+`src/markdown-source.test.ts` covers this. Within an edited block, `src/markdown.ts` keeps what the
 editor has no model for as the markdown it was written as: HTML blocks, link and
 footnote definitions and YAML front matter become a `source_block`, and inline
 HTML and footnote references an `inline_source` atom. Reference links are

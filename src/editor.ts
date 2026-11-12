@@ -1,4 +1,4 @@
-import { EditorState, Plugin, PluginKey, Selection, TextSelection } from 'prosemirror-state'
+import { EditorState, Plugin, PluginKey, Selection, TextSelection, type EditorStateConfig } from 'prosemirror-state'
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
 import { Slice, type Node as ProseNode } from 'prosemirror-model'
 import { history, undo, redo } from 'prosemirror-history'
@@ -10,7 +10,7 @@ import { GapCursor, gapCursor } from 'prosemirror-gapcursor'
 import { dropCursor } from 'prosemirror-dropcursor'
 import { blockStartKeymap, blockStartRules } from './blockstart'
 import { schema } from './schema'
-import { markdownToProse, proseToMarkdown, sliceMarkdown } from './markdown'
+import { markdownToProse, parseMarkdown, proseToMarkdown, sliceMarkdown, type MarkdownSource } from './markdown'
 import {
   blockModeFocusPlugin,
   blockModePlugin,
@@ -293,6 +293,25 @@ const savedPointPlugin = new Plugin<ProseNode>({
 })
 
 /**
+ * The text this state's document was read from (see `MarkdownSource`), so that
+ * `getMarkdown` writes every block nobody edited exactly as the file has it.
+ * Plugin state rather than a closure variable because tabs swap whole states:
+ * each document's record has to travel with its own state.
+ */
+const markdownSourceKey = new PluginKey<MarkdownSource | null>('markdownSource')
+type SourceConfig = EditorStateConfig & { markdownSource?: MarkdownSource | null }
+const markdownSourcePlugin = new Plugin<MarkdownSource | null>({
+  key: markdownSourceKey,
+  state: {
+    init: (config) => (config as SourceConfig).markdownSource ?? null,
+    apply: (tr, kept) => {
+      const next = tr.getMeta(markdownSourceKey) as MarkdownSource | null | undefined
+      return next === undefined ? kept : next
+    },
+  },
+})
+
+/**
  * **A fresh document's caret is on its first text, never on a block.** ProseMirror's
  * default, `Selection.atStart`, answers a document that *starts* with an atom with a
  * `NodeSelection` on it, so a file opening with a table — or an encrypted block whose
@@ -426,8 +445,14 @@ export function createBlockEditor(
   if (options.insideEncryptedBlock) plugins.push(noNestedEncryptedBlocksPlugin)
 
   const createState = (markdown: string): EditorState => {
-    const doc = markdownToProse(markdown, schema)
-    return EditorState.create({ doc, selection: startSelection(doc), plugins: [...plugins, savedPointPlugin] })
+    const { doc, source } = parseMarkdown(markdown, schema)
+    const config: SourceConfig = {
+      doc,
+      selection: startSelection(doc),
+      plugins: [...plugins, savedPointPlugin, markdownSourcePlugin],
+      markdownSource: source,
+    }
+    return EditorState.create(config)
   }
 
   const viewRef: { current: EditorView | null } = { current: null }
@@ -520,7 +545,7 @@ export function createBlockEditor(
       return view
     },
     getMarkdown() {
-      return proseToMarkdown(view.state.doc, formulaEnvFor(view.state))
+      return proseToMarkdown(view.state.doc, formulaEnvFor(view.state), markdownSourceKey.getState(view.state))
     },
     getSelectionMarkdown() {
       return selectionMarkdownFor(view)
@@ -565,14 +590,20 @@ export function createBlockEditor(
     },
     replaceMarkdown(markdown: string) {
       commitSourceMode(view)
-      const parsed = markdownToProse(markdown, view.state.schema)
+      const { doc: parsed, source } = parseMarkdown(markdown, view.state.schema)
       const current = view.state.doc
       // Only the stretch that differs is replaced, so the caret and the scroll
       // position survive a document reloaded under the reader (an agent's edit
       // further down does not throw them back to the top), and the undo step is
       // that change, not the whole document.
       const start = current.content.findDiffStart(parsed.content)
-      if (start === null) return
+      // The new text is what unedited blocks are written as from now on, even
+      // when it parses to the same document: a file re-indented on disk must not
+      // get its old layout back on the next save.
+      if (start === null) {
+        view.dispatch(view.state.tr.setMeta(markdownSourceKey, source).setMeta('addToHistory', false))
+        return
+      }
       const end = current.content.findDiffEnd(parsed.content)!
       let endA = end.a
       let endB = end.b
@@ -582,7 +613,7 @@ export function createBlockEditor(
         endA += overlap
         endB += overlap
       }
-      view.dispatch(view.state.tr.replace(start, endA, parsed.slice(start, endB)))
+      view.dispatch(view.state.tr.replace(start, endA, parsed.slice(start, endB)).setMeta(markdownSourceKey, source))
     },
     commitSource(): boolean {
       return commitSourceMode(view)
