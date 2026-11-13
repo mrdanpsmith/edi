@@ -56,14 +56,21 @@ export async function readAnyTextFile(path: string): Promise<string> {
 /**
  * Write `content` to `path`. `history` asks the backend to record the written
  * file as a version of the document (`backend/history.py`): a document save
- * does, an export of some other format does not.
+ * does, an export of some other format does not. `makeFolders` makes the
+ * document's folder again if it is gone, and is sent only after the reader
+ * agreed to it (a write without it is refused with `folderMissing`).
  */
 export async function writeTextFile(
   path: string,
   content: string,
-  options: { history?: boolean } = {},
+  options: { history?: boolean; makeFolders?: boolean } = {},
 ): Promise<void> {
-  await invoke('writeTextFile', { path, content, history: options.history ?? false })
+  await invoke('writeTextFile', {
+    path,
+    content,
+    history: options.history ?? false,
+    ...(options.makeFolders ? { makeFolders: true } : {}),
+  })
 }
 
 /**

@@ -231,7 +231,7 @@ Where a document stands is `history.location_status`:
 | On disk (`exists`) | A file is at its path. |
 | Missing (`missing`) | No file, but its folder is there. |
 | Folder missing (`folderMissing`) | Its folder is gone and could be made again. |
-| Drive not connected (`noDrive`) | It is below a mount point that is gone: `/Volumes/<name>`, `/media/<user>/<name>`, `/run/media/<user>/<name>`, `/mnt/<name>`, or a Windows drive root (`history.missing_volume`). |
+| Drive not connected (`noDrive`) | It is below a mount point that is gone: `/Volumes/<name>`, `/media/<user>/<name>`, `/run/media/<user>/<name>`, `/mnt/<name>`, or a Windows drive root (`files.missing_volume`). |
 | Something else there (`blocked`) | A folder is at its path, or a file where one of its folders should be. |
 
 A document moved or renamed outside Edi is indistinguishable from a deleted
@@ -266,7 +266,7 @@ prompt:
 | Group | What happens |
 | --- | --- |
 | Missing, folder there | Written straight back, no prompt. |
-| One missing folder | "The folder … no longer exists", naming exactly the folders Edi will create (`history.missing_folders`: everything below the nearest folder that still exists). Recreate Folder, Choose Another Folder…, or Skip. |
+| One missing folder | "The folder … no longer exists", naming exactly the folders Edi will create (`files.missing_folders`: everything below the nearest folder that still exists). Recreate Folder, Choose Another Folder…, or Skip. |
 | One disconnected drive | Choose Another Folder… or Skip. A drive's folder is never recreated: on macOS that would put an ordinary `/Volumes/<name>` folder on the main disk where the drive belongs. |
 | Each blocked path | Choose Another Folder… or Skip. |
 

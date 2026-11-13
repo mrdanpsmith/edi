@@ -82,6 +82,16 @@ export function isChangedOnDisk(error: unknown): boolean {
   return error instanceof BridgeError && error.code === 'changedOnDisk'
 }
 
+/** A save into a folder that no longer exists; saving again with `makeFolders` makes it. */
+export function isFolderMissing(error: unknown): boolean {
+  return error instanceof BridgeError && error.code === 'folderMissing'
+}
+
+/** A save to a drive that isn't connected. Its folder is never made again. */
+export function isNoDrive(error: unknown): boolean {
+  return error instanceof BridgeError && error.code === 'noDrive'
+}
+
 interface ResultMessage {
   id: number
   ok: boolean

@@ -98,6 +98,8 @@ vi.mock('./bridge', async (importOriginal) => ({
   BridgeError: (await importOriginal<typeof import('./bridge')>()).BridgeError,
   isNotPermitted: (await importOriginal<typeof import('./bridge')>()).isNotPermitted,
   isChangedOnDisk: (await importOriginal<typeof import('./bridge')>()).isChangedOnDisk,
+  isFolderMissing: (await importOriginal<typeof import('./bridge')>()).isFolderMissing,
+  isNoDrive: (await importOriginal<typeof import('./bridge')>()).isNoDrive,
   hasBridge: () => mainState.hasBridge(),
   invoke: mainState.invoke,
   confirmAction: mainState.confirmAction,
@@ -1264,6 +1266,69 @@ describe('open and save', () => {
     menu('save')
     await flushAsync()
     expect(mainState.showError).toHaveBeenCalledWith(expect.stringContaining('linked.md'))
+  })
+
+  it('asks before making a deleted folder again, then saves into it', async () => {
+    const { BridgeError } = await import('./bridge')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/gone/notes.md'])
+    mainState.readTextFile.mockResolvedValue('notes')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.writeTextFile
+      .mockRejectedValueOnce(new BridgeError('The folder “/tmp/gone” no longer exists.', 'folderMissing'))
+      .mockResolvedValueOnce(undefined)
+    mainState.confirmAction.mockResolvedValue(true)
+    menu('save')
+    await flushAsync()
+    expect(mainState.confirmAction).toHaveBeenCalledWith(expect.stringContaining('no longer exists'))
+    expect(mainState.writeTextFile).toHaveBeenLastCalledWith('/tmp/gone/notes.md', expect.any(String), {
+      history: true,
+      makeFolders: true,
+    })
+    const state = await stateModule()
+    expect(state.isAnyDirty()).toBe(false)
+  })
+
+  it('makes no folder and stays unsaved when the reader declines', async () => {
+    const { BridgeError } = await import('./bridge')
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/gone/notes.md'])
+    mainState.readTextFile.mockResolvedValue('notes')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.editorOptions!.onChange!()
+    mainState.writeTextFile.mockRejectedValueOnce(new BridgeError('The folder “/tmp/gone” no longer exists.', 'folderMissing'))
+    mainState.confirmAction.mockResolvedValue(false)
+    menu('save')
+    await flushAsync()
+    expect(mainState.writeTextFile).toHaveBeenCalledTimes(1)
+    expect(mainState.showError).not.toHaveBeenCalledWith(expect.stringContaining('notes.md'))
+    const state = await stateModule()
+    expect(state.getActive()!.dirty).toBe(true)
+  })
+
+  it('offers somewhere else when the drive is not connected, never the same path', async () => {
+    const { BridgeError } = await import('./bridge')
+    mainState.pickOpenPath.mockResolvedValue(['/Volumes/USB/notes.md'])
+    mainState.readTextFile.mockResolvedValue('notes')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.writeTextFile
+      .mockRejectedValueOnce(new BridgeError("The drive /Volumes/USB isn't connected", 'noDrive'))
+      .mockResolvedValueOnce(undefined)
+    mainState.confirmAction.mockResolvedValue(true)
+    mainState.pickSavePath.mockResolvedValue('/tmp/notes.md')
+    menu('save')
+    await flushAsync()
+    expect(mainState.pickSavePath).toHaveBeenCalledWith('notes.md')
+    expect(mainState.writeTextFile).toHaveBeenLastCalledWith('/tmp/notes.md', expect.any(String), { history: true })
+    expect(mainState.writeTextFile).not.toHaveBeenCalledWith(
+      '/Volumes/USB/notes.md',
+      expect.any(String),
+      expect.objectContaining({ makeFolders: true }),
+    )
   })
 
   it('does not overwrite a file changed on disk: it raises the changed-on-disk bar', async () => {

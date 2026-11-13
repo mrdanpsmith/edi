@@ -117,6 +117,19 @@ The three choices on the bar:
 On `diskDeleted`, the bar says the file was deleted or moved and that saving
 will write it again, with a Dismiss button.
 
+**A deleted folder.** If the document's folder went with it, a save is refused
+with `folderMissing` rather than growing the folders back unasked:
+`write_text_file` makes folders only with `makeFolders`
+(`files.check_folder`). The page asks, naming the folders a yes would make,
+then saves again with `makeFolders: true`. A no leaves the tab unsaved.
+
+**A drive that isn't connected.** A document below a mount point that is gone
+(`files.missing_volume`: `/Volumes/<name>`, `/media/<user>/<name>`,
+`/run/media/<user>/<name>`, `/mnt/<name>`, a Windows drive root) is refused
+with `noDrive`, even with `makeFolders`. Making that folder would put an
+ordinary folder on the main disk where the drive belongs. The page offers to
+save somewhere else, through the Save dialog.
+
 **Tabs out of view.** An event for a tab that is not in view is held until the
 tab is shown: `afterActivate` calls `disk.refresh()`. A refused save raises the
 same bar and flashes "Not saved: … changed on disk".

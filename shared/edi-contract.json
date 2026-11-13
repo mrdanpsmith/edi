@@ -89,6 +89,8 @@
   },
   "errorCodes": {
     "changedOnDisk": true,
+    "folderMissing": true,
+    "noDrive": true,
     "notPermitted": true
   }
 }

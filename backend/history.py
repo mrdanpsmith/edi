@@ -34,6 +34,7 @@ from dulwich.refs import Ref
 from dulwich.repo import Repo
 
 from . import githistory
+from .files import check_folder, missing_volume
 
 log = logging.getLogger(__name__)
 
@@ -238,46 +239,6 @@ def stored_documents() -> list[dict]:
 
 # ── where a document stands on disk, and recovering it ──────────────────────
 
-#: Folders that removable drives and network shares are mounted under. A path
-#: below one whose mount point is gone is on a drive that isn't connected, and
-#: recreating that folder would put an ordinary folder on the main disk where
-#: the drive belongs.
-_MOUNT_PARENTS = ("/Volumes", "/media", "/run/media", "/mnt")
-
-
-def missing_volume(path: str) -> str | None:
-    """The mount point ``path`` is on when that mount point is gone, else ``None``.
-
-    macOS ``/Volumes/<name>``, Linux ``/media/<user>/<name>``,
-    ``/run/media/<user>/<name>`` and ``/mnt/<name>``, and a Windows drive root."""
-    drive, _rest = os.path.splitdrive(path)
-    if drive and not os.path.exists(drive + os.sep):
-        return drive + os.sep
-    parts = Path(path).parts
-    for parent in _MOUNT_PARENTS:
-        prefix = Path(parent).parts
-        if tuple(parts[: len(prefix)]) != prefix:
-            continue
-        # `/media` and `/run/media` hold a folder per user, then the volume.
-        depth = len(prefix) + (2 if parent in ("/media", "/run/media") else 1)
-        if len(parts) <= depth:
-            return None
-        mount = Path(*parts[:depth])
-        if not mount.exists():
-            return str(mount)
-    return None
-
-
-def missing_folders(path: str) -> list[str]:
-    """The folders that would have to be made, outermost first, to put a file at
-    ``path``: everything below the nearest folder that still exists."""
-    missing: list[str] = []
-    folder = Path(path).parent
-    while not folder.exists() and folder != folder.parent:
-        missing.append(str(folder))
-        folder = folder.parent
-    return list(reversed(missing))
-
 
 def location_status(path: str) -> str:
     """Where a document's path stands on disk:
@@ -327,13 +288,7 @@ def recover(path: str, destination: str, make_folders: bool = False) -> None:
     target = Path(destination)
     if os.path.lexists(target):
         raise FileExistsError(f"Something is already at {destination}")
-    volume = missing_volume(destination)
-    if volume is not None:
-        raise FileNotFoundError(f"The drive {volume} isn't connected")
-    if not target.parent.is_dir():
-        if not make_folders:
-            raise FileNotFoundError(f"The folder {target.parent} no longer exists")
-        target.parent.mkdir(parents=True)
+    check_folder(destination, make_folders)
     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as handle:

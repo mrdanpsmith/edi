@@ -10,6 +10,7 @@ from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import Repo
 
 from backend import history
+from backend.files import missing_folders, missing_volume
 
 
 @pytest.fixture
@@ -248,7 +249,7 @@ def test_location_status_names_what_stands_in_the_way(docs, tmp_path):
     assert history.location_status(str(docs / "a" / "b" / "gone.md")) == "folderMissing"
     assert history.location_status(str(docs / "folder.md")) == "blocked"
     assert history.location_status(str(docs / "plain-file" / "gone.md")) == "blocked"
-    assert history.missing_folders(str(docs / "a" / "b" / "gone.md")) == [str(docs / "a"), str(docs / "a" / "b")]
+    assert missing_folders(str(docs / "a" / "b" / "gone.md")) == [str(docs / "a"), str(docs / "a" / "b")]
 
 
 def test_a_path_on_a_drive_that_is_not_connected_is_never_recreated(monkeypatch):
@@ -256,9 +257,9 @@ def test_a_path_on_a_drive_that_is_not_connected_is_never_recreated(monkeypatch)
     # stubbed, since nothing can be recorded on a drive that isn't there.
     monkeypatch.setattr(history.Path, "exists", lambda self: str(self) not in ("/Volumes/USB", "/media/ada/USB"))
     monkeypatch.setattr(history, "latest_bytes", lambda _path: b"notes\n")
-    assert history.missing_volume("/Volumes/USB/notes/a.md") == "/Volumes/USB"
-    assert history.missing_volume("/media/ada/USB/a.md") == "/media/ada/USB"
-    assert history.missing_volume("/Users/ada/notes/a.md") is None
+    assert missing_volume("/Volumes/USB/notes/a.md") == "/Volumes/USB"
+    assert missing_volume("/media/ada/USB/a.md") == "/media/ada/USB"
+    assert missing_volume("/Users/ada/notes/a.md") is None
     assert history.location_status("/Volumes/USB/notes/a.md") == "noDrive"
     with pytest.raises(FileNotFoundError, match="isn't connected"):
         history.recover("/Volumes/USB/notes/a.md", "/Volumes/USB/notes/a.md", make_folders=True)

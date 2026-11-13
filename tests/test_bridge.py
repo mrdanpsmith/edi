@@ -1222,6 +1222,32 @@ def test_a_link_opened_document_is_readable_but_not_writable(bridge, tmp_path):
     assert _refused(_wait_for(lambda: result.get(89)))
 
 
+def test_a_save_into_a_deleted_folder_is_refused_until_the_page_says_to_make_it(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    doc = tmp_path / "gone" / "notes.md"
+    bridge_obj.grants.allow_write(str(doc))
+    _invoke(bridge_obj, "writeTextFile", {"path": str(doc), "content": "x", "history": True}, 160)
+    refused = _wait_for(lambda: result.get(160))
+    assert refused["ok"] is False and refused["code"] == "folderMissing"
+    assert not (tmp_path / "gone").exists()
+
+    _invoke(bridge_obj, "writeTextFile", {"path": str(doc), "content": "x", "history": True, "makeFolders": True}, 161)
+    assert _wait_for(lambda: result.get(161))["ok"] is True
+    assert doc.read_text(encoding="utf-8") == "x"
+
+
+def test_a_save_to_a_drive_that_is_not_connected_says_so(bridge, monkeypatch):
+    from backend import files
+
+    bridge_obj, _window, result = bridge
+    doc = "/Volumes/EdiTestDrive/notes.md"
+    bridge_obj.grants.allow_write(doc)
+    monkeypatch.setattr(files, "missing_volume", lambda path: "/Volumes/EdiTestDrive")
+    _invoke(bridge_obj, "writeTextFile", {"path": doc, "content": "x", "makeFolders": True}, 162)
+    refused = _wait_for(lambda: result.get(162))
+    assert refused["ok"] is False and refused["code"] == "noDrive"
+
+
 def test_saving_a_link_opened_document_asks_once_in_the_shell(bridge, tmp_path):
     bridge_obj, window, result = bridge
     linked = tmp_path / "linked.md"

@@ -117,9 +117,9 @@ def test_the_preference_defaults_are_the_declared_ones(contract):
 
 def test_the_bridge_error_codes_are_the_declared_ones(contract):
     """(d) every ``code`` the bridge can reply with is one the page knows."""
-    from backend.bridge import CHANGED_ON_DISK, NOT_PERMITTED
+    from backend.bridge import CHANGED_ON_DISK, FOLDER_MISSING, NO_DRIVE, NOT_PERMITTED
 
-    assert set(contract["errorCodes"]) == {CHANGED_ON_DISK, NOT_PERMITTED}
+    assert set(contract["errorCodes"]) == {CHANGED_ON_DISK, FOLDER_MISSING, NO_DRIVE, NOT_PERMITTED}
 
 
 def test_both_name_sections_are_sorted(contract):

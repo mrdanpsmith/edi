@@ -13,7 +13,10 @@ the Python ↔ TypeScript boundary as bare strings:
   `notPermitted` is a file access the user never handed to Edi (see
   [architecture.md](architecture.md)), and `changedOnDisk` is a save refused
   because the file changed on disk since Edi read it (see
-  [disk-changes.md](disk-changes.md)).
+  [disk-changes.md](disk-changes.md)). `folderMissing` is a save into a folder
+  that no longer exists, which the page may retry with `makeFolders` once the
+  reader agrees, and `noDrive` is a save to a drive that isn't connected (both
+  in [disk-changes.md](disk-changes.md)).
 
 The first three used to drift silently: a rename on one side left a menu item
 that did nothing, a call that answered `Unknown method`, or a store disagreeing

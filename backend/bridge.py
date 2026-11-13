@@ -27,7 +27,14 @@ from PySide6.QtGui import QGuiApplication, QImage
 
 from . import history
 from .exec import kill_process_tree, run_code_block, run_code_block_streamed
-from .files import read_any_text_file, read_text_file, rename_text_file, write_text_file
+from .files import (
+    DriveNotConnected,
+    FolderMissing,
+    read_any_text_file,
+    read_text_file,
+    rename_text_file,
+    write_text_file,
+)
 from .tables import parse_table_file
 from .watcher import DiskWatcher
 
@@ -37,6 +44,11 @@ NOT_PERMITTED = "notPermitted"
 # A save refused because the file changed on disk since Edi last read it: the
 # page shows what changed rather than overwriting it (`backend/watcher.py`).
 CHANGED_ON_DISK = "changedOnDisk"
+# A save into a folder that no longer exists: the page asks, then saves again
+# with `makeFolders` (`files.check_folder`).
+FOLDER_MISSING = "folderMissing"
+# A save to a drive that isn't connected, whose folder is never made again.
+NO_DRIVE = "noDrive"
 
 
 class ChangedOnDisk(Exception):
@@ -434,14 +446,20 @@ class Bridge(QObject):
         # Only a document save asks for a version; an HTML export writes
         # through this same method and is not the document's history.
         keep_version = bool(args.get("history"))
+        # Only after the reader agreed: the folder the document was in is gone.
+        make_folders = bool(args.get("makeFolders"))
 
         def work() -> None:
             try:
                 if keep_version and self.disk.changed_since_seen(str(path)):
                     raise ChangedOnDisk(f"The file changed on disk since Edi read it: {path}")
-                write_text_file(str(path), str(args.get("content") or ""))
+                write_text_file(str(path), str(args.get("content") or ""), make_folders=make_folders)
             except ChangedOnDisk as exc:
                 self._reply_error(request_id, str(exc), code=CHANGED_ON_DISK)
+            except FolderMissing as exc:
+                self._reply_error(request_id, str(exc), code=FOLDER_MISSING)
+            except DriveNotConnected as exc:
+                self._reply_error(request_id, str(exc), code=NO_DRIVE)
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:

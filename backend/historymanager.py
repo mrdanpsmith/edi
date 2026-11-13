@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import history
+from .files import missing_folders, missing_volume
 
 STATUS_LABELS = {
     "exists": "On disk",
@@ -278,7 +279,7 @@ class HistoryManager(QDialog):
         for path in sorted(paths):
             status = self._documents[path]["status"]
             if status == "noDrive":
-                key = f"noDrive\0{history.missing_volume(path)}"
+                key = f"noDrive\0{missing_volume(path)}"
             elif status == "blocked":
                 key = f"blocked\0{path}"
             else:
@@ -313,7 +314,7 @@ class HistoryManager(QDialog):
         box.setWindowTitle("Recover")
         recreate = None
         if status == "folderMissing":
-            folders = history.missing_folders(paths[0])
+            folders = missing_folders(paths[0])
             box.setText(f"The folder “{_tilde(os.path.dirname(paths[0]))}” no longer exists.")
             box.setInformativeText(
                 f"Recreate it to put {names} back where {'it was' if len(paths) == 1 else 'they were'}? "
@@ -321,7 +322,7 @@ class HistoryManager(QDialog):
             )
             recreate = box.addButton("Recreate Folder", QMessageBox.ButtonRole.AcceptRole)
         elif status == "noDrive":
-            volume = history.missing_volume(paths[0]) or ""
+            volume = missing_volume(paths[0]) or ""
             box.setText(f"{names} {'was' if len(paths) == 1 else 'were'} on a drive that isn't connected: {volume}")
             box.setInformativeText(
                 "Connect the drive and choose Recover again to put "
@@ -355,7 +356,7 @@ class HistoryManager(QDialog):
         start = Path(paths[0]).parent
         while not start.is_dir() and start != start.parent:
             start = start.parent
-        if history.missing_volume(paths[0]) is not None:
+        if missing_volume(paths[0]) is not None:
             start = Path.home()
         dialog = QFileDialog(self, "Recover to Folder", str(start))
         dialog.setFileMode(QFileDialog.FileMode.Directory)

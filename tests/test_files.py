@@ -6,9 +6,13 @@ import os
 from pathlib import Path
 
 from backend.files import (
+    DriveNotConnected,
+    FolderMissing,
+    check_folder,
     check_rename_target,
     check_typed_open_path,
     is_supported_extension,
+    missing_volume,
     read_any_text_file,
     read_text_file,
     rename_text_file,
@@ -140,10 +144,39 @@ def test_a_renamed_file_keeps_the_format_of_the_file_it_was(tmp_path):
     assert new.read_bytes() == b"a\r\nb\r\nc\r\n"
 
 
-def test_write_text_file_creates_missing_folders(tmp_path):
+def test_write_text_file_makes_no_folder_it_was_not_asked_to(tmp_path):
+    """A document whose folder was deleted is not silently written into a new
+    tree of folders: the save is refused, naming the folders a yes would make."""
     path = tmp_path / "a" / "b" / "notes.md"
-    write_text_file(str(path), "hi")
+    with pytest.raises(FolderMissing) as refused:
+        write_text_file(str(path), "hi")
+    assert refused.value.folders == [str(tmp_path / "a"), str(tmp_path / "a" / "b")]
+    assert "no longer exists" in str(refused.value)
+    assert not (tmp_path / "a").exists()
+
+    write_text_file(str(path), "hi", make_folders=True)
     assert path.read_text(encoding="utf-8") == "hi"
+
+
+def test_write_text_file_never_makes_the_folder_of_a_drive_that_is_not_connected(monkeypatch):
+    real_exists = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda self: False if str(self) == "/Volumes/USB" else real_exists(self))
+    monkeypatch.setattr(Path, "is_dir", lambda self: False if str(self).startswith("/Volumes/USB") else True)
+    assert missing_volume("/Volumes/USB/notes/a.md") == "/Volumes/USB"
+    with pytest.raises(DriveNotConnected, match="/Volumes/USB isn't connected"):
+        check_folder("/Volumes/USB/notes/a.md", make_folders=True)
+
+
+def test_missing_volume_knows_the_usual_mount_points(monkeypatch):
+    gone = {"/Volumes/USB", "/media/ada/USB", "/run/media/ada/USB", "/mnt/share"}
+    real_exists = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda self: False if str(self) in gone else real_exists(self))
+    assert missing_volume("/media/ada/USB/notes/a.md") == "/media/ada/USB"
+    assert missing_volume("/run/media/ada/USB/a.md") == "/run/media/ada/USB"
+    assert missing_volume("/mnt/share/a.md") == "/mnt/share"
+    # The mount parents themselves, and ordinary folders, are never a missing drive.
+    assert missing_volume("/Volumes/a.md") is None
+    assert missing_volume(str(Path.home() / "gone" / "a.md")) is None
 
 
 def test_rename_text_file_moves_the_content_and_deletes_the_old_file(tmp_path):

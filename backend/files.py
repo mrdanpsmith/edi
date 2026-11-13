@@ -118,7 +118,83 @@ def _file_format(path: Path) -> tuple[str | None, bool]:
     return ("\r\n" if head[first - 1 : first] == b"\r" else "\n"), bom
 
 
-def write_text_file(path: str, content: str, *, like: str | None = None) -> None:
+#: Folders that removable drives and network shares are mounted under. A path
+#: below one whose mount point is gone is on a drive that isn't connected, and
+#: making that folder would put an ordinary folder on the main disk where the
+#: drive belongs.
+_MOUNT_PARENTS = ("/Volumes", "/media", "/run/media", "/mnt")
+
+
+def missing_volume(path: str) -> str | None:
+    """The mount point ``path`` is on when that mount point is gone, else ``None``.
+
+    macOS ``/Volumes/<name>``, Linux ``/media/<user>/<name>``,
+    ``/run/media/<user>/<name>`` and ``/mnt/<name>``, and a Windows drive root."""
+    drive, _rest = os.path.splitdrive(path)
+    if drive and not os.path.exists(drive + os.sep):
+        return drive + os.sep
+    parts = Path(path).parts
+    for parent in _MOUNT_PARENTS:
+        prefix = Path(parent).parts
+        if tuple(parts[: len(prefix)]) != prefix:
+            continue
+        # `/media` and `/run/media` hold a folder per user, then the volume.
+        depth = len(prefix) + (2 if parent in ("/media", "/run/media") else 1)
+        if len(parts) <= depth:
+            return None
+        mount = Path(*parts[:depth])
+        if not mount.exists():
+            return str(mount)
+    return None
+
+
+def missing_folders(path: str) -> list[str]:
+    """The folders that would have to be made, outermost first, to put a file at
+    ``path``: everything below the nearest folder that still exists."""
+    missing: list[str] = []
+    folder = Path(path).parent
+    while not folder.exists() and folder != folder.parent:
+        missing.append(str(folder))
+        folder = folder.parent
+    return list(reversed(missing))
+
+
+class FolderMissing(FileNotFoundError):
+    """A write into a folder that no longer exists, which the user has not
+    agreed to make again. ``folders`` are those it would take, outermost first."""
+
+    def __init__(self, path: str) -> None:
+        self.folders = missing_folders(path)
+        listed = "\n".join(f"  {folder}" for folder in self.folders)
+        super().__init__(
+            f"The folder “{os.path.dirname(path)}” no longer exists.\n\nSaving there would create:\n{listed}"
+        )
+
+
+class DriveNotConnected(FileNotFoundError):
+    """A write to a drive that isn't connected (``missing_volume``)."""
+
+    def __init__(self, volume: str) -> None:
+        self.volume = volume
+        super().__init__(f"The drive {volume} isn't connected")
+
+
+def check_folder(path: str, make_folders: bool = False) -> None:
+    """Make sure a file can be written at ``path``: its folder is there, or is
+    made when ``make_folders`` says the user agreed to it. Never on a drive that
+    isn't connected (``DriveNotConnected``); otherwise ``FolderMissing``."""
+    folder = Path(path).parent
+    if folder.is_dir():
+        return
+    volume = missing_volume(path)
+    if volume is not None:
+        raise DriveNotConnected(volume)
+    if not make_folders:
+        raise FolderMissing(path)
+    folder.mkdir(parents=True)
+
+
+def write_text_file(path: str, content: str, *, like: str | None = None, make_folders: bool = False) -> None:
     """Write ``content`` so the file on disk is always the old or the new text.
 
     The text goes to a temporary file beside the target, is flushed to disk and
@@ -129,9 +205,14 @@ def write_text_file(path: str, content: str, *, like: str | None = None) -> None
     It also keeps its *format*: the line endings and byte-order mark of the file
     being replaced (or of ``like``, the file a rename moves), so saving a CRLF
     file on macOS, or an LF one on Windows, does not rewrite every line.
+
+    A folder that is gone is made again only with ``make_folders``, and never
+    on a drive that isn't connected (``check_folder``): a document whose folder
+    was deleted, or whose drive was unplugged, is not silently written into a
+    new tree of folders on the main disk.
     """
     target = Path(os.path.realpath(path))
-    target.parent.mkdir(parents=True, exist_ok=True)
+    check_folder(str(target), make_folders)
     try:
         mode = target.stat().st_mode & 0o7777
     except FileNotFoundError:

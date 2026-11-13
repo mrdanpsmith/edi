@@ -1,5 +1,5 @@
 import type { Node as ProseNode } from 'prosemirror-model'
-import { confirmAction, isChangedOnDisk, isNotPermitted } from './bridge'
+import { confirmAction, isChangedOnDisk, isFolderMissing, isNoDrive, isNotPermitted } from './bridge'
 import {
   clearHistory,
   confirmWritePath,
@@ -213,19 +213,45 @@ export function createFileController(ctx: AppContext): FileController {
     await saveTo(path)
   }
 
-  async function saveTo(path: string, confirmed = false): Promise<void> {
+  async function saveTo(path: string, confirmed = false, makeFolders = false): Promise<void> {
     if (
+      !makeFolders &&
       !isSupportedFile(path) &&
       !(await confirmAction(`"${path}" does not have a supported extension.\n\nContinue anyway?`))
     ) {
       return
     }
+    const name = path.split('/').pop() ?? path
     try {
       const snapshot = await snapshotForSave()
       if (snapshot === null) return
-      await writeTextFile(path, snapshot.markdown, { history: true })
+      await writeTextFile(path, snapshot.markdown, makeFolders ? { history: true, makeFolders } : { history: true })
       afterSave(path, snapshot)
     } catch (error) {
+      if (isFolderMissing(error) && !makeFolders) {
+        // The document's folder was deleted. The backend makes no folder it
+        // was not asked to, so a deleted tree is not silently grown back; the
+        // message names the folders a yes would create.
+        const message = error instanceof Error ? error.message : String(error)
+        if (await confirmAction(`${message}\n\nCreate it again and save “${name}” there?`)) {
+          await saveTo(path, confirmed, true)
+        } else {
+          ctx.flashStatus(`Not saved: ${name}`)
+        }
+        return
+      }
+      if (isNoDrive(error)) {
+        // Never written into a folder of that name on the main disk: offer
+        // another place instead, through the Save dialog (which grants it).
+        const message = error instanceof Error ? error.message : String(error)
+        if (await confirmAction(`Not saved: ${message}.\n\nSave “${name}” somewhere else?`)) {
+          const chosen = await pickSavePath(name)
+          if (chosen) await saveTo(chosen, true)
+        } else {
+          ctx.flashStatus(`Not saved: ${name}`)
+        }
+        return
+      }
       if (isChangedOnDisk(error)) {
         // Something else wrote the file since Edi read it. Not overwritten:
         // the bar this raises offers Compare, Take theirs and Keep mine.
