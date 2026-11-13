@@ -1106,15 +1106,18 @@ def _composer(win, anchor=None, expression=False):
 
 
 # The open field and the block it is in, which is what "the editor is tall enough
-# for this" is made of: a field is absolutely positioned, so the block around it
-# is the only thing that can make room for one that is taller than its slot.
+# for this" is made of: a field is absolutely positioned, so padding is the only
+# thing that can make room for one that is taller than its slot. The padding is
+# the *preview's* — the field's own scroller, which it must not hang out of — so
+# `pad` is read there; `block` is still the box the field has to end inside.
 COMPOSER_FIT = (
     "(() => { const f = document.querySelector('.mermaid-edit-field');"
     " const b = document.querySelector('.mermaid');"
+    " const p = document.querySelector('.mermaid .mermaid-preview');"
     " const box = (e) => { if (!e) return null; const r = e.getBoundingClientRect();"
     "   return { top: r.top, left: r.left, right: r.right, bottom: r.bottom,"
     "     width: r.width, height: r.height }; };"
-    " const pad = b ? getComputedStyle(b).paddingBottom : null;"
+    " const pad = p ? getComputedStyle(p).paddingBottom : null;"
     " return { box: f ? box(f) : null, block: b ? box(b) : null, pad: pad }; })()"
 )
 

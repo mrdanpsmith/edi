@@ -2526,7 +2526,7 @@ def test_a_composer_gets_the_room_it_needs_to_be_usable(window):
     card — but a title that needs several lines takes the composer to more than
     twice that, and a field is absolutely positioned, so the part of it below the
     board contributes nothing to the block's height and is not something the
-    editor can scroll to. The block grows to hold it.
+    editor can scroll to. The preview (and so the block) grows to hold it.
     """
     _render(window, KANBAN_BARE)
     _enter_edit_mode(window)
