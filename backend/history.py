@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -195,7 +196,12 @@ def clear(path: str) -> None:
 
 
 def stored_documents() -> list[dict]:
-    """Every document the store holds a history for: ``{path, exists}``."""
+    """Every document the store holds a history for, newest change first:
+    ``{path, exists, status, versions, time}``.
+
+    ``status`` is where the document stands on disk (``location_status``),
+    ``versions`` how many versions it has and ``time`` when the newest was
+    recorded (``0`` when the repository has none)."""
     store = root()
     if not store.is_dir():
         return []
@@ -208,48 +214,167 @@ def stored_documents() -> list[dict]:
                 recorded = (folder / PATH_FILE).read_text(encoding="utf-8").strip()
             except OSError:
                 recorded = ""
-            documents.append({"path": recorded, "exists": bool(recorded) and os.path.exists(recorded)})
+            versions, newest = 0, 0
+            try:
+                with Repo(str(folder)) as repo:
+                    head = _head(repo)
+                    if head is not None:
+                        newest = head.commit_time
+                        versions = sum(1 for _entry in repo.get_walker(include=[head.id]))
+            except Exception:  # noqa: BLE001 — one damaged repository is still listed
+                log.exception("Could not read the history in %s", folder)
+            documents.append(
+                {
+                    "path": recorded,
+                    "exists": bool(recorded) and os.path.exists(recorded),
+                    "status": location_status(recorded) if recorded else "blocked",
+                    "versions": versions,
+                    "time": newest,
+                }
+            )
+    documents.sort(key=lambda doc: doc["time"], reverse=True)
     return documents
 
 
-def remove_missing() -> int:
-    """Remove the history of every document whose file is no longer on disk.
+# ── where a document stands on disk, and recovering it ──────────────────────
 
-    That includes a file renamed or moved outside Edi whose history would
-    otherwise be reattached when it is next opened (``_reattach``).
-    Returns how many histories were removed."""
-    removed = 0
-    store = root()
-    if not store.is_dir():
-        return 0
+#: Folders that removable drives and network shares are mounted under. A path
+#: below one whose mount point is gone is on a drive that isn't connected, and
+#: recreating that folder would put an ordinary folder on the main disk where
+#: the drive belongs.
+_MOUNT_PARENTS = ("/Volumes", "/media", "/run/media", "/mnt")
+
+
+def missing_volume(path: str) -> str | None:
+    """The mount point ``path`` is on when that mount point is gone, else ``None``.
+
+    macOS ``/Volumes/<name>``, Linux ``/media/<user>/<name>``,
+    ``/run/media/<user>/<name>`` and ``/mnt/<name>``, and a Windows drive root."""
+    drive, _rest = os.path.splitdrive(path)
+    if drive and not os.path.exists(drive + os.sep):
+        return drive + os.sep
+    parts = Path(path).parts
+    for parent in _MOUNT_PARENTS:
+        prefix = Path(parent).parts
+        if tuple(parts[: len(prefix)]) != prefix:
+            continue
+        # `/media` and `/run/media` hold a folder per user, then the volume.
+        depth = len(prefix) + (2 if parent in ("/media", "/run/media") else 1)
+        if len(parts) <= depth:
+            return None
+        mount = Path(*parts[:depth])
+        if not mount.exists():
+            return str(mount)
+    return None
+
+
+def missing_folders(path: str) -> list[str]:
+    """The folders that would have to be made, outermost first, to put a file at
+    ``path``: everything below the nearest folder that still exists."""
+    missing: list[str] = []
+    folder = Path(path).parent
+    while not folder.exists() and folder != folder.parent:
+        missing.append(str(folder))
+        folder = folder.parent
+    return list(reversed(missing))
+
+
+def location_status(path: str) -> str:
+    """Where a document's path stands on disk:
+
+    - ``exists``: a file is there;
+    - ``missing``: no file, but its folder is there to write it back into;
+    - ``folderMissing``: its folder is gone, and could be made again;
+    - ``noDrive``: it is on a drive that isn't connected (``missing_volume``);
+    - ``blocked``: something that isn't a file is in the way (a folder at the
+      path, or a file where a folder should be).
+    """
+    if os.path.isfile(path):
+        return "exists"
+    if os.path.lexists(path):
+        return "blocked"
+    if missing_volume(path) is not None:
+        return "noDrive"
+    folder = Path(path).parent
+    while not folder.exists() and folder != folder.parent:
+        folder = folder.parent
+    if not folder.is_dir():
+        return "blocked"
+    return "missing" if folder == Path(path).parent else "folderMissing"
+
+
+def latest_bytes(path: str) -> bytes | None:
+    """The newest version of a document as the store holds it, or ``None``."""
     with _lock:
-        for folder in list(store.iterdir()):
-            if not folder.is_dir():
+        repo = _open(path)
+        if repo is None:
+            return None
+        with repo:
+            head = _head(repo)
+            return None if head is None else _blob_of(repo, head).data
+
+
+def recover(path: str, destination: str, make_folders: bool = False) -> None:
+    """Write the newest version of the document recorded at ``path`` to
+    ``destination``, byte for byte, and carry its history there.
+
+    Never replaces anything: ``destination`` must not exist. Missing folders are
+    made only when ``make_folders`` says the user agreed to it, and never on a
+    drive that isn't connected. The write is atomic, like a save."""
+    data = latest_bytes(path)
+    if data is None:
+        raise FileNotFoundError(f"No history for {path}")
+    target = Path(destination)
+    if os.path.lexists(target):
+        raise FileExistsError(f"Something is already at {destination}")
+    volume = missing_volume(destination)
+    if volume is not None:
+        raise FileNotFoundError(f"The drive {volume} isn't connected")
+    if not target.parent.is_dir():
+        if not make_folders:
+            raise FileNotFoundError(f"The folder {target.parent} no longer exists")
+        target.parent.mkdir(parents=True)
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp_name, 0o666 & ~umask)
+        # A hard link fails if something appeared at the target meanwhile, where
+        # `os.replace` would replace it. A filesystem without hard links (FAT, some
+        # network shares) gets the replace, after one last look.
+        try:
+            os.link(tmp_name, target)
+        except FileExistsError:
+            raise
+        except OSError:
+            if os.path.lexists(target):
+                raise FileExistsError(f"Something is already at {destination}") from None
+            os.replace(tmp_name, target)
+    finally:
+        if os.path.lexists(tmp_name):
+            os.unlink(tmp_name)
+    if _normalized(destination) != _normalized(path):
+        move(path, destination)
+
+
+def remove_histories(paths: list[str], keep: list[str] | None = None) -> int:
+    """Remove the history of each document in ``paths``. One that is open in Edi
+    (in ``keep``) gets its current file back as a first version, as ``clear``
+    gives a single document. Returns how many histories were removed."""
+    open_now = {_normalized(path) for path in keep or []}
+    removed = 0
+    for path in paths:
+        with _lock:
+            folder = repo_dir(path)
+            if not (folder / "HEAD").is_file():
                 continue
-            try:
-                recorded = (folder / PATH_FILE).read_text(encoding="utf-8").strip()
-            except OSError:
-                recorded = ""
-            if not recorded or not os.path.exists(recorded):
-                _remove(folder)
-                removed += 1
-    return removed
-
-
-def clear_all(keep: list[str] | None = None) -> int:
-    """Remove every history. The documents in ``keep`` (those open in Edi) get
-    their current file back as a first version, as ``clear`` does for one.
-    Returns how many histories were removed."""
-    store = root()
-    removed = 0
-    with _lock:
-        if store.is_dir():
-            for folder in list(store.iterdir()):
-                if folder.is_dir():
-                    _remove(folder)
-                    removed += 1
-    for path in keep or []:
-        if os.path.isfile(path):
+            _remove(folder)
+            removed += 1
+        if _normalized(path) in open_now and os.path.isfile(path):
             record(path, "History cleared")
     return removed
 

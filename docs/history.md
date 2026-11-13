@@ -200,34 +200,82 @@ never its plaintext.
 - `src/historyDialog.test.ts` and `src/editor-replacemarkdown.test.ts` cover
   the page.
 
-## Clearing history
+## Clearing one document's history
 
-There are two ways to clear history:
+**Clear History…** in the Version History dialog asks for confirmation, then
+calls `clearHistory({path})`, which checks `grants.check_read` like the other
+history methods. `history.clear` deletes the document's repository and records
+the file as it is on disk now as a fresh first version, "History cleared", so
+the next change can still be compared with something. A document whose file is
+gone keeps nothing.
 
-- **One document.** **Clear History…** in the Version History dialog asks for
-  confirmation, then calls `clearHistory({path})`, which checks
-  `grants.check_read` like the other history methods. `history.clear` deletes
-  the document's repository and records the file as it is on disk now as a
-  fresh first version, "History cleared", so the next change can still be
-  compared with something. A document whose file is gone keeps nothing.
-- **The whole store.** **File › Clear Version History…** is a native dialog
-  (`MainWindow._clear_all_history`) that says how many documents have history
-  and how many of those are no longer on disk. It offers two actions:
-  - **Remove Deleted Documents' History** (`history.remove_missing`) removes
-    every history whose recorded path no longer exists. That includes
-    documents renamed or moved outside Edi, which would otherwise be
-    reattached the next time they're opened, and the dialog says so.
-  - **Clear All History** (`history.clear_all`) removes everything. The
-    documents Edi has open (the watcher's `watched()`) get a fresh "History
-    cleared" first version, as `clear` gives a single document.
+## Managing the whole store
 
-  The outcome is reported in the status bar through a `flashStatus` native
-  event.
+**File › Manage Version History…** (`backend/historymanager.py`) lists every
+document Edi keeps a history for, and is where a deleted document is recovered
+or a history deleted. It is the shell's own dialog and has no page command or
+bridge method: listing every stored path, deleting histories and writing
+recovered files are out of reach of anything running in the page.
 
-The store-wide actions run in the shell's own dialog and have no page command
-or bridge method, so nothing running in the page can wipe every history. Every
-deletion goes through `history._remove`, which refuses a folder that isn't
-directly inside the store.
+**The list** comes from `history.stored_documents`: name, folder, where the
+document stands on disk, how many versions it has and when the newest was
+recorded, newest first. A filter shows all documents (the default), those
+missing from disk, or those on disk. Several can be selected. A preview shows
+the selected document's newest version, read-only. Older versions are Version
+History's job once the document is back.
+
+Where a document stands is `history.location_status`:
+
+| Status | Meaning |
+| --- | --- |
+| On disk (`exists`) | A file is at its path. |
+| Missing (`missing`) | No file, but its folder is there. |
+| Folder missing (`folderMissing`) | Its folder is gone and could be made again. |
+| Drive not connected (`noDrive`) | It is below a mount point that is gone: `/Volumes/<name>`, `/media/<user>/<name>`, `/run/media/<user>/<name>`, `/mnt/<name>`, or a Windows drive root (`history.missing_volume`). |
+| Something else there (`blocked`) | A folder is at its path, or a file where one of its folders should be. |
+
+A document moved or renamed outside Edi is indistinguishable from a deleted
+one and shows as missing. The dialog says so: open it where it is now, and its
+history is reattached (`_reattach`).
+
+### Delete History…
+
+Deletes the histories of the selection, after a confirmation that counts them
+(`history.remove_histories`). The documents themselves aren't touched. One open
+in Edi (the watcher's `watched()`) gets a fresh "History cleared" first
+version, as `clear` gives a single document. Every deletion goes through
+`history._remove`, which refuses a folder that isn't directly inside the store.
+
+### Recover…
+
+Recover is offered when every selected document is missing from disk. It
+writes each document's newest version back with `history.recover`, then opens
+the recovered documents as the OS opening them would (`open_files`, which
+grants them).
+
+- **Byte for byte.** The newest version's exact bytes are written, line endings
+  and byte-order mark included.
+- **Atomic.** A temporary file is written, synced, and then hard-linked into
+  place. A filesystem without hard links gets a rename after one last check.
+- **Never replaces anything.** If something appears at the path meanwhile, that
+  document is reported as not recovered and the other thing is left alone.
+
+The selection is grouped by what stands in the way, and each group gets one
+prompt:
+
+| Group | What happens |
+| --- | --- |
+| Missing, folder there | Written straight back, no prompt. |
+| One missing folder | "The folder … no longer exists", naming exactly the folders Edi will create (`history.missing_folders`: everything below the nearest folder that still exists). Recreate Folder, Choose Another Folder…, or Skip. |
+| One disconnected drive | Choose Another Folder… or Skip. A drive's folder is never recreated: on macOS that would put an ordinary `/Volumes/<name>` folder on the main disk where the drive belongs. |
+| Each blocked path | Choose Another Folder… or Skip. |
+
+**Choose Another Folder…** opens a folder picker at the nearest folder that
+still exists (home, for a disconnected drive). The documents keep their names
+there, and their histories move with them, as a rename moves one.
+
+What couldn't be recovered is listed at the end. Successes are reported in the
+status bar through a `flashStatus` native event.
 
 ## Not yet
 

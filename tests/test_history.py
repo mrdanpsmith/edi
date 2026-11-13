@@ -202,30 +202,120 @@ def test_clear_of_a_deleted_document_leaves_nothing(store, docs):
     assert history.stored_documents() == []
 
 
-def test_removing_the_history_of_deleted_documents_keeps_the_rest(store, docs):
+def test_stored_documents_say_where_each_stands_newest_first(store, docs, monkeypatch):
+    now = {"t": 100}
+    monkeypatch.setattr(history.time, "time", lambda: now["t"])
     kept = docs / "kept.md"
     gone = docs / "gone.md"
     _save(kept, "kept\n")
+    now["t"] = 200
     _save(gone, "gone\n")
+    _save(gone, "gone again\n")
     gone.unlink()
-    assert sorted(
-        (d["path"], d["exists"]) for d in history.stored_documents()
-    ) == sorted([(os.path.realpath(kept), True), (os.path.realpath(gone), False)])
-
-    assert history.remove_missing() == 1
-    assert [d["path"] for d in history.stored_documents()] == [os.path.realpath(kept)]
+    assert [(d["path"], d["exists"], d["status"], d["versions"], d["time"]) for d in history.stored_documents()] == [
+        (os.path.realpath(gone), False, "missing", 2, 200),
+        (os.path.realpath(kept), True, "exists", 1, 100),
+    ]
 
 
-def test_clear_all_keeps_only_a_fresh_start_for_the_open_documents(store, docs):
+def test_removing_histories_keeps_a_fresh_start_only_for_open_documents(store, docs):
     open_doc = docs / "open.md"
     closed_doc = docs / "closed.md"
+    other = docs / "other.md"
     _save(open_doc, "one\n")
     _save(open_doc, "two\n")
     _save(closed_doc, "x\n")
+    _save(other, "y\n")
 
-    assert history.clear_all(keep=[str(open_doc)]) == 2
+    assert history.remove_histories([str(open_doc), str(closed_doc)], keep=[str(open_doc)]) == 2
     assert [v["message"] for v in history.list_versions(str(open_doc))] == ["History cleared"]
-    assert [d["path"] for d in history.stored_documents()] == [os.path.realpath(open_doc)]
+    assert sorted(d["path"] for d in history.stored_documents()) == sorted(
+        [os.path.realpath(open_doc), os.path.realpath(other)]
+    )
+    assert closed_doc.exists()  # the document itself is never touched
+
+
+# ── recovering a deleted document ─────────────────────────────────────────
+
+
+def test_location_status_names_what_stands_in_the_way(docs, tmp_path):
+    there = docs / "there.md"
+    there.write_text("x", encoding="utf-8")
+    (docs / "folder.md").mkdir()
+    (docs / "plain-file").write_text("x", encoding="utf-8")
+    assert history.location_status(str(there)) == "exists"
+    assert history.location_status(str(docs / "gone.md")) == "missing"
+    assert history.location_status(str(docs / "a" / "b" / "gone.md")) == "folderMissing"
+    assert history.location_status(str(docs / "folder.md")) == "blocked"
+    assert history.location_status(str(docs / "plain-file" / "gone.md")) == "blocked"
+    assert history.missing_folders(str(docs / "a" / "b" / "gone.md")) == [str(docs / "a"), str(docs / "a" / "b")]
+
+
+def test_a_path_on_a_drive_that_is_not_connected_is_never_recreated(monkeypatch):
+    # The drives are "unplugged": their mount points don't exist. The store is
+    # stubbed, since nothing can be recorded on a drive that isn't there.
+    monkeypatch.setattr(history.Path, "exists", lambda self: str(self) not in ("/Volumes/USB", "/media/ada/USB"))
+    monkeypatch.setattr(history, "latest_bytes", lambda _path: b"notes\n")
+    assert history.missing_volume("/Volumes/USB/notes/a.md") == "/Volumes/USB"
+    assert history.missing_volume("/media/ada/USB/a.md") == "/media/ada/USB"
+    assert history.missing_volume("/Users/ada/notes/a.md") is None
+    assert history.location_status("/Volumes/USB/notes/a.md") == "noDrive"
+    with pytest.raises(FileNotFoundError, match="isn't connected"):
+        history.recover("/Volumes/USB/notes/a.md", "/Volumes/USB/notes/a.md", make_folders=True)
+
+
+def test_recover_writes_the_newest_version_back_byte_for_byte(store, docs):
+    doc = docs / "notes.md"
+    doc.write_bytes(b"\xef\xbb\xbfone\r\n")
+    history.record(str(doc))
+    doc.write_bytes(b"\xef\xbb\xbftwo\r\n")
+    history.record(str(doc))
+    doc.unlink()
+
+    history.recover(str(doc), str(doc))
+    assert doc.read_bytes() == b"\xef\xbb\xbftwo\r\n"
+    # Back where it was, so nothing new is recorded and the history is whole.
+    assert len(history.list_versions(str(doc))) == 2
+    assert [p.name for p in docs.iterdir()] == ["notes.md"]  # no temporary file left
+
+
+def test_recover_makes_missing_folders_only_when_asked(store, docs):
+    doc = docs / "2025" / "q4" / "plan.md"
+    doc.parent.mkdir(parents=True)
+    _save(doc, "plan\n")
+    doc.unlink()
+    doc.parent.rmdir()
+    doc.parent.parent.rmdir()
+
+    with pytest.raises(FileNotFoundError, match="no longer exists"):
+        history.recover(str(doc), str(doc))
+    assert not (docs / "2025").exists()
+    history.recover(str(doc), str(doc), make_folders=True)
+    assert doc.read_text(encoding="utf-8") == "plan\n"
+
+
+def test_recover_never_replaces_anything(store, docs):
+    doc = docs / "notes.md"
+    _save(doc, "mine\n")
+    doc.write_text("someone else's\n", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        history.recover(str(doc), str(doc))
+    assert doc.read_text(encoding="utf-8") == "someone else's\n"
+
+
+def test_recover_elsewhere_takes_the_history_along(store, docs, tmp_path):
+    doc = docs / "notes.md"
+    _save(doc, "one\n")
+    _save(doc, "two\n")
+    doc.unlink()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    target = elsewhere / "notes.md"
+
+    history.recover(str(doc), str(target))
+    assert target.read_text(encoding="utf-8") == "two\n"
+    assert [v["message"] for v in history.list_versions(str(target))] == ["Saved", "Saved"]
+    assert [d["path"] for d in history.stored_documents()] == [os.path.realpath(target)]
 
 
 def test_nothing_outside_the_store_is_ever_removed(store, docs):

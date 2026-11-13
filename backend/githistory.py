@@ -35,7 +35,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
-from dulwich.objects import Blob, Commit, Tree
+from dulwich.objects import Blob, Commit, ObjectID, Tree
 from dulwich.repo import Repo
 
 log = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class GitVersion:
     authored: int
     message: str
     author: str
-    blob: bytes
+    blob: ObjectID
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,7 @@ class GitHistory:
     walked: int
 
 
-_cache: OrderedDict[tuple[str, str], tuple[bytes, GitHistory]] = OrderedDict()
+_cache: OrderedDict[tuple[str, str], tuple[ObjectID, GitHistory]] = OrderedDict()
 _cache_lock = threading.Lock()
 
 
@@ -98,10 +98,10 @@ class _Reader:
         self.repo = repo
         self.store = repo.object_store
         self.parts = parts
-        self._entries: dict[tuple[bytes, bytes], bytes | None] = {}
-        self._commits: dict[bytes, Commit] = {}
+        self._entries: dict[tuple[ObjectID, bytes], ObjectID | None] = {}
+        self._commits: dict[ObjectID, Commit] = {}
 
-    def commit(self, commit_id: bytes) -> Commit:
+    def commit(self, commit_id: ObjectID) -> Commit:
         found = self._commits.get(commit_id)
         if found is None:
             obj = self.store[commit_id]
@@ -111,29 +111,28 @@ class _Reader:
             self._commits[commit_id] = found
         return found
 
-    def blob_id(self, commit: Commit) -> bytes | None:
+    def blob_id(self, commit: Commit) -> ObjectID | None:
         """The id of the document's blob in ``commit``, one tree per folder."""
-        current: bytes | None = commit.tree
+        current: ObjectID = commit.tree
         for part in self.parts:
-            assert current is not None
             key = (current, part)
             if key in self._entries:
-                current = self._entries[key]
+                sha = self._entries[key]
             else:
                 tree = self.store[current]
-                sha: bytes | None = None
+                sha = None
                 if isinstance(tree, Tree):
                     try:
                         _mode, sha = tree[part]
                     except KeyError:
                         sha = None
                 self._entries[key] = sha
-                current = sha
-            if current is None:
+            if sha is None:
                 return None
+            current = sha
         return current
 
-    def data(self, blob_id: bytes) -> bytes:
+    def data(self, blob_id: ObjectID) -> bytes:
         blob = self.store[blob_id]
         if not isinstance(blob, Blob):
             raise ValueError("Not a file")
@@ -163,7 +162,7 @@ def _author_name(commit: Commit) -> str:
 
 def _walk(reader: _Reader, head: Commit, limit: int, budget: float) -> GitHistory:
     started = time.monotonic()
-    heap: list[tuple[int, bytes]] = [(-head.commit_time, head.id)]
+    heap: list[tuple[int, ObjectID]] = [(-head.commit_time, head.id)]
     seen = {head.id}
     found: list[GitVersion] = []
     walked = 0
@@ -250,7 +249,7 @@ def read(path: str, commit_id: str) -> bytes:
     reader, _work_tree = opened
     with reader.repo:
         try:
-            commit = reader.commit(commit_id.encode("ascii"))
+            commit = reader.commit(ObjectID(commit_id.encode("ascii")))
         except KeyError:
             raise FileNotFoundError(f"No such commit: {commit_id}") from None
         blob_id = reader.blob_id(commit)

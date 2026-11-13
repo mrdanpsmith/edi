@@ -521,8 +521,8 @@ class Bridge(QObject):
 
     def _clear_history(self, request_id: int, args: dict) -> None:
         """Forget a document's saved versions, keeping the file as it is now as
-        the first version. The whole store is cleared from the native menu
-        (``MainWindow._clear_all_history``), never from the page."""
+        the first version. The whole store is managed from the native menu
+        (``backend/historymanager.py``), never from the page."""
         path = args.get("path")
         if not path:
             self._reply_error(request_id, "Missing path")

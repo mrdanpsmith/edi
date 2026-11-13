@@ -223,35 +223,32 @@ def test_alert_dialog_shows_single_ok_button(visible, qtbot):
     _dismiss_box(box, qtbot, box.button(QMessageBox.StandardButton.Ok))
 
 
-def test_clear_version_history_removes_only_deleted_documents_history(visible, qtbot, tmp_path, monkeypatch):
-    import os
-
+def test_manage_version_history_opens_the_shells_own_dialog_over_the_store(visible, qtbot, tmp_path, monkeypatch):
+    """The dialog itself is tested in tests/test_historymanager.py; this is the
+    wiring: the menu item, and the window's own open, flash and watched."""
     from backend import history
+    from backend.historymanager import HistoryManager
 
     monkeypatch.setenv(history.ROOT_ENV, str(tmp_path / "history"))
-    kept = tmp_path / "kept.md"
     gone = tmp_path / "gone.md"
-    for doc in (kept, gone):
-        doc.write_text(doc.name, encoding="utf-8")
-        history.record(str(doc))
+    gone.write_text("gone", encoding="utf-8")
+    history.record(str(gone))
     gone.unlink()
 
-    visible._clear_all_history()
-    box = _wait_modal(qtbot)
-    assert "2 documents" in box.text() and "1 of them is no longer on disk" in box.text()
-    remove = next(b for b in box.buttons() if b.text() == "Remove Deleted Documents' History")
-    _dismiss_box(box, qtbot, remove)
-    assert [d["path"] for d in history.stored_documents()] == [os.path.realpath(kept)]
+    labels = [action.text() for action in visible._file_menu.actions()]
+    assert "&Manage Version History…" in labels
+    assert "Clear Version &History…" not in labels
 
-
-def test_clear_version_history_with_nothing_stored_says_so(visible, qtbot, tmp_path, monkeypatch):
-    from backend import history
-
-    monkeypatch.setenv(history.ROOT_ENV, str(tmp_path / "empty-history"))
-    visible._clear_all_history()
-    box = _wait_modal(qtbot)
-    assert box.text() == "No document has any version history yet."
-    _dismiss_box(box, qtbot, box.button(QMessageBox.StandardButton.Ok))
+    dialog = visible._manage_history()
+    try:
+        qtbot.waitUntil(dialog.isVisible, timeout=3000)
+        assert isinstance(QApplication.activeModalWidget(), HistoryManager)
+        assert dialog.tree.topLevelItemCount() == 1
+        assert dialog._open_files == visible.open_files
+        assert dialog._watched == visible._bridge.disk.watched
+    finally:
+        dialog.close()
+        qtbot.waitUntil(lambda: QApplication.activeModalWidget() is None, timeout=3000)
 
 
 def test_close_clean_exits_without_prompt(visible, qtbot):

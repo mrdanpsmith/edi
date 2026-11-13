@@ -26,8 +26,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from . import __version__, history
+from . import __version__
 from .bridge import Bridge
+from .historymanager import HistoryManager
 from .files import check_rename_target, check_typed_open_path, resolve_typed_path
 from .preferences import Preferences
 from .printing import PrintJob
@@ -502,12 +503,13 @@ class MainWindow(QMainWindow):
         self._link_command(self._git_history_action, "toggleGitHistory")
         file_menu.addAction(self._git_history_action)
 
-        # The whole store, not one document: the shell's own dialog, never a
-        # page command, so nothing running in the page can wipe every history.
-        # Like Quit and About it carries no command name.
-        clear_history_action = QAction("Clear Version &History…", self)
-        clear_history_action.triggered.connect(lambda _checked=False: self._clear_all_history())
-        file_menu.addAction(clear_history_action)
+        # The whole store, not one document: recover deleted documents, delete
+        # histories (`backend/historymanager.py`). The shell's own dialog, never
+        # a page command, so nothing running in the page can list, wipe or write
+        # back every history. Like Quit and About it carries no command name.
+        manage_history_action = QAction("&Manage Version History…", self)
+        manage_history_action.triggered.connect(lambda _checked=False: self._manage_history())
+        file_menu.addAction(manage_history_action)
 
         # Enabled by the frontend only while the document in view has a path.
         # `setShortcut` rather than a `\t` in the label, for the reason
@@ -674,46 +676,18 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(lambda _checked=False: self._show_about())
         help_menu.addAction(about_action)
 
-    def _clear_all_history(self) -> None:
-        """File › Clear Version History…: remove the history of documents that
-        are gone from disk, or of every document. Non-blocking, like ``confirm``."""
-        documents = history.stored_documents()
-        missing = sum(1 for doc in documents if not doc["exists"])
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("Clear Version History")
-        if not documents:
-            box.setText("No document has any version history yet.")
-            box.addButton(QMessageBox.StandardButton.Ok)
-        else:
-            box.setText(
-                f"Version history is kept for {len(documents)} "
-                f"document{'s' if len(documents) != 1 else ''}; "
-                f"{missing} of them {'is' if missing == 1 else 'are'} no longer on disk."
-            )
-            box.setInformativeText(
-                "Removing the history of deleted documents also removes that of documents "
-                "renamed or moved outside Edi. Clearing all history keeps the documents open "
-                "now, as they are, as the first version of a new history. This cannot be undone."
-            )
-            remove_missing = box.addButton("Remove Deleted Documents' History", QMessageBox.ButtonRole.AcceptRole)
-            remove_missing.setEnabled(missing > 0)
-            clear_all = box.addButton("Clear All History", QMessageBox.ButtonRole.DestructiveRole)
-            cancel = box.addButton(QMessageBox.StandardButton.Cancel)
-            box.setDefaultButton(cancel)
-
-            def answered(button) -> None:
-                if button is remove_missing:
-                    removed = history.remove_missing()
-                    self._flash(f"Removed the history of {removed} deleted document{'s' if removed != 1 else ''}")
-                elif button is clear_all:
-                    removed = history.clear_all(keep=self._bridge.disk.watched())
-                    self._flash(f"Cleared the history of {removed} document{'s' if removed != 1 else ''}")
-
-            box.buttonClicked.connect(answered)
-        box.setWindowModality(Qt.WindowModality.WindowModal)
-        box.finished.connect(lambda _result: box.deleteLater())
-        box.open()
+    def _manage_history(self) -> HistoryManager:
+        """File › Manage Version History…: every document with history, to
+        recover or delete. Non-blocking, like ``confirm``."""
+        dialog = HistoryManager(
+            self,
+            open_files=self.open_files,
+            flash=self._flash,
+            watched=self._bridge.disk.watched,
+        )
+        dialog.finished.connect(lambda _result: dialog.deleteLater())
+        dialog.open()
+        return dialog
 
     def _flash(self, message: str) -> None:
         """Say something in the page's status bar (a `flashStatus` native event)."""
