@@ -13,8 +13,8 @@
 // synthesised event.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { userEvent } from 'vitest/browser'
-import { bootApp, settle, waitFor, type BootedApp } from './app'
+import { page, userEvent } from 'vitest/browser'
+import { bootApp, nextFrames, settle, waitFor, type BootedApp } from './app'
 import {
   KANBAN,
   KANBAN_BARE,
@@ -225,28 +225,58 @@ describe('the composer', () => {
 
   it('grows the block when it hangs below the board, and gives the room back', async () => {
     // A field is absolutely positioned, so a tall one would hang off the end of
-    // the document. The block's padding grows to hold it.
+    // the document. The preview's padding grows to hold it, and the block with it.
     await openBoard(app, KANBAN_BARE)
     const band = frameOf(bands()[0]!)
     await clickCardSlot(0)
     await waitForField()
     const short = fieldBox()
     expect(short.bottom).toBeLessThanOrEqual(band.bottom + 0.5)
-    const block = document.querySelector<HTMLElement>('.mermaid')!
+    const preview = document.querySelector<HTMLElement>('.mermaid .mermaid-preview')!
     await typeInField(
       'a card title long enough that the composer grows well past the height of the column it was opened in',
     )
     await waitFor(
-      () => fieldBox().height > short.height + 20 && fieldBox().bottom <= block.getBoundingClientRect().bottom + 0.5,
-      { message: 'the block never made room' },
+      () => fieldBox().height > short.height + 20 && fieldBox().bottom <= preview.getBoundingClientRect().bottom + 0.5,
+      { message: 'the preview never made room' },
     )
     expect(fieldBox().bottom).toBeGreaterThan(band.bottom)
-    expect(Number.parseFloat(getComputedStyle(block).paddingBottom)).toBeGreaterThan(0)
+    expect(Number.parseFloat(getComputedStyle(preview).paddingBottom)).toBeGreaterThan(0)
     await userEvent.keyboard('{Escape}')
     await waitForFieldClosed()
-    await waitFor(() => Number.parseFloat(getComputedStyle(block).paddingBottom) === 0, {
+    await waitFor(() => Number.parseFloat(getComputedStyle(preview).paddingBottom) === 0, {
       message: 'the padding was never given back',
     })
+  })
+
+  it('holds still while it grows at the bottom of a long column in a scrolled document', async () => {
+    // The preview is a scroller (`overflow-x: auto` makes `overflow-y` auto too).
+    // A field padded for by the *block* hung past the preview's bottom, so its
+    // `scrollIntoView` scrolled the preview, which moved the field, which changed
+    // the room measured: the editor crept down a few pixels a frame until the
+    // field closed or the document ran out.
+    await page.viewport(700, 500)
+    try {
+      const done = Array.from({ length: 12 }, (_, i) => `    d${i}[A finished task with a title of some length ${i}]`)
+      const board = ['kanban', '  col1[To do]', '    t1[One]', '  col2[Done]', ...done].join('\n')
+      const after = Array.from({ length: 40 }, (_, i) => `Paragraph ${i}\n`).join('\n')
+      await openBoard(app, board, after)
+      cardSlots()[1]!.scrollIntoView({ block: 'center' })
+      await settle()
+      const preview = document.querySelector<HTMLElement>('.mermaid .mermaid-preview')!
+      const scroller = preview.closest('.ProseMirror')!.parentElement!
+      await clickCardSlot(1)
+      await waitForField()
+      await typeInField('a card title long enough to wrap onto several lines of the composer it is typed in')
+      await settle()
+      const at = scroller.scrollTop
+      await nextFrames(30)
+      expect(scroller.scrollTop, 'the editor kept scrolling').toBe(at)
+      expect(preview.scrollTop, 'the preview scrolled under the field').toBe(0)
+      expect(fieldBox().bottom).toBeLessThanOrEqual(preview.getBoundingClientRect().bottom + 0.5)
+    } finally {
+      await page.viewport(1280, 900)
+    }
   })
 })
 

@@ -538,11 +538,13 @@ export class DiagramSession {
     for (const { element, box } of this.overlays) {
       const at = box()
       if (at === null) continue
-      // `scrollLeft` because the preview is a horizontal scroller: an absolute
-      // child is placed from the scrolled content, not from the visible box — and
-      // `scrollLeft` is already in document pixels, like the offset being built.
+      // The scroll offsets because the preview is a scroller: an absolute child is
+      // placed from the scrolled content, not from the visible box — and both
+      // offsets are already in document pixels, like the offset being built. It
+      // scrolls horizontally by design, and `overflow-x: auto` makes it a
+      // vertical scroller too, so an overlay hanging past its bottom can scroll it.
       const left = `${(at.left - base.left) / zoom + this.preview.scrollLeft}px`
-      const top = `${(at.top - base.top) / zoom}px`
+      const top = `${(at.top - base.top) / zoom + this.preview.scrollTop}px`
       if (element.style.left !== left) {
         element.style.left = left
         moved = true
@@ -657,8 +659,14 @@ export class DiagramSession {
     input.value = spec.value
     if (spec.placeholder) input.placeholder = spec.placeholder
 
-    const block = this.block
-    const padAtOpen = block.style.paddingBottom
+    // The *preview* grows, not the block around it: the field is the preview's
+    // child, and the preview is a scroller (`overflow-x: auto` makes its
+    // `overflow-y` auto as well). Padding the block left the field hanging past
+    // the preview's own bottom, so `scrollIntoView` scrolled the preview, which
+    // moved the field, which changed the room `fit` measured — a loop that walked
+    // the editor down a few pixels a frame for as long as the field was open.
+    const grown = this.preview
+    const padAtOpen = grown.style.paddingBottom
     /**
      * The subject as the *current* render has it. A field holds this rather than
      * an element, because a render replaces the element and the field does not
@@ -689,16 +697,16 @@ export class DiagramSession {
     const fit = (): boolean => {
       if (closed) return false
       const zoom = effectiveZoom(this.preview)
-      const shown = Number.parseFloat(block.style.paddingBottom) || 0
+      const shown = Number.parseFloat(grown.style.paddingBottom) || 0
       // Room measured in document pixels, which is the space `padding-bottom`
-      // (and `FIELD_MARGIN`) live in: the block's own padding is unscaled, while
+      // (and `FIELD_MARGIN`) live in: the preview's own padding is unscaled, while
       // both rects here are viewport pixels, so a raw subtraction would leave a
       // field short by the zoom factor at every level but 100%.
       const room =
-        (block.getBoundingClientRect().bottom - shown * zoom - element.getBoundingClientRect().bottom) / zoom
+        (grown.getBoundingClientRect().bottom - shown * zoom - element.getBoundingClientRect().bottom) / zoom
       const pad = room < FIELD_MARGIN ? Math.ceil(FIELD_MARGIN - room) : 0
       if (pad === shown) return false
-      block.style.paddingBottom = pad === 0 ? '' : `${pad}px`
+      grown.style.paddingBottom = pad === 0 ? '' : `${pad}px`
       // Growing the block makes the field reachable, not looked at — and only
       // when it really grew, so this cannot feed the place that caused it.
       if (pad > 0) element.scrollIntoView({ block: 'nearest' })
@@ -718,7 +726,7 @@ export class DiagramSession {
       // Not `.remove()`: a blur handler can fire while the field is being
       // detached, and `remove()` throws when the node has no parent.
       element.parentNode?.removeChild(element)
-      block.style.paddingBottom = padAtOpen
+      grown.style.paddingBottom = padAtOpen
       if (this.field?.element === element) this.field = null
     }
 

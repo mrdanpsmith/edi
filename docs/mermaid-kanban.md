@@ -688,10 +688,20 @@ simply cut off.
 
 `openInlineInput`:
 
-- measures the difference and sets the block's `padding-bottom` to it
+- measures the difference and sets the **preview's** `padding-bottom` to it
   (`FIELD_MARGIN`);
 - scrolls the field into view only when it really grew;
 - puts the padding back on close.
+
+It is the preview, not the block, because the preview is a scroller:
+`overflow-x: auto` makes its `overflow-y` auto as well. Padding the block left
+the field hanging past the preview's own bottom, so `scrollIntoView` scrolled
+the *preview* too, which moved the field, which changed the room measured. The
+pad flipped between two values and every flip scrolled the editor again: in a
+scrolled document the page crept down a few pixels a frame for as long as the
+field was open. For the same reason `place()` adds the preview's `scrollTop` as
+well as its `scrollLeft`. `tests/browser/kanban-compose.browser.test.ts` ("holds
+still while it grows…") pins it.
 
 It takes the rect as a *function* when the caller has one
 (`spec.rect: DOMRect | (() => DOMRect)`, reported through `onPlaced`) and is
