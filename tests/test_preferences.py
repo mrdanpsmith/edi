@@ -38,9 +38,10 @@ def test_a_value_survives_a_new_store_over_the_same_file(prefs, tmp_path):
     prefs.set("zoomFactor", 1.5)
     prefs.set("toolbarVisible", False)
     prefs.set("hoverBand", False)
+    prefs.set("gitHistory", False)
 
     reopened = Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
-    assert reopened.all() == {"zoomFactor": 1.5, "toolbarVisible": False, "hoverBand": False}
+    assert reopened.all() == {"zoomFactor": 1.5, "toolbarVisible": False, "hoverBand": False, "gitHistory": False}
 
 
 def _in_a_fresh_interpreter(path, expression):
@@ -76,11 +77,12 @@ def test_a_write_reaches_the_file_and_the_next_process_reads_it(tmp_path):
     _in_a_fresh_interpreter(
         path,
         "[store.set(name, value) for name, value in"
-        " [('zoomFactor', 1.5), ('toolbarVisible', False), ('hoverBand', False)]] or 'written'",
+        " [('zoomFactor', 1.5), ('toolbarVisible', False), ('hoverBand', False), ('gitHistory', False)]]"
+        " or 'written'",
     )
     # A separate process, so nothing of this one's cache is involved.
     assert _in_a_fresh_interpreter(path, "store.all()") == json.dumps(
-        {"zoomFactor": 1.5, "toolbarVisible": False, "hoverBand": False}, sort_keys=True
+        {"zoomFactor": 1.5, "toolbarVisible": False, "hoverBand": False, "gitHistory": False}, sort_keys=True
     )
 
 

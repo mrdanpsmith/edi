@@ -4,6 +4,7 @@ import { invoke, showError } from './bridge'
 import { blockModeFor, interactionLabels, type BlockMode } from './block-modes'
 import { UNTITLED } from './files'
 import { isHoverBandEnabled } from './hoverBand'
+import { currentPreferences } from './preferences'
 import { getActive, getState, isAnyDirty } from './state'
 import { canZoomIn, canZoomOut, DEFAULT_ZOOM } from './zoom'
 import type { BlockEditor } from './editor'
@@ -184,6 +185,7 @@ function syncMenuState(ctx: AppContext): void {
     canRename: Boolean(active?.path),
     toolbarVisible: ctx.toolbar?.isVisible() ?? true,
     hoverBand: isHoverBandEnabled(),
+    gitHistory: currentPreferences().gitHistory,
     zoomFactor: ctx.documentZoom,
     canZoomIn: canZoomIn(ctx.documentZoom),
     canZoomOut: canZoomOut(ctx.documentZoom),

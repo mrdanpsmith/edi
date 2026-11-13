@@ -11,7 +11,7 @@ import { encryptSelection } from './encrypt'
 import { NEW_ICON, OPEN_ICON, PRINT_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
 import { applyZoom, clampZoom, DEFAULT_ZOOM, zoomIn, zoomOut } from './zoom'
-import { currentPreferences } from './preferences'
+import { currentPreferences, savePreference } from './preferences'
 import { applyHoverBand, isHoverBandEnabled, setHoverBand } from './hoverBand'
 import { documentFunctionsFor } from './formulaDefs'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
@@ -200,6 +200,12 @@ function toggleToolbar(ctx: AppContext): void {
 
 function toggleHoverBand(ctx: AppContext): void {
   setHoverBand(!isHoverBandEnabled())
+  ctx.syncMenuState()
+}
+
+/** File › Include Git Commits in History: read when Version History next opens. */
+function toggleGitHistory(ctx: AppContext): void {
+  savePreference('gitHistory', !currentPreferences().gitHistory)
   ctx.syncMenuState()
 }
 
@@ -466,6 +472,7 @@ export function init(roots: AppRoots): () => void {
     print: () => void files.printDocument(),
     toggleToolbar: () => toggleToolbar(ctx),
     toggleHoverBand: () => toggleHoverBand(ctx),
+    toggleGitHistory: () => toggleGitHistory(ctx),
     zoomIn: () => zoom.set(zoomIn(ctx.documentZoom)),
     zoomOut: () => zoom.set(zoomOut(ctx.documentZoom)),
     zoomReset: () => zoom.set(DEFAULT_ZOOM),

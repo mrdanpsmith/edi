@@ -7,7 +7,7 @@ the Python ↔ TypeScript boundary as bare strings:
   into `MenuCommands` in `src/menus.ts`;
 - **bridge methods** — the `invoke('…')`/`invokeStream('…')` names against
   `Bridge._handlers` in `backend/bridge.py`;
-- **the three preference defaults**;
+- **the preference defaults**;
 - **bridge error codes** — the `code` an error reply may carry beside its
   message (`errorCodes`), read on the page as `BridgeError.code`.
   `notPermitted` is a file access the user never handed to Edi (see

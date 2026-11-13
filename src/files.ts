@@ -66,17 +66,49 @@ export async function writeTextFile(
   await invoke('writeTextFile', { path, content, history: options.history ?? false })
 }
 
-/** One saved version of a document, as `listHistory` reports it. */
+/**
+ * Where an Edi version falls among a git-tracked document's commits:
+ * `uncommitted` after the newest, `between` two of them, `beforeGit` before the
+ * file's first commit. Absent when the document has no git history.
+ */
+export type HistorySection = 'uncommitted' | 'between' | 'beforeGit'
+
+/** One version of a document, as `listHistory` reports it. */
 export interface HistoryVersion {
   id: string
   /** Seconds since the epoch. */
   time: number
   message: string
+  /** Edi's own snapshot, or a commit in the git repository the document is in. */
+  source?: 'edi' | 'git'
+  /** A commit's author. */
+  author?: string
+  /** A commit's short id. */
+  short?: string
+  section?: HistorySection
+  /** For a `between` version, the id of the commit it follows (`''` when that is beyond the walk). */
+  group?: string
 }
 
-/** A document's saved versions, newest first. */
-export async function listHistory(path: string): Promise<HistoryVersion[]> {
-  return invoke<HistoryVersion[]>('listHistory', { path })
+/** What the walk of a document's git history found, when it has one. */
+export interface GitWalk {
+  /** The walk reached the file's first commit. */
+  complete: boolean
+  /** How many commits it looked at. */
+  walked: number
+}
+
+export interface HistoryList {
+  versions: HistoryVersion[]
+  git: GitWalk | null
+}
+
+/**
+ * A document's versions, newest first. With `git`, a document tracked by git
+ * also lists the commits that changed it (`backend/githistory.py`).
+ */
+export async function listHistory(path: string, options: { git?: boolean } = {}): Promise<HistoryList> {
+  return invoke<HistoryList>('listHistory', { path, git: options.git ?? false })
 }
 
 /** Forget a document's saved versions; its current file becomes the first version. */
@@ -85,8 +117,12 @@ export async function clearHistory(path: string): Promise<void> {
 }
 
 /** The markdown of one saved version. */
-export async function readHistoryVersion(path: string, id: string): Promise<string> {
-  return invoke<string>('readHistoryVersion', { path, id })
+export async function readHistoryVersion(
+  path: string,
+  id: string,
+  source: 'edi' | 'git' = 'edi',
+): Promise<string> {
+  return invoke<string>('readHistoryVersion', { path, id, source })
 }
 
 /**

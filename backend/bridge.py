@@ -505,10 +505,13 @@ class Bridge(QObject):
             self._reply_error(request_id, "Missing path")
             return
         self.grants.check_read(str(path))
+        # The page sends its `gitHistory` preference: a tracked document's
+        # commits are listed beside Edi's versions (`backend/githistory.py`).
+        use_git = bool(args.get("git", False))
 
         def work() -> None:
             try:
-                versions = history.list_versions(str(path))
+                versions = history.list_combined(str(path), use_git)
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
@@ -543,10 +546,11 @@ class Bridge(QObject):
             self._reply_error(request_id, "Missing path or version")
             return
         self.grants.check_read(str(path))
+        source = "git" if args.get("source") == "git" else "edi"
 
         def work() -> None:
             try:
-                content = history.read_version(str(path), str(version_id))
+                content = history.read_from(str(path), str(version_id), source)
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
@@ -732,6 +736,7 @@ class Bridge(QObject):
             can_copy_path=bool(args.get("canCopyPath")),
             toolbar_visible=bool(args.get("toolbarVisible")),
             hover_band=bool(args.get("hoverBand", True)),
+            git_history=bool(args.get("gitHistory", True)),
             can_rename=bool(args.get("canRename")),
             zoom_factor=float(args.get("zoomFactor") or 1.0),
             can_zoom_in=bool(args.get("canZoomIn", True)),

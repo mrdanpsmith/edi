@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openHistoryDialog, renderDiff } from './historyDialog'
-import type { HistoryVersion } from './files'
+import type { HistoryList, HistoryVersion } from './files'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -13,12 +13,14 @@ const versions: HistoryVersion[] = [
   { id: 'a'.repeat(40), time: 1_700_000_000, message: 'Renamed from old.md' },
 ]
 
+const plain = (list: HistoryVersion[]): HistoryList => ({ versions: list, git: null })
+
 function open(texts: Record<string, string>, current = 'now\n') {
-  const read = vi.fn(async (id: string) => texts[id]!)
+  const read = vi.fn(async (version: HistoryVersion) => texts[version.id]!)
   const promise = openHistoryDialog({
     name: 'notes.md',
     current,
-    list: async () => versions,
+    list: async () => plain(versions),
     read,
   })
   return { promise, read }
@@ -92,7 +94,7 @@ describe('openHistoryDialog', () => {
     openHistoryDialog({
       name: 'notes.md',
       current: 'now\n',
-      list: async () => versionsNow,
+      list: async () => plain(versionsNow),
       read: async () => 'now\n',
       clear,
     })
@@ -108,7 +110,7 @@ describe('openHistoryDialog', () => {
   })
 
   it('keeps the history when the caller declines to clear it', async () => {
-    const list = vi.fn(async () => versions)
+    const list = vi.fn(async () => plain(versions))
     openHistoryDialog({ name: 'n.md', current: '', list, read: async () => '', clear: async () => false })
     await flush()
     document.querySelector<HTMLButtonElement>('.edi-history-clear')!.click()
@@ -118,9 +120,99 @@ describe('openHistoryDialog', () => {
   })
 
   it('says so when there are no versions', async () => {
-    openHistoryDialog({ name: 'n.md', current: '', list: async () => [], read: vi.fn() })
+    openHistoryDialog({ name: 'n.md', current: '', list: async () => plain([]), read: vi.fn() })
     await flush()
     expect(document.querySelector('.edi-history-empty')!.textContent).toContain('No saved versions')
+  })
+})
+
+describe('a git-tracked document', () => {
+  const id = (c: string) => c.repeat(40)
+  const tracked: HistoryVersion[] = [
+    { id: id('e'), time: 500, message: 'Saved', source: 'edi', section: 'uncommitted' },
+    { id: id('2'), time: 400, message: 'Second commit', source: 'git', short: '2222222', author: 'Ada' },
+    { id: id('d'), time: 350, message: 'Saved', source: 'edi', section: 'between', group: id('1') },
+    { id: id('c'), time: 300, message: 'Changed outside Edi', source: 'edi', section: 'between', group: id('1') },
+    { id: id('1'), time: 200, message: 'Add notes', source: 'git', short: '1111111', author: 'Ada' },
+    { id: id('b'), time: 100, message: 'Opened in Edi', source: 'edi', section: 'beforeGit' },
+  ]
+
+  const rows = () =>
+    [...document.querySelector('.edi-history-list')!.children].map((row) =>
+      row.classList.contains('edi-history-item')
+        ? row.querySelector('.edi-history-message')!.textContent
+        : row.classList.contains('edi-history-folded')
+          ? `[${row.children.length} folded]`
+          : row.textContent,
+    )
+
+  it('groups Edi snapshots by where they fall among the commits', async () => {
+    openHistoryDialog({
+      name: 'n.md',
+      current: '',
+      list: async () => ({ versions: tracked, git: { complete: true, walked: 9 } }),
+      read: async () => 'x',
+    })
+    await flush()
+    expect(rows()).toEqual([
+      'Not committed',
+      'Saved',
+      'Second commit',
+      '2 Edi snapshots',
+      '[2 folded]',
+      'Add notes',
+      'Before git',
+      'Opened in Edi',
+    ])
+    const commit = document.querySelector('.edi-history-commit')!
+    expect(commit.querySelector('.edi-history-commit-id')!.textContent).toBe('2222222 · Ada')
+    expect(document.querySelector('.edi-history-searched')).toBeNull()
+  })
+
+  it('opens the folded snapshots, and reads a commit from git', async () => {
+    const read = vi.fn(async (version: HistoryVersion) => version.message)
+    openHistoryDialog({
+      name: 'n.md',
+      current: '',
+      list: async () => ({ versions: tracked, git: { complete: true, walked: 9 } }),
+      read,
+    })
+    await flush()
+    const folded = document.querySelector<HTMLElement>('.edi-history-folded')!
+    const toggle = document.querySelector<HTMLButtonElement>('.edi-history-fold-toggle')!
+    expect(folded.hidden).toBe(true)
+    toggle.click()
+    expect(folded.hidden).toBe(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    document.querySelector<HTMLButtonElement>('.edi-history-commit')!.click()
+    await flush()
+    expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ id: id('2'), source: 'git' }))
+  })
+
+  it('says the search stopped, rather than that there is nothing, when it found no commit', async () => {
+    openHistoryDialog({
+      name: 'n.md',
+      current: '',
+      list: async () => ({ versions: [], git: { complete: false, walked: 4475 } }),
+      read: async () => 'x',
+    })
+    await flush()
+    expect(document.querySelector('.edi-history-empty')!.textContent).toContain(
+      `most recent ${(4475).toLocaleString()} commits searched`,
+    )
+  })
+
+  it('says how far it searched when the walk stopped early', async () => {
+    openHistoryDialog({
+      name: 'n.md',
+      current: '',
+      list: async () => ({ versions: tracked.slice(0, 2), git: { complete: false, walked: 1200 } }),
+      read: async () => 'x',
+    })
+    await flush()
+    expect(document.querySelector('.edi-history-searched')!.textContent).toBe(
+      `Searched the most recent ${(1200).toLocaleString()} commits`,
+    )
   })
 })
 

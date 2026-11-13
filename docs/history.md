@@ -63,13 +63,98 @@ ref updates and folder moves.
 
 | Bridge method | Returns |
 | --- | --- |
-| `listHistory({path})` | `[{id, time, message}]`, newest first. `time` is in epoch seconds. |
-| `readHistoryVersion({path, id})` | The version's text, decoded the way `readTextFile` decodes a file (`utf-8-sig`, `\n` line endings). |
+| `listHistory({path, git})` | `{versions, git}`. `versions` is newest first, each `{id, time, message, source}`; `time` is in epoch seconds and `source` is `"edi"` or `"git"`. With `git: true`, a tracked document's commits are included (see below) and `git` is `{complete, walked}`; otherwise `git` is `null`. |
+| `readHistoryVersion({path, id, source})` | The version's text, decoded the way `readTextFile` decodes a file (`utf-8-sig`, `\n` line endings). `source` says which history `id` is from; it defaults to `"edi"`. |
 
 Both methods require `grants.check_read(path)`. A document's past versions may
 hold text that has since been deleted, so they are no more readable than the
 document itself (see `PathGrants` in `backend/bridge.py`). `id` must be a
-40-hex commit id, and is looked up only in that document's repository.
+40-hex commit id, and is looked up only in that document's repository: Edi's
+own, or for `source: "git"` the repository the document is in.
+
+## Documents tracked by git
+
+A document in a git repository already has a history: the commits that changed
+it. When **File › Include Git Commits in History** is on (the `gitHistory`
+preference, on by default), Version History lists those commits beside Edi's
+own versions. The reader is `backend/githistory.py`; the merge is
+`history.list_combined`.
+
+Edi keeps recording its own versions of a tracked document exactly as before.
+Git only sees commits, and an agent may write a file many times between two of
+them, so Edi's versions are the only record of those states.
+
+### What counts as tracked
+
+A document is tracked when it is in the tree of the `HEAD` commit of the
+nearest repository above it (a `.git` folder, or a `.git` file for a worktree
+or a submodule). These have no git history here, and Version History lists
+Edi's versions alone:
+
+- untracked or ignored files, and a file staged but never committed;
+- a repository with no commits yet, or one dulwich can't read;
+- a file stored in git LFS: the commits hold only a pointer to it.
+
+### Reading the repository
+
+**Read-only.** Edi never commits, stages or writes into the repository.
+
+**dulwich, not `git`.** The repository is read with dulwich. A repository is
+content from anywhere, and its config can make `git` run programs
+(`core.fsmonitor`, textconv, an external diff), while dulwich only reads
+objects. dulwich doesn't read the commit-graph index, so it is 10–20× slower
+than `git log`, which is why the walk has limits.
+
+**The walk** follows `git log -- <path>`:
+
+- newest first, from `HEAD`, so only the current branch's history;
+- at a merge, it follows the parent the file came from (history
+  simplification);
+- each lookup goes one tree per folder of the path rather than diffing whole
+  trees;
+- it stops on each line of history where the file doesn't exist yet. A file
+  deleted and later added again is followed back only to that last add.
+
+It stops after `LIMIT` (100) commits that changed the file, or after
+`BUDGET_S` (3) seconds. The dialog then says how many commits it searched.
+
+**Speed, measured** on a 108k-commit, 2.3 GB repository: 200–550 ms for files
+that changed recently, 0.8 s for a file from the repository's first years with
+the pack files in the disk cache, 1.2 s without. Merge simplification is why it
+is that fast: such a walk visits about 10k of the 108k commits.
+
+**Cache.** A walk's result is kept per document until the repository's `HEAD`
+moves, for up to 64 documents. Reopening the dialog takes a few milliseconds.
+Opening a document does no git work at all.
+
+### One timeline
+
+The list is newest first, by when each version entered its history (a commit's
+commit time; it shows the author time, as `git log` does). A commit row shows
+its message's first line, its short id and its author. Each of Edi's versions
+falls into a section by where it lies among the commits:
+
+| Section | Where it lies | Shown |
+| --- | --- | --- |
+| `uncommitted` | after the newest commit | under "Not committed" |
+| `between` | between two commits | folded into one "N Edi snapshots" row, which opens them |
+| `beforeGit` | before the file's first commit, which git knows nothing of | under "Before git" |
+
+A version older than the oldest commit an unfinished walk reached is
+`between`, with `group: ""`: there may be commits before it that the walk
+didn't get to.
+
+**Folding.** One of Edi's versions whose text is the commit just before it, or
+the commit just after it, *is* that commit (opened right after a commit, or
+saved and then committed), and is left out of the list. The comparison ignores
+a byte-order mark and `\r\n` line endings, which git's `core.autocrlf` can
+introduce. Nothing is removed from the store: the folding is only what the
+dialog shows.
+
+**A document moved into a repository.** Its Edi history goes with it: Edi's
+rename moves it, and a move outside Edi is reattached as usual. Once it is
+committed, its earlier versions are `beforeGit` and stay in view. They exist
+nowhere else.
 
 ## Restore is an edit, not a revert
 
@@ -108,6 +193,9 @@ never its plaintext.
   suite never writes into the developer's real history store. Tests that need
   their own store set it with `monkeypatch`.
 - `tests/test_history.py` covers the store.
+- `tests/test_githistory.py` covers reading a tracked document's commits and
+  the one timeline, against throwaway repositories made with dulwich in
+  `tmp_path`.
 - `tests/test_bridge.py` covers the bridge wiring and grants.
 - `src/historyDialog.test.ts` and `src/editor-replacemarkdown.test.ts` cover
   the page.
@@ -148,4 +236,6 @@ These are not implemented yet:
 - automatic pruning (by age or by count);
 - version messages the reader writes;
 - remotes;
-- history for documents outside the grants.
+- history for documents outside the grants;
+- following a file across a rename in git (`git log --follow`), and loading
+  commits beyond the walk's limits.

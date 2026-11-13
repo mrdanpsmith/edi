@@ -757,6 +757,18 @@ def test_view_menu_hover_band_action_invokes_js_command(visible, qtbot):
     )
 
 
+def test_file_menu_git_history_action_invokes_js_command_and_follows_the_page(visible, qtbot):
+    action = _menu_action(visible._file_menu, "Include &Git Commits in History")
+    labels = [a.text() for a in visible._file_menu.actions()]
+    # It qualifies Version History, so it sits directly under it.
+    assert labels.index(action.text()) == labels.index("Version &History…") + 1
+    _assert_menu_action_sends_command(visible, qtbot, action, "toggleGitHistory")
+    visible.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True)
+    assert action.isChecked() is True
+    visible.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True, git_history=False)
+    assert action.isChecked() is False
+
+
 def test_update_menu_state_reports_the_hover_band(visible):
     """The checkmark follows the page's stored answer, and on by default.
 
@@ -4871,6 +4883,7 @@ def test_preferences_reach_the_page_before_its_own_bundle_runs(window):
         "zoomFactor": 1.0,
         "toolbarVisible": True,
         "hoverBand": True,
+        "gitHistory": True,
     }, seen
     # And the page acted on it rather than merely holding it: 100% by default,
     # the toolbar row shown, the band drawn.

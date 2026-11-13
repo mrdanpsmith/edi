@@ -3,16 +3,18 @@
 The app's preferences live in `QSettings` (`backend/preferences.py`), beside
 the recent-files list, in `~/.config/Edi/Edi.conf`.
 
-There are three:
+There are four:
 
 - `zoomFactor`;
 - `toolbarVisible`;
-- `hoverBand`.
+- `hoverBand`;
+- `gitHistory`: Version History lists a git-tracked document's commits
+  ([history.md](history.md)).
 
-The shipped defaults are 100%, on and on. They are declared in both `DEFAULTS`
+The shipped defaults are 100%, on, on and on. They are declared in both `DEFAULTS`
 and `src/preferences.ts`'s `DEFAULT_PREFERENCES`, and both are checked against
 `shared/edi-contract.json`'s `preferences` section by `tests/test_contract.py`
-and `src/contract.test.ts`. That manifest is where the three values are written
+and `src/contract.test.ts`. That manifest is where the four values are written
 down once.
 
 ## Why not localStorage

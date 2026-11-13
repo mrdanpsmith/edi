@@ -28,6 +28,7 @@
     "save": true,
     "saveAs": true,
     "selectAll": true,
+    "toggleGitHistory": true,
     "toggleHoverBand": true,
     "toggleToolbar": true,
     "undo": true,
@@ -83,7 +84,8 @@
   "preferences": {
     "zoomFactor": 1.0,
     "toolbarVisible": true,
-    "hoverBand": true
+    "hoverBand": true,
+    "gitHistory": true
   },
   "errorCodes": {
     "changedOnDisk": true,

@@ -32,6 +32,8 @@ from dulwich.objects import Blob, Commit, Tree
 from dulwich.refs import Ref
 from dulwich.repo import Repo
 
+from . import githistory
+
 log = logging.getLogger(__name__)
 
 # Overrides the store's location; the test suite points it at a throwaway folder.
@@ -302,6 +304,11 @@ def _reattach(path: str) -> None:
 
 def list_versions(path: str) -> list[dict]:
     """The document's versions, newest first: ``{id, time, message}``."""
+    return [version for version, _data in _edi_versions(path)]
+
+
+def _edi_versions(path: str) -> list[tuple[dict, bytes]]:
+    """Edi's versions of the document, newest first, each with its bytes."""
     with _lock:
         if not (repo_dir(path) / "HEAD").is_file():
             _reattach(path)
@@ -315,14 +322,112 @@ def list_versions(path: str) -> list[dict]:
             versions = []
             for entry in repo.get_walker(include=[head.id]):
                 commit = entry.commit
-                versions.append(
-                    {
-                        "id": commit.id.decode("ascii"),
-                        "time": commit.commit_time,
-                        "message": commit.message.decode("utf-8", "replace").strip(),
-                    }
-                )
+                version = {
+                    "id": commit.id.decode("ascii"),
+                    "time": commit.commit_time,
+                    "message": commit.message.decode("utf-8", "replace").strip(),
+                }
+                versions.append((version, _blob_of(repo, commit).data))
             return versions
+
+
+def _comparable(data: bytes) -> bytes:
+    """A file's bytes with the differences git itself may introduce removed: a
+    byte-order mark and ``\\r\\n`` line endings (``core.autocrlf``)."""
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.replace(b"\r\n", b"\n")
+
+
+def list_combined(path: str, use_git: bool = True) -> dict:
+    """Edi's versions of the document, and its git commits when it is tracked.
+
+    Returns ``{versions, git}``. Each version has ``id``, ``time``, ``message``
+    and ``source`` (``"edi"`` or ``"git"``); a git one also has ``author`` and
+    ``short``. ``git`` is ``None`` for a document without git history, else
+    ``{complete, walked}`` from the walk (``backend/githistory.py``).
+
+    When there are commits, each of Edi's versions gets a ``section``, by where
+    it falls among them:
+
+    - ``uncommitted``: after the newest commit;
+    - ``between``: between two commits, or older than the commits the walk
+      reached (``group`` is the id of the commit it follows, or ``""``);
+    - ``beforeGit``: before the file's first commit, the stretch git knows
+      nothing of.
+
+    One of Edi's versions whose text is the commit just before it or just after
+    it (line endings aside) is that commit, and is left out. Nothing is removed
+    from the store: this is only what Version History shows. The list is newest
+    first, by when each version entered its history.
+    """
+    edi = _edi_versions(path)
+    found = githistory.history(path) if use_git else None
+    if found is None or not found.versions:
+        return {
+            "versions": [{**version, "source": "edi"} for version, _data in edi],
+            "git": None if found is None else {"complete": found.complete, "walked": found.walked},
+        }
+    commits = found.versions  # newest first
+    texts: dict[str, bytes] = {}
+
+    def text_of(index: int) -> bytes:
+        commit = commits[index]
+        if commit.id not in texts:
+            try:
+                texts[commit.id] = _comparable(githistory.read(path, commit.id))
+            except Exception:  # noqa: BLE001 — an unreadable commit folds nothing
+                texts[commit.id] = b""
+        return texts[commit.id]
+
+    entries: list[tuple[int, int, dict]] = []
+    for order, commit in enumerate(commits):
+        entries.append(
+            (
+                commit.committed,
+                -order,
+                {
+                    "id": commit.id,
+                    "time": commit.authored,
+                    "message": commit.message,
+                    "source": "git",
+                    "author": commit.author,
+                    "short": commit.id[:7],
+                },
+            )
+        )
+    for order, (version, data) in enumerate(edi):
+        when = version["time"]
+        # The newest commit at or before this version, and the oldest after it.
+        base = next((i for i, commit in enumerate(commits) if commit.committed <= when), None)
+        after = (base if base is not None else len(commits)) - 1
+        mine = _comparable(data)
+        if (base is not None and text_of(base) == mine) or (after >= 0 and text_of(after) == mine):
+            continue
+        entry: dict = {**version, "source": "edi"}
+        if after < 0:
+            entry["section"] = "uncommitted"
+        elif base is None and found.complete:
+            entry["section"] = "beforeGit"
+        else:
+            entry["section"] = "between"
+            entry["group"] = commits[base].id if base is not None else ""
+        # An Edi version sorts after a commit made in the same second: the
+        # commit was made from it.
+        entries.append((when, -len(commits) - order, entry))
+    entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return {
+        "versions": [entry for _when, _order, entry in entries],
+        "git": {"complete": found.complete, "walked": found.walked},
+    }
+
+
+def read_from(path: str, version_id: str, source: str = "edi") -> str:
+    """The text of one version from either history, decoded like a file."""
+    if source == "git":
+        text = githistory.read(path, version_id).decode("utf-8-sig")
+        return text.replace("\r\n", "\n")
+    return read_version(path, version_id)
 
 
 def read_version(path: str, version_id: str) -> str:

@@ -298,6 +298,7 @@ class MainWindow(QMainWindow):
         self._print_action = None
         self._copy_path_action = None
         self._history_action = None
+        self._git_history_action = None
         self._rename_action = None
         self._toolbar_action = None
         self._hover_band_action = None
@@ -490,6 +491,16 @@ class MainWindow(QMainWindow):
         self._history_action.setEnabled(False)
         self._link_command(self._history_action, "versionHistory")
         file_menu.addAction(self._history_action)
+
+        # Whether Version History lists a git-tracked document's commits beside
+        # Edi's versions (`backend/githistory.py`). A blind toggle like View ›
+        # Hover Band: the page owns the persisted value, and the checkmark
+        # arrives in the next `setMenuState`.
+        self._git_history_action = QAction("Include &Git Commits in History", self)
+        self._git_history_action.setCheckable(True)
+        self._git_history_action.setChecked(True)
+        self._link_command(self._git_history_action, "toggleGitHistory")
+        file_menu.addAction(self._git_history_action)
 
         # The whole store, not one document: the shell's own dialog, never a
         # page command, so nothing running in the page can wipe every history.
@@ -758,7 +769,10 @@ class MainWindow(QMainWindow):
         can_zoom_in: bool = True,
         can_zoom_out: bool = True,
         has_document: bool = False,
+        git_history: bool = True,
     ) -> None:
+        if self._git_history_action is not None:
+            self._git_history_action.setChecked(git_history)
         for action in (self._export_action, self._print_action):
             if action is not None:
                 action.setEnabled(has_document)

@@ -1,5 +1,5 @@
 import { diffLines } from 'diff'
-import type { HistoryVersion } from './files'
+import type { HistoryList, HistoryVersion } from './files'
 
 /** Runs of unchanged lines longer than this are folded to a count. */
 const CONTEXT = 3
@@ -9,8 +9,8 @@ export interface HistoryDialogOptions {
   name: string
   /** The markdown in the editor now, which every version is compared with. */
   current: string
-  list: () => Promise<HistoryVersion[]>
-  read: (id: string) => Promise<string>
+  list: () => Promise<HistoryList>
+  read: (version: HistoryVersion) => Promise<string>
   /**
    * Forget the document's saved versions, after the caller has asked. Resolves
    * whether it did; the dialog then shows the (fresh) history again.
@@ -108,14 +108,14 @@ export function openHistoryDialog(options: HistoryDialogOptions): Promise<string
     }
 
     const select = async (version: HistoryVersion, item: HTMLElement): Promise<void> => {
-      for (const other of list.children) other.setAttribute('aria-selected', 'false')
+      for (const other of list.querySelectorAll('.edi-history-item')) other.setAttribute('aria-selected', 'false')
       item.setAttribute('aria-selected', 'true')
       selected = null
       restore.disabled = true
       const mine = ++request
       show('Loading…')
       try {
-        const text = await options.read(version.id)
+        const text = await options.read(version)
         if (mine !== request) return
         selected = { id: version.id, text }
         restore.disabled = text === options.current
@@ -150,39 +150,124 @@ export function openHistoryDialog(options: HistoryDialogOptions): Promise<string
       list.replaceChildren()
       show('Loading…')
       options.list().then(
-        (versions) => listVersions(versions),
+        (history) => listVersions(history),
         (error: unknown) => {
           show(`Could not read the history: ${error instanceof Error ? error.message : String(error)}`)
         },
       )
     }
 
-    const listVersions = (versions: HistoryVersion[]): void => {
+    const listVersions = (history: HistoryList): void => {
+      const { versions } = history
       if (versions.length === 0) {
-        show('No saved versions yet. Each save of this document records one.')
+        show(
+          history.git && !history.git.complete
+            ? `No versions yet, and no commit of this file in the most recent ${history.git.walked.toLocaleString()} commits searched.`
+            : 'No saved versions yet. Each save of this document records one.',
+        )
         return
       }
-      for (const version of versions) {
-        const item = document.createElement('button')
-        item.type = 'button'
-        item.className = 'edi-history-item'
-        item.setAttribute('role', 'option')
-        item.setAttribute('aria-selected', 'false')
-        const when = document.createElement('span')
-        when.className = 'edi-history-time'
-        when.textContent = new Date(version.time * 1000).toLocaleString()
-        const what = document.createElement('span')
-        what.className = 'edi-history-message'
-        what.textContent = version.message
-        item.append(when, what)
+      const itemFor = (version: HistoryVersion): HTMLButtonElement => {
+        const item = versionItem(version)
         item.addEventListener('click', () => void select(version, item))
-        list.append(item)
+        return item
       }
-      void select(versions[0]!, list.firstElementChild as HTMLElement)
+      renderVersionList(list, versions, itemFor)
+      if (history.git && !history.git.complete) {
+        const more = document.createElement('div')
+        more.className = 'edi-history-heading edi-history-searched'
+        more.textContent = `Searched the most recent ${history.git.walked.toLocaleString()} commits`
+        list.append(more)
+      }
+      const first = list.querySelector<HTMLButtonElement>('.edi-history-item')!
+      void select(versions[0]!, first)
     }
 
     load()
   })
+}
+
+/** One version in the list: when, what, and for a commit its id and author. */
+function versionItem(version: HistoryVersion): HTMLButtonElement {
+  const item = document.createElement('button')
+  item.type = 'button'
+  item.className = version.source === 'git' ? 'edi-history-item edi-history-commit' : 'edi-history-item'
+  item.setAttribute('role', 'option')
+  item.setAttribute('aria-selected', 'false')
+  const when = document.createElement('span')
+  when.className = 'edi-history-time'
+  when.textContent = new Date(version.time * 1000).toLocaleString()
+  const what = document.createElement('span')
+  what.className = 'edi-history-message'
+  what.textContent = version.message
+  item.append(when, what)
+  if (version.source === 'git') {
+    const who = document.createElement('span')
+    who.className = 'edi-history-commit-id'
+    who.textContent = [version.short, version.author].filter(Boolean).join(' · ')
+    item.append(who)
+  }
+  return item
+}
+
+function heading(text: string): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'edi-history-heading'
+  row.textContent = text
+  return row
+}
+
+/**
+ * Lay out a document's versions, newest first. A document without git history
+ * is a plain list. With commits, Edi's versions are grouped by where they fall:
+ * those not yet committed under "Not committed", those between two commits
+ * folded into one row that opens them, and those from before the file's first
+ * commit under "Before git".
+ */
+export function renderVersionList(
+  list: HTMLElement,
+  versions: HistoryVersion[],
+  itemFor: (version: HistoryVersion) => HTMLElement,
+): void {
+  let section: string | undefined
+  let fold: { toggle: HTMLButtonElement; rows: HTMLElement; count: number } | null = null
+  const closeFold = (): void => {
+    if (!fold) return
+    const { toggle, count } = fold
+    toggle.textContent = `${count} Edi snapshot${count === 1 ? '' : 's'}`
+    fold = null
+  }
+  for (const version of versions) {
+    const where = version.source === 'git' ? 'git' : version.section
+    if (where !== 'between') closeFold()
+    if (where !== section) {
+      if (where === 'uncommitted') list.append(heading('Not committed'))
+      if (where === 'beforeGit') list.append(heading('Before git'))
+      section = where
+    }
+    if (where === 'between') {
+      if (!fold) {
+        const toggle = document.createElement('button')
+        toggle.type = 'button'
+        toggle.className = 'edi-history-fold-toggle'
+        toggle.setAttribute('aria-expanded', 'false')
+        const rows = document.createElement('div')
+        rows.className = 'edi-history-folded'
+        rows.hidden = true
+        toggle.addEventListener('click', () => {
+          rows.hidden = !rows.hidden
+          toggle.setAttribute('aria-expanded', String(!rows.hidden))
+        })
+        list.append(toggle, rows)
+        fold = { toggle, rows, count: 0 }
+      }
+      fold.rows.append(itemFor(version))
+      fold.count++
+      continue
+    }
+    list.append(itemFor(version))
+  }
+  closeFold()
 }
 
 /** A line diff from `before` to `after`: `after`'s own lines are the added ones. */

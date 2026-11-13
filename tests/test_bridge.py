@@ -65,7 +65,9 @@ class StubWindow(QObject):
         can_zoom_in=True,
         can_zoom_out=True,
         has_document=False,
+        git_history=True,
     ) -> None:
+        self.git_history = git_history
         self.has_document = has_document
         self.can_revert = can_revert
         self.can_copy_path = can_copy_path
@@ -260,6 +262,16 @@ def test_set_menu_state_defaults_the_hover_band_on(bridge):
     )
     _wait_for(lambda: result.get(2))
     assert window.hover_band is False
+
+
+def test_set_menu_state_defaults_git_history_on_and_passes_it_through(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "setMenuState", {"toolbarVisible": True})
+    _wait_for(lambda: result.get(1))
+    assert window.git_history is True
+    _invoke(bridge_obj, "setMenuState", {"toolbarVisible": True, "gitHistory": False}, request_id=2)
+    _wait_for(lambda: result.get(2))
+    assert window.git_history is False
 
 
 def test_get_preferences_returns_the_whole_store(bridge):
@@ -1038,11 +1050,32 @@ def history_store(tmp_path, monkeypatch):
     monkeypatch.setenv("EDI_HISTORY_DIR", str(tmp_path / "history"))
 
 
-def _versions(bridge_obj, result, path, request_id):
-    _invoke(bridge_obj, "listHistory", {"path": str(path)}, request_id)
+def _versions(bridge_obj, result, path, request_id, git=False):
+    _invoke(bridge_obj, "listHistory", {"path": str(path), "git": git}, request_id)
     message = _wait_for(lambda: result.get(request_id))
     assert message["ok"] is True, message
-    return message["data"]
+    return message["data"]["versions"]
+
+
+def test_a_tracked_document_lists_its_commits_only_when_the_page_asks(bridge, tmp_path, history_store):
+    from dulwich import porcelain
+    from dulwich.repo import Repo
+
+    bridge_obj, _window, result = bridge
+    work = tmp_path / "project"
+    work.mkdir()
+    Repo.init(str(work)).close()
+    doc = work / "notes.md"
+    doc.write_text("committed\n", encoding="utf-8")
+    porcelain.add(str(work), [str(doc)])
+    commit_id = porcelain.commit(str(work), message=b"Add notes", author=b"A <a@x>", committer=b"A <a@x>").decode()
+    bridge_obj.grants.allow_write(str(doc))
+
+    assert [v["source"] for v in _versions(bridge_obj, result, doc, 150, git=True)] == ["git"]
+    assert _versions(bridge_obj, result, doc, 151, git=False) == []
+
+    _invoke(bridge_obj, "readHistoryVersion", {"path": str(doc), "id": commit_id, "source": "git"}, 152)
+    assert _wait_for(lambda: result.get(152)) == {"id": 152, "ok": True, "data": "committed\n"}
 
 
 def test_a_save_asked_to_keep_a_version_records_one_and_an_export_does_not(

@@ -70,14 +70,27 @@ describe('bridge wrappers', () => {
   })
 
   it('listHistory and readHistoryVersion pass the path (and version) to the bridge', async () => {
-    const versions = [{ id: 'a'.repeat(40), time: 1, message: 'Saved' }]
-    vi.mocked(invoke).mockResolvedValueOnce(versions).mockResolvedValueOnce('old text')
-    await expect(listHistory('/tmp/a.md')).resolves.toEqual(versions)
+    const history = { versions: [{ id: 'a'.repeat(40), time: 1, message: 'Saved' }], git: null }
+    vi.mocked(invoke).mockResolvedValueOnce(history).mockResolvedValueOnce('old text')
+    await expect(listHistory('/tmp/a.md')).resolves.toEqual(history)
     await expect(readHistoryVersion('/tmp/a.md', 'a'.repeat(40))).resolves.toBe('old text')
-    expect(invoke).toHaveBeenNthCalledWith(1, 'listHistory', { path: '/tmp/a.md' })
+    expect(invoke).toHaveBeenNthCalledWith(1, 'listHistory', { path: '/tmp/a.md', git: false })
     expect(invoke).toHaveBeenNthCalledWith(2, 'readHistoryVersion', {
       path: '/tmp/a.md',
       id: 'a'.repeat(40),
+      source: 'edi',
+    })
+  })
+
+  it('listHistory asks for git commits, and readHistoryVersion reads one', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ versions: [], git: null }).mockResolvedValueOnce('committed')
+    await listHistory('/tmp/a.md', { git: true })
+    await readHistoryVersion('/tmp/a.md', 'c'.repeat(40), 'git')
+    expect(invoke).toHaveBeenNthCalledWith(1, 'listHistory', { path: '/tmp/a.md', git: true })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'readHistoryVersion', {
+      path: '/tmp/a.md',
+      id: 'c'.repeat(40),
+      source: 'git',
     })
   })
 

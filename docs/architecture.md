@@ -141,7 +141,7 @@ bridge methods and preference defaults are declared in
 | `src/styles.css` | Application stylesheet entry; imports the component sheets in cascade order. |
 | `src/styles/` | One stylesheet per component (`tabs`, `toolbar`, `block-controls`, `tables`, `mermaid`, …). |
 | `src/docs/` | Markdown used by the in-app Help guide. |
-| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, version history (`history.py`), code execution, table import, printing, preferences and theming. |
+| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, version history (`history.py`, and a tracked document's git commits in `githistory.py`), code execution, table import, printing, preferences and theming. |
 | `shared/edi-contract.json` | Single source of truth for menu-command, bridge-method and preference names. |
 | `tests/` | Python tests, including the real-WebEngine tests in `tests/window/test_window.py` and helpers in `tests/mermaid_render.py`. |
 | `scripts/` | Developer, build, packaging and release scripts. |

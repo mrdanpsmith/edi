@@ -29,6 +29,8 @@ export interface Preferences {
   zoomFactor: number
   toolbarVisible: boolean
   hoverBand: boolean
+  /** Version History lists a git-tracked document's commits beside Edi's versions. */
+  gitHistory: boolean
 }
 
 /**
@@ -46,6 +48,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   zoomFactor: 1,
   toolbarVisible: true,
   hoverBand: true,
+  gitHistory: true,
 } satisfies Record<PreferenceName, number | boolean>
 
 /**
@@ -61,6 +64,7 @@ function injected(): Preferences {
     zoomFactor: typeof raw.zoomFactor === 'number' && Number.isFinite(zoom) ? zoom : DEFAULT_PREFERENCES.zoomFactor,
     toolbarVisible: typeof raw.toolbarVisible === 'boolean' ? raw.toolbarVisible : DEFAULT_PREFERENCES.toolbarVisible,
     hoverBand: typeof raw.hoverBand === 'boolean' ? raw.hoverBand : DEFAULT_PREFERENCES.hoverBand,
+    gitHistory: typeof raw.gitHistory === 'boolean' ? raw.gitHistory : DEFAULT_PREFERENCES.gitHistory,
   }
 }
 

@@ -20,23 +20,23 @@ describe('preferences', () => {
     // `npm run dev` in a plain browser, and every unit test: nothing injected.
     delete window.ediPreferences
     const { currentPreferences: read, DEFAULT_PREFERENCES: defaults } = await freshPreferences()
-    expect(read()).toEqual({ zoomFactor: 1, toolbarVisible: true, hoverBand: true })
-    expect(defaults).toEqual({ zoomFactor: 1, toolbarVisible: true, hoverBand: true })
+    expect(read()).toEqual({ zoomFactor: 1, toolbarVisible: true, hoverBand: true, gitHistory: true })
+    expect(defaults).toEqual({ zoomFactor: 1, toolbarVisible: true, hoverBand: true, gitHistory: true })
   })
 
   it('takes the shell\'s injected snapshot as it stands', async () => {
-    window.ediPreferences = { zoomFactor: 1.5, toolbarVisible: false, hoverBand: false }
+    window.ediPreferences = { zoomFactor: 1.5, toolbarVisible: false, hoverBand: false, gitHistory: false }
     const { currentPreferences: read } = await freshPreferences()
-    expect(read()).toEqual({ zoomFactor: 1.5, toolbarVisible: false, hoverBand: false })
+    expect(read()).toEqual({ zoomFactor: 1.5, toolbarVisible: false, hoverBand: false, gitHistory: false })
   })
 
   it('takes only the keys that are the right shape', async () => {
     // A page from an older edi, or a hand-edited Edi.conf behind it: a missing
     // key and a wrongly-typed one both have to land on the default rather than
     // reaching the editor as `undefined` or as a string.
-    window.ediPreferences = { zoomFactor: '1.5', toolbarVisible: 'no' }
+    window.ediPreferences = { zoomFactor: '1.5', toolbarVisible: 'no', gitHistory: 'off' }
     const { currentPreferences: read } = await freshPreferences()
-    expect(read()).toEqual({ zoomFactor: 1, toolbarVisible: true, hoverBand: true })
+    expect(read()).toEqual({ zoomFactor: 1, toolbarVisible: true, hoverBand: true, gitHistory: true })
   })
 
   it('rejects a NaN level rather than letting it into the ladder', async () => {

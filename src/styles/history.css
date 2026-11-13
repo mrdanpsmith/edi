@@ -53,6 +53,68 @@
   color: var(--text-secondary);
 }
 
+/* A git commit: the same row, marked by a rule down its left edge. */
+.edi-history-commit {
+  box-shadow: inset 3px 0 0 var(--text-muted);
+}
+
+.edi-history-commit-id {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* "Not committed", "Before git", and the note when the walk stopped early. */
+.edi-history-heading {
+  padding: 6px 9px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.edi-history-searched {
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 0;
+}
+
+/* Edi snapshots between two commits, folded into one row that opens them. */
+.edi-history-fold-toggle {
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 5px 9px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.edi-history-fold-toggle::before {
+  content: '▸ ';
+}
+
+.edi-history-fold-toggle[aria-expanded='true']::before {
+  content: '▾ ';
+}
+
+.edi-history-folded {
+  display: flex;
+  flex-direction: column;
+}
+
+/* `display: flex` above would otherwise override the `hidden` attribute. */
+.edi-history-folded[hidden] {
+  display: none;
+}
+
+.edi-history-folded .edi-history-item {
+  padding-left: 21px;
+}
+
 .edi-history-diff {
   flex: 1;
   min-width: 0;

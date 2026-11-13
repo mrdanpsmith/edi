@@ -40,6 +40,7 @@ DEFAULTS: dict[str, Any] = {
     "zoomFactor": 1.0,
     "toolbarVisible": True,
     "hoverBand": True,
+    "gitHistory": True,
 }
 
 #: Names the page may ask to change. A name outside this set is ignored rather
@@ -71,7 +72,7 @@ def _as_float(value: Any, default: float) -> float:
     return number if number == number else default  # NaN is not a zoom level
 
 
-_COERCE = {"zoomFactor": _as_float, "toolbarVisible": _as_bool, "hoverBand": _as_bool}
+_COERCE = {"zoomFactor": _as_float, "toolbarVisible": _as_bool, "hoverBand": _as_bool, "gitHistory": _as_bool}
 
 
 class Preferences:

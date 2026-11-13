@@ -2844,6 +2844,32 @@ describe('persisted View options', () => {
     })
   })
 
+  it('toggles git commits in Version History, and Version History asks for them', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/tracked.md'])
+    mainState.readTextFile.mockResolvedValue('tracked')
+    mainState.invoke.mockImplementation((method: string) =>
+      Promise.resolve(method === 'listHistory' ? { versions: [], git: null } : undefined),
+    )
+    await loadMain()
+    expect((lastMenuState() as { gitHistory?: boolean }).gitHistory).toBe(true)
+    menu('open')
+    await flushAsync()
+    const listCalls = () => mainState.invoke.mock.calls.filter((call) => call[0] === 'listHistory')
+    menu('versionHistory')
+    await flushAsync()
+    expect(listCalls().at(-1)?.[1]).toEqual({ path: '/tmp/tracked.md', git: true })
+    document.querySelector<HTMLButtonElement>('.edi-history-dialog .edi-dialog-actions .toolbar-btn:not(.edi-history-clear)')!.click()
+    await flushAsync()
+
+    menu('toggleGitHistory')
+    await flushAsync()
+    expect(savedPreferences().gitHistory).toBe(false)
+    expect((lastMenuState() as { gitHistory?: boolean }).gitHistory).toBe(false)
+    menu('versionHistory')
+    await flushAsync()
+    expect(listCalls().at(-1)?.[1]).toEqual({ path: '/tmp/tracked.md', git: false })
+  })
+
   it('starts with the toolbar hidden when the last run hid it', async () => {
     window.ediPreferences = { toolbarVisible: false }
     await loadMain()

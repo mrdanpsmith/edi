@@ -25,6 +25,7 @@ import {
   UNTITLED,
   writeTextFile,
 } from './files'
+import { currentPreferences } from './preferences'
 import { buildExportHtml, serializeDocToHtml } from './export'
 import { parseTableFile, toMarkdownTable } from './import'
 import { copyText } from './clipboard'
@@ -380,8 +381,8 @@ export function createFileController(ctx: AppContext): FileController {
     const restored = await openHistoryDialog({
       name,
       current: ctx.blockEditor?.getMarkdown() ?? '',
-      list: () => listHistory(path),
-      read: (id) => readHistoryVersion(path, id),
+      list: () => listHistory(path, { git: currentPreferences().gitHistory }),
+      read: (version) => readHistoryVersion(path, version.id, version.source ?? 'edi'),
       clear: async () => {
         const confirmed = await confirmAction(
           `Delete every saved version of ${name}?\n\nThe document as it is on disk is kept as the first version of a new history. This cannot be undone.`,
