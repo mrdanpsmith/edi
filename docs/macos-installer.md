@@ -47,6 +47,11 @@ and on a Mac where nothing else owns Markdown that can make Edi the `.md`
 handler. The installer therefore asks before changing the association and never
 assumes.
 
+The bundle also declares a Mermaid type (`com.mrdanpsmith.edi.mermaid`, for
+`.mmd` and `.mermaid`) with Edi as its `Default` handler. Registering the
+bundle is enough for those files: nothing else on a stock Mac claims them, so
+the installer does not prompt for them.
+
 ### Prompt behaviour
 
 The installer reads the current handler before swapping the bundle, so the

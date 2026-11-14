@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  shared-mime-info package for the file types Edi opens that the system
+  database does not define. Installed as mime/packages/edi.xml, system-wide by
+  the .deb/.rpm and per-user by scripts/install-desktop.sh and the tarball's
+  install.sh; update-mime-database compiles it.
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-mermaid">
+    <comment>Mermaid diagram</comment>
+    <sub-class-of type="text/plain"/>
+    <glob pattern="*.mmd"/>
+    <glob pattern="*.mermaid"/>
+  </mime-type>
+</mime-info>

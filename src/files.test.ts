@@ -202,6 +202,8 @@ describe('isSupportedFile', () => {
     expect(isSupportedFile('/tmp/a.md')).toBe(true)
     expect(isSupportedFile('/tmp/a.markdown')).toBe(true)
     expect(isSupportedFile('/tmp/a.mermaid')).toBe(true)
+    expect(isSupportedFile('/tmp/a.mmd')).toBe(true)
+    expect(isSupportedFile('/tmp/A.MMD')).toBe(true)
   })
 
   it('rejects unsupported extensions', () => {

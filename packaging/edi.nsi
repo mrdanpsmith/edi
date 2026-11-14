@@ -37,6 +37,52 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
+
+; --- File associations --------------------------------------------------------
+; Windows 10+ will not let an installer make itself the default handler (the
+; per-user UserChoice is hash-protected), so Edi only *offers* itself: it shows
+; in Explorer's "Open with" (OpenWithProgids) and in Settings > Default apps
+; (Capabilities + RegisteredApplications), and the user picks it from there.
+; The one exception is a Mermaid extension no other app has claimed: Edi takes
+; it, like the macOS bundle's Default rank, and gives it back on uninstall.
+;
+; These live in the 64-bit registry view (the installer itself is 32-bit), so
+; Default apps finds them; the Uninstall key above keeps its existing view.
+
+!define EDI_CAPS "Software\Edi\Capabilities"
+!define EDI_APP "Software\Classes\Applications\Edi.exe"
+!define SHCNE_ASSOCCHANGED 0x08000000
+
+!macro EdiProgId PROGID DESCRIPTION
+  WriteRegStr HKLM "Software\Classes\${PROGID}" "" "${DESCRIPTION}"
+  WriteRegStr HKLM "Software\Classes\${PROGID}\DefaultIcon" "" "$INSTDIR\Edi.exe,0"
+  WriteRegStr HKLM "Software\Classes\${PROGID}\shell\open\command" "" '"$INSTDIR\Edi.exe" "%1"'
+!macroend
+
+!macro EdiOffer EXT PROGID
+  WriteRegStr HKLM "Software\Classes\${EXT}\OpenWithProgids" "${PROGID}" ""
+  WriteRegStr HKLM "${EDI_APP}\SupportedTypes" "${EXT}" ""
+  WriteRegStr HKLM "${EDI_CAPS}\FileAssociations" "${EXT}" "${PROGID}"
+!macroend
+
+!macro EdiClaimIfUnowned EXT PROGID
+  ReadRegStr $0 HKLM "Software\Classes\${EXT}" ""
+  ${If} $0 == ""
+    WriteRegStr HKLM "Software\Classes\${EXT}" "" "${PROGID}"
+  ${EndIf}
+!macroend
+
+!macro EdiUnoffer EXT PROGID
+  DeleteRegValue HKLM "Software\Classes\${EXT}\OpenWithProgids" "${PROGID}"
+  DeleteRegKey /ifempty HKLM "Software\Classes\${EXT}\OpenWithProgids"
+  ReadRegStr $0 HKLM "Software\Classes\${EXT}" ""
+  ${If} $0 == "${PROGID}"
+    DeleteRegValue HKLM "Software\Classes\${EXT}" ""
+  ${EndIf}
+  DeleteRegKey /ifempty HKLM "Software\Classes\${EXT}"
+!macroend
+
 !define MUI_ICON "${ICO}"
 !define MUI_UNICON "${ICO}"
 
@@ -74,6 +120,29 @@ Section "Edi"
     "Publisher" "Edi"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Edi" \
     "InstallLocation" "$INSTDIR"
+
+  SetRegView 64
+  !insertmacro EdiProgId "Edi.Markdown" "Markdown Document"
+  !insertmacro EdiProgId "Edi.Mermaid" "Mermaid Diagram"
+
+  WriteRegStr HKLM "${EDI_APP}" "FriendlyAppName" "Edi"
+  WriteRegStr HKLM "${EDI_APP}\shell\open\command" "" '"$INSTDIR\Edi.exe" "%1"'
+
+  WriteRegStr HKLM "${EDI_CAPS}" "ApplicationName" "Edi"
+  WriteRegStr HKLM "${EDI_CAPS}" "ApplicationDescription" \
+    "Markdown editor with live preview, code, Mermaid diagrams, and spreadsheets"
+  WriteRegStr HKLM "${EDI_CAPS}" "ApplicationIcon" "$INSTDIR\Edi.exe,0"
+  WriteRegStr HKLM "Software\RegisteredApplications" "Edi" "${EDI_CAPS}"
+
+  !insertmacro EdiOffer ".md" "Edi.Markdown"
+  !insertmacro EdiOffer ".markdown" "Edi.Markdown"
+  !insertmacro EdiOffer ".mmd" "Edi.Mermaid"
+  !insertmacro EdiOffer ".mermaid" "Edi.Mermaid"
+  !insertmacro EdiClaimIfUnowned ".mmd" "Edi.Mermaid"
+  !insertmacro EdiClaimIfUnowned ".mermaid" "Edi.Mermaid"
+  SetRegView default
+
+  System::Call 'shell32::SHChangeNotify(i ${SHCNE_ASSOCCHANGED}, i 0, i 0, i 0)'
 SectionEnd
 
 Section "Uninstall"
@@ -86,4 +155,18 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\Edi"
   Delete "$DESKTOP\Edi.lnk"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Edi"
+
+  SetRegView 64
+  !insertmacro EdiUnoffer ".md" "Edi.Markdown"
+  !insertmacro EdiUnoffer ".markdown" "Edi.Markdown"
+  !insertmacro EdiUnoffer ".mmd" "Edi.Mermaid"
+  !insertmacro EdiUnoffer ".mermaid" "Edi.Mermaid"
+  DeleteRegValue HKLM "Software\RegisteredApplications" "Edi"
+  DeleteRegKey HKLM "Software\Edi"
+  DeleteRegKey HKLM "${EDI_APP}"
+  DeleteRegKey HKLM "Software\Classes\Edi.Markdown"
+  DeleteRegKey HKLM "Software\Classes\Edi.Mermaid"
+  SetRegView default
+
+  System::Call 'shell32::SHChangeNotify(i ${SHCNE_ASSOCCHANGED}, i 0, i 0, i 0)'
 SectionEnd

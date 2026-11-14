@@ -1,6 +1,6 @@
 import { invoke } from './bridge'
 
-export const SUPPORTED_EXTENSIONS = ['md', 'markdown', 'txt', 'mermaid'] as const
+export const SUPPORTED_EXTENSIONS = ['md', 'markdown', 'txt', 'mermaid', 'mmd'] as const
 
 export const UNTITLED = 'Untitled'
 

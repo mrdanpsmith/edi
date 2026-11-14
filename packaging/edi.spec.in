@@ -32,6 +32,7 @@ cp -a %{_sourcedir}/usr %{buildroot}/
 /usr/bin/edi
 /usr/lib/edi
 /usr/share/applications/edi.desktop
+/usr/share/mime/packages/edi.xml
 /usr/share/icons/hicolor/*/apps/edi.png
 /usr/share/doc/edi/copyright
 /usr/share/doc/edi/README.md

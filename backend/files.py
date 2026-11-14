@@ -7,7 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 
-SUPPORTED_EXTENSIONS = ("md", "markdown", "txt", "mermaid")
+SUPPORTED_EXTENSIONS = ("md", "markdown", "txt", "mermaid", "mmd")
 
 
 def is_supported_extension(path: str) -> bool:

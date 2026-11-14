@@ -89,6 +89,8 @@ def test_read_text_file_rejects_unknown_extensions(tmp_path):
 def test_is_supported_extension():
     assert is_supported_extension("a.md") is True
     assert is_supported_extension("a.txt") is True
+    assert is_supported_extension("a.mermaid") is True
+    assert is_supported_extension("a.mmd") is True
     assert is_supported_extension("a.log") is False
 
 

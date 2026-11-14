@@ -7,5 +7,5 @@ Exec=@EDI_BINARY@ %U
 Icon=edi
 Terminal=false
 Categories=Utility;TextEditor;
-MimeType=text/markdown;text/x-markdown;
+MimeType=text/markdown;text/x-markdown;text/x-mermaid;
 StartupNotify=false

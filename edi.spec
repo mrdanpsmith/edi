@@ -250,6 +250,15 @@ if sys.platform == 'darwin':
                     'LSHandlerRank': 'Alternate',
                     'LSItemContentTypes': ['public.plain-text'],
                 },
+                # Mermaid diagram files (.mmd, .mermaid). macOS has no system
+                # type for them, so the declaration below supplies one. Edi is
+                # their Default handler: nothing else on a stock Mac claims them.
+                {
+                    'CFBundleTypeName': 'Mermaid Diagram',
+                    'CFBundleTypeRole': 'Editor',
+                    'LSHandlerRank': 'Default',
+                    'LSItemContentTypes': ['com.mrdanpsmith.edi.mermaid'],
+                },
             ],
             # Safety net: macOS defines this UTI already, but importing it
             # guarantees .md/.markdown resolve to it even on a system where
@@ -261,6 +270,16 @@ if sys.platform == 'darwin':
                     'UTTypeConformsTo': ['public.plain-text'],
                     'UTTypeTagSpecification': {
                         'public.filename-extension': ['md', 'markdown'],
+                    },
+                },
+                # Imported, not exported: Edi does not own the Mermaid format,
+                # so an app that exports its own type for these extensions wins.
+                {
+                    'UTTypeIdentifier': 'com.mrdanpsmith.edi.mermaid',
+                    'UTTypeDescription': 'Mermaid Diagram',
+                    'UTTypeConformsTo': ['public.plain-text'],
+                    'UTTypeTagSpecification': {
+                        'public.filename-extension': ['mmd', 'mermaid'],
                     },
                 },
             ],

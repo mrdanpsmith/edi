@@ -126,10 +126,14 @@ print_step "Assembling install tree"
 TREE="$STAGE/tree"
 mkdir -p "$TREE/usr/bin" \
   "$TREE/usr/share/applications" \
+  "$TREE/usr/share/mime/packages" \
   "$TREE/usr/share/doc/edi"
 install_bundle "$TREE/usr/lib/edi"
 ln -s ../lib/edi/edi "$TREE/usr/bin/edi"
 install -m 0644 "$ROOT/packaging/edi.desktop" "$TREE/usr/share/applications/edi.desktop"
+# shared-mime-info's file trigger (dpkg and rpm alike) runs
+# update-mime-database when a package drops a file in mime/packages.
+install -m 0644 "$ROOT/packaging/edi-mime.xml" "$TREE/usr/share/mime/packages/edi.xml"
 
 # hicolor icon set scaled from the 1024x1024 source with PySide6 (headless).
 SCALE_PY="$STAGE/scale_icons.py"
@@ -198,6 +202,7 @@ TAR_DIR="$STAGE/tgz/edi-${VER}-linux-${RPM_ARCH}"
 # The bundle sits at the archive root, so ./edi still runs it in place.
 install_bundle "$TAR_DIR"
 install -m 0644 "$ROOT/scripts/assets/edi.desktop" "$TAR_DIR/edi.desktop"
+install -m 0644 "$ROOT/packaging/edi-mime.xml" "$TAR_DIR/edi-mime.xml"
 install -m 0644 "$TREE/usr/share/icons/hicolor/512x512/apps/edi.png" "$TAR_DIR/edi.png"
 install -m 0755 "$ROOT/scripts/assets/install-tarball.sh" "$TAR_DIR/install.sh"
 cat > "$TAR_DIR/README.txt" <<EOF
@@ -216,6 +221,9 @@ print_step "Building .AppImage"
 APPDIR="$STAGE/AppDir"
 install_bundle "$APPDIR/usr/lib/edi"
 install -m 0644 "$ROOT/packaging/edi.desktop" "$APPDIR/edi.desktop"
+# For AppImage integrators (appimaged, AppImageLauncher) that install the
+# bundle's MIME packages alongside its desktop entry.
+install -D -m 0644 "$ROOT/packaging/edi-mime.xml" "$APPDIR/usr/share/mime/packages/edi.xml"
 install -m 0644 "$TREE/usr/share/icons/hicolor/512x512/apps/edi.png" "$APPDIR/edi.png"
 install -m 0755 "$ROOT/packaging/AppDir/AppRun" "$APPDIR/AppRun"
 

@@ -134,13 +134,17 @@ INFO="$APP/Contents/Info.plist"
 plutil -lint "$INFO"
 MARKDOWN_TYPE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:0:LSItemContentTypes:0' "$INFO" 2>/dev/null || true)"
 PLAIN_TYPE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:1:LSItemContentTypes:0' "$INFO" 2>/dev/null || true)"
+MERMAID_TYPE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:2:LSItemContentTypes:0' "$INFO" 2>/dev/null || true)"
 MARKDOWN_UTI="$(/usr/libexec/PlistBuddy -c 'Print :UTImportedTypeDeclarations:0:UTTypeIdentifier' "$INFO" 2>/dev/null || true)"
+MERMAID_UTI="$(/usr/libexec/PlistBuddy -c 'Print :UTImportedTypeDeclarations:1:UTTypeIdentifier' "$INFO" 2>/dev/null || true)"
 if [[ "$MARKDOWN_TYPE" != "net.daringfireball.markdown" || \
       "$PLAIN_TYPE" != "public.plain-text" || \
-      "$MARKDOWN_UTI" != "net.daringfireball.markdown" ]]; then
+      "$MERMAID_TYPE" != "com.mrdanpsmith.edi.mermaid" || \
+      "$MARKDOWN_UTI" != "net.daringfireball.markdown" || \
+      "$MERMAID_UTI" != "com.mrdanpsmith.edi.mermaid" ]]; then
   echo "error: Info.plist is missing its document types (edi.spec was not applied?)" >&2
-  echo "       CFBundleDocumentTypes: Markdown='$MARKDOWN_TYPE' plain-text='$PLAIN_TYPE'" >&2
-  echo "       UTImportedTypeDeclarations: Markdown='$MARKDOWN_UTI'" >&2
+  echo "       CFBundleDocumentTypes: Markdown='$MARKDOWN_TYPE' plain-text='$PLAIN_TYPE' Mermaid='$MERMAID_TYPE'" >&2
+  echo "       UTImportedTypeDeclarations: Markdown='$MARKDOWN_UTI' Mermaid='$MERMAID_UTI'" >&2
   exit 1
 fi
 

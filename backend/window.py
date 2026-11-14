@@ -949,7 +949,7 @@ class MainWindow(QMainWindow):
         dialog = QFileDialog(self, "Open documents")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
         dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
-        dialog.setNameFilter("Markdown documents (*.md *.markdown *.txt *.mermaid);;All files (*)")
+        dialog.setNameFilter("Markdown documents (*.md *.markdown *.txt *.mermaid *.mmd);;All files (*)")
         self._run_dialog(dialog, callback, multiple=True)
 
     def pick_typed_open_path(
@@ -1040,8 +1040,8 @@ class MainWindow(QMainWindow):
     def pick_save_path(self, default_name, callback=None) -> None:
         dialog = QFileDialog(self, "Save document")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
-        dialog.setNameFilter("Markdown documents (*.md *.markdown *.txt *.mermaid);;All files (*)")
-        if not default_name.lower().endswith((".md", ".markdown", ".txt", ".mermaid")):
+        dialog.setNameFilter("Markdown documents (*.md *.markdown *.txt *.mermaid *.mmd);;All files (*)")
+        if not default_name.lower().endswith((".md", ".markdown", ".txt", ".mermaid", ".mmd")):
             default_name = f"{default_name}.md"
         dialog.selectFile(default_name)
         self._run_dialog(dialog, callback)
@@ -1051,7 +1051,7 @@ class MainWindow(QMainWindow):
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
         dialog.setNameFilter("HTML documents (*.html *.htm);;All files (*)")
         stem = default_name
-        for ext in (".markdown", ".mermaid", ".md", ".txt"):
+        for ext in (".markdown", ".mermaid", ".mmd", ".md", ".txt"):
             if stem.lower().endswith(ext):
                 stem = stem[: -len(ext)]
                 break
@@ -1101,7 +1101,7 @@ class MainWindow(QMainWindow):
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
         dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         dialog.setNameFilter(
-            "Markdown / text files (*.md *.markdown *.txt *.mermaid *.log);;"
+            "Markdown / text files (*.md *.markdown *.txt *.mermaid *.mmd *.log);;"
             "All files (*)"
         )
         self._run_dialog(dialog, callback)

@@ -5,10 +5,12 @@
 # comes from a .desktop entry, not the window icon, so without this the app
 # shows a generic marker even though the window icon is set.
 #
-# Also registers Edi for .md files: the desktop entry advertises the
-# text/markdown and text/x-markdown MIME types (via the template), which makes
-# the app appear in the "Open With" menu. Pass --set-default to additionally
-# make Edi the system default handler for those types.
+# Also registers Edi for .md and Mermaid (.mmd, .mermaid) files: it installs
+# the text/x-mermaid MIME type (packaging/edi-mime.xml), which the system
+# database lacks, and the desktop entry advertises text/markdown,
+# text/x-markdown and text/x-mermaid (via the template), which makes the app
+# appear in the "Open With" menu. Pass --set-default to additionally make Edi
+# the system default handler for those types.
 #
 # Usage:  ./scripts/install-desktop.sh [--set-default] [path/to/edi]
 #         (path defaults to ./dist-app/edi/edi; a bundle directory means the
@@ -36,11 +38,17 @@ BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 ICON_DIR="$APP_DIR/icons/hicolor/512x512/apps"
 APPS_DIR="$APP_DIR/applications"
-mkdir -p "$ICON_DIR" "$APPS_DIR"
+MIME_DIR="$APP_DIR/mime"
+mkdir -p "$ICON_DIR" "$APPS_DIR" "$MIME_DIR/packages"
 
 install -m 0644 "$ROOT/scripts/assets/app-icon.png" "$ICON_DIR/edi.png"
 sed "s|@EDI_BINARY@|$BIN|" "$ROOT/scripts/assets/edi.desktop" > "$APPS_DIR/edi.desktop"
 chmod 0644 "$APPS_DIR/edi.desktop"
+install -m 0644 "$ROOT/packaging/edi-mime.xml" "$MIME_DIR/packages/edi.xml"
+
+if command -v update-mime-database >/dev/null 2>&1; then
+  update-mime-database "$MIME_DIR" >/dev/null 2>&1 || true
+fi
 
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "$APP_DIR/icons/hicolor" >/dev/null 2>&1 || true
@@ -54,7 +62,7 @@ if [ "$SET_DEFAULT" = 1 ]; then
     echo "error: xdg-mime not found; cannot set default MIME handler" >&2
     exit 1
   fi
-  for mime in text/markdown text/x-markdown; do
+  for mime in text/markdown text/x-markdown text/x-mermaid; do
     xdg-mime default edi.desktop "$mime"
   done
 fi
@@ -62,10 +70,11 @@ fi
 echo "Installed Edi desktop integration:"
 echo "  Icon:    $ICON_DIR/edi.png"
 echo "  Desktop: $APPS_DIR/edi.desktop (Exec=$BIN %U)"
-echo "  MIME:    registered for text/markdown;text/x-markdown"
+echo "  MIME:    $MIME_DIR/packages/edi.xml (text/x-mermaid: *.mmd, *.mermaid)"
+echo "  Handles: text/markdown;text/x-markdown;text/x-mermaid"
 if [ "$SET_DEFAULT" = 1 ]; then
-  echo "  Default: Edi is now the default handler for Markdown files"
+  echo "  Default: Edi is now the default handler for Markdown and Mermaid files"
 else
-  echo "  Default: pass --set-default to make Edi the default Markdown handler"
+  echo "  Default: pass --set-default to make Edi the default Markdown and Mermaid handler"
 fi
 echo "Log out and back in (or restart Files/the dock) if the app or gear icon is stale."

@@ -129,11 +129,14 @@ The per-platform branches only adjust the inputs:
 - **macOS** wraps the collected folder in `BUNDLE`: `Edi.app` with an
   Info.plist declaring the icon,
   `bundle_identifier=com.mrdanpsmith.edi`, `CFBundleDocumentTypes` (Markdown
-  `Default`, plain text `Alternate`) and an imported
-  `net.daringfireball.markdown` UTI.
+  `Default`, plain text `Alternate`, Mermaid `Default`) and two imported
+  UTIs: `net.daringfireball.markdown`, and `com.mrdanpsmith.edi.mermaid` for
+  `.mmd`/`.mermaid`, which macOS does not define. The Mermaid type is
+  imported rather than exported because Edi does not own the format: an app
+  that exports its own type for those extensions takes precedence.
 
 File association on macOS is a build fact, not an installed-app patch.
-`scripts/build-macos.sh` asserts the Markdown document type is in the signed
+`scripts/build-macos.sh` asserts the Markdown and Mermaid document types are in the signed
 bundle's Info.plist before shipping. See [macos-installer.md](macos-installer.md)
 for the installer and association behaviour.
 
@@ -253,6 +256,31 @@ pre-onedir release just overwrites its single `Edi.exe`. The uninstaller
 removes exactly `Edi.exe`, `_internal\`, the icon and itself, never the
 whole install directory, which the user may have chosen.
 
+#### File associations
+
+Windows 10 and later do not let an installer make itself the default app:
+the per-user choice is hash-protected and Windows resets a forged one. The
+installer therefore *offers* Edi for `.md`, `.markdown`, `.mmd` and
+`.mermaid`, and the user chooses it in "Open with" or Settings › Default apps.
+It writes, in the 64-bit registry view under `HKLM`:
+
+- two ProgIDs, `Edi.Markdown` and `Edi.Mermaid` (type name, icon,
+  `"Edi.exe" "%1"`);
+- `Software\Classes\<ext>\OpenWithProgids`, which puts Edi in "Open with"
+  without taking the default from another app;
+- `Software\Classes\Applications\Edi.exe` with `SupportedTypes`;
+- `Software\Edi\Capabilities` plus a `RegisteredApplications` entry, which
+  list Edi in Default apps.
+
+`.mmd` and `.mermaid` are usually unowned. When an extension has no default
+ProgID, the installer sets it to `Edi.Mermaid`, the counterpart of the macOS
+`Default` rank, and the uninstaller clears it only if it is still Edi's.
+`.md` and `.markdown` are never claimed. The uninstaller removes Edi's
+values and keys and leaves other apps' entries for the same extensions.
+Both directions end with `SHChangeNotify(SHCNE_ASSOCCHANGED)` so Explorer
+refreshes. `.txt` is not offered on Windows, to keep Edi off every text file's
+menu.
+
 ## Structural bundle check
 
 `scripts/check_bundle_contents.py` is the load-bearing regression gate. It
@@ -277,7 +305,7 @@ which PySide6 6.11.x has no wheels for, and under 3.14 the bundle fails
 `codesign` on `QtWebEngineCore.framework`. Move the version only with a full
 local build, when the PySide6 pin moves. It mirrors the Linux steps into `dist-app/Edi.app`, ad-hoc code-signs
 the bundle (`codesign --force --deep -s -`; arm64 will not launch unsigned),
-asserts the Markdown document type is in the sealed Info.plist, smoke-tests
+asserts the Markdown and Mermaid document types are in the sealed Info.plist, smoke-tests
 a throwaway copy of the bundle (the verdict comes from `EDI_SELFTEST_OUT`; the
 captured app log and verdict are printed when it fails), re-verifies the
 signature, then produces:
@@ -373,6 +401,20 @@ installs:
 - `~/.local/share/icons/hicolor/512x512/apps/edi.png`
 - `~/.local/share/applications/edi.desktop` (from
   `scripts/assets/edi.desktop`, with `Exec` substituted)
+- `~/.local/share/mime/packages/edi.xml` (from `packaging/edi-mime.xml`)
+
+The tarball's `install.sh` installs the same three files under the user's data
+directory. The `.deb` and `.rpm` install them system-wide
+(`packaging/edi.desktop`, `/usr/share/mime/packages/edi.xml`), and the AppImage
+carries them for integrators to pick up.
+
+### File types
+
+Every desktop entry advertises `text/markdown`, `text/x-markdown` and
+`text/x-mermaid`, so Edi appears in "Open With" for each. The shared-mime-info
+database defines no type for Mermaid files, so `packaging/edi-mime.xml` defines
+`text/x-mermaid` (a `text/plain` subclass) for `*.mmd` and `*.mermaid`.
+`install-desktop.sh --set-default` makes Edi the default for all three.
 
 `app.setDesktopFileName("edi")` in `backend/main.py` hints the window manager to
 match it.
