@@ -3,7 +3,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import { createBlockEditor } from './editor'
 import { markdownToProse, proseToMarkdown } from './markdown'
 import { schema } from './schema'
-import { imageNodeView, reResolveImages } from './image'
+import { bumpImageReload, imageNodeView, reResolveImages, withImageReload } from './image'
 
 interface ShallowNodeView {
   dom: HTMLElement
@@ -132,5 +132,18 @@ describe('reResolveImages', () => {
     expect(imgs.item(1).getAttribute('src')).toBeNull()
     expect(imgs.item(2).getAttribute('src')).toBeNull()
     expect(seen).toEqual(['./a.png'])
+  })
+})
+
+describe('withImageReload', () => {
+  it('leaves URLs alone until an image reload, then cache-busts file URLs only', () => {
+    expect(withImageReload('file:///docs/a.png')).toBe('file:///docs/a.png')
+    bumpImageReload()
+    expect(withImageReload('file:///docs/a.png')).toMatch(/^file:\/\/\/docs\/a\.png\?edi-reload=\d+$/)
+    const first = withImageReload('file:///docs/a.png')
+    bumpImageReload()
+    expect(withImageReload('file:///docs/a.png')).not.toBe(first)
+    expect(withImageReload('https://example.com/a.png')).toBe('https://example.com/a.png')
+    expect(withImageReload('data:image/png;base64,AAAA')).toBe('data:image/png;base64,AAAA')
   })
 })

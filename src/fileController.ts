@@ -29,6 +29,7 @@ import { currentPreferences } from './preferences'
 import { buildExportHtml, serializeDocToHtml } from './export'
 import { parseTableFile, toMarkdownTable } from './import'
 import { copyText } from './clipboard'
+import { bumpImageReload } from './image'
 import { mermaidPngSnapshots } from './mermaid-export'
 import { formulaEnvFor } from './formulaDefs'
 import { addRecentFile, getRecentFiles } from './recents'
@@ -381,7 +382,11 @@ export function createFileController(ctx: AppContext): FileController {
     try {
       const content = await readTextFile(path)
       ctx.disk?.noteDiskText(path, content)
+      // Images may have changed on disk too: give them fresh URLs so the
+      // engine's image cache cannot serve the old pixels.
+      bumpImageReload()
       ctx.tabs.setActiveContent(content)
+      ctx.blockEditor?.resolveImages()
       setActiveDirty(false)
       ctx.tabs.snapshotActive()
     } catch (error) {

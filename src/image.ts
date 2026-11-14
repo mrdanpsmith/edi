@@ -8,6 +8,27 @@ import type { NodeView, NodeViewConstructor } from 'prosemirror-view'
 export type ResolveImage = (src: string) => string
 
 /**
+ * How many times images have been reloaded from disk (File › Revert). The
+ * engine caches images by URL, so a ``file://`` image changed on disk keeps
+ * showing the old pixels until its URL changes; ``withImageReload`` appends
+ * this generation as a query, which ``file://`` loads ignore.
+ */
+let imageReload = 0
+
+/** Make every ``file://`` image URL resolved from now on fetch from disk again. */
+export function bumpImageReload(): void {
+  imageReload += 1
+}
+
+/** ``url`` with the current reload generation, for ``file://`` URLs only. */
+export function withImageReload(url: string): string {
+  if (imageReload === 0 || !url.startsWith('file://')) return url
+  const parsed = new URL(url)
+  parsed.searchParams.set('edi-reload', String(imageReload))
+  return parsed.href
+}
+
+/**
  * The hover tooltip text for an image: its alt text, falling back to the file
  * name in the src. Browsers show image tooltips from the ``title`` attribute
  * (not ``alt``), so we mirror the markdown alt text onto ``title``.

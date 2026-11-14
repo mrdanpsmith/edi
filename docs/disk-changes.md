@@ -160,9 +160,20 @@ The reload Edi makes itself is not an edit by the reader. The controller sets
 `applying` while it rewrites the document, so the `onChange` that rewrite fires
 does not clear the marker it has just earned.
 
+## Images
+
+Only the markdown file is watched; the images it references are not. Changed
+images are picked up by **File › Revert**: it bumps a reload generation
+(`bumpImageReload` in `src/image.ts`), which the resolver appends to every
+`file://` image URL as `?edi-reload=N`, and re-resolves the rendered images.
+Without the new URL, the engine's image cache keeps serving the old pixels for
+the same `file://` URL.
+
 ## Not yet
 
 These are not implemented yet:
+
+- Watching referenced images, so a changed image refreshes without a revert.
 
 - **Merge both:** a three-way merge of their changes onto yours.
 - Word-level highlighting inside changed lines.

@@ -2,6 +2,7 @@ import { confirmAction, hasBridge, invoke, onBridgeReady } from './bridge'
 import { startThemeWatcher } from './theme'
 
 import { dirname, isAbsolutePath, isSupportedFile, openUrl } from './files'
+import { withImageReload } from './image'
 import { headingSlug } from './schema'
 import { insertTable as insertSpreadsheetTable } from './node/table'
 import { insertKanbanBoard } from './node/mermaid'
@@ -101,7 +102,7 @@ function resolveImageFileUrl(src: string): string {
   }
   if (!path.startsWith('/')) return path
   // Normalize dot segments and percent-encode spaces into a loadable file URL.
-  return new URL(`file://${path}`).href
+  return withImageReload(new URL(`file://${path}`).href)
 }
 
 function scrollToFragment(fragment: string): void {
