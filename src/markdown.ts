@@ -180,7 +180,7 @@ function mapChildrenWithCarriers(
 // block only if it holds more backticks than the opener. So an opening fence
 // length of (longest backtick run in the content) + 1 — minimum 3 — always
 // round-trips in CommonMark.
-function codeFence(content: string): string {
+export function codeFence(content: string): string {
   let maxRun = 0
   const re = /`+/g
   let match: RegExpExecArray | null

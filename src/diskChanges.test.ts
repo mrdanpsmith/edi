@@ -191,6 +191,37 @@ describe('a document changed on disk', () => {
     // The file was read once, for the dialog; the choice used that text.
     expect(readTextFile).toHaveBeenCalledTimes(1)
   })
+
+  it('reloads a Mermaid file as its one diagram', async () => {
+    const { ctx, blockEditor } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/flow.mmd')
+    disk.noteDiskText('/docs/flow.mmd', 'mine\n')
+    vi.mocked(readTextFile).mockResolvedValue('graph TD\n')
+
+    disk.onEvent('diskChanged', '/docs/flow.mmd')
+    await flush()
+
+    expect(blockEditor.replaceMarkdown).toHaveBeenCalledWith('```mermaid\ngraph TD\n```\n')
+  })
+
+  it('compares a Mermaid file as the bare source it writes', async () => {
+    const { ctx, blockEditor } = fakeContext()
+    blockEditor.replaceMarkdown('```mermaid\ngraph LR\n```\n')
+    blockEditor.replaceMarkdown.mockClear()
+    const disk = createDiskController(ctx)
+    openTab('/docs/flow.mmd', true)
+    disk.noteDiskText('/docs/flow.mmd', 'graph TD\n')
+    disk.onEvent('diskChanged', '/docs/flow.mmd')
+    vi.mocked(readTextFile).mockResolvedValue('graph BT\n')
+
+    clickBar('Compare…')
+    await flush()
+    await flush()
+    const mine = document.querySelector('.edi-compare-mine')!
+    expect(mine.querySelector('.edi-history-added')!.textContent).toBe('+ graph LR')
+    expect(mine.textContent).not.toContain('```')
+  })
 })
 
 describe('the changed-on-disk marker', () => {

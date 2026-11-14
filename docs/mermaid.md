@@ -32,6 +32,32 @@ context-menu items in `src/contextMenuController.ts`.
 `Ctrl`+`+`/`-`/`0`) scales it. `MermaidDiagramOptions` carries no control sink,
 and the block's cluster holds only its mode buttons.
 
+## Mermaid files
+
+A `.mmd` or `.mermaid` file is bare diagram source, with no fence, because
+that is what other Mermaid tools read. `src/documentFormat.ts` converts between
+the file's text and the editor's markdown, and every load and save goes through
+it: open, save and Save As, rename, revert, the changed-on-disk reload, Take
+theirs and Compare, version history (its diff and restore), Insert text file and
+the status bar's word count.
+
+- **Reading** wraps the source in one `mermaid` fence (`fileTextToMarkdown`).
+  The fence comes from `codeFence`, so it is longer than any backtick run in
+  the source. Whether the file ends in a newline is carried by what follows the
+  closing fence, which the block's source record keeps, so an unedited diagram
+  saves byte for byte.
+- **Writing** removes the fence (`markdownToFileText`). It only succeeds while
+  the document is one diagram, allowing blank lines around it. Anything more or
+  less returns `null`: Save writes nothing and offers Save As under a `.md`
+  name, and a rename to `.mmd` is refused with a status message.
+- The disk base, history versions and the Compare panes are all file text, so
+  the document is compared as the file it would write (`fileTextForDisplay`).
+- Saving a Mermaid file under a `.md` name writes the fenced markdown, and a
+  markdown document that is a single diagram saves to `.mmd` as bare source.
+
+`src/documentFormat.test.ts` covers the byte-for-byte cases through a real
+editor.
+
 ## `DiagramSession`
 
 **One `DiagramSession` per block (`src/mermaid-session.ts`) owns everything

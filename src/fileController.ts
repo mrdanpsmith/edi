@@ -30,6 +30,7 @@ import { buildExportHtml, serializeDocToHtml } from './export'
 import { parseTableFile, toMarkdownTable } from './import'
 import { copyText } from './clipboard'
 import { bumpImageReload } from './image'
+import { fileTextForDisplay, fileTextToMarkdown, markdownToFileText } from './documentFormat'
 import { mermaidPngSnapshots } from './mermaid-export'
 import { formulaEnvFor } from './formulaDefs'
 import { addRecentFile, getRecentFiles } from './recents'
@@ -182,7 +183,7 @@ export function createFileController(ctx: AppContext): FileController {
       ctx.disk?.noteDiskText(path, content)
       // The path is set before the content is rendered so that relative image
       // references in opened documents resolve against the document's directory.
-      ctx.tabs.addSession(content, path)
+      ctx.tabs.addSession(fileTextToMarkdown(path, content), path)
       void rememberRecent(path)
     } catch (error) {
       ctx.reportError(`Failed to open ${path}`, error)
@@ -226,8 +227,13 @@ export function createFileController(ctx: AppContext): FileController {
     try {
       const snapshot = await snapshotForSave()
       if (snapshot === null) return
-      await writeTextFile(path, snapshot.markdown, makeFolders ? { history: true, makeFolders } : { history: true })
-      afterSave(path, snapshot)
+      const text = markdownToFileText(path, snapshot.markdown)
+      if (text === null) {
+        await offerMarkdownInstead(path)
+        return
+      }
+      await writeTextFile(path, text, makeFolders ? { history: true, makeFolders } : { history: true })
+      afterSave(path, snapshot, text)
     } catch (error) {
       if (isFolderMissing(error) && !makeFolders) {
         // The document's folder was deleted. The backend makes no folder it
@@ -298,9 +304,27 @@ export function createFileController(ctx: AppContext): FileController {
     }
   }
 
-  /** The document is on disk under `path`: everything that follows. */
-  function afterSave(path: string, snapshot: SaveSnapshot): void {
-    ctx.disk?.noteDiskText(path, snapshot.markdown)
+  /**
+   * `path` is a Mermaid file, which holds one diagram and nothing else, and the
+   * document is more than that. Nothing is written; the reader may save it as
+   * Markdown under another name instead.
+   */
+  async function offerMarkdownInstead(path: string): Promise<void> {
+    const name = path.split('/').pop() ?? path
+    const yes = await confirmAction(
+      `“${name}” is a Mermaid file, which can only hold a single diagram, and this document now has more than the diagram.\n\nSave it as Markdown instead?`,
+    )
+    if (!yes) {
+      ctx.flashStatus(`Not saved: ${name}`)
+      return
+    }
+    const chosen = await pickSavePath(`${fileName(path)}.md`)
+    if (chosen) await saveTo(chosen, true)
+  }
+
+  /** The document is on disk under `path`, written as `text`: everything that follows. */
+  function afterSave(path: string, snapshot: SaveSnapshot, text: string): void {
+    ctx.disk?.noteDiskText(path, text)
     markSaved(snapshot.id, path, snapshot.revision)
     // The editor's saved point is the document the save read. Only for the tab
     // in view: another tab's state is stored away, and is not this editor's.
@@ -341,7 +365,13 @@ export function createFileController(ctx: AppContext): FileController {
       if (snapshot === null) return
       const rebased = ctx.blockEditor?.rebaseLinks(oldPath, newPath) ?? null
       const markdown = rebased?.markdown ?? snapshot.markdown
-      await renameTextFile(oldPath, newPath, markdown)
+      const text = markdownToFileText(newPath, markdown)
+      if (text === null) {
+        // Renaming to `.mmd` is a change of format the document cannot take.
+        ctx.flashStatus(`Not renamed: “${name}” is a Mermaid file, which can only hold a single diagram`)
+        return
+      }
+      await renameTextFile(oldPath, newPath, text)
       ctx.disk?.renamed(oldPath, newPath)
       if (rebased) {
         // Only the editor in view can take the rewrite. A tab switched away
@@ -355,7 +385,7 @@ export function createFileController(ctx: AppContext): FileController {
           snapshot = { ...snapshot, markdown, doc: rebased.doc, revision: -1 }
         }
       }
-      afterSave(newPath, snapshot)
+      afterSave(newPath, snapshot, text)
       ctx.flashStatus(dirname(newPath) === dirname(oldPath) ? `Renamed to ${name}` : `Moved to ${newPath}`)
     } catch (error) {
       if (isChangedOnDisk(error)) {
@@ -385,7 +415,7 @@ export function createFileController(ctx: AppContext): FileController {
       // Images may have changed on disk too: give them fresh URLs so the
       // engine's image cache cannot serve the old pixels.
       bumpImageReload()
-      ctx.tabs.setActiveContent(content)
+      ctx.tabs.setActiveContent(fileTextToMarkdown(path, content))
       ctx.blockEditor?.resolveImages()
       setActiveDirty(false)
       ctx.tabs.snapshotActive()
@@ -411,7 +441,8 @@ export function createFileController(ctx: AppContext): FileController {
     const name = path.split('/').pop() ?? path
     const restored = await openHistoryDialog({
       name,
-      current: ctx.blockEditor?.getMarkdown() ?? '',
+      // Versions are file text, so the document is compared as the file it would write.
+      current: fileTextForDisplay(path, ctx.blockEditor?.getMarkdown() ?? ''),
       list: () => listHistory(path, { git: currentPreferences().gitHistory }),
       read: (version) => readHistoryVersion(path, version.id, version.source ?? 'edi'),
       clear: async () => {
@@ -431,7 +462,7 @@ export function createFileController(ctx: AppContext): FileController {
     })
     if (restored === null || getActive()?.id !== session.id) return
     await ctx.blockEditor?.flushReveals()
-    ctx.blockEditor?.replaceMarkdown(restored)
+    ctx.blockEditor?.replaceMarkdown(fileTextToMarkdown(path, restored))
     ctx.blockEditor?.focus()
     ctx.flashStatus('Restored a saved version')
   }
@@ -463,7 +494,8 @@ export function createFileController(ctx: AppContext): FileController {
     }
     try {
       const content = await readAnyTextFile(path)
-      insertMarkdown(`\n${content}\n`)
+      // A Mermaid file goes in as a diagram, not as a paragraph of its source.
+      insertMarkdown(`\n${fileTextToMarkdown(path, content)}\n`)
       ctx.flashStatus(`Inserted ${fileName(path)}`)
     } catch (error) {
       ctx.reportError(`Failed to insert ${path}`, error)

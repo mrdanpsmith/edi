@@ -1,4 +1,5 @@
 import { readTextFile } from './files'
+import { fileTextForDisplay, fileTextToMarkdown } from './documentFormat'
 import { renderDiff } from './historyDialog'
 import {
   describeDiskNote,
@@ -159,7 +160,7 @@ export function createDiskController(ctx: AppContext): DiskController {
     }
   }
 
-  /** Put `text` in the editor of the tab in view, as the saved document. */
+  /** Put the file text `text` in the editor of the tab in view, as the saved document. */
   async function applyToActive(path: string, text: string): Promise<boolean> {
     const session = getActive()
     if (session?.path !== path || !ctx.blockEditor) return false
@@ -167,7 +168,8 @@ export function createDiskController(ctx: AppContext): DiskController {
     if (getActive()?.id !== session.id) return false
     applying = true
     try {
-      if (ctx.blockEditor.getMarkdown() !== text) ctx.blockEditor.replaceMarkdown(text)
+      const markdown = fileTextToMarkdown(path, text)
+      if (ctx.blockEditor.getMarkdown() !== markdown) ctx.blockEditor.replaceMarkdown(markdown)
       ctx.blockEditor.markSavedPoint(ctx.blockEditor.getView().state.doc)
       setActiveDirty(false)
     } finally {
@@ -224,7 +226,8 @@ export function createDiskController(ctx: AppContext): DiskController {
     const choice = await openCompareDialog({
       name: nameOf(path),
       base: entry(path).base,
-      mine: ctx.blockEditor.getMarkdown(),
+      // The base and theirs are file text; compare like with like.
+      mine: fileTextForDisplay(path, ctx.blockEditor.getMarkdown()),
       theirs,
     })
     if (choice === 'theirs') await takeTheirs(path, theirs)

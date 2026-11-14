@@ -1158,6 +1158,55 @@ describe('open and save', () => {
     expect(document.title).toBe('copy.md — Edi')
   })
 
+  it('opens a Mermaid file as one diagram and saves it back as bare source', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/flow.mmd'])
+    mainState.readTextFile.mockResolvedValue('graph TD\n  A --> B\n')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    menu('save')
+    await flushAsync()
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/flow.mmd', 'graph TD\n  A --> B\n', {
+      history: true,
+    })
+  })
+
+  it('saves a Mermaid file as markdown, fence and all, under a .md name', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/flow.mermaid'])
+    mainState.readTextFile.mockResolvedValue('graph TD\n')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.pickSavePath.mockResolvedValue('/tmp/flow.md')
+    menu('saveAs')
+    await flushAsync()
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/flow.md', '```mermaid\ngraph TD\n```\n', {
+      history: true,
+    })
+  })
+
+  it('will not write a Mermaid file that holds more than the diagram, and offers Markdown', async () => {
+    mainState.pickSavePath.mockResolvedValue('/tmp/doc.mmd')
+    await loadMain()
+    window.ediSetContent?.('```mermaid\ngraph TD\n```\n\nA note under the diagram.')
+    await flushAsync()
+    mainState.confirmAction.mockResolvedValue(false)
+    menu('save')
+    await flushAsync()
+    expect(mainState.confirmAction).toHaveBeenCalledWith(expect.stringContaining('Save it as Markdown instead?'))
+    expect(mainState.writeTextFile).not.toHaveBeenCalled()
+
+    mainState.confirmAction.mockResolvedValue(true)
+    mainState.pickSavePath.mockResolvedValueOnce('/tmp/doc.mmd').mockResolvedValueOnce('/tmp/doc.md')
+    menu('save')
+    await flushAsync()
+    expect(mainState.pickSavePath).toHaveBeenLastCalledWith('doc.md')
+    expect(mainState.writeTextFile).toHaveBeenCalledTimes(1)
+    expect(mainState.writeTextFile).toHaveBeenCalledWith('/tmp/doc.md', expect.stringContaining('A note under'), {
+      history: true,
+    })
+  })
+
   it('asks before saving to an unsupported extension', async () => {
     mainState.pickSavePath.mockResolvedValue('/tmp/out.csv')
     await loadMain()

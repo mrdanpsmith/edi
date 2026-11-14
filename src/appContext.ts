@@ -2,6 +2,7 @@ import type { Node as ProseNode } from 'prosemirror-model'
 
 import { invoke, showError } from './bridge'
 import { blockModeFor, interactionLabels, type BlockMode } from './block-modes'
+import { fileTextForDisplay } from './documentFormat'
 import { UNTITLED } from './files'
 import { isHoverBandEnabled } from './hoverBand'
 import { currentPreferences } from './preferences'
@@ -112,7 +113,8 @@ function updateStatus(ctx: AppContext): void {
     return
   }
   ctx.roots.statusLeft.textContent = active.path ?? UNTITLED
-  const text = ctx.blockEditor?.getMarkdown() ?? ''
+  // Counted as the file it writes: a Mermaid file's fence is not its text.
+  const text = fileTextForDisplay(active.path, ctx.blockEditor?.getMarkdown() ?? '')
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   ctx.roots.statusRight.textContent = `${words.toLocaleString()} words · ${text.length.toLocaleString()} characters`
 }

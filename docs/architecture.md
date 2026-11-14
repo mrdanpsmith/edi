@@ -48,6 +48,11 @@ way, except a formula cell, which is written raw because it is the formula's
 source. `src/markdown-roundtrip.test.ts` holds the files that must survive a
 save byte for byte.
 
+A Mermaid file (`.mmd`, `.mermaid`) is the exception to "plain markdown": it
+holds bare diagram source, and the editor sees it as a single fenced diagram.
+`src/documentFormat.ts` does that conversion at every load and save; see
+[mermaid.md](mermaid.md), "Mermaid files".
+
 The bytes around the text are the file's too. `backend/files.py` reads with
 `utf-8-sig` and universal newlines, so the page only ever sees `\n` and no
 byte-order mark, and a write takes the line ending and BOM of the file it
