@@ -106,6 +106,38 @@ def test_a_deleted_file_is_reported_and_its_return_too(watcher, tmp_path):
     assert events[1] == {"type": "diskChanged", "path": str(doc)}
 
 
+@pytest.mark.parametrize("relative", ["docs/notes.md", "docs/deep/notes.md"])
+def test_a_file_whose_folders_went_with_it_is_noticed_coming_back(watcher, tmp_path, relative):
+    """A branch switch: git removes the file and its now-empty folders, then puts
+    them all back. The return clears the deleted state, and later edits are
+    still noticed, so the watch is a live one and not the stale one of the
+    folder that was deleted."""
+    disk, events = watcher
+    doc = tmp_path / relative
+    doc.parent.mkdir(parents=True)
+    doc.write_text("mine\n", encoding="utf-8")
+    disk.seen(str(doc), doc.read_bytes())
+    _settle(0.1)
+
+    doc.unlink()
+    for folder in [doc.parent, *doc.parent.parents]:
+        if folder == tmp_path:
+            break
+        folder.rmdir()
+    _wait_for(lambda: events or None)
+    assert events == [{"type": "diskDeleted", "path": str(doc)}]
+
+    doc.parent.mkdir(parents=True)
+    doc.write_text("mine\n", encoding="utf-8")
+    _wait_for(lambda: events[1:] or None)
+    assert events[1] == {"type": "diskChanged", "path": str(doc)}
+
+    _settle()
+    _replace(doc, "theirs\n")
+    _wait_for(lambda: events[2:] or None)
+    assert events[2:] == [{"type": "diskChanged", "path": str(doc)}]
+
+
 def test_a_forgotten_file_is_not_watched(watcher, tmp_path):
     disk, events = watcher
     doc = tmp_path / "notes.md"

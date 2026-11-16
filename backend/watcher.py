@@ -16,10 +16,20 @@ Edi's own writes are not reported: the bridge calls ``seen`` with the bytes it
 wrote, so the change notification that follows finds the file as Edi left it.
 
 ``QFileSystemWatcher`` stops watching a file that is *replaced*, which is how
-editors and agents save (write a temporary file, rename it over the target). So
-every check re-adds the file, and the parent folder is watched too, which is
-what reports a file that is briefly gone and then back. Bursts of writes are
-coalesced: a document is checked once its file has been quiet for ``SETTLE_MS``.
+editors and agents save (write a temporary file, rename it over the target), and
+on macOS it keeps listing a file or folder that was deleted while never
+reporting on it again. So the watches are kept in step with the disk
+(``_sync``): each target is re-added whenever the file or folder at that path is
+a different one from the one watched. The parent folder is watched too, which is
+what reports a file that is briefly gone and then back; while that folder is
+gone (a branch switch that removes the whole folder), its nearest existing
+ancestor is watched instead, and a change there checks every document below it.
+
+Native notifications are not complete: a file and its folders deleted in quick
+succession can produce no signal at all. So a slow poll (``POLL_MS``) checks only
+whether each document *exists* as Edi believes, which is what a branch switch
+changes. Bursts of writes are coalesced: a document is checked once its file has
+been quiet for ``SETTLE_MS``.
 
 **Lifetime.** The watcher and its timers are Qt objects living on the main
 thread, children of the ``Bridge`` that owns them, so they go when it goes — and
@@ -42,10 +52,35 @@ from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QTimer, Signal, Slot
 from . import history
 
 SETTLE_MS = 300
+POLL_MS = 2000
 
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _identity(path: str) -> tuple[int, int] | None:
+    """Which file or folder is at ``path`` now: a replaced one is a different one."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_dev, stat.st_ino)
+
+
+def _nearest_folder(path: str) -> str:
+    """The document's folder or, while that is gone, its nearest existing ancestor."""
+    folder = os.path.dirname(os.path.abspath(path))
+    while not os.path.isdir(folder):
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    return folder
+
+
+def _below(path: str, folder: str) -> bool:
+    return os.path.abspath(path).startswith(os.path.join(folder, ""))
 
 
 def _read(path: str) -> bytes | None:
@@ -75,6 +110,11 @@ class DiskWatcher(QObject):
         self._reported: dict[str, str] = {}
         self._missing: set[str] = set()
         self._timers: dict[str, QTimer] = {}
+        # Watched path → the identity of the file or folder it was when added.
+        self._identities: dict[str, tuple[int, int]] = {}
+        self._poll = QTimer(self)
+        self._poll.setInterval(POLL_MS)
+        self._poll.timeout.connect(self._poll_existence)
         self._watcher = QFileSystemWatcher(self)
         self._watcher.fileChanged.connect(self._schedule)
         self._watcher.directoryChanged.connect(self._folder_changed)
@@ -93,9 +133,11 @@ class DiskWatcher(QObject):
         for timer in self._timers.values():
             timer.stop()
         self._timers.clear()
+        self._poll.stop()
         watched = self._watcher.files() + self._watcher.directories()
         if watched:
             self._watcher.removePaths(watched)
+        self._identities.clear()
 
     # ── called by the bridge, from any thread ─────────────────────────────
 
@@ -138,34 +180,63 @@ class DiskWatcher(QObject):
 
     @Slot(str)
     def _start_watching(self, path: str) -> None:
-        with self._lock:
-            if self._closed or path not in self._seen:
-                return
-        folder = os.path.dirname(os.path.abspath(path))
-        if os.path.exists(path) and path not in self._watcher.files():
-            self._watcher.addPath(path)
-        if folder and folder not in self._watcher.directories():
-            self._watcher.addPath(folder)
+        self._sync()
 
     @Slot(str)
     def _stop_watching(self, path: str) -> None:
-        if path in self._watcher.files():
-            self._watcher.removePath(path)
         timer = self._timers.pop(path, None)
         if timer is not None:
             timer.stop()
-        folder = os.path.dirname(os.path.abspath(path))
+        self._sync()
+
+    def _sync(self) -> None:
+        """Watch each document that exists and its folder (or nearest existing
+        ancestor), and nothing else. A target that is gone, or is no longer the
+        file or folder that was watched, is dropped and watched afresh."""
         with self._lock:
-            still_needed = any(
-                os.path.dirname(os.path.abspath(other)) == folder for other in self._seen
-            )
-        if not still_needed and folder in self._watcher.directories():
-            self._watcher.removePath(folder)
+            if self._closed:
+                return
+            paths = list(self._seen)
+        wanted: dict[str, tuple[int, int]] = {}
+        for path in paths:
+            for target in (path, _nearest_folder(path)):
+                identity = _identity(target)
+                if identity is not None:
+                    wanted[target] = identity
+        watched = set(self._watcher.files()) | set(self._watcher.directories())
+        stale = [
+            target
+            for target in watched
+            if target not in wanted or self._identities.get(target) != wanted[target]
+        ]
+        if stale:
+            self._watcher.removePaths(stale)
+            for target in stale:
+                self._identities.pop(target, None)
+            watched.difference_update(stale)
+        for target, identity in wanted.items():
+            if target not in watched and self._watcher.addPath(target):
+                self._identities[target] = identity
+        if paths and not self._poll.isActive():
+            self._poll.start()
+        elif not paths:
+            self._poll.stop()
+
+    @Slot()
+    def _poll_existence(self) -> None:
+        """The backstop for notifications that never came: a document whose
+        existence is not what Edi believes is checked."""
+        with self._lock:
+            mismatched = [p for p in self._seen if os.path.exists(p) == (p in self._missing)]
+        for path in mismatched:
+            self._schedule(path)
 
     @Slot(str)
     def _folder_changed(self, folder: str) -> None:
+        # Below, not only in: while a document's folder is gone its ancestor is
+        # watched, and the folder coming back is reported there.
         with self._lock:
-            paths = [p for p in self._seen if os.path.dirname(os.path.abspath(p)) == folder]
+            paths = [p for p in self._seen if _below(p, folder)]
         for path in paths:
             self._schedule(path)
 
@@ -189,6 +260,8 @@ class DiskWatcher(QObject):
         if known is None:
             return
         data = _read(path)
+        # Gone, back or replaced: watch what is there now.
+        self._sync()
         if data is None:
             with self._lock:
                 first = path not in self._missing
@@ -196,8 +269,6 @@ class DiskWatcher(QObject):
             if first:
                 self._notify({"type": "diskDeleted", "path": path})
             return
-        # Back (or replaced): watch the file that is there now.
-        self._start_watching(path)
         current = digest(data)
         with self._lock:
             was_missing = path in self._missing

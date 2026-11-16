@@ -59,6 +59,8 @@ type Pending = 'changed' | 'deleted' | null
 interface Entry {
   base: string | null
   pending: Pending
+  /** Reported deleted, and not read or written by Edi since. */
+  gone: boolean
 }
 
 export function createDiskController(ctx: AppContext): DiskController {
@@ -101,7 +103,7 @@ export function createDiskController(ctx: AppContext): DiskController {
   const entry = (path: string): Entry => {
     let found = entries.get(path)
     if (!found) {
-      found = { base: null, pending: null }
+      found = { base: null, pending: null, gone: false }
       entries.set(path, found)
     }
     return found
@@ -184,7 +186,31 @@ export function createDiskController(ctx: AppContext): DiskController {
     const found = entry(path)
     found.base = text
     found.pending = null
+    found.gone = false
     if (getActive()?.path === path) hideBar()
+  }
+
+  /**
+   * A deleted file is back — typically a switch to a branch without it and
+   * back again. Back as it was, the deletion simply never happened: nothing to
+   * reload or ask, and the marker goes. Back different, it is a change like any
+   * other. Settled at once, in view or not, so a tab out of view does not keep
+   * saying the file is gone.
+   */
+  async function restored(path: string): Promise<void> {
+    const found = entry(path)
+    const text = found.base === null ? null : await readTheirs(path)
+    if (text === null && found.base !== null) return // Gone again.
+    if (text !== null && text === found.base) {
+      settled(path, text)
+      dismiss(path)
+      if (findSessionByPath(path)) ctx.flashStatus(`${nameOf(path)} is back on disk`)
+      return
+    }
+    found.gone = false
+    found.pending = 'changed'
+    mark(path, 'changed')
+    if (getActive()?.path === path) refresh()
   }
 
   /** A tab with nothing unsaved simply follows the file. */
@@ -262,8 +288,14 @@ export function createDiskController(ctx: AppContext): DiskController {
       if (found) entries.set(newPath, found)
     },
     onEvent(type, path) {
+      const found = entry(path)
+      if (type === 'diskChanged' && found.gone) {
+        void restored(path)
+        return
+      }
       const kind = type === 'diskDeleted' ? 'deleted' : 'changed'
-      entry(path).pending = kind
+      found.pending = kind
+      if (kind === 'deleted') found.gone = true
       mark(path, kind)
       if (getActive()?.path === path) refresh()
     },

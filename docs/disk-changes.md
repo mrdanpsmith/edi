@@ -26,10 +26,22 @@ it.
 `QFileSystemWatcher` watches each document and its folder:
 
 - **Atomic replaces.** Agents and editors save by renaming a temporary file over
-  the target, and the watcher drops a file that is replaced. So every check
-  re-adds the file.
+  the target, and the watcher drops a file that is replaced. On macOS it also
+  keeps *listing* a deleted file or folder while never reporting on it again.
+  So every check re-syncs the watches (`_sync`): a target is re-added whenever
+  the file or folder at its path is a different one (device and inode) from the
+  one that was watched.
 - **Brief gaps.** The folder watch catches a file that is briefly gone and then
   back.
+- **Folders that go too.** A branch switch removes a file together with its
+  now-empty folders. While the document's folder is gone, its nearest existing
+  ancestor is watched instead, and a change in a watched folder checks every
+  document *below* it, not only those directly in it.
+- **Missed notifications.** A file and its folders deleted in quick succession
+  can produce no signal at all. A poll every `POLL_MS` (2 s), on the main
+  thread, checks only whether each document exists as Edi believes, and checks
+  any that doesn't. It reads nothing, so content changes still rely on the
+  native notifications.
 - **Bursts.** A document is checked once its file has been quiet for
   `SETTLE_MS` (300 ms).
 
@@ -77,7 +89,9 @@ joined.
 
 Polling with a plain thread, holding no Qt objects, was tried and dropped. It
 avoided the problem rather than fixing the lifetime, lost the immediate native
-notifications, and brought timing flakiness of its own.
+notifications, and brought timing flakiness of its own. The existence poll
+(see Watching) is different: it is a `QTimer` that lives with the watcher, and
+it only backs up the native notifications.
 
 ## Saves never overwrite an unseen change
 
@@ -116,6 +130,13 @@ The three choices on the bar:
 
 On `diskDeleted`, the bar says the file was deleted or moved and that saving
 will write it again, with a Dismiss button.
+
+**A deleted file that comes back**, typically from switching to a branch
+without it and back, is settled straight away, whether its tab is in view or
+not (`restored` in `src/diskChanges.ts`). The page reads it: back exactly as
+the base, the deletion is forgotten. The bar and marker go, unsaved edits stay,
+and the status bar says "… is back on disk". Back different, it is handled like
+any other change: a reload, or the bar if there are unsaved edits.
 
 **A deleted folder.** If the document's folder went with it, a save is refused
 with `folderMissing` rather than growing the folders back unasked:

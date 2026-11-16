@@ -163,6 +163,49 @@ describe('a document changed on disk', () => {
     expect(bar()).toBeNull()
   })
 
+  it('a deleted file that comes back unchanged is simply back, even out of view', async () => {
+    const { ctx, blockEditor } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/a.md', true)
+    const a = getActive()!.id
+    disk.noteDiskText('/docs/a.md', 'base\n')
+    disk.onEvent('diskDeleted', '/docs/a.md')
+    expect(bar()).not.toBeNull()
+    openTab('/docs/b.md')
+    vi.mocked(readTextFile).mockResolvedValue('base\n')
+
+    // A switch to a branch without the file, and back.
+    disk.onEvent('diskChanged', '/docs/a.md')
+    await flush()
+
+    const session = getState().sessions.find((s) => s.id === a)!
+    expect(session.diskNote).toBeNull()
+    expect(session.dirty).toBe(true)
+    expect(blockEditor.replaceMarkdown).not.toHaveBeenCalled()
+    expect(ctx.flashStatus).toHaveBeenCalledWith('a.md is back on disk')
+
+    openTab('/docs/a.md', true)
+    disk.refresh()
+    expect(bar()).toBeNull()
+  })
+
+  it('a deleted file that comes back different is a change', async () => {
+    const { ctx, blockEditor } = fakeContext()
+    const disk = createDiskController(ctx)
+    openTab('/docs/a.md')
+    disk.noteDiskText('/docs/a.md', 'mine\n')
+    disk.onEvent('diskDeleted', '/docs/a.md')
+    vi.mocked(readTextFile).mockResolvedValue('theirs\n')
+
+    disk.onEvent('diskChanged', '/docs/a.md')
+    await flush()
+    await flush()
+
+    expect(getActive()!.diskNote).toMatchObject({ kind: 'changed' })
+    expect(blockEditor.replaceMarkdown).toHaveBeenCalledWith('theirs\n')
+    expect(bar()).toBeNull()
+  })
+
   it('Compare shows each side against the base, and its choice is carried out', async () => {
     const { ctx, blockEditor } = fakeContext()
     const disk = createDiskController(ctx)
