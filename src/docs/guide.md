@@ -24,7 +24,8 @@ the preview renders it live — and a few block types go much further.
 - Click a link to open it; right-click one to edit its address. Clearing
   the address removes the link and keeps the text.
 - `Ctrl+Shift+V` pastes clipboard text as markdown (parsed into real blocks);
-  the right-click menu offers the same as "Paste as Markdown".
+  the right-click menu offers the same as "Paste as Markdown". Inside a code
+  block, both pastes insert the clipboard text as it is, every line included.
 - Bold `Ctrl+B`, italic `Ctrl+I`, inline code `Ctrl+Alt+C`.
 - Every mark also has an end you can walk out of: `→` at the end of one and
   `←` at the start leave it, so what you type next is plain text. The text

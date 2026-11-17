@@ -4,7 +4,7 @@ import { EditorView } from 'prosemirror-view'
 import { DOMParser as ProseMirrorDOMParser } from 'prosemirror-model'
 import { schema } from './schema'
 import { markdownToProse, proseToMarkdown } from './markdown'
-import { isRawUrl, containsRawUrl, insertPastedText, pasteAsMarkdown } from './paste'
+import { isRawUrl, containsRawUrl, insertPastedText, pasteAsMarkdown, pasteIntoCode } from './paste'
 
 function linkifySerialized(pasted: string): string {
   // Paste at a position strictly inside a paragraph ("abc" text spans 1-3),
@@ -133,6 +133,56 @@ describe('pasteAsMarkdown', () => {
     const view = new EditorView(host, { state: EditorState.create({ doc }) })
     expect(pasteAsMarkdown(view, null)).toBe(false)
     expect(pasteAsMarkdown(view, '')).toBe(false)
+    view.destroy()
+  })
+})
+
+describe('paste into a code block', () => {
+  // "```\nab\n```": the code block's text "ab" spans 1-3; 2 is between a and b.
+  function codeView(): EditorView {
+    const doc = markdownToProse('```\nab\n```\n\nafter', schema)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    return new EditorView(host, {
+      state: EditorState.create({ doc, selection: new TextSelection(doc.resolve(2)) }),
+    })
+  }
+
+  function blocks(view: EditorView): string[] {
+    const out: string[] = []
+    view.state.doc.forEach((n) => out.push(`${n.type.name}:${n.textContent}`))
+    return out
+  }
+
+  it('keeps every line of a plain-text paste inside the block', () => {
+    const view = codeView()
+    insertPastedText(view, 'one\r\ntwo\nthree')
+    expect(blocks(view)).toEqual(['code_block:aone\ntwo\nthreeb', 'paragraph:after'])
+    view.destroy()
+  })
+
+  it('does not linkify a URL pasted into code', () => {
+    const view = codeView()
+    insertPastedText(view, 'curl https://example.com\nnext')
+    expect(blocks(view)).toEqual(['code_block:acurl https://example.com\nnextb', 'paragraph:after'])
+    expect(proseToMarkdown(view.state.doc)).not.toContain('](')
+    view.destroy()
+  })
+
+  it('pastes markdown literally rather than parsing it', () => {
+    const view = codeView()
+    expect(pasteAsMarkdown(view, '# not a heading\n- nor a list')).toBe(true)
+    expect(blocks(view)).toEqual(['code_block:a# not a heading\n- nor a listb', 'paragraph:after'])
+    view.destroy()
+  })
+
+  it('leaves a paste outside code to the normal routes', () => {
+    const doc = markdownToProse('abc', schema)
+    const view = new EditorView(document.createElement('div'), {
+      state: EditorState.create({ doc, selection: new TextSelection(doc.resolve(2)) }),
+    })
+    expect(pasteIntoCode(view, 'x\ny')).toBe(false)
+    expect(proseToMarkdown(view.state.doc)).toBe('abc\n')
     view.destroy()
   })
 })

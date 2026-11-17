@@ -16,10 +16,31 @@ const NEWLINE_RE = /\r\n?/g
  */
 export function pasteAsMarkdown(view: EditorView, text: string | null): boolean {
   if (!text || text.trim() === '') return false
+  if (pasteIntoCode(view, text)) return true
   const doc = markdownToProse(text.replace(NEWLINE_RE, '\n'), view.state.schema)
   if (doc.content.size === 0) return false
   const slice = new Slice(Fragment.from(doc.content), 0, 0)
   view.dispatch(view.state.tr.replaceSelection(slice))
+  return true
+}
+
+/**
+ * **A paste into a code block is the clipboard's characters, newlines and all.**
+ *
+ * Every other paste route builds blocks — one paragraph per line, or parsed
+ * markdown or HTML — and splices them in open at depth 1. Inside a code block
+ * that splice merges the first line into the block and closes it, so the rest
+ * of the paste landed as paragraphs *after* the code. A `code: true` block
+ * holds plain text only, so the text goes in as text.
+ *
+ * Returns false when the selection is not wholly inside one code block, so the
+ * caller carries on with its normal paste.
+ */
+export function pasteIntoCode(view: EditorView, text: string | null): boolean {
+  if (text === null || text === '') return false
+  const { $from, $to } = view.state.selection
+  if (!$from.parent.type.spec.code || !$from.sameParent($to)) return false
+  view.dispatch(view.state.tr.insertText(text.replace(NEWLINE_RE, '\n')).scrollIntoView())
   return true
 }
 
@@ -60,6 +81,7 @@ export function insertPastedText(view: EditorView, text: string): void {
   const schema = view.state.schema
   const normalized = text.replace(NEWLINE_RE, '\n')
   if (normalized.trim() === '') return
+  if (pasteIntoCode(view, normalized)) return
 
   const paragraphs = normalized.split('\n').map((line) =>
     schema.nodes.paragraph.create(null, linkifiedInline(line, schema)),

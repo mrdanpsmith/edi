@@ -9,7 +9,7 @@ import { copyText, readText, writeClipboard } from './clipboard'
 import { selectionMarkdownFor } from './editor'
 import { getActiveEncryptedBlockView } from './node/encryptedblock'
 import { selectAllInSpreadsheet } from './node/table'
-import { insertPastedText, pasteAsMarkdown } from './paste'
+import { insertPastedText, pasteAsMarkdown, pasteIntoCode } from './paste'
 import { snapshotMermaidHtml } from './mermaid-export'
 import { computeSpreadsheet } from './spreadsheet'
 import { formulaEnvFor } from './formulaDefs'
@@ -241,6 +241,9 @@ export function createEditController(ctx: AppContext): EditController {
       }
     }
     view.focus()
+    // Inside a code block the paste is the plain text, never parsed structure:
+    // the text leg first (an Edi copy's markdown leg would bring its fences).
+    if (pasteIntoCode(view, text ?? markdown)) return
     // **An Edi-to-Edi copy carries its selection as markdown, and that is the leg
     // this app reads.** The HTML leg is for other apps (a mermaid block is a PNG
     // there), so parsing it back would turn the diagram into a picture; the
