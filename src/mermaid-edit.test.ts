@@ -36,6 +36,7 @@ vi.mock('./mermaid', () => ({
     return block
   }),
   responsifySvg: vi.fn(() => 800),
+  clearSelfMessageSteps: vi.fn(),
   adaptDiagramColors: vi.fn(),
   pinSvgTextColors: vi.fn(),
   bakeDiagram: hoisted.bake,

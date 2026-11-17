@@ -7,6 +7,7 @@ import {
   pinSvgTextColors,
   adaptDiagramColors,
 } from './mermaid-colors'
+import { clearSelfMessageSteps } from './mermaid-layout'
 import {
   responsifySvg,
   bakeDiagram,
@@ -17,6 +18,7 @@ export * from './mermaid-bake'
 
 const MERMAID_DARK_BACKGROUND = '#0d1117'
 export * from './mermaid-colors'
+export * from './mermaid-layout'
 
 export const MERMAID_LANG = 'mermaid'
 export const MERMAID_CLASS = 'mermaid'
@@ -109,6 +111,7 @@ export async function renderPendingMermaid(container: HTMLElement): Promise<void
       const svgEl = holder.querySelector<SVGSVGElement>('svg')
       if (svgEl) {
         const natural = responsifySvg(svgEl)
+        clearSelfMessageSteps(svgEl)
         adaptDiagramColors(svgEl)
         pinSvgTextColors(svgEl)
         void bakeDiagram(holder, svgEl, natural)

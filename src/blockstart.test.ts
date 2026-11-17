@@ -22,6 +22,7 @@ vi.mock('./mermaid', () => ({
     return el
   },
   responsifySvg: () => null,
+  clearSelfMessageSteps: () => {},
   adaptDiagramColors: () => {},
   pinSvgTextColors: () => {},
   bakeDiagram: () => Promise.resolve(false),

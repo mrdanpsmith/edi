@@ -251,6 +251,53 @@ export function shapeElements(svg: SVGSVGElement): SVGElement[] {
   return Array.from(svg.querySelectorAll<SVGElement>('line, rect, path, polygon, polyline'))
 }
 
+/** A sequence diagram self-message's `autonumber` step and its label lines. */
+export interface SelfMessageStep {
+  /** The zero-length line whose `marker-start` draws the step's circle. */
+  anchor: SVGLineElement
+  /** The circle the marker draws, which holds its radius. */
+  circle: SVGCircleElement
+  /** One `text.messageText` per line of the label, top to bottom. */
+  label: SVGTextElement[]
+}
+
+/**
+ * The numbered self-messages of a sequence diagram.
+ *
+ * Mermaid draws each message as its label lines (`text.messageText`), then the
+ * message itself (a `path` for a self-message, a `line` for any other), then,
+ * with `autonumber`, a zero-length `line` carrying the step circle as its
+ * `marker-start` and the `text.sequenceNumber` on top. A self-message's label is
+ * centred on the lifeline, which is exactly where the circle goes.
+ */
+export function selfMessageSteps(svg: SVGSVGElement): SelfMessageStep[] {
+  const circle = svg.querySelector<SVGCircleElement>('marker[id$="-sequencenumber"] circle')
+  if (!circle) return []
+  const steps: SelfMessageStep[] = []
+  for (const number of Array.from(svg.querySelectorAll<SVGTextElement>('text.sequenceNumber'))) {
+    const anchor = number.previousElementSibling
+    if (!(anchor instanceof SVGLineElement)) continue
+    if (!(anchor.getAttribute('marker-start') ?? '').endsWith('-sequencenumber)')) continue
+    let node = anchor.previousElementSibling
+    // The message itself, past anything drawn between it and its step (a
+    // central connection's circles).
+    while (node && !(node instanceof SVGPathElement || node instanceof SVGLineElement)) {
+      node = node.previousElementSibling
+    }
+    if (!(node instanceof SVGPathElement)) continue
+    const label: SVGTextElement[] = []
+    for (
+      node = node.previousElementSibling;
+      node instanceof SVGTextElement && node.classList.contains('messageText');
+      node = node.previousElementSibling
+    ) {
+      label.unshift(node)
+    }
+    if (label.length > 0) steps.push({ anchor, circle, label })
+  }
+  return steps
+}
+
 /** Arrowhead and marker paths, which carry their own fill. */
 export function markerPaths(svg: SVGSVGElement): SVGPathElement[] {
   return Array.from(svg.querySelectorAll<SVGPathElement>('marker path'))

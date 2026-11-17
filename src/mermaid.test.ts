@@ -259,6 +259,39 @@ describe('adaptDiagramColors', () => {
     expect(text.style.color).toBe('rgb(31, 35, 40)')
   })
 
+  // Mermaid's autonumber: the circle is a marker on a zero-length line, the
+  // number a sibling text, so no shape encloses the number.
+  function autonumberSvg(scheme: 'dark' | 'light', circleFill: string, numberFill: string): SVGSVGElement {
+    return makeSvg(
+      '<defs><marker id="d-sequencenumber"><circle cx="15" cy="15" r="6" fill="' +
+        circleFill +
+        '"></circle></marker></defs>' +
+        '<line x1="75" y1="100" x2="75" y2="100" marker-start="url(#d-sequencenumber)"></line>' +
+        '<text x="75" y="104" class="sequenceNumber" fill="' +
+        numberFill +
+        '">1</text>',
+      scheme,
+    )
+  }
+
+  it('judges an autonumber step against its circle in light mode', () => {
+    const svg = autonumberSvg('light', '#333333', '#ffffff')
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGTextElement>('text.sequenceNumber')!.style.fill).toBe('')
+  })
+
+  it('judges an autonumber step against its circle in dark mode', () => {
+    const svg = autonumberSvg('dark', '#cccccc', '#000000')
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGTextElement>('text.sequenceNumber')!.style.fill).toBe('')
+  })
+
+  it('still fixes an autonumber step that is unreadable on its circle', () => {
+    const svg = autonumberSvg('light', '#ffffff', '#ffffff')
+    adaptDiagramColors(svg)
+    expect(svg.querySelector<SVGTextElement>('text.sequenceNumber')!.style.fill).toBe('#1f2328')
+  })
+
   it('never touches foreignObject HTML labels', () => {
     const svg = makeSvg(
       '<text x="10" y="30" fill="#000000">native</text>' +

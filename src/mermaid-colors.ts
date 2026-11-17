@@ -161,7 +161,25 @@ function shapeBBox(el: Element): { x: number; y: number; width: number; height: 
 }
 
 /**
+ * The fill of the circle behind a sequence diagram's `autonumber` step.
+ *
+ * Mermaid draws the circle as the `marker-start` of a zero-length line and
+ * places the `<text class="sequenceNumber">` beside it, so no shape in the
+ * text's ancestry covers it. The circle takes its fill from the marker's
+ * `[id$="-sequencenumber"]` rule, so the marker is the fallback when the circle
+ * itself reports none.
+ */
+function sequenceNumberBackdrop(el: SVGElement, svg: SVGSVGElement): string | null {
+  if (!el.classList.contains('sequenceNumber')) return null
+  const marker = svg.querySelector('marker[id$="-sequencenumber"]')
+  if (!marker) return null
+  const circle = marker.querySelector('circle')
+  return (circle ? solidFill(circle) : null) ?? solidFill(marker)
+}
+
+/**
  * The color the page paints behind an element:
+ * - a sequence diagram's step-number circle, for the number drawn on it;
  * - nearest enclosing solid-filled shape that covers the element's center
  *   (so C4's white-on-navy text is judged against the navy, not the editor
  *   background), scanning ancestors innermost-first;
@@ -170,6 +188,8 @@ function shapeBBox(el: Element): { x: number; y: number; width: number; height: 
  * - else the editor's `--bg`.
  */
 function effectiveBackgroundFor(el: SVGElement, svg: SVGSVGElement): string {
+  const backdrop = sequenceNumberBackdrop(el, svg)
+  if (backdrop) return backdrop
   let center: { x: number; y: number } | null = null
   try {
     const bb = shapeBBox(el)

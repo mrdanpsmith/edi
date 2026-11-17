@@ -24,6 +24,7 @@
 
 import {
   adaptDiagramColors,
+  clearSelfMessageSteps,
   bakeDiagram,
   errorBlock,
   loadMermaid,
@@ -221,6 +222,7 @@ export async function renderDiagram(
     const svgEl = container.querySelector<SVGSVGElement>('svg')
     if (!svgEl) return
     const natural = responsifySvg(svgEl)
+    clearSelfMessageSteps(svgEl)
     adaptDiagramColors(svgEl)
     pinSvgTextColors(svgEl)
     // A baked diagram is a bitmap under an invisible vector, which would put

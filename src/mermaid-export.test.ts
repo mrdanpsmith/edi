@@ -9,6 +9,7 @@ const hoisted = vi.hoisted(() => ({
 vi.mock('./mermaid', () => ({
   loadMermaid: vi.fn(async () => ({ render: hoisted.render })),
   responsifySvg: vi.fn(),
+  clearSelfMessageSteps: vi.fn(),
   adaptDiagramColors: vi.fn(),
   pinSvgTextColors: vi.fn(),
 }))

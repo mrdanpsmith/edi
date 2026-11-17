@@ -1,5 +1,11 @@
 import type { Node as ProseNode } from 'prosemirror-model'
-import { adaptDiagramColors, loadMermaid, pinSvgTextColors, responsifySvg } from './mermaid'
+import {
+  adaptDiagramColors,
+  clearSelfMessageSteps,
+  loadMermaid,
+  pinSvgTextColors,
+  responsifySvg,
+} from './mermaid'
 import { rasterizeSvgToBase64Png } from './mermaid-bake'
 
 export interface MermaidPng {
@@ -98,6 +104,7 @@ export async function renderMermaidPng(source: string): Promise<MermaidPng | nul
     const size = viewBoxSize(svgEl)
     if (!size) return null
     responsifySvg(svgEl)
+    clearSelfMessageSteps(svgEl)
     adaptDiagramColors(svgEl)
     pinSvgTextColors(svgEl)
 

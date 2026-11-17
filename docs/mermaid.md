@@ -3,8 +3,10 @@
 `src/mermaid-edit.ts` is the visual-editing layer:
 
 - `renderDiagram()`, a thin wrapper over mermaid plus `responsifySvg`,
-  `adaptDiagramColors`, `pinSvgTextColors` and `bakeDiagram` from
-  `src/mermaid.ts`;
+  `clearSelfMessageSteps`, `adaptDiagramColors`, `pinSvgTextColors` and
+  `bakeDiagram` from `src/mermaid.ts` (`clearSelfMessageSteps`, in
+  `src/mermaid-layout.ts`, lifts a sequence diagram self-message's label off
+  its `autonumber` circle, which mermaid draws on top of it);
 - the label model and source patchers;
 - the field a label is edited in;
 - the kanban drag (see [mermaid-kanban.md](mermaid-kanban.md));
