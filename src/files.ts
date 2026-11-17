@@ -146,6 +146,16 @@ export async function renameTextFile(
 }
 
 /**
+ * Ask the user, in the shell's own prompt, whether to move the document at
+ * `path` to the Trash, and move it if they agree. `true` means the file is in
+ * the Trash; `false` is a cancel. `dirty` only adds a warning to the prompt
+ * that the unsaved changes go with it.
+ */
+export async function trashDocument(path: string, dirty: boolean): Promise<boolean> {
+  return invoke<boolean>('trashDocument', { path, dirty })
+}
+
+/**
  * Which of `paths` exist on disk, for a move of the document at `documentPath`
  * (`relink.ts`): one boolean per path, in order. The shell answers only for a
  * document it would let the page move — one it may write — and says nothing

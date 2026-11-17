@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from PySide6.QtCore import QObject
@@ -26,6 +27,8 @@ class StubWindow(QObject):
         self.alert_messages: list[str] = []
         self.write_confirmations: list[str] = []
         self.write_confirmation_answer = True
+        self.trash_confirmations: list[tuple[str, bool]] = []
+        self.trash_confirmation_answer = True
         self.can_revert = False
         self.can_rename = False
         self.toolbar_visible = True
@@ -95,6 +98,11 @@ class StubWindow(QObject):
         self.write_confirmations.append(path)
         if callback is not None:
             callback(self.write_confirmation_answer)
+
+    def confirm_trash(self, path, dirty, callback=None) -> None:
+        self.trash_confirmations.append((path, dirty))
+        if callback is not None:
+            callback(self.trash_confirmation_answer)
 
     def pick_save_path(self, default_name, callback=None) -> None:
         if callback is not None:
@@ -1009,6 +1017,117 @@ def test_rename_text_file_renames_and_drops_the_old_recent(bridge, tmp_path):
     assert not old.exists()
     # The old name no longer names anything, so it is not left in the recents.
     assert window.recent_files_list == ["/other.md"]
+
+
+@pytest.fixture
+def fake_trash(monkeypatch, tmp_path):
+    """Stand in for the system Trash, so no test puts files in the real one.
+
+    Trashed files are moved into ``tmp_path / "Trash"``; set ``failure`` to make
+    the next move raise instead, the way a volume with no Trash does.
+    """
+    trash = tmp_path / "Trash"
+    trash.mkdir()
+    state = {"failure": None}
+
+    def trash_file(path: str) -> None:
+        if state["failure"] is not None:
+            raise state["failure"]
+        os.replace(path, trash / os.path.basename(path))
+
+    monkeypatch.setattr(bridge_module, "trash_file", trash_file)
+    return trash, state
+
+
+def test_trash_document_moves_the_file_once_the_user_agrees(bridge, tmp_path, fake_trash):
+    bridge_obj, window, result = bridge
+    trash, _state = fake_trash
+    doc = tmp_path / "notes.md"
+    doc.write_text("# Notes", encoding="utf-8")
+    window.recent_files_list = [str(doc), "/other.md"]
+    bridge_obj.grants.allow_write(str(doc))
+
+    _invoke(bridge_obj, "trashDocument", {"path": str(doc), "dirty": True}, 90)
+    message = _wait_for(lambda: result.get(90))
+    assert message == {"id": 90, "ok": True, "data": True}
+    # The shell asked, about this file, and was told about the unsaved edits.
+    assert window.trash_confirmations == [(str(doc), True)]
+    assert not doc.exists()
+    assert (trash / "notes.md").read_text(encoding="utf-8") == "# Notes"
+    # Its name no longer names anything, so it is not offered as a recent.
+    assert window.recent_files_list == ["/other.md"]
+
+
+def test_trash_document_cancel_leaves_everything(bridge, tmp_path, fake_trash):
+    bridge_obj, window, result = bridge
+    doc = tmp_path / "notes.md"
+    doc.write_text("# Notes", encoding="utf-8")
+    window.recent_files_list = [str(doc)]
+    window.trash_confirmation_answer = False
+    bridge_obj.grants.allow_write(str(doc))
+
+    _invoke(bridge_obj, "trashDocument", {"path": str(doc)}, 91)
+    message = _wait_for(lambda: result.get(91))
+    assert message == {"id": 91, "ok": True, "data": False}
+    assert window.trash_confirmations == [(str(doc), False)]
+    assert doc.read_text(encoding="utf-8") == "# Notes"
+    assert window.recent_files_list == [str(doc)]
+
+
+def test_trash_document_refuses_a_file_edi_was_never_given(bridge, tmp_path, fake_trash):
+    bridge_obj, window, result = bridge
+    elsewhere = tmp_path / "id_rsa"
+    elsewhere.write_text("secret", encoding="utf-8")
+
+    _invoke(bridge_obj, "trashDocument", {"path": str(elsewhere)}, 92)
+    message = _wait_for(lambda: result.get(92))
+    assert message["ok"] is False
+    assert message["code"] == "notPermitted"
+    # Refused before the prompt: the page cannot put an arbitrary path in
+    # front of the user, let alone move it.
+    assert window.trash_confirmations == []
+    assert elsewhere.exists()
+
+
+def test_trash_document_asks_about_a_document_opened_from_a_link(bridge, tmp_path, fake_trash):
+    # Readable but never granted for writing: the shell's own prompt naming it
+    # is the user's say-so, as it is for saving such a document.
+    bridge_obj, window, result = bridge
+    doc = tmp_path / "linked.md"
+    doc.write_text("# Linked", encoding="utf-8")
+    bridge_obj.grants.note_opened(str(doc))
+
+    _invoke(bridge_obj, "trashDocument", {"path": str(doc)}, 93)
+    message = _wait_for(lambda: result.get(93))
+    assert message["data"] is True
+    assert window.trash_confirmations == [(str(doc), False)]
+    assert not doc.exists()
+
+
+def test_trash_document_failure_keeps_the_file_and_the_recents(bridge, tmp_path, fake_trash):
+    bridge_obj, window, result = bridge
+    _trash, state = fake_trash
+    state["failure"] = OSError("Could not move to the Trash")
+    doc = tmp_path / "notes.md"
+    doc.write_text("# Notes", encoding="utf-8")
+    window.recent_files_list = [str(doc)]
+    bridge_obj.grants.allow_write(str(doc))
+
+    _invoke(bridge_obj, "trashDocument", {"path": str(doc)}, 94)
+    message = _wait_for(lambda: result.get(94))
+    assert message["ok"] is False
+    assert "Could not move to the Trash" in message["error"]
+    assert doc.exists()
+    assert window.recent_files_list == [str(doc)]
+
+
+def test_trash_document_missing_path(bridge, fake_trash):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "trashDocument", {}, 95)
+    message = _wait_for(lambda: result.get(95))
+    assert message["ok"] is False
+    assert "Missing path" in message["error"]
+    assert window.trash_confirmations == []
 
 
 def test_rename_text_file_missing_path(bridge):

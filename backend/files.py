@@ -288,3 +288,30 @@ def rename_text_file(old_path: str, new_path: str, content: str) -> None:
         # document; the original is untouched (it was never opened for writing).
         new.unlink(missing_ok=True)
         raise
+
+
+def trash_name() -> str:
+    """What this platform calls the place a deleted file goes."""
+    return "Recycle Bin" if os.name == "nt" else "Trash"
+
+
+def trash_file(path: str) -> None:
+    """Move the file at ``path`` to the system Trash (Recycle Bin on Windows).
+
+    Never a permanent delete: where the volume has no Trash (some network
+    drives, a filesystem without one) this raises and the file stays put,
+    rather than falling back to erasing it. A symlink is trashed itself, not
+    the file it points to.
+    """
+    # Imported here so the rest of this module stays free of Qt.
+    from PySide6.QtCore import QFile
+
+    target = Path(path)
+    if not (target.is_file() or target.is_symlink()):
+        raise FileNotFoundError(f"Not a file: {path}")
+    result = QFile.moveToTrash(path)
+    # PySide6 answers a bare bool; a binding that also reports where the file
+    # went answers ``(ok, path_in_trash)``.
+    moved = result[0] if isinstance(result, tuple) else result
+    if not moved:
+        raise OSError(f"Could not move to the {trash_name()}: {path}")

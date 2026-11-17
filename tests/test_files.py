@@ -17,6 +17,8 @@ from backend.files import (
     read_text_file,
     rename_text_file,
     resolve_typed_path,
+    trash_file,
+    trash_name,
     write_text_file,
 )
 
@@ -303,3 +305,61 @@ def test_check_rename_target(tmp_path):
     assert "already exists" in check_rename_target(str(old), str(tmp_path / "taken.md"))
     assert "No such folder" in check_rename_target(str(old), str(tmp_path / "missing" / "notes.md"))
     assert "Not a folder" in check_rename_target(str(old), str(tmp_path / "plain" / "notes.md"))
+
+
+@pytest.fixture
+def fake_move_to_trash(monkeypatch):
+    """Replace Qt's ``QFile.moveToTrash`` so no test touches the real Trash.
+
+    Records each path it is asked to move and answers ``answer`` (a bool, or the
+    ``(ok, path_in_trash)`` tuple some bindings return).
+    """
+    from PySide6.QtCore import QFile
+
+    calls: list[str] = []
+    state = {"answer": True}
+
+    def move_to_trash(path):
+        calls.append(path)
+        return state["answer"]
+
+    monkeypatch.setattr(QFile, "moveToTrash", staticmethod(move_to_trash))
+    return calls, state
+
+
+def test_trash_file_hands_the_file_to_the_system_trash(tmp_path, fake_move_to_trash):
+    calls, _state = fake_move_to_trash
+    doc = tmp_path / "notes.md"
+    doc.write_text("x", encoding="utf-8")
+    trash_file(str(doc))
+    assert calls == [str(doc)]
+
+
+def test_trash_file_accepts_the_tuple_answer(tmp_path, fake_move_to_trash):
+    calls, state = fake_move_to_trash
+    state["answer"] = (True, "/Trash/notes.md")
+    doc = tmp_path / "notes.md"
+    doc.write_text("x", encoding="utf-8")
+    trash_file(str(doc))
+    assert calls == [str(doc)]
+
+
+@pytest.mark.parametrize("answer", [False, (False, "")])
+def test_trash_file_never_falls_back_to_deleting(tmp_path, fake_move_to_trash, answer):
+    # A volume with no Trash: the file stays where it is, and the caller hears.
+    _calls, state = fake_move_to_trash
+    state["answer"] = answer
+    doc = tmp_path / "notes.md"
+    doc.write_text("x", encoding="utf-8")
+    with pytest.raises(OSError, match=f"Could not move to the {trash_name()}"):
+        trash_file(str(doc))
+    assert doc.read_text(encoding="utf-8") == "x"
+
+
+def test_trash_file_refuses_a_missing_file_or_a_folder(tmp_path, fake_move_to_trash):
+    calls, _state = fake_move_to_trash
+    with pytest.raises(FileNotFoundError):
+        trash_file(str(tmp_path / "gone.md"))
+    with pytest.raises(FileNotFoundError):
+        trash_file(str(tmp_path))
+    assert calls == []

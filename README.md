@@ -161,13 +161,22 @@ remembered between runs (`~/.config/Edi/Edi.conf`).
 
 | Menu | Items |
 | --- | --- |
-| **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename or Move…, Revert, Copy File Path, Export HTML…, Print…, Quit |
+| **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename or Move…, Move to Trash…, Revert, Copy File Path, Export HTML…, Print…, Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
 | **View** | Toolbar, Hover Band, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
 | **Help** | Edi Guide…, Formula Reference…, About Edi… |
 
-`Revert` and `Rename or Move…` need a document that has been saved somewhere.
+`Revert`, `Rename or Move…` and `Move to Trash…` need a document that has been
+saved somewhere.
+
+Move to Trash asks first, naming the file, and warns when the document has
+unsaved changes; Cancel is the default. A yes moves the file to the system
+Trash (the Recycle Bin on Windows, where the item is also named for it) and
+closes its tab. It never deletes outright: on a drive with no Trash the file
+stays put and Edi says why. The document's saved versions are kept, so File ›
+Manage Version History can still recover it after the Trash is emptied.
+
 Rename or Move opens on the current name with the stem selected, so typing
 renames in place. A path moves the document instead: relative to its folder,
 `~` or absolute. A folder on its own keeps the name (`../archive/`). The

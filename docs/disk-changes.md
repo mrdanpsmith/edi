@@ -14,6 +14,9 @@ the bytes involved (`seen`):
 - `writeTextFile` (a document save, `history: true`) and `renameTextFile` tell
   it after a write.
 
+`trashDocument` does the opposite: once the file is in the Trash the bridge
+`forget`s it, so Edi's own delete is never reported back as "deleted on disk".
+
 Those bytes are the file's **known state**. Anything else found on disk later
 is somebody else's change.
 

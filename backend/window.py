@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .bridge import Bridge
 from .historymanager import HistoryManager
-from .files import check_rename_target, check_typed_open_path, resolve_typed_path
+from .files import check_rename_target, check_typed_open_path, resolve_typed_path, trash_name
 from .preferences import Preferences
 from .printing import PrintJob
 
@@ -301,6 +301,7 @@ class MainWindow(QMainWindow):
         self._history_action = None
         self._git_history_action = None
         self._rename_action = None
+        self._trash_action = None
         self._toolbar_action = None
         self._hover_band_action = None
         self._insert_actions = None
@@ -480,6 +481,14 @@ class MainWindow(QMainWindow):
         self._rename_action.setEnabled(False)
         self._link_command(self._rename_action, "rename")
         file_menu.addAction(self._rename_action)
+
+        # No shortcut: Cmd/Ctrl+Backspace deletes back to the line start in the
+        # editor, and a menubar shortcut wins over the page. The confirmation is
+        # the shell's own (`confirm_trash`), never the page's.
+        self._trash_action = QAction(f"Move to {trash_name()}…", self)
+        self._trash_action.setEnabled(False)
+        self._link_command(self._trash_action, "moveToTrash")
+        file_menu.addAction(self._trash_action)
 
         self._revert_action = QAction("&Revert", self)
         self._revert_action.setEnabled(False)
@@ -756,8 +765,10 @@ class MainWindow(QMainWindow):
             self._copy_path_action.setEnabled(can_copy_path)
         if self._history_action is not None:
             self._history_action.setEnabled(can_copy_path)
-        if self._rename_action is not None:
-            self._rename_action.setEnabled(can_rename)
+        # Both need exactly a document on disk, so they share the page's answer.
+        for action in (self._rename_action, self._trash_action):
+            if action is not None:
+                action.setEnabled(can_rename)
         if self._toolbar_action is not None:
             self._toolbar_action.setChecked(toolbar_visible)
         if self._hover_band_action is not None:
@@ -896,6 +907,44 @@ class MainWindow(QMainWindow):
 
         def done(_result) -> None:
             accepted = box.clickedButton() == save
+            box.deleteLater()
+            if callback is not None:
+                callback(accepted)
+
+        box.finished.connect(done)
+        box.open()
+
+    def confirm_trash(self, path: str, dirty: bool, callback=None) -> None:
+        """Ask whether to move the document at ``path`` to the Trash.
+
+        ``callback(accepted: bool)`` runs when the user answers. Cancel is the
+        default button, so a stray Return keeps the file. The prompt is the
+        shell's own, naming the file, so nothing in the page can answer it or
+        point it at another file (see ``PathGrants``). ``dirty`` only adds the
+        warning that unsaved edits go with it; the page supplies it, and a wrong
+        answer changes the wording, never which file is moved.
+        """
+        place = trash_name()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Edi")
+        box.setText(f"Move “{os.path.basename(path)}” to the {place}?")
+        detail = f"You can restore it from the {place}.\n\n{path}"
+        if dirty:
+            detail = f"Its unsaved changes will be lost. {detail}"
+        box.setInformativeText(detail)
+        move = box.addButton(f"Move to {place}", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.adjustSize()
+        frame = box.frameGeometry()
+        frame.moveCenter(self.frameGeometry().center())
+        box.move(frame.topLeft())
+
+        def done(_result) -> None:
+            accepted = box.clickedButton() == move
             box.deleteLater()
             if callback is not None:
                 callback(accepted)

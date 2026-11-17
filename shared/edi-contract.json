@@ -14,6 +14,7 @@
     "insertImage": true,
     "insertKanban": true,
     "insertTableDefault": true,
+    "moveToTrash": true,
     "new": true,
     "open": true,
     "openPath": true,
@@ -81,6 +82,7 @@
     "setTitle": true,
     "stopCodeBlock": true,
     "streamCodeBlock": true,
+    "trashDocument": true,
     "writeBinaryFile": true,
     "writeTextFile": true
   },

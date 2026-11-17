@@ -105,7 +105,11 @@ page have explicit limits:
   naming the file, and a yes grants it — which is how a document opened from a
   link is saved the first time. The shell only asks about a document it opened
   through `readTextFile`, so the page cannot put an arbitrary path in front of
-  the user.
+  the user. Move to Trash works the same way: `trashDocument` carries only
+  the document's path, the shell asks in its own prompt naming the file, and
+  only a yes there moves it, to the system Trash and never a permanent delete.
+  It is refused before the prompt for a file the page may not write and Edi
+  never opened.
 - **Runnable code blocks** (`backend/exec.py`). On POSIX each run leads its own
   process group, and Stop, the 30-second timeout and quitting the app
   (`Bridge.shutdown`, on `aboutToQuit`) kill the whole group; Windows uses
@@ -140,7 +144,7 @@ bridge methods and preference defaults are declared in
 | --- | --- |
 | `src/` | TypeScript frontend. `entry.ts` is the page entry point; `main.ts` boots from `init(roots)`; `node/` holds node views. |
 | `src/appContext.ts` | The shared `AppContext`, roots and app-chrome updates (title, status, menu state). |
-| `src/fileController.ts` | File lifecycle: open, save, rename or move, revert, version history, import and export. |
+| `src/fileController.ts` | File lifecycle: open, save, rename or move, move to Trash, revert, version history, import and export. |
 | `src/relink.ts` | Rebases a moved document's relative images, links and link definitions so they still name the same files. A reference that names nothing at the old location is left as written. |
 | `src/editController.ts` | Clipboard, paste, select-all and menu undo/redo. |
 | `src/contextMenuController.ts` | Document, input, source-editor and block context menus. |

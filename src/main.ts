@@ -463,6 +463,7 @@ export function init(roots: AppRoots): () => void {
     save: () => void files.saveFile(),
     saveAs: () => void files.saveFileAs(),
     rename: () => void files.renameFile(),
+    moveToTrash: () => void files.moveToTrash(),
     revert: () => void files.revertFile(),
     versionHistory: () => void files.showHistory(),
     importTable: () => void files.importTable(),

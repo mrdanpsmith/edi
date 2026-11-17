@@ -63,6 +63,7 @@ const mainState = vi.hoisted(() => {
     writeTextFile: vi.fn(),
     renameTextFile: vi.fn(),
     pickRenamePath: vi.fn(),
+    trashDocument: vi.fn(),
     rebaseLinks: vi.fn().mockReturnValue(null),
     rebaseTargets: vi.fn().mockReturnValue([] as string[]),
     pathsExist: vi.fn().mockResolvedValue([] as boolean[]),
@@ -131,6 +132,7 @@ vi.mock('./files', async () => {
     writeTextFile: mainState.writeTextFile,
     renameTextFile: mainState.renameTextFile,
     pickRenamePath: mainState.pickRenamePath,
+    trashDocument: mainState.trashDocument,
     pathsExist: mainState.pathsExist,
     pickExportPath: mainState.pickExportPath,
     pickImageImportPath: mainState.pickImageImportPath,
@@ -465,6 +467,7 @@ const FILE_MOCKS = [
   mainState.writeTextFile,
   mainState.renameTextFile,
   mainState.pickRenamePath,
+  mainState.trashDocument,
   mainState.promptForLink,
   mainState.pickExportPath,
   mainState.pickImageImportPath,
@@ -1483,6 +1486,73 @@ describe('opening links', () => {
     mainState.editorOptions!.onOpenLink!('vscode://evil', 'https://example.com')
     await flushAsync()
     expect(mainState.confirmAction).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('move to trash', () => {
+  async function openNotes(): Promise<void> {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+  }
+
+  it('asks the shell, then closes the tab once the file is in the Trash', async () => {
+    await openNotes()
+    mainState.trashDocument.mockResolvedValue(true)
+    menu('moveToTrash')
+    await flushAsync()
+    expect(mainState.trashDocument).toHaveBeenCalledWith('/tmp/notes.md', false)
+    // The shell's prompt is the confirmation: the page draws none of its own.
+    expect(mainState.confirmAction).not.toHaveBeenCalled()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(0)
+    expect(statusLeft().textContent).toContain('Deleted notes.md')
+  })
+
+  it('keeps the tab when the reader cancels', async () => {
+    await openNotes()
+    mainState.trashDocument.mockResolvedValue(false)
+    menu('moveToTrash')
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(1)
+    expect(activeTabTitle()).toBe('notes.md')
+  })
+
+  it('tells the shell about unsaved changes and does not ask a second time', async () => {
+    await openNotes()
+    const { setActiveDirty } = await import('./state')
+    setActiveDirty(true)
+    mainState.trashDocument.mockResolvedValue(true)
+    menu('moveToTrash')
+    await flushAsync()
+    expect(mainState.trashDocument).toHaveBeenCalledWith('/tmp/notes.md', true)
+    expect(mainState.confirmAction).not.toHaveBeenCalled()
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(0)
+  })
+
+  it('reports a failure and keeps the tab', async () => {
+    await openNotes()
+    mainState.trashDocument.mockRejectedValue(new Error('Could not move to the Trash'))
+    menu('moveToTrash')
+    await flushAsync()
+    expect(mainState.showError).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to delete /tmp/notes.md'),
+    )
+    const state = await stateModule()
+    expect(state.getState().sessions).toHaveLength(1)
+  })
+
+  it('does nothing for an untitled document', async () => {
+    await loadMain()
+    menu('new')
+    await flushAsync()
+    menu('moveToTrash')
+    await flushAsync()
+    expect(mainState.trashDocument).not.toHaveBeenCalled()
   })
 })
 

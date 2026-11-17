@@ -24,6 +24,7 @@ import {
   readHistoryVersion,
   readTextFile,
   renameTextFile,
+  trashDocument,
   UNTITLED,
   writeTextFile,
 } from './files'
@@ -56,6 +57,7 @@ export interface FileController {
   saveFile(): Promise<void>
   saveFileAs(): Promise<void>
   renameFile(): Promise<void>
+  moveToTrash(): Promise<void>
   revertFile(): Promise<void>
   showHistory(): Promise<void>
   copyFilePath(): void
@@ -437,6 +439,35 @@ export function createFileController(ctx: AppContext): FileController {
     }
   }
 
+  /**
+   * Move the document's file to the Trash and close its tab.
+   *
+   * The confirmation is the shell's (`trashDocument`), not `confirmAction`: a
+   * page-drawn yes is one a script in the page could give, so the shell asks,
+   * naming the file, before it touches anything. The tab closes only once the
+   * file is gone, and without the usual unsaved-changes question, because the
+   * shell's prompt has already said those changes go with it.
+   */
+  async function moveToTrash(): Promise<void> {
+    const active = getActive()
+    const path = active?.path
+    if (!active || !path) return
+    const name = path.split('/').pop() ?? path
+    try {
+      if (!(await trashDocument(path, active.dirty))) return
+    } catch (error) {
+      ctx.reportError(`Failed to delete ${path}`, error)
+      return
+    }
+    ctx.disk?.dismiss(path)
+    // By id, not "the active tab": the reader may have switched while the
+    // prompt was up, and it is this document's tab that has nothing left.
+    ctx.tabs.close(active.id)
+    // The shell's prompt named the place (Trash, or Recycle Bin on Windows),
+    // which the page does not know.
+    ctx.flashStatus(`Deleted ${name}`)
+  }
+
   async function revertFile(): Promise<void> {
     if (!getActive()) return
     const active = getActive()!
@@ -634,6 +665,7 @@ export function createFileController(ctx: AppContext): FileController {
     saveFile,
     saveFileAs,
     renameFile,
+    moveToTrash,
     revertFile,
     showHistory,
     copyFilePath,

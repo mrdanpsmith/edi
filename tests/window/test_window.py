@@ -223,6 +223,51 @@ def test_alert_dialog_shows_single_ok_button(visible, qtbot):
     _dismiss_box(box, qtbot, box.button(QMessageBox.StandardButton.Ok))
 
 
+def _trash_box(window, qtbot, path, dirty):
+    answers: list[bool] = []
+    window.confirm_trash(path, dirty, answers.append)
+    return _wait_modal(qtbot), answers
+
+
+def test_trash_prompt_names_the_file_and_defaults_to_cancel(visible, qtbot, tmp_path):
+    from backend.files import trash_name
+
+    path = str(tmp_path / "notes.md")
+    box, answers = _trash_box(visible, qtbot, path, dirty=False)
+    place = trash_name()
+    assert box.text() == f"Move “notes.md” to the {place}?"
+    assert path in box.informativeText()
+    assert "unsaved" not in box.informativeText()
+    # A stray Return keeps the file.
+    assert box.defaultButton() is box.button(QMessageBox.StandardButton.Cancel)
+    _dismiss_box(box, qtbot, box.button(QMessageBox.StandardButton.Cancel))
+    assert answers == [False]
+
+
+def test_trash_prompt_warns_about_unsaved_changes_and_moves_on_yes(visible, qtbot, tmp_path):
+    from backend.files import trash_name
+
+    box, answers = _trash_box(visible, qtbot, str(tmp_path / "notes.md"), dirty=True)
+    assert "unsaved changes will be lost" in box.informativeText()
+    move = next(b for b in box.buttons() if b.text() == f"Move to {trash_name()}")
+    _dismiss_box(box, qtbot, move)
+    assert answers == [True]
+
+
+def test_trash_menu_item_follows_whether_the_document_has_a_path(visible):
+    action = visible._trash_action
+    assert action is not None and action.data() == "moveToTrash"
+    assert not action.isEnabled()
+    visible.update_menu_state(
+        can_revert=True, can_copy_path=True, toolbar_visible=True, can_rename=True
+    )
+    assert action.isEnabled()
+    visible.update_menu_state(
+        can_revert=False, can_copy_path=False, toolbar_visible=True, can_rename=False
+    )
+    assert not action.isEnabled()
+
+
 def test_manage_version_history_opens_the_shells_own_dialog_over_the_store(visible, qtbot, tmp_path, monkeypatch):
     """The dialog itself is tested in tests/test_historymanager.py; this is the
     wiring: the menu item, and the window's own open, flash and watched."""

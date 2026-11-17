@@ -10,6 +10,9 @@ the preview renders it live — and a few block types go much further.
 - `File → Rename or Move…` takes a new name or a path (`../archive/`
   keeps the name). Relative images and links are rewritten so they still
   point at the same files.
+- `File → Move to Trash…` asks first, then moves the document's file to the
+  Trash (the Recycle Bin on Windows) and closes its tab. `File → Manage Version
+  History…` can still recover it after the Trash is emptied.
 - File actions also live as toolbar buttons; hide that row with
   `View → Toolbar`.
 - Hovering a block puts a faint band behind it, marking which block

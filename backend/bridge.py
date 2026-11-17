@@ -33,6 +33,7 @@ from .files import (
     read_any_text_file,
     read_text_file,
     rename_text_file,
+    trash_file,
     write_text_file,
 )
 from .tables import parse_table_file
@@ -204,6 +205,7 @@ class Bridge(QObject):
             "readAnyTextFile": self._read_any_text_file,
             "writeTextFile": self._write_text_file,
             "renameTextFile": self._rename_text_file,
+            "trashDocument": self._trash_document,
             "pathsExist": self._paths_exist,
             "listHistory": self._list_history,
             "readHistoryVersion": self._read_history_version,
@@ -561,6 +563,46 @@ class Bridge(QObject):
                 self._reply(request_id, None)
 
         self._spawn(work)
+
+    def _trash_document(self, request_id: int, args: dict) -> None:
+        """Move an open document's file to the Trash, if the user says so.
+
+        Replies ``True`` once the file is in the Trash and ``False`` on a
+        cancel. The yes comes from the shell's own prompt naming the file
+        (``window.confirm_trash``), which the page can neither draw nor answer:
+        a page that calls this can at most put that question in front of the
+        user, and only for a document Edi may write or has itself opened.
+
+        The document's saved versions are kept, so File › Manage Version
+        History can still recover it after the Trash is emptied.
+        """
+        path = args.get("path")
+        if not path:
+            self._reply_error(request_id, "Missing path")
+            return
+        path = str(path)
+        if not self.grants.may_write(path):
+            self.grants.check_confirmable(path)
+
+        def work() -> None:
+            try:
+                trash_file(path)
+            except Exception as exc:  # noqa: BLE001
+                self._reply_error(request_id, str(exc))
+            else:
+                # Its name no longer names anything: nothing to offer a click
+                # away, and nothing for the watcher to report as deleted.
+                self._window.forget_recent_file(path)
+                self.disk.forget(path)
+                self._reply(request_id, True)
+
+        def answered(accepted: bool) -> None:
+            if accepted:
+                self._spawn(work)
+            else:
+                self._reply(request_id, False)
+
+        self._window.confirm_trash(path, bool(args.get("dirty")), answered)
 
     def _seen_written(self, path: str) -> None:
         """Edi wrote ``path``: what is there now is Edi's, not news to report."""
