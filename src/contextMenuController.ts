@@ -322,7 +322,7 @@ export function createContextMenuController(
     // **The press is classified, not sniffed** (`src/press.ts`): the menu is offered for the block
     // the press names, and for nothing else.
     const press = pressTarget(view, event)
-    if (press.kind !== 'content' && press.kind !== 'margin') return entries
+    if (press.kind !== 'content' && press.kind !== 'frame' && press.kind !== 'margin') return entries
     const pos = press.pos
     const node = view.state.doc.nodeAt(pos)
     if (node === null) return entries

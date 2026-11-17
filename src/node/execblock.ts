@@ -8,6 +8,7 @@ import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
 import type { CodeResult } from '../exec'
 import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
 import { exitCodeBlock } from '../codeBlockExit'
+import { codeBlockKey } from '../codeBlockDelete'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { FENCE_OPENED_META } from '../blockstart'
 import { codeLanguageFor, codeLanguageLabel, shebangLanguage } from '../codeLanguages'
@@ -238,6 +239,15 @@ class RunnableBlockNodeView implements NodeView {
         (dir) => {
           const pos = this.getPos()
           if (pos !== undefined) exitCodeBlock(this.view, pos, dir)
+        },
+        (key) => {
+          // Backspace at the start turns the block into paragraphs; Escape selects
+          // it. Either way the answer is ProseMirror's now, so the next key has to
+          // reach ProseMirror's keymap rather than this editor.
+          const pos = this.getPos()
+          if (pos === undefined) return
+          const view = this.view
+          if (codeBlockKey(view.state, view.dispatch, pos, key)) view.focus()
         },
       )
       this.dom.appendChild(host)
@@ -667,11 +677,16 @@ function focusCodeEditorAt(view: EditorView, pos: number, offset: number): boole
  */
 function handCaretToCodeEditor(view: EditorView, prev: EditorState): void {
   if (prev.doc === view.state.doc || document.activeElement !== view.dom) return
+  focusSelectionCodeEditor(view)
+}
+
+/** If ProseMirror's caret is inside a CodeMirror-drawn block, give that editor the focus there. */
+function focusSelectionCodeEditor(view: EditorView): boolean {
   const { selection } = view.state
-  if (!(selection instanceof TextSelection)) return
+  if (!(selection instanceof TextSelection)) return false
   const { $head } = selection
-  if ($head.parent.type.name !== 'code_block') return
-  focusCodeEditorAt(view, $head.before(), $head.parentOffset)
+  if ($head.parent.type.name !== 'code_block') return false
+  return focusCodeEditorAt(view, $head.before(), $head.parentOffset)
 }
 
 export const codeBlockNodeViewPlugin = new Plugin<number | null>({

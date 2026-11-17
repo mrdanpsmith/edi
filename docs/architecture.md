@@ -143,6 +143,7 @@ bridge methods and preference defaults are declared in
 | `src/contextMenuController.ts` | Document, input, source-editor and block context menus. |
 | `src/zoomController.ts` | Document zoom commands, wheel handling and the status indicator. |
 | `src/editor.ts` | Builds the ProseMirror editor. |
+| `src/codeBlockDelete.ts`, `src/codeBlockMouse.ts` | Selecting and deleting code blocks from the keyboard, and the frame press and drags across them; see [code-blocks.md](code-blocks.md). |
 | `src/styles.css` | Application stylesheet entry; imports the component sheets in cascade order. |
 | `src/styles/` | One stylesheet per component (`tabs`, `toolbar`, `block-controls`, `tables`, `mermaid`, …). |
 | `src/docs/` | Markdown used by the in-app Help guide. |

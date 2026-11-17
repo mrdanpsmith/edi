@@ -125,6 +125,39 @@ function arrowExitBindings(onArrowOut: ArrowOut | undefined): KeyBinding[] {
   return [binding(1), binding(-1)]
 }
 
+/** A key that is about the whole block rather than its text (`codeBlockDelete.ts`). */
+export type BlockKey = 'Backspace' | 'Escape'
+
+/**
+ * Backspace at the very start of the block, and Escape anywhere in it, are
+ * requests about the block, not its text: CodeMirror has nothing before
+ * position 0 to delete, and its own Escape only collapses extra selections. The
+ * owner answers them (turn the block into text; select the block). Delete at
+ * the end needs no binding — CodeMirror already does nothing there, which is
+ * the answer.
+ */
+function blockKeyBindings(onBlockKey: ((key: BlockKey) => void) | undefined): KeyBinding[] {
+  if (!onBlockKey) return []
+  return [
+    {
+      key: 'Backspace',
+      run(view: EditorView): boolean {
+        const { selection } = view.state
+        if (selection.ranges.length !== 1 || !selection.main.empty || selection.main.head !== 0) return false
+        onBlockKey('Backspace')
+        return true
+      },
+    },
+    {
+      key: 'Escape',
+      run(): boolean {
+        onBlockKey('Escape')
+        return true
+      },
+    },
+  ]
+}
+
 export function createBlockCodeMirror(
   parent: HTMLElement,
   doc: string,
@@ -204,6 +237,7 @@ export function createCodeEditor(
   language: Extension,
   onChange: (value: string) => void,
   onArrowOut?: ArrowOut,
+  onBlockKey?: (key: BlockKey) => void,
 ): BlockCodeMirror {
   const view = new EditorView({
     state: EditorState.create({
@@ -212,6 +246,7 @@ export function createCodeEditor(
         history(),
         keymap.of([
           ...arrowExitBindings(onArrowOut),
+          ...blockKeyBindings(onBlockKey),
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,

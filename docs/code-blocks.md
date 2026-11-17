@@ -1,0 +1,196 @@
+# Code blocks
+
+A fenced code block is one `code_block` node: a textblock with `code: true`,
+plain text only, and a `language` attr. What the reader sees, and therefore how
+every key, paste and press behaves in it, depends on which of two renderers
+draws it. Block modes (Visual/Source) are separate and covered in
+[block-modes.md](block-modes.md); this is the Visual form.
+
+## Two renderers, one node
+
+`RunnableBlockNodeView` (`src/node/execblock.ts`) draws every Visual code block
+in one of two ways:
+
+| The block resolves to | Renderer | Its text is |
+| --- | --- | --- |
+| a grammar, from its language tag or else its shebang | an embedded CodeMirror (`createCodeEditor`) | CodeMirror's, mirrored into the node by `commitEditorText` |
+| nothing | a `<pre><code>` that is ProseMirror's own `contentDOM` | ProseMirror's, edited natively |
+
+`codeLanguageLabel` (`src/codeLanguages.ts`) is the one answer to "which
+grammar". It builds nothing, so the node view can ask it on every keystroke;
+`codeLanguageFor` builds the grammar from its label, and `isCodeEditorBlock`
+(`src/selectionExpand.ts`) asks the same function, so the selection rules and
+the renderer cannot disagree about which blocks are CodeMirror. It looks names
+up as **own keys only**: a shebang naming `constructor` must not find
+`Object.prototype`'s.
+
+**The renderer follows the text.** `update` returns false, rebuilding the view,
+whenever the resolved grammar changes, not only when the `language` attr does.
+Finishing `#!/usr/bin/env python3` turns a plain block into a Python one;
+deleting the interpreter turns it back. The **badge** (`syncBadge`) is
+different: it follows the shebang's interpreter in place, so typing `pyt…`
+renames it on every key without rebuilding anything.
+
+**A rebuild hands the caret over.** The view being replaced is the one taking
+the typing, so:
+
+- plain → CodeMirror: the typing was in ProseMirror's `contentDOM`, so focus is
+  on ProseMirror's root with a selection inside a block that no longer has a DOM
+  caret. `handCaretToCodeEditor`, a plugin-view `update`, focuses the new
+  CodeMirror at the same offset. It only acts after a document change and only
+  when ProseMirror's own root has focus, so it cannot take focus from a grid, a
+  dialog or another CodeMirror.
+- CodeMirror → plain, or another grammar: `commitEditorText` sees that its edit
+  changes the grammar, puts ProseMirror's selection where CodeMirror's caret
+  was, and focuses whatever replaced it. It is deferred to a microtask because it
+  runs inside CodeMirror's own update, which must not have its view destroyed
+  underneath it.
+
+A rebuilt CodeMirror starts with an empty undo history. The document-level
+undo still has the edits.
+
+## Typing a fence
+
+A line that is only ```` ``` ````, optionally with an info string, becomes a
+code block on space (the `fenceRule` input rule) or on Enter
+(`blockStartKeymap`), both in `src/blockstart.ts`. A fence followed by text on
+the same line is prose and declines.
+
+- **The caret goes to the end of the new block's text.** For a language fence
+  the block is empty, so that is its only position.
+- **A shebang keeps the key that closed it.** ```` ```#!/usr/bin/env ```` +
+  space is half of `#!/usr/bin/env python3`, so the space stays in the line;
+  Enter puts the caret on line two. A language tag's space is only the trigger
+  and is dropped.
+- A CodeMirror-drawn block has no DOM caret for ProseMirror's selection, so
+  the transaction carries `FENCE_OPENED_META` and `focusOpenedFence` hands
+  focus to that CodeMirror, at the end of its text, once it is drawn.
+
+`mermaid` is the exception: it inserts a diagram atom and opens it in Source.
+
+## Pasting into a code block
+
+The paste routes build blocks: one paragraph per line (`insertPastedText`),
+parsed markdown (`pasteAsMarkdown`) or parsed HTML, spliced in open at depth 1.
+Inside a code block that splice would merge the first line into the code and
+put the rest after the block, so code blocks are answered before it.
+
+`pasteIntoCode` (`src/paste.ts`) answers first on every route (Edit → Paste
+in `editController.ts`, Paste as Markdown, and the URL-linking `handlePaste`):
+when the selection is wholly inside one code block, the clipboard's characters
+go in as text, line endings normalised to `\n`, nothing linked or parsed. Edit →
+Paste prefers the `text/plain` leg there, because an Edi copy's markdown leg
+would bring its fences with it.
+
+## Code block keys
+
+**Notion's block-editor model**, chosen because its semantics are already
+understood. A code block is a textblock, and ProseMirror's own commands would
+treat it as text (joining it into the paragraph before, or the next line into
+it), so it gets two rules of its own:
+
+1. **Backspace at the start of a block turns it into plain text.** For a code
+   block that is one paragraph per line, the text kept and the caret at the
+   start of the first: the same as deleting its fences in Source. A second
+   Backspace is then an ordinary paragraph's.
+2. **A whole block is deleted by selecting it, then deleting.** Esc inside a
+   code block selects it (Notion's gesture, from a caret or a selection of its
+   text); so does a press on its frame or a drag across it (see below). A delete
+   key never selects the block it is pressed inside.
+
+`codeBlockDeleteKeymap` (`src/codeBlockDelete.ts`) sits before `baseKeymap`:
+
+| Caret | Key | Result |
+| --- | --- | --- |
+| start of a code block | Backspace | one paragraph per line (an empty block becomes one empty paragraph) |
+| end of a code block | Delete | nothing: the next line is not the code's to take |
+| anywhere in a code block | Esc | the block is selected |
+| start of the line after a code block | Backspace | the block is selected; the line keeps its text |
+| an empty line after a code block | Backspace | the line is removed and the block selected |
+| end of the line before a code block | Delete | the block is selected |
+| an empty line before a code block | Delete | the line is removed and the block selected |
+| the block selected | Backspace / Delete | the block is removed (`deleteSelection`) |
+
+The neighbour rows are the rule Edi already has beside a diagram or a table
+(`baseKeymap`'s `selectNodeBackward` on an atom), kept so that all three kinds
+of block read the same. They apply only when the code block is the line's own
+sibling, so the first line of a list item after a code block still lifts out
+of its list.
+
+Esc defers to a block mode: with a block in Source, Esc is that mode's (it
+leaves Source, `blockToggleKeymap`), and selecting a block would answer a
+different question.
+
+Inside a CodeMirror block the keys are CodeMirror's, so `createCodeEditor` takes
+an `onBlockKey(key)` callback, bound before `defaultKeymap`, for Backspace at
+position 0 and for Esc. The node view answers it with `codeBlockKey` and focuses
+ProseMirror, so the next key reaches ProseMirror's keymap. Delete at the end
+needs no binding: CodeMirror already does nothing there.
+
+**A key the page does not take is deleted natively by the engine**, which
+strips a selected block's markup and leaves its text as a paragraph. That is
+why these keys are also gated with real key events in QtWebEngine (see Tests).
+
+## The mouse
+
+A CodeMirror block is a selection unit like a diagram (`isSelectionAtom`): a
+range that covers it gets `edi-block-selected` and copies the block's markdown.
+A plain block is text, and a drag through it is the browser's like any
+paragraph's.
+
+**A press on a code block's frame selects it.** The block's text has to take
+a press as a caret, so the frame is what stands for the block: the border, the
+padding and the language bar. `press.ts` classifies it as the `frame` press
+kind, which carries `pos` (the top-level block, as for `content`) and `code`
+(the code block itself, which is what is selected, so one in a list item is
+selected and not its list). The context menu and Alt+click treat `frame`
+exactly as `content`. These are not frame:
+
+- the code: the plain renderer's `<code>`, which is `display: block` so it also
+  covers the space beside a short line, and all of a CodeMirror, line numbers
+  included;
+- the buttons;
+- the run output and formula diagnostics, whose text a reader selects to copy.
+
+**A drag treats the block as one thing** (`codeBlockMousePlugin`,
+`src/codeBlockMouse.ts`), in both directions:
+
+1. *Into the block from the text.* Chromium does not carry a drag's selection
+   from the outer contenteditable into CodeMirror's nested one, so on its own
+   the head would stop on the line before the block. The plugin tracks the
+   pointer while a drag ProseMirror started is held, and over a CodeMirror
+   block it moves the head to the first text past the block in the drag's
+   direction. Its `createSelectionBetween` prop does the same for any selection
+   ProseMirror reads from the DOM meanwhile.
+2. *Out of the block into the text.* A press in the code begins CodeMirror's
+   own drag, which cannot leave the block. When the pointer leaves the block's
+   box, the plugin ends that drag with a synthetic `mousemove` holding no
+   buttons (CodeMirror's `MouseSelection` destroys itself on one, without
+   moving its selection; public DOM, no internals). It then focuses
+   ProseMirror and drives a document selection from the block's far side to
+   the pointer until the button comes up.
+
+The pointer state is per plugin instance, so a revealed encrypted block's
+editor tracks its own.
+
+## Tests
+
+| Behaviour | Unit (jsdom) | Real input (`npm run test:browser`) |
+| --- | --- | --- |
+| Paste into a code block | `src/paste.test.ts` | — |
+| Typing a fence and a shebang | `src/blockstart.test.ts` | `tests/browser/edit-blocks.browser.test.ts` |
+| Renderer switch and caret handoff | — | `tests/browser/edit-blocks.browser.test.ts` |
+| Backspace / Delete / Esc | `src/codeBlockDelete.test.ts` | `tests/browser/edit-blocks.browser.test.ts` (`code block keys`) |
+| Frame press and drags | — | `tests/browser/code-block-mouse.browser.test.ts` |
+
+The focus, caret and pointer behaviour only exists with real layout and input,
+which is why most of it is tested in the browser project and not in jsdom. A
+CodeMirror line's text is split across highlight tokens, so those tests aim at
+`.cm-line` boxes rather than `charBox`.
+
+**The keys are also gated in QtWebEngine with real key events**:
+`tests/window/test_window.py::test_code_block_keys_with_real_key_events`, for
+both renderers. Real keys reach the page when they are sent to the web view's
+`focusProxy()`, the widget QtWebEngine reads input from; `qtbot.keyClick` on the
+window does not reach it. A synthetic `KeyboardEvent` only exercises
+ProseMirror's keymap and could never show the engine deleting natively.

@@ -28,6 +28,8 @@ import { blockDragPlugin } from './blockDrag'
 import { pressPlugin } from './press'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { codeBlockExitPlugin } from './codeBlockExit'
+import { codeBlockDeleteKeymap } from './codeBlockDelete'
+import { codeBlockMousePlugin } from './codeBlockMouse'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import { formulaDefsPlugin, formulaEnvFor } from './formulaDefs'
@@ -424,6 +426,9 @@ export function createBlockEditor(
     undoKeymap,
     selectionExpandKeymap,
     listKeymap,
+    // Before baseKeymap, whose joinBackward/joinForward would merge a line into a
+    // code block (or the code into the line) instead of selecting the block.
+    codeBlockDeleteKeymap(),
     keymap(baseKeymap),
     formattingKeymap,
     markExitPlugin,
@@ -442,6 +447,7 @@ export function createBlockEditor(
     blockModeFocusPlugin,
     blockDragPlugin,
     pressPlugin(),
+    codeBlockMousePlugin(),
     formulaDefsPlugin,
     mermaidNodeViewPlugin,
     maskedFieldNodeViewPlugin,

@@ -28,7 +28,7 @@ import { keymap } from 'prosemirror-keymap'
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import type { EditorView } from 'prosemirror-view'
 import type { Node as ProseNode, Slice } from 'prosemirror-model'
-import { CODE_LANGUAGE_ALIASES, shebangLanguage } from './codeLanguages'
+import { codeLanguageLabel } from './codeLanguages'
 import { blockFormMode, modeFor } from './block-modes'
 
 type Dir = 1 | -1
@@ -68,10 +68,8 @@ export const SELECTION_HIGHLIGHT_KEY = new PluginKey('EDI_SELECTION_HIGHLIGHT')
 export function isCodeEditorBlock(state: EditorState, node: ProseNode, pos: number): boolean {
   if (node.type.name !== 'code_block') return false
   if (modeFor(state, pos)?.representation === 'source') return true
-  const tag = String(node.attrs.language ?? '').trim().toLowerCase()
-  if (tag && tag in CODE_LANGUAGE_ALIASES) return true
-  const interpreter = shebangLanguage(node.textContent)
-  return !!(interpreter && interpreter in CODE_LANGUAGE_ALIASES)
+  // The node view's own question (`RunnableBlockNodeView`), so the two cannot disagree.
+  return codeLanguageLabel(String(node.attrs.language ?? '') || null, node.textContent) !== null
 }
 
 /** A block the gesture selects whole: an atom, or a CodeMirror code block.

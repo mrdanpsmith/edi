@@ -9998,3 +9998,77 @@ def test_arrow_keys_leave_a_code_blocks_visual_and_source_views(window):
           and "after" in (d.get("md") or ""), timeout=10)
     _wait(window, selected_paragraph(),
           lambda d: d.get("p") == "after" and d.get("inside") is True, timeout=10)
+
+
+_CODE_KEY_BLOCKS = """(() => {
+  const ed = document.querySelector('#editor-container > .ProseMirror');
+  return { blocks: [...ed.children].map((el) =>
+    (el.classList.contains('runnable-block') ? 'code' : 'p') + ':'
+    + (el.querySelector('.cm-content, code, p')?.textContent ?? '').trim()
+    + (el.classList.contains('ProseMirror-selectednode') ? ' [selected]' : '')) };
+})()"""
+
+
+@pytest.mark.parametrize("fence", ["```", "```py"])
+def test_code_block_keys_with_real_key_events(window, fence):
+    """Backspace at a code block's start makes it text; Escape selects it; Backspace deletes it.
+
+    `docs/code-blocks.md`'s two rules, **with real key events into QtWebEngine**, because a
+    report from the app ("selected, then the next key turned the code into a paragraph") was
+    about this engine and could not be reproduced in Chromium. The keys are sent to the
+    view's ``focusProxy``: that is the widget QtWebEngine reads input from. ``qtbot.keyClick``
+    on the window itself never reaches the page (see the block-marker test above), so a
+    synthetic `KeyboardEvent` would only test ProseMirror's keymap, never the engine's own
+    route to it — and a key the page fails to take is deleted *natively* by the engine, which
+    strips a block's markup and leaves its text: exactly what was reported.
+
+    Both renderers: a plain block, whose keys are ProseMirror's, and a highlighted one,
+    whose keys are CodeMirror's and are handed back across (`createCodeEditor`).
+    """
+    from PySide6.QtTest import QTest
+
+    doc = f"before\n\n{fence}\nfirst\nsecond\n```\n\nafter\n"
+    target = window._web.focusProxy() or window._web
+
+    def load_and_caret_at_code_start():
+        _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()" % json.dumps(doc))
+        _wait(window, _CODE_KEY_BLOCKS, lambda d: len(d.get("blocks") or []) == 3, timeout=15)
+        window._web.setFocus()
+        _dump(window, """(() => {
+          const block = document.querySelector('.runnable-block');
+          const cm = block.querySelector('.cm-content');
+          const host = cm ?? block.querySelector('code');
+          (cm ?? document.querySelector('#editor-container > .ProseMirror')).focus();
+          const text = document.createTreeWalker(host, NodeFilter.SHOW_TEXT).nextNode();
+          const r = document.createRange(); r.setStart(text, 0); r.collapse(true);
+          const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+          return { d: 1 };
+        })()""")
+        _settle(window)
+
+    def key(k):
+        QTest.keyClick(target, k)
+        _settle(window)
+
+    # Rule 1: Backspace at the start turns the block into text, one paragraph per line.
+    load_and_caret_at_code_start()
+    key(Qt.Key_Backspace)
+    got = _wait(window, _CODE_KEY_BLOCKS, lambda d: "code" not in str(d.get("blocks")), timeout=10)
+    assert got["blocks"] == ["p:before", "p:first", "p:second", "p:after"], got
+
+    # Rule 2: Escape selects the block, and the next Backspace removes all of it.
+    load_and_caret_at_code_start()
+    key(Qt.Key_Escape)
+    got = _wait(window, _CODE_KEY_BLOCKS, lambda d: "[selected]" in str(d.get("blocks")), timeout=10)
+    assert got["blocks"][1].endswith("[selected]"), got
+    key(Qt.Key_Backspace)
+    got = _wait(window, _CODE_KEY_BLOCKS, lambda d: len(d.get("blocks") or []) == 2, timeout=10)
+    assert got["blocks"] == ["p:before", "p:after"], got
+
+    # The same with Delete, the key from the report.
+    load_and_caret_at_code_start()
+    key(Qt.Key_Escape)
+    _wait(window, _CODE_KEY_BLOCKS, lambda d: "[selected]" in str(d.get("blocks")), timeout=10)
+    key(Qt.Key_Delete)
+    got = _wait(window, _CODE_KEY_BLOCKS, lambda d: len(d.get("blocks") or []) == 2, timeout=10)
+    assert got["blocks"] == ["p:before", "p:after"], got

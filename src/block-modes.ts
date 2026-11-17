@@ -993,7 +993,7 @@ export function blockModeGesture(view: EditorView, event: MouseEvent): boolean {
   // which was a real complaint, and the fix was never to forbid the gesture but to give it one
   // meaning: *it closes, and that is what a press that names nothing is for.* Alt+click has no
   // other meaning in the app, so this is the whole of it.
-  if (press.kind === 'content' || press.kind === 'margin') {
+  if (press.kind === 'content' || press.kind === 'frame' || press.kind === 'margin') {
     return toggleBlockModeFromGesture(view, press.pos)
   }
   if (press.kind === 'space' || press.kind === 'none') {

@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { bootApp, settle, type BootedApp } from './app'
-import { MOD, blockTypes, emptyDocument, md, press, type } from './edit-helpers'
+import { MOD, blockTypes, caretAfter, emptyDocument, md, press, type } from './edit-helpers'
 
 let app: BootedApp
 
@@ -176,5 +176,96 @@ describe('undo and redo', () => {
     app.editor.focus()
     await press('z', MOD)
     expect(md(app)).toBe('second file')
+  })
+})
+
+// `src/codeBlockDelete.test.ts` runs the commands on a bare state. These press
+// the keys for real, which is the only place the CodeMirror-drawn block can be
+// tested: Backspace and Escape there are CodeMirror's keys, handed back across.
+describe('code block keys (Notion\'s model)', () => {
+  const selected = () => app.editor.querySelector('.ProseMirror-selectednode')
+
+  it('Backspace at the start of a highlighted block turns it into text', async () => {
+    await emptyDocument(app)
+    await type('before{Enter}```py{Enter}x = 1{Enter}y = 2')
+    expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
+    await press('ArrowUp')
+    await press('Home')
+    await press('Backspace')
+    expect(blockTypes(app)).toEqual(['paragraph', 'paragraph', 'paragraph'])
+    expect(md(app)).toBe('before\n\nx = 1\n\ny = 2')
+    expect(selected()).toBeNull()
+    // The caret is in the first of them, so typing goes there.
+    await type('!')
+    expect(md(app)).toBe('before\n\n!x = 1\n\ny = 2')
+  })
+
+  it('Backspace at the start of a plain block does the same', async () => {
+    await app.setDocument('before\n\n```\nplain\n```\n\nafter')
+    await caretAfter(app, 'plain')
+    await press('Home')
+    await press('Backspace')
+    expect(md(app)).toBe('before\n\nplain\n\nafter')
+  })
+
+  it('Escape selects a highlighted block, and Backspace removes it', async () => {
+    await emptyDocument(app)
+    await type('before{Enter}```py{Enter}x = 1')
+    await press('Escape')
+    expect(selected()?.classList.contains('runnable-block')).toBe(true)
+    expect(document.activeElement).toBe(app.editor)
+    await press('Backspace')
+    expect(md(app)).toBe('before')
+  })
+
+  it('Escape selects a plain block, and Delete removes it', async () => {
+    await app.setDocument('before\n\n```\nplain\n```\n\nafter')
+    await caretAfter(app, 'plain')
+    await press('Escape')
+    expect(selected()).not.toBeNull()
+    await press('Delete')
+    expect(md(app)).toBe('before\n\nafter')
+  })
+
+  it('Backspace at the start of the line after selects the block instead of joining the line into it', async () => {
+    await app.setDocument('```py\nx = 1\n```\n\nafter')
+    await caretAfter(app, 'after')
+    await press('Home')
+    await press('Backspace')
+    expect(selected()).not.toBeNull()
+    expect(md(app)).toBe('```py\nx = 1\n```\n\nafter')
+    await press('Backspace')
+    expect(md(app)).toBe('after')
+  })
+
+  it('Delete at the end of the line before selects the block, and again removes it', async () => {
+    await app.setDocument('before\n\n```py\nx = 1\n```')
+    await caretAfter(app, 'before')
+    await press('Delete')
+    expect(selected()).not.toBeNull()
+    await press('Delete')
+    expect(md(app)).toBe('before')
+  })
+
+  it('Delete at the end of a highlighted block stays put instead of pulling the next line in', async () => {
+    await emptyDocument(app)
+    await type('```py{Enter}x = 1')
+    await press('ArrowDown') // leaves the block: the empty paragraph a fence at the end gets
+    await type('after')
+    await press('ArrowUp')
+    await press('End')
+    await press('Delete')
+    expect(md(app)).toBe('```py\nx = 1\n```\n\nafter')
+    expect(selected()).toBeNull()
+    expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
+  })
+
+  it('Delete at the end of a plain block does the same', async () => {
+    await app.setDocument('```\nplain\n```\n\nafter')
+    await caretAfter(app, 'plain')
+    await press('End')
+    await press('Delete')
+    expect(md(app)).toBe('```\nplain\n```\n\nafter')
+    expect(selected()).toBeNull()
   })
 })

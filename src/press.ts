@@ -63,7 +63,7 @@
  * the block's business (§3.1), a `control` press is the button's, and any of
  * `Shift`/`Ctrl`/`Alt`/`Meta` is a selection being extended or the block-mode toggle.
  */
-import { Plugin, Selection, TextSelection } from 'prosemirror-state'
+import { NodeSelection, Plugin, Selection, TextSelection } from 'prosemirror-state'
 import { GapCursor } from 'prosemirror-gapcursor'
 import type { EditorView } from 'prosemirror-view'
 import type { Node as ProseNode } from 'prosemirror-model'
@@ -180,6 +180,8 @@ export const BLOCK_CONTROLS_CLASS = 'block-controls'
 /** What a press is, and where it points. */
 export type PressTarget =
   | { kind: 'control'; pos: number }
+  /** A code block's frame: `pos` is the top-level block, as for `content`; `code` is the code block. */
+  | { kind: 'frame'; pos: number; code: number }
   | { kind: 'content'; pos: number }
   | { kind: 'margin'; pos: number; before: boolean }
   | { kind: 'space'; pos: number; before: boolean }
@@ -278,6 +280,9 @@ export function pressTarget(view: EditorView, event: MouseEvent): PressTarget {
       return { kind: 'space', pos: nearest.pos, before: nearest.before }
     }
   }
+  // **A code block's frame** — after the strip, whose white space is the page's, not the block's.
+  const frame = codeBlockFrameAt(view, target)
+  if (frame !== -1) return { kind: 'frame', pos: named, code: frame }
   // **And the margin** — `onBlockMargin` excluding the content itself, because a margin element
   // *contains* the content it surrounds: "inside the margin" alone is true of every cell, and a
   // press in a cell is the browser's text selection rather than a request for a caret.
@@ -302,6 +307,39 @@ export function pressTarget(view: EditorView, event: MouseEvent): PressTarget {
   return { kind: 'content', pos: named }
 }
 
+/**
+ * **A press on a code block's frame selects the block**, the way a press on a diagram does.
+ *
+ * A code block's text has to take a press as a caret, so the whole block cannot be what a press
+ * on it means, as it is for an atom. The frame can: the border and padding round the code and the
+ * language bar above it are the block and nothing in it. Not a frame: the code itself (the plain
+ * renderer's `<code>`, which is `display: block` and so covers the space beside a short line, and
+ * all of a CodeMirror, line numbers included), the buttons, and the run output, whose text a
+ * reader selects to copy.
+ *
+ * Returns the block's position, or -1. The position is found from the element, not from
+ * `blockPosForElement`, which names the *top-level* block: a code block in a list item is
+ * selected itself, not its list.
+ */
+function codeBlockFrameAt(view: EditorView, target: EventTarget | null): number {
+  if (!(target instanceof Element)) return -1
+  const block = target.closest('.runnable-block')
+  if (block === null || !view.dom.contains(block)) return -1
+  if (target.closest('code, .cm-editor, button, .runnable-controls, .formula-errors') !== null) return -1
+  return codeBlockPosForElement(view, block)
+}
+
+/** The position of the `code_block` whose node view is `block` (a `.runnable-block`), or -1. */
+export function codeBlockPosForElement(view: EditorView, block: Element): number {
+  let found = -1
+  view.state.doc.descendants((node, pos) => {
+    if (found !== -1) return false
+    if (node.type.name === 'code_block' && view.nodeDOM(pos) === block) found = pos
+    return found === -1
+  })
+  return found
+}
+
 /** Is this press a plain one, with no gesture riding on it? */
 function plainPress(event: MouseEvent): boolean {
   return event.button === 0 &&
@@ -323,6 +361,12 @@ export function answerPress(view: EditorView, event: MouseEvent, target: PressTa
     case 'content':
     case 'control':
       return false
+    case 'frame':
+      if (!plainPress(event)) return false
+      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, target.code)))
+      event.preventDefault()
+      view.focus()
+      return true
     case 'margin':
     case 'space':
       break

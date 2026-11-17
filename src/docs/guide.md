@@ -172,6 +172,20 @@ print("Hello from Edi!")
 Hovering a code block shows a **Run** button in its controls; output lands
 beneath the block and **Stop** cancels a hung run.
 
+## Selecting and deleting a code block
+
+Click a code block's frame (its border or the language bar along the top) to
+select the whole block; clicking the code itself puts the caret there. Dragging
+a selection into or out of a highlighted block takes in the whole block.
+
+`Esc` inside a code block selects the whole block; `Backspace` or `Delete` then
+deletes it. `Backspace` at the start of a code block turns it back into ordinary
+text, one paragraph per line.
+
+Next to a code block, `Backspace` at the start of the line after it (or `Delete`
+at the end of the line before it) selects the block, just as it does next to a
+diagram or a table.
+
 ## Export
 
 `File → Export HTML…` exports the rendered document — Mermaid diagrams,
