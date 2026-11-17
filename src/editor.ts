@@ -33,7 +33,7 @@ import { codeBlockMousePlugin } from './codeBlockMouse'
 import { mermaidNodeViewPlugin } from './node/mermaid'
 import { tableNodeViewPlugin } from './node/table'
 import { formulaDefsPlugin, formulaEnvFor } from './formulaDefs'
-import { rebaseLinksTransaction } from './relink'
+import { rebaseLinksTransaction, referenceTargets, type Exists } from './relink'
 import { maskedFieldNodeViewPlugin } from './node/masked'
 import {
   discardOpenReveals,
@@ -200,9 +200,12 @@ export interface BlockEditor {
    * relative image, link and definition rebased to name the same file from the
    * new folder (`src/relink.ts`). Computed, not dispatched — a move writes
    * `markdown` and only then calls `apply`, so a move that fails leaves the
-   * editor as it was. `null` when the move rewrites nothing.
+   * editor as it was. `null` when the move rewrites nothing. With `exists`, a
+   * reference whose target is not there is left as written.
    */
-  rebaseLinks(fromPath: string, toPath: string): RebasedLinks | null
+  rebaseLinks(fromPath: string, toPath: string, exists?: Exists): RebasedLinks | null
+  /** The targets {@link rebaseLinks} needs `exists` answered for (`referenceTargets`). */
+  rebaseTargets(fromPath: string, toPath: string): string[]
   commitSource(): boolean
   // Per-tab editor state: each document owns its own ProseMirror EditorState
   // (doc, undo/redo history, selection). Tabs swap whole states into the view.
@@ -644,9 +647,12 @@ export function createBlockEditor(
       }
       view.dispatch(view.state.tr.replace(start, endA, parsed.slice(start, endB)).setMeta(markdownSourceKey, source))
     },
-    rebaseLinks(fromPath: string, toPath: string): RebasedLinks | null {
+    rebaseTargets(fromPath: string, toPath: string): string[] {
+      return referenceTargets(view.state, fromPath, toPath)
+    },
+    rebaseLinks(fromPath: string, toPath: string, exists?: Exists): RebasedLinks | null {
       const before = view.state
-      const tr = rebaseLinksTransaction(before, fromPath, toPath)
+      const tr = rebaseLinksTransaction(before, fromPath, toPath, exists)
       if (!tr) return null
       const after = before.apply(tr)
       return {
@@ -657,7 +663,9 @@ export function createBlockEditor(
             view.dispatch(tr)
             return true
           }
-          const again = rebaseLinksTransaction(view.state, fromPath, toPath)
+          // A reference typed in between was never asked about; `exists` answers
+          // false for it, so it is left as written rather than guessed at.
+          const again = rebaseLinksTransaction(view.state, fromPath, toPath, exists)
           if (again) view.dispatch(again)
           return false
         },

@@ -8,6 +8,7 @@ import time
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication
 
+import backend.bridge as bridge_module
 import backend.exec as exec_module
 from backend.bridge import Bridge
 from backend.exec import parse_shebang, run_code_block, strip_shebang_line
@@ -1150,6 +1151,52 @@ def test_history_is_only_read_for_documents_the_user_gave_edi(bridge, tmp_path, 
 
 def _refused(message: dict) -> bool:
     return message["ok"] is False and message.get("code") == "notPermitted"
+
+
+def test_paths_exist_answers_for_a_document_the_page_may_move(bridge, tmp_path):
+    """A move rebases only references that name something (`src/relink.ts`); the
+    shell says which do, one boolean per path and nothing more."""
+    bridge_obj, _window, result = bridge
+    doc = tmp_path / "draft.md"
+    (tmp_path / "img").mkdir()
+    (tmp_path / "img" / "a.png").write_bytes(b"x")
+    bridge_obj.grants.allow_write(str(doc))
+    paths = [str(tmp_path / "img" / "a.png"), str(tmp_path / "img"), str(tmp_path / "block-modes.md"), "img/a.png"]
+    _invoke(bridge_obj, "pathsExist", {"documentPath": str(doc), "paths": paths}, 150)
+    # A directory counts; a relative path is never resolved against the process's folder.
+    assert _wait_for(lambda: result.get(150)) == {"id": 150, "ok": True, "data": [True, True, False, False]}
+
+
+def test_paths_exist_is_refused_for_a_document_the_user_never_gave(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    (tmp_path / "secret").write_text("s", encoding="utf-8")
+    _invoke(bridge_obj, "pathsExist",
+            {"documentPath": str(tmp_path / "draft.md"), "paths": [str(tmp_path / "secret")]}, 151)
+    assert _refused(_wait_for(lambda: result.get(151)))
+
+
+def test_paths_exist_rejects_a_malformed_or_oversized_request(bridge, tmp_path):
+    bridge_obj, _window, result = bridge
+    doc = tmp_path / "draft.md"
+    bridge_obj.grants.allow_write(str(doc))
+    for request_id, payload in (
+        (152, {"documentPath": str(doc), "paths": "not a list"}),
+        (153, {"documentPath": str(doc), "paths": [1, 2]}),
+        (154, {"paths": []}),
+        (155, {"documentPath": str(doc), "paths": ["/x"] * (bridge_module.MAX_EXISTENCE_QUERIES + 1)}),
+    ):
+        _invoke(bridge_obj, "pathsExist", payload, request_id)
+        message = _wait_for(lambda: result.get(request_id))
+        assert message["ok"] is False and not _refused(message), message
+
+
+def test_a_page_normalized_windows_path_is_native_again(monkeypatch):
+    """The page's POSIX normalization turns `C:/notes/a.md` into `/C:/notes/a.md`."""
+    monkeypatch.setattr(bridge_module.os, "name", "nt")
+    assert bridge_module._native_page_path("/C:/notes/a.md") == "C:/notes/a.md"
+    assert bridge_module._native_page_path("/home/a.md") == "/home/a.md"
+    monkeypatch.setattr(bridge_module.os, "name", "posix")
+    assert bridge_module._native_page_path("/C:/notes/a.md") == "/C:/notes/a.md"
 
 
 def test_the_page_cannot_write_a_file_the_user_never_named(bridge, tmp_path):

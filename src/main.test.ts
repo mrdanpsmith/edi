@@ -64,6 +64,8 @@ const mainState = vi.hoisted(() => {
     renameTextFile: vi.fn(),
     pickRenamePath: vi.fn(),
     rebaseLinks: vi.fn().mockReturnValue(null),
+    rebaseTargets: vi.fn().mockReturnValue([] as string[]),
+    pathsExist: vi.fn().mockResolvedValue([] as boolean[]),
     promptForLink: vi.fn(),
     pickExportPath: vi.fn(),
     pickImageImportPath: vi.fn(),
@@ -129,6 +131,7 @@ vi.mock('./files', async () => {
     writeTextFile: mainState.writeTextFile,
     renameTextFile: mainState.renameTextFile,
     pickRenamePath: mainState.pickRenamePath,
+    pathsExist: mainState.pathsExist,
     pickExportPath: mainState.pickExportPath,
     pickImageImportPath: mainState.pickImageImportPath,
     pickImportPath: mainState.pickImportPath,
@@ -169,7 +172,9 @@ vi.mock('./editor', async (importOriginal) => ({
         options?.onChange?.()
       },
       commitSource: vi.fn(),
-      rebaseLinks: (fromPath: string, toPath: string) => mainState.rebaseLinks(fromPath, toPath),
+      rebaseLinks: (fromPath: string, toPath: string, exists?: (target: string) => boolean) =>
+        mainState.rebaseLinks(fromPath, toPath, exists),
+      rebaseTargets: (fromPath: string, toPath: string) => mainState.rebaseTargets(fromPath, toPath),
       createState: (markdown: string) => ({ _md: markdown }),
       getState: () => ({ _md: mainState.markdown }),
       applyState: (state: { _md: string }) => { mainState.markdown = state._md },
@@ -500,6 +505,8 @@ beforeEach(() => {
     mock.mockReset()
   }
   mainState.rebaseLinks.mockReset().mockReturnValue(null)
+  mainState.rebaseTargets.mockReset().mockReturnValue([])
+  mainState.pathsExist.mockReset().mockResolvedValue([])
   vi.restoreAllMocks()
 })
 
@@ -1535,11 +1542,39 @@ describe('rename', () => {
     mainState.pickRenamePath.mockResolvedValue('/tmp/archive/notes.md')
     menu('rename')
     await flushAsync()
-    expect(mainState.rebaseLinks).toHaveBeenCalledWith('/tmp/notes.md', '/tmp/archive/notes.md')
+    // No shell to ask (the dev server): every reference is rebased, as before.
+    expect(mainState.rebaseLinks).toHaveBeenCalledWith('/tmp/notes.md', '/tmp/archive/notes.md', undefined)
+    expect(mainState.pathsExist).not.toHaveBeenCalled()
     expect(mainState.renameTextFile).toHaveBeenCalledWith('/tmp/notes.md', '/tmp/archive/notes.md', '![](../img.png)')
     expect(order).toEqual(['rename', 'apply'])
     const state = await stateModule()
     expect(state.isAnyDirty()).toBe(false)
+  })
+
+  it('asks the shell which targets exist, and rebases only those', async () => {
+    await openNotes()
+    mainState.hasBridge.mockReturnValue(true)
+    const order: string[] = []
+    mainState.rebaseTargets.mockReturnValue(['/tmp/img.png', '/tmp/block-modes.md'])
+    mainState.pathsExist.mockImplementation(async () => {
+      order.push('pathsExist')
+      return [true, false]
+    })
+    mainState.rebaseLinks.mockImplementation(() => {
+      order.push('rebaseLinks')
+      return null
+    })
+    mainState.pickRenamePath.mockResolvedValue('/tmp/archive/notes.md')
+    menu('rename')
+    await flushAsync()
+    expect(mainState.pathsExist).toHaveBeenCalledWith('/tmp/notes.md', ['/tmp/img.png', '/tmp/block-modes.md'])
+    expect(order).toEqual(['pathsExist', 'rebaseLinks'])
+    const exists = mainState.rebaseLinks.mock.calls[0][2] as (target: string) => boolean
+    expect(exists('/tmp/img.png')).toBe(true)
+    expect(exists('/tmp/block-modes.md')).toBe(false)
+    // Never asked about (typed during the move): left as written.
+    expect(exists('/tmp/new.md')).toBe(false)
+    expect(mainState.renameTextFile).toHaveBeenCalledTimes(1)
   })
 
   it('does not rebase the editor when the move fails', async () => {

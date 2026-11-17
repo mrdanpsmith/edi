@@ -55,6 +55,7 @@
     "listHistory": true,
     "openUrl": true,
     "parseTableFile": true,
+    "pathsExist": true,
     "pickExportPath": true,
     "pickImageImportPath": true,
     "pickImageSavePath": true,

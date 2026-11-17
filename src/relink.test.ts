@@ -45,6 +45,29 @@ describe('rebaseReference', () => {
   it('leaves alone a path that climbs above the root', () => {
     expect(rebaseReference('../../../../../a.png', FROM, '/home/draft.md')).toBe('../../../../../a.png')
   })
+
+  describe('with an existence check', () => {
+    const to = '/home/reader/docs/draft.md'
+    const onDisk = new Set(['/home/reader/notes/img/a.png'])
+    const exists = (target: string) => onDisk.has(target)
+
+    it('rebases a reference whose target exists at the old location', () => {
+      expect(rebaseReference('img/a.png', FROM, to, exists)).toBe('../notes/img/a.png')
+    })
+
+    it('leaves as written a reference that names nothing at the old location', () => {
+      // The draft links the file it will sit beside once moved.
+      expect(rebaseReference('block-modes.md', FROM, to, exists)).toBe('block-modes.md')
+      expect(rebaseReference('missing/a.png#x', FROM, to, exists)).toBe('missing/a.png#x')
+    })
+
+    it('still follows a link to the document itself, which is never asked about', () => {
+      const asked: string[] = []
+      const record = (target: string) => { asked.push(target); return false }
+      expect(rebaseReference('draft.md#top', FROM, '/home/reader/docs/ideas.md', record)).toBe('ideas.md#top')
+      expect(asked).toEqual([])
+    })
+  })
 })
 
 describe('rebaseDefinitions', () => {
@@ -147,6 +170,34 @@ describe('BlockEditor.rebaseLinks', () => {
     const editor = createBlockEditor(document.body, 'Plain [web](https://example.com) text.')
     expect(editor.rebaseLinks(FROM, '/home/reader/archive/draft.md')).toBeNull()
     expect(editor.rebaseLinks(FROM, FROM)).toBeNull()
+    editor.destroy()
+  })
+
+  it('lists every target the move needs answered, once each, and not the document itself', () => {
+    const md = `${DOC}\nAgain ![image](img/a.png), and [me](draft.md).\n`
+    const editor = createBlockEditor(document.body, md)
+    expect(editor.rebaseTargets(FROM, '/home/reader/archive/draft.md').sort()).toEqual([
+      '/home/reader/notes/img/a.png',
+      '/home/reader/notes/other.md',
+      '/home/reader/notes/ref.md',
+    ])
+    editor.destroy()
+  })
+
+  it('rebases only the references whose targets exist', () => {
+    const editor = createBlockEditor(document.body, DOC)
+    const onDisk = new Set(['/home/reader/notes/img/a.png'])
+    const rebased = editor.rebaseLinks(FROM, '/home/reader/archive/draft.md', (t) => onDisk.has(t))!
+    expect(rebased.markdown).toContain('![image](../notes/img/a.png)')
+    // Named nothing at the old location: kept as the author wrote them.
+    expect(rebased.markdown).toContain('[a link](other.md)')
+    expect(rebased.markdown).toContain('[r]: ref.md')
+    editor.destroy()
+  })
+
+  it('is null when no target exists', () => {
+    const editor = createBlockEditor(document.body, DOC)
+    expect(editor.rebaseLinks(FROM, '/home/reader/archive/draft.md', () => false)).toBeNull()
     editor.destroy()
   })
 })

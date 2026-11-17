@@ -96,7 +96,10 @@ page have explicit limits:
   may be read without one, so a link to another note still opens. A rename or
   move goes only to a destination typed into the shell's Rename or Move prompt
   (`pickRenamePath`: the page sends the document's path, and the shell grants
-  the answer). Anything else is refused with the
+  the answer). Before a move the page may ask which of the document's
+  reference targets exist (`pathsExist`), so it rebases only references that
+  name something; the shell answers with booleans and nothing else, only for a
+  document the page may write, and answers `false` for a relative path. Anything else is refused with the
   `notPermitted` error code. The page answers a refused save with
   `confirmWritePath`: the shell asks "Save changes to …?" in its own prompt,
   naming the file, and a yes grants it — which is how a document opened from a
@@ -138,7 +141,7 @@ bridge methods and preference defaults are declared in
 | `src/` | TypeScript frontend. `entry.ts` is the page entry point; `main.ts` boots from `init(roots)`; `node/` holds node views. |
 | `src/appContext.ts` | The shared `AppContext`, roots and app-chrome updates (title, status, menu state). |
 | `src/fileController.ts` | File lifecycle: open, save, rename or move, revert, version history, import and export. |
-| `src/relink.ts` | Rebases a moved document's relative images, links and link definitions so they still name the same files. |
+| `src/relink.ts` | Rebases a moved document's relative images, links and link definitions so they still name the same files. A reference that names nothing at the old location is left as written. |
 | `src/editController.ts` | Clipboard, paste, select-all and menu undo/redo. |
 | `src/contextMenuController.ts` | Document, input, source-editor and block context menus. |
 | `src/zoomController.ts` | Document zoom commands, wheel handling and the status indicator. |

@@ -1,5 +1,6 @@
 import type { Node as ProseNode } from 'prosemirror-model'
-import { confirmAction, isChangedOnDisk, isFolderMissing, isNoDrive, isNotPermitted } from './bridge'
+import { confirmAction, hasBridge, isChangedOnDisk, isFolderMissing, isNoDrive, isNotPermitted } from './bridge'
+import type { Exists } from './relink'
 import {
   clearHistory,
   confirmWritePath,
@@ -9,6 +10,7 @@ import {
   imageReference,
   isSupportedFile,
   listHistory,
+  pathsExist,
   pickExportPath,
   pickImageImportPath,
   pickImportPath,
@@ -365,7 +367,27 @@ export function createFileController(ctx: AppContext): FileController {
    * there, not one the page sends. Relative images and links are rebased so they
    * still name the same files from the new folder; the editor takes that rewrite
    * only once the file is on disk, so a refused move changes nothing.
+   *
+   * A reference whose target does not exist at the old location is left as
+   * written (`relink.ts`). Which targets exist is asked of the shell *before*
+   * the snapshot, so the rebase still runs right after it, on the document the
+   * snapshot read.
    */
+  /**
+   * The `exists` a move's rebase uses: the shell's answer for every target the
+   * document references now. A target it was not asked about (a reference typed
+   * since) is treated as missing, so it is left as written. Without the shell
+   * (the dev server) nothing can be checked, and every reference is rebased.
+   */
+  async function targetsThatExist(oldPath: string, newPath: string): Promise<Exists | undefined> {
+    if (!hasBridge()) return undefined
+    const targets = ctx.blockEditor?.rebaseTargets(oldPath, newPath) ?? []
+    if (targets.length === 0) return () => false
+    const answers = await pathsExist(oldPath, targets)
+    const present = new Set(targets.filter((_target, i) => answers[i] === true))
+    return (target) => present.has(target)
+  }
+
   async function renameFile(): Promise<void> {
     const oldPath = getActive()?.path
     if (!oldPath) return
@@ -379,9 +401,10 @@ export function createFileController(ctx: AppContext): FileController {
       return
     }
     try {
+      const exists = await targetsThatExist(oldPath, newPath)
       let snapshot = await snapshotForSave()
       if (snapshot === null) return
-      const rebased = ctx.blockEditor?.rebaseLinks(oldPath, newPath) ?? null
+      const rebased = ctx.blockEditor?.rebaseLinks(oldPath, newPath, exists) ?? null
       const markdown = rebased?.markdown ?? snapshot.markdown
       const text = markdownToFileText(newPath, markdown)
       if (text === null) {

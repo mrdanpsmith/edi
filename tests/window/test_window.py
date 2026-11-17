@@ -10072,3 +10072,36 @@ def test_code_block_keys_with_real_key_events(window, fence):
     key(Qt.Key_Delete)
     got = _wait(window, _CODE_KEY_BLOCKS, lambda d: len(d.get("blocks") or []) == 2, timeout=10)
     assert got["blocks"] == ["p:before", "p:after"], got
+
+
+def test_a_move_rebases_only_references_that_name_something(window, tmp_path, monkeypatch):
+    """Moving a draft next to the file it links keeps that link as written.
+
+    `src/relink.ts` rebases a relative reference so it names the same file from
+    the new folder, but only where that file exists: a draft written for its
+    destination links `block-modes.md` before it sits beside it. The page asks the
+    shell (`pathsExist`); this is that whole route, through the real bridge.
+    """
+    assert _pump_until(lambda: window._bridge.frontend_ready, timeout=5)
+    notes = tmp_path / "notes"
+    docs = tmp_path / "docs"
+    (notes / "img").mkdir(parents=True)
+    docs.mkdir()
+    (notes / "img" / "a.png").write_bytes(b"\x89PNG")
+    (docs / "block-modes.md").write_text("# Block modes\n", encoding="utf-8")
+    draft = notes / "draft.md"
+    draft.write_text("See ![pic](img/a.png) and [modes](block-modes.md).\n", encoding="utf-8")
+    moved = docs / "draft.md"
+
+    window.open_files([str(draft)])
+    _wait(window, "(() => ({ active: (document.querySelector('.tab.active .tab-title') || {}).textContent }))()",
+          lambda d: d.get("active") == "draft.md", timeout=15)
+    # The shell's Rename or Move prompt, answered as a reader typing the new path.
+    monkeypatch.setattr(window, "pick_rename_path",
+                        lambda _old, callback=None, **_kw: callback(str(moved)))
+
+    window._menu_command("rename")
+    assert _pump_until(lambda: moved.exists() and not draft.exists(), timeout=15), "the move never happened"
+    text = moved.read_text(encoding="utf-8")
+    assert "![pic](../notes/img/a.png)" in text, text
+    assert "[modes](block-modes.md)" in text, text

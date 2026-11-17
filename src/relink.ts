@@ -16,7 +16,18 @@ import { dirname } from './files'
  * Not rewritten: URLs (anything with a scheme), absolute paths, `#fragment`
  * links, and references inside what the editor keeps as opaque text — inline
  * HTML, tables' pipe source, code, diagrams and encrypted blocks.
+ *
+ * **Nor a reference that names nothing at the old location.** Keeping it pointing
+ * at the same file only means keeping it pointing at nothing, and such a link is
+ * usually written for where the document is going: a draft that links
+ * `block-modes.md` before it is moved next to that file. It is left as written.
+ * Whether a target exists is the caller's to say (`Exists`); the page cannot
+ * look, so the move asks the shell (`pathsExist`) for exactly the targets
+ * `referenceTargets` lists.
  */
+
+/** Whether the absolute, normalized path `target` exists on disk. */
+export type Exists = (target: string) => boolean
 
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 
@@ -48,9 +59,10 @@ function relativePath(from: string, to: string): string {
 /**
  * `ref` as written in the document at `fromPath`, rewritten to name the same
  * target from `toPath`. Anything that is not a relative path comes back as it
- * was, as does a reference whose target the move does not change.
+ * was, as does a reference whose target the move does not change and, when
+ * `exists` is given, one whose target `exists` says is not there.
  */
-export function rebaseReference(ref: string, fromPath: string, toPath: string): string {
+export function rebaseReference(ref: string, fromPath: string, toPath: string, exists?: Exists): string {
   if (!ref || ref.startsWith('/') || ref.startsWith('#') || ref.startsWith('?') || SCHEME.test(ref)) return ref
   const cut = ref.search(/[?#]/)
   const pathPart = cut >= 0 ? ref.slice(0, cut) : ref
@@ -60,6 +72,7 @@ export function rebaseReference(ref: string, fromPath: string, toPath: string): 
   if (target === null) return ref
   // A link to the document itself names it by its old name; it follows the move.
   if (target === normalize(fromPath)) target = normalize(toPath) ?? target
+  else if (exists && !exists(target)) return ref
   let rebased = relativePath(normalize(dirname(toPath)) ?? '/', target)
   if (pathPart.endsWith('/') && !rebased.endsWith('/')) rebased += '/'
   // Keep a leading `./` the author wrote, where the new path still starts here.
@@ -76,21 +89,21 @@ export function rebaseReference(ref: string, fromPath: string, toPath: string): 
 const DEFINITION = /^( {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*)(<(?:[^>\\\n]|\\.)*>|[^\s<]\S*)/gm
 
 /** A source block's markdown with each definition's destination rebased. */
-export function rebaseDefinitions(markdown: string, fromPath: string, toPath: string): string {
+export function rebaseDefinitions(markdown: string, fromPath: string, toPath: string, exists?: Exists): string {
   return markdown.replace(DEFINITION, (_whole, lead: string, destination: string) => {
     const bracketed = destination.startsWith('<')
     const inner = bracketed ? destination.slice(1, -1) : destination
-    const rebased = rebaseReference(inner, fromPath, toPath)
+    const rebased = rebaseReference(inner, fromPath, toPath, exists)
     if (rebased === inner) return lead + destination
     return lead + (bracketed || /\s/.test(rebased) ? `<${rebased}>` : rebased)
   })
 }
 
-function rebasedLink(mark: Mark, fromPath: string, toPath: string): Mark | null {
+function rebasedLink(mark: Mark, fromPath: string, toPath: string, exists?: Exists): Mark | null {
   const href = (mark.attrs.href as string) ?? ''
   const reference = mark.attrs.reference as { type: string; label: string; url: string } | null
-  const nextHref = rebaseReference(href, fromPath, toPath)
-  const nextUrl = reference ? rebaseReference(reference.url, fromPath, toPath) : null
+  const nextHref = rebaseReference(href, fromPath, toPath, exists)
+  const nextUrl = reference ? rebaseReference(reference.url, fromPath, toPath, exists) : null
   if (nextHref === href && (!reference || nextUrl === reference.url)) return null
   return mark.type.create({
     ...mark.attrs,
@@ -103,8 +116,14 @@ function rebasedLink(mark: Mark, fromPath: string, toPath: string): Mark | null 
  * The transaction that rebases every relative reference in `state`'s document
  * from `fromPath` to `toPath`, or `null` when there is nothing to rewrite. It is
  * kept out of the undo history: undoing past it would only break the links again.
+ * With `exists`, a reference whose target is not there is left as written.
  */
-export function rebaseLinksTransaction(state: EditorState, fromPath: string, toPath: string): Transaction | null {
+export function rebaseLinksTransaction(
+  state: EditorState,
+  fromPath: string,
+  toPath: string,
+  exists?: Exists,
+): Transaction | null {
   if (fromPath === toPath) return null
   const tr = state.tr
   let changed = false
@@ -112,7 +131,7 @@ export function rebaseLinksTransaction(state: EditorState, fromPath: string, toP
     if (node.isInline) {
       for (const mark of node.marks) {
         if (mark.type.name !== 'link') continue
-        const next = rebasedLink(mark, fromPath, toPath)
+        const next = rebasedLink(mark, fromPath, toPath, exists)
         if (!next) continue
         tr.removeMark(pos, pos + node.nodeSize, mark).addMark(pos, pos + node.nodeSize, next)
         changed = true
@@ -120,7 +139,7 @@ export function rebaseLinksTransaction(state: EditorState, fromPath: string, toP
     }
     if (node.type.name === 'image') {
       const src = (node.attrs.src as string) ?? ''
-      const next = rebaseReference(src, fromPath, toPath)
+      const next = rebaseReference(src, fromPath, toPath, exists)
       if (next !== src) {
         // Read the node back from `tr`: its marks may just have been rewritten.
         const current = tr.doc.nodeAt(pos)!
@@ -132,7 +151,7 @@ export function rebaseLinksTransaction(state: EditorState, fromPath: string, toP
             ...current.attrs,
             src: next,
             // Its definition moves with it, so it stays a reference.
-            reference: reference ? { ...reference, url: rebaseReference(reference.url, fromPath, toPath) } : null,
+            reference: reference ? { ...reference, url: rebaseReference(reference.url, fromPath, toPath, exists) } : null,
           },
           current.marks,
         )
@@ -140,7 +159,7 @@ export function rebaseLinksTransaction(state: EditorState, fromPath: string, toP
       }
     } else if (node.type.name === 'source_block') {
       const markdown = (node.attrs.markdown as string) ?? ''
-      const next = rebaseDefinitions(markdown, fromPath, toPath)
+      const next = rebaseDefinitions(markdown, fromPath, toPath, exists)
       if (next !== markdown) {
         tr.setNodeMarkup(pos, undefined, { ...node.attrs, markdown: next })
         changed = true
@@ -149,4 +168,20 @@ export function rebaseLinksTransaction(state: EditorState, fromPath: string, toP
     return true
   })
   return changed ? tr.setMeta('addToHistory', false) : null
+}
+
+/**
+ * Every target a move from `fromPath` to `toPath` would have to know exists:
+ * the absolute path of each relative reference the rebase would rewrite, the
+ * document's own path excepted. Found by running the rebase itself with an
+ * `exists` that records what it is asked, so the two cannot disagree about which
+ * references count.
+ */
+export function referenceTargets(state: EditorState, fromPath: string, toPath: string): string[] {
+  const targets = new Set<string>()
+  rebaseLinksTransaction(state, fromPath, toPath, (target) => {
+    targets.add(target)
+    return true
+  })
+  return [...targets]
 }

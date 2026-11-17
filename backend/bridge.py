@@ -41,6 +41,20 @@ from .watcher import DiskWatcher
 # The error code a refused file access replies with (`shared/edi-contract.json`
 # → `errorCodes`), so the page can tell "not yours to write" from a failure.
 NOT_PERMITTED = "notPermitted"
+#: `pathsExist` answers for a document's own references; no document has this many.
+MAX_EXISTENCE_QUERIES = 10_000
+
+
+def _native_page_path(path: str) -> str:
+    """A path the page normalized, as this platform spells it.
+
+    The page treats every path as POSIX, so its `relink.ts` normalization of a
+    Windows document's `C:/notes/a.md` comes out as `/C:/notes/a.md`. On Windows
+    that leading slash is dropped again; elsewhere the path is already native.
+    """
+    if os.name == "nt" and len(path) > 3 and path[0] == "/" and path[2] == ":" and path[1].isalpha():
+        return path[1:]
+    return path
 # A save refused because the file changed on disk since Edi last read it: the
 # page shows what changed rather than overwriting it (`backend/watcher.py`).
 CHANGED_ON_DISK = "changedOnDisk"
@@ -190,6 +204,7 @@ class Bridge(QObject):
             "readAnyTextFile": self._read_any_text_file,
             "writeTextFile": self._write_text_file,
             "renameTextFile": self._rename_text_file,
+            "pathsExist": self._paths_exist,
             "listHistory": self._list_history,
             "readHistoryVersion": self._read_history_version,
             "clearHistory": self._clear_history,
@@ -479,6 +494,32 @@ class Bridge(QObject):
                     self._seen_written(str(path))
                     history.record(str(path))
                 self._reply(request_id, None)
+
+        self._spawn(work)
+
+    def _paths_exist(self, request_id: int, args: dict) -> None:
+        """Which of ``paths`` exist, for moving the document at ``documentPath``.
+
+        A move rebases the document's relative references only where they name
+        something (``src/relink.ts``), and the page cannot look. The answer is
+        one boolean per path and nothing else: no contents, no kinds, no
+        listing. It is given only for a document the page may write, which is
+        the only kind a move can start from (``check_rename``); a relative path
+        is answered ``False`` rather than resolved against the process's folder.
+        """
+        document = args.get("documentPath")
+        paths = args.get("paths")
+        if not document or not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            self._reply_error(request_id, "Expected documentPath and a list of paths")
+            return
+        if len(paths) > MAX_EXISTENCE_QUERIES:
+            self._reply_error(request_id, f"At most {MAX_EXISTENCE_QUERIES} paths")
+            return
+        self.grants.check_write(str(document))
+
+        def work() -> None:
+            native = [_native_page_path(p) for p in paths]
+            self._reply(request_id, [os.path.isabs(p) and os.path.exists(p) for p in native])
 
         self._spawn(work)
 

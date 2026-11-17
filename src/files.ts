@@ -145,6 +145,16 @@ export async function renameTextFile(
   await invoke('renameTextFile', { oldPath, newPath, content })
 }
 
+/**
+ * Which of `paths` exist on disk, for a move of the document at `documentPath`
+ * (`relink.ts`): one boolean per path, in order. The shell answers only for a
+ * document it would let the page move — one it may write — and says nothing
+ * beyond existence.
+ */
+export async function pathsExist(documentPath: string, paths: string[]): Promise<boolean[]> {
+  return invoke<boolean[]>('pathsExist', { documentPath, paths })
+}
+
 export async function writeBinaryFile(path: string, data: string): Promise<void> {
   await invoke('writeBinaryFile', { path, data })
 }
