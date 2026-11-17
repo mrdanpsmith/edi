@@ -181,8 +181,19 @@ case "${EDI_SET_DEFAULT:-}" in
   *) die "invalid EDI_SET_DEFAULT '${EDI_SET_DEFAULT}' (use 1 or 0)" ;;
 esac
 
+# An Edi that was running is started again once the new one is in place, and
+# reopens the documents it had open (docs/preferences.md, "The last session").
+# EDI_RELAUNCH=0 leaves it closed.
+case "${EDI_RELAUNCH:-1}" in
+  1|yes|true) WANT_RELAUNCH=1 ;;
+  0|no|false) WANT_RELAUNCH=0 ;;
+  *) die "invalid EDI_RELAUNCH '${EDI_RELAUNCH}' (use 1 or 0)" ;;
+esac
+WAS_RUNNING=0
+
 # --- quit running instance -------------------------------------------------
 if pgrep -xq "$APP_NAME"; then
+  WAS_RUNNING=1
   log "Quitting running ${APP_NAME}"
   osascript -e "tell application id \"${BUNDLE_ID}\" to quit" >/dev/null 2>&1 || true
   for _ in {1..20}; do
@@ -230,3 +241,9 @@ elif [[ -z "$PREVIOUS_HANDLER" ]]; then
 fi
 
 log "Installed ${APP_NAME} ${VERSION} to ${DEST}"
+
+# By path, not bundle ID: the copy just installed, never a stale one elsewhere.
+if [[ "$WAS_RUNNING" == "1" && "$WANT_RELAUNCH" == "1" ]]; then
+  log "Starting ${APP_NAME} again"
+  open "$DEST" || log "warning: could not start ${APP_NAME}; open it from ${DEST_DIR}"
+fi

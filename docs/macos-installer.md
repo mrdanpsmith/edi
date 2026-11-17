@@ -21,6 +21,12 @@ rollback, clears any quarantine xattr, and re-registers the bundle with Launch
 Services. The app is installed into `/Applications` when writable, otherwise
 `~/Applications`.
 
+An Edi that was running is started again at the end, by the path just
+installed (`open "$DEST"`), and reopens the documents it had open
+([preferences.md](preferences.md), "The last session"). Set `EDI_RELAUNCH=0`
+to leave it closed. One that was not running stays closed, and so does one
+whose install failed.
+
 The zip download shows curl's progress bar on a terminal; when stderr is
 redirected, curl's numeric meter is kept so a captured log still shows
 progress. Each phase (download, verify, unpack, signature, install) also prints

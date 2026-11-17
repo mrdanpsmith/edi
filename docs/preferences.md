@@ -68,7 +68,7 @@ file, not to second-guess the ladder.
 The documents open in the window are kept too, under `session/paths` (in tab
 order) and `session/active`, so a launch reopens them. This matters most for
 upgrades: `install.sh` quits the running Edi before it swaps in the new one,
-and does not start it again.
+then starts the new one ([macos-installer.md](macos-installer.md)).
 
 - **Kept as they change.** `src/session.ts`'s `trackOpenFiles` sends
   `setOpenFiles` whenever the open documents or the tab in view change, and
