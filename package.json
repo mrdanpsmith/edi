@@ -15,7 +15,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "dupcheck": "jscpd .",
-    "audit": "npm audit --audit-level=high",
+    "audit": "node scripts/audit.mjs",
     "check": "npm run typecheck && npm run lint && npm run test && npm run dupcheck",
     "pyright": "npx pyright"
   },

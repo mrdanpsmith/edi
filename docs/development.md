@@ -34,7 +34,7 @@ it is not the app.
 | `npm run coverage` | Frontend unit tests with the Cobertura and HTML coverage reports. |
 | `npm run test:browser` | Browser-mode tests in headless Chromium (see [Browser tests](#browser-tests)). Not part of `npm run check`. |
 | `npm run dupcheck` | `jscpd .` at the 5% threshold in `.jscpd.json`. It scans Python and scripts too, not just `src/`. |
-| `npm run audit` | `npm audit --audit-level=high` (needs network). Clean; the Vitest toolchain is pinned to patched 4.1.11, so do not drift below it. `package.json` `overrides` forces `minimatch ^11.0.3` (GHSA-g3hv-75wg-m249) under ESLint, whose releases still ask for `^10`; drop it once they don't. |
+| `npm run audit` | `scripts/audit.mjs` (needs network): npm's audit at `high`. See [The npm audit gate](#the-npm-audit-gate). The Vitest toolchain is pinned to patched 4.1.11, so do not drift below it. `package.json` `overrides` forces `minimatch ^11.0.3` (GHSA-g3hv-75wg-m249) under ESLint, whose releases still ask for `^10`; drop it once they don't. |
 | `.venv/bin/pytest tests/` | Python tests (needs `npm run build:test`; see below). |
 | `./scripts/version.sh check` | Version agreement plus the Python-pin guard (pins only in `requirements*.txt`). |
 
@@ -60,6 +60,35 @@ append words after the test ID; bandit warns on every token.
 
 `pip-audit` audits the app's declared dependencies, not the venv's own `pip`
 (the venv's stale pip 25.x has CVEs that would otherwise be false alarms).
+
+### The npm audit gate
+
+`npm run audit` (`scripts/audit.mjs`) fails on every high or critical npm
+advisory, with one narrow exception:
+
+- **Shipped dependencies have no exceptions.** An advisory reachable from
+  `dependencies` (`npm audit --omit=dev`) fails whatever the allowlist says.
+- **A dev-only advisory with no patched release may be allowlisted** in
+  `scripts/audit-allowlist.json`, keyed by its GHSA id, with the package, a
+  reason, the date it was `added` and a `reviewBy` date. A run lists every
+  allowed advisory rather than hiding it.
+
+An entry cannot go stale:
+
+| Condition | Result |
+| --- | --- |
+| The package's latest release is outside the vulnerable range | fails: a fix exists, so update the dependency |
+| The advisory is no longer reported (the fix is installed) | locally, the entry is **removed automatically** and the run says so; under `CI`, the run fails and asks for a local run, since a rewrite there would be thrown away |
+| `reviewBy` has passed | fails until the entry is re-evaluated and `reviewBy` moved, at most 90 days out (`REVIEW_DAYS`) |
+| `reviewBy` is missing, malformed or more than 90 days out | fails |
+
+So the normal life of an entry is: added with a 90-day `reviewBy`; re-evaluated
+at each due date; and, once upstream publishes a fix, the dependency is updated
+and the next local `npm run audit` deletes the entry, which is committed with
+the update. `scripts/simulate-ci-test.sh` runs it with `CI=true`, like CI.
+
+npm's own suggested fix for an allowlisted advisory can be a downgrade
+(`npm audit fix --force` offers Vitest 3.x for GHSA-fc5q-39xc-vjpf); never take it.
 
 ## Tests
 

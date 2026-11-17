@@ -148,7 +148,8 @@ echo "[sim] bandit (backend security, all findings)"
 echo "[sim] pytest tests/"
 /opt/edi/venv/bin/pytest tests/
 echo "[sim] npm audit (network)"
-npm run audit
+# As in CI: a resolved allowlist entry fails here instead of being rewritten.
+CI=true npm run audit
 echo "[sim] pip-audit -r requirements.txt (network)"
 /opt/edi/venv/bin/pip-audit --cache-dir /builds/edi/build/ci-cache -r requirements.txt
 echo "[sim] SIMULATED TEST JOB PASSED"'
