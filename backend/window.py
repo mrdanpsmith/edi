@@ -285,7 +285,7 @@ class _AboutDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, pending_files: list[str] | None = None) -> None:
+    def __init__(self, pending_files: list[str] | None = None, restore_session: bool = False) -> None:
         super().__init__()
         self.setWindowTitle("Edi")
         self.setMinimumSize(800, 560)
@@ -311,7 +311,7 @@ class MainWindow(QMainWindow):
         self._print_job: PrintJob | None = None
 
         self._preferences = Preferences()
-        self._bridge = Bridge(self, pending_files)
+        self._bridge = Bridge(self, pending_files, restore_session)
         # Quitting does not always close the window first (Cmd+Q on macOS), and a
         # code block still running would outlive the app.
         app = QCoreApplication.instance()

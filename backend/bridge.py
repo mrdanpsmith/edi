@@ -25,7 +25,7 @@ import time
 from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage
 
-from . import history
+from . import history, session
 from .exec import kill_process_tree, run_code_block, run_code_block_streamed
 from .files import (
     DriveNotConnected,
@@ -144,7 +144,9 @@ class Bridge(QObject):
     stream = Signal(str)
     notify = Signal(str)
 
-    def __init__(self, window, pending_files: list[str] | None = None) -> None:
+    def __init__(
+        self, window, pending_files: list[str] | None = None, restore_session: bool = False
+    ) -> None:
         super().__init__()
         self._window = window
         self.grants = PathGrants()
@@ -152,6 +154,14 @@ class Bridge(QObject):
         # Named on the command line: the user's own choice, so they may be saved.
         for path in self._pending_files:
             self.grants.allow_write(path)
+        # The documents open when Edi last quit (`backend/session.py`). Only
+        # granted paths are ever stored, so this restores grants, not new ones.
+        # Off unless the app asks: tests make many windows over one settings
+        # file, and a window must not reopen another test's tabs.
+        self._restore_session = restore_session
+        if restore_session:
+            for path in session.load()["paths"]:
+                self.grants.allow_write(path)
         # Set when the page first asks for pending files (at the end of its
         # init). Until then an open-document event is queued rather than pushed
         # over the notify signal, which would be lost before the page listens.
@@ -203,6 +213,8 @@ class Bridge(QObject):
             "getRecentFiles": self._get_recent_files,
             "addRecentFile": self._add_recent_file,
             "getPendingFiles": self._get_pending_files,
+            "getSession": self._get_session,
+            "setOpenFiles": self._set_open_files,
             "quit": self._quit,
             "ping": self._ping,
         }
@@ -786,6 +798,30 @@ class Bridge(QObject):
         # and reading it back would be a grant the page gave itself.
         if path and self.grants.may_write(str(path)):
             self._window.add_recent_file(str(path))
+        self._reply(request_id, None)
+
+    def _get_session(self, request_id: int, _args: dict) -> None:
+        # Read now, not at launch: after a page reload this is the tabs the page
+        # had a moment ago. Filtered by grant, like everything the page stored.
+        if not self._restore_session:
+            self._reply(request_id, {"paths": [], "active": None})
+            return
+        stored = session.load()
+        paths = [path for path in stored["paths"] if self.grants.may_write(path)]
+        active = stored["active"] if stored["active"] in paths else None
+        self._reply(request_id, {"paths": paths, "active": active})
+
+    def _set_open_files(self, request_id: int, args: dict) -> None:
+        # Only paths that already have a grant, as with the recent list: the
+        # stored session is reopened with write access next launch.
+        raw = args.get("paths")
+        paths = [
+            str(path)
+            for path in (raw if isinstance(raw, list) else [])
+            if isinstance(path, str) and path and self.grants.may_write(path)
+        ]
+        active = args.get("active")
+        session.save(paths, active if isinstance(active, str) else None)
         self._reply(request_id, None)
 
     def _get_pending_files(self, request_id: int, _args: dict) -> None:

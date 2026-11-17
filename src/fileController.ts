@@ -34,6 +34,7 @@ import { fileTextForDisplay, fileTextToMarkdown, markdownToFileText } from './do
 import { mermaidPngSnapshots } from './mermaid-export'
 import { formulaEnvFor } from './formulaDefs'
 import { addRecentFile, getRecentFiles } from './recents'
+import { getSession } from './session'
 import {
   findSessionByPath,
   getActive,
@@ -48,7 +49,7 @@ export interface FileController {
   openTypedPath(): Promise<void>
   openPendingFiles(): Promise<void>
   openPaths(paths: string[]): Promise<void>
-  openDocument(path: string): Promise<void>
+  openDocument(path: string, options?: { remember?: boolean }): Promise<void>
   onNativeEvent(payload: string): void
   saveFile(): Promise<void>
   saveFileAs(): Promise<void>
@@ -118,9 +119,21 @@ export function createFileController(ctx: AppContext): FileController {
    * argument never pops an error dialog on an otherwise clean launch.
    */
   async function openPendingFiles(): Promise<void> {
+    // First the documents open at the last quit (`src/session.ts`), in their
+    // tab order, then any Edi was launched with. Asked for before the pending
+    // files, whose request is what marks the page ready for open events.
+    const restored = await getSession().catch(() => undefined)
     const paths = await getPendingFiles().catch(() => undefined)
-    if (!paths || paths.length === 0) return
-    await openPaths(paths)
+    for (const path of restored?.paths ?? []) {
+      if (isSupportedFile(path)) await openDocument(path, { remember: false })
+    }
+    if (paths && paths.length > 0) {
+      await openPaths(paths)
+      return
+    }
+    // Launched with nothing in particular: back to the tab that was in view.
+    const active = restored?.active
+    if (active && findSessionByPath(active)) await openDocument(active)
   }
 
   /** Open the supported paths in `paths`, in order, as tabs. */
@@ -164,7 +177,12 @@ export function createFileController(ctx: AppContext): FileController {
     void openPaths(paths)
   }
 
-  async function openDocument(path: string): Promise<void> {
+  /**
+   * Open `path` as a tab, or switch to it if it is open. `remember: false`
+   * keeps it off the top of the recent list: a reopened session is not the
+   * reader choosing those documents again.
+   */
+  async function openDocument(path: string, { remember = true } = {}): Promise<void> {
     const existing = findSessionByPath(path)
     if (existing) {
       // Already-open *and* already-active is not a swap, so there is no settle
@@ -184,7 +202,7 @@ export function createFileController(ctx: AppContext): FileController {
       // The path is set before the content is rendered so that relative image
       // references in opened documents resolve against the document's directory.
       ctx.tabs.addSession(fileTextToMarkdown(path, content), path)
-      void rememberRecent(path)
+      if (remember) void rememberRecent(path)
     } catch (error) {
       ctx.reportError(`Failed to open ${path}`, error)
     } finally {

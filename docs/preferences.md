@@ -62,3 +62,29 @@ A stored zoom level is clamped by `clampZoom` on the way into the editor, not
 by the store. The ladder belongs to the frontend. `Edi.conf` is a file a person
 can edit, so `_as_bool`/`_as_float` in the store exist to read a hand-edited
 file, not to second-guess the ladder.
+
+## The last session
+
+The documents open in the window are kept too, under `session/paths` (in tab
+order) and `session/active`, so a launch reopens them. This matters most for
+upgrades: `install.sh` quits the running Edi before it swaps in the new one,
+and does not start it again.
+
+- **Kept as they change.** `src/session.ts`'s `trackOpenFiles` sends
+  `setOpenFiles` whenever the open documents or the tab in view change, and
+  `backend/session.py` writes it at once. A crash keeps them as well as a quit.
+  Tracking starts only after the restore has finished, so a half-done restore
+  is never stored over the session it is restoring.
+- **Reopened at launch.** `openPendingFiles` asks `getSession` first and opens
+  those documents in order, without moving them up the recent list. Then it
+  opens any files Edi was launched with, and the last of those is in view.
+  Without any, the tab that was in view last time is.
+- **Only documents with a path and a grant.** An untitled tab is not kept, nor
+  are unsaved edits; the quit prompt still guards those. `setOpenFiles` drops
+  any path without a write grant, as the recent list does, so the page cannot
+  grant itself a path by storing it. A file that is gone by the next launch is
+  left out.
+- **App only.** `MainWindow(restore_session=True)` comes from `backend/main.py`,
+  outside the packaged smoke test. A window built anywhere else, as every test
+  does, reopens nothing: the tests share one settings file, and a window must
+  not reopen another test's tabs.

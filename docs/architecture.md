@@ -91,8 +91,8 @@ page have explicit limits:
   dialog, the shell's Open Path prompt (`pickTypedOpenPath`: the page sends
   only the folder a relative path resolves against, never the path), the
   command line, the OS opening a document, or a document reopened
-  from the backend's own recent list (which in turn only takes paths already
-  granted). Reading an arbitrary file needs an import dialog; a document type
+  from the backend's own recent list or last session (which in turn only take
+  paths already granted). Reading an arbitrary file needs an import dialog; a document type
   may be read without one, so a link to another note still opens. A rename or
   move goes only to a destination typed into the shell's Rename or Move prompt
   (`pickRenamePath`: the page sends the document's path, and the shell grants

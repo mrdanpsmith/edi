@@ -24,8 +24,9 @@ import pytest
 
 
 class _FakeWindow:
-    def __init__(self, page: object | None = None) -> None:
+    def __init__(self, page: object | None = None, restore_session: bool = False) -> None:
         self._web = _FakeWeb(page)
+        self.restore_session = restore_session
 
     def resize(self, width: int, height: int) -> None:
         self._resized = (width, height)
@@ -222,8 +223,10 @@ def test_main_opens_command_line_files_by_absolute_path(monkeypatch, tmp_path):
     monkeypatch.setattr(main_module, "_EdiApplication", lambda argv: proxy)
     opened: list = []
 
-    def window(pending):
+    def window(pending, restore_session=False):
         opened.append(pending)
+        # The real app reopens the last session's documents.
+        assert restore_session is True
         return _FakeWindow()
 
     monkeypatch.setattr(main_module, "MainWindow", window)
@@ -267,6 +270,8 @@ def test_main_selftest_branch_sets_webengine_flags(monkeypatch):
 
     assert main_module.main() == 0
     assert isinstance(calls["window"], _FakeWindow)
+    # The smoke test boots the same page every time, whatever was open last.
+    assert calls["window"].restore_session is False
     assert os.environ.get("QTWEBENGINE_DISABLE_SANDBOX") == "1"
     assert "--disable-dev-shm-usage" in os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]
 

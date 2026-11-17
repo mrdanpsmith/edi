@@ -1022,6 +1022,37 @@ describe('open and save', () => {
     expect(document.title).toBe('other.txt — Edi')
   })
 
+  it('reopens the last session in its tab order, back on the tab that was in view', async () => {
+    mainState.invoke.mockImplementation(async (method: string) =>
+      method === 'getSession' ? { paths: ['/tmp/a.md', '/tmp/b.md', '/tmp/c.md'], active: '/tmp/b.md' } : undefined,
+    )
+    mainState.readTextFile.mockImplementation(async (path: string) => `content of ${path}`)
+    await loadMain()
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions.map((s) => s.path)).toEqual(['/tmp/a.md', '/tmp/b.md', '/tmp/c.md'])
+    expect(state.getActive()!.path).toBe('/tmp/b.md')
+    // Reopening is not choosing them again: the recent list keeps its order.
+    expect(mainState.addRecentFile).not.toHaveBeenCalled()
+    // And from then on the shell is told what is open, once the restore is done.
+    const reports = mainState.invoke.mock.calls.filter(([method]) => method === 'setOpenFiles')
+    expect(reports.at(-1)![1]).toEqual({ paths: ['/tmp/a.md', '/tmp/b.md', '/tmp/c.md'], active: '/tmp/b.md' })
+    expect(reports.every(([, args]) => (args as { paths: string[] }).paths.length === 3)).toBe(true)
+  })
+
+  it('opens the files Edi was launched with after the last session, and shows them', async () => {
+    mainState.invoke.mockImplementation(async (method: string) =>
+      method === 'getSession' ? { paths: ['/tmp/a.md'], active: '/tmp/a.md' } : undefined,
+    )
+    mainState.getPendingFiles.mockResolvedValue(['/tmp/new.md'])
+    mainState.readTextFile.mockImplementation(async (path: string) => `content of ${path}`)
+    await loadMain()
+    await flushAsync()
+    const state = await stateModule()
+    expect(state.getState().sessions.map((s) => s.path)).toEqual(['/tmp/a.md', '/tmp/new.md'])
+    expect(state.getActive()!.path).toBe('/tmp/new.md')
+  })
+
   it('ignores unsupported pending files and a missing bridge', async () => {
     mainState.getPendingFiles.mockResolvedValue(['/tmp/a.md', '/tmp/b.bin'])
     mainState.readTextFile.mockResolvedValue('content')

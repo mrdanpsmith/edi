@@ -30,6 +30,7 @@ import { createEditController, type EditController } from './editController'
 import { createFileController, type FileController } from './fileController'
 import { createDiskController } from './diskChanges'
 import { createZoomController, type ZoomController } from './zoomController'
+import { trackOpenFiles } from './session'
 
 function openNewTab(ctx: AppContext): void {
   ctx.tabs.addSession()
@@ -534,9 +535,14 @@ export function init(roots: AppRoots): () => void {
     nativeBridge = bridge
     bridge?.notify?.connect(files.onNativeEvent)
   })
-  // Open any document Edi was launched with (silently ignored when there is
-  // no native shell, e.g. plain `vite dev` in a browser).
-  void files.openPendingFiles()
+  // Reopen the last session's documents and any Edi was launched with
+  // (silently ignored when there is no native shell, e.g. plain `vite dev` in
+  // a browser). Only then start keeping the open documents for next time, so
+  // a half-done restore is never stored over the session it is restoring.
+  let stopTrackingOpenFiles: (() => void) | null = null
+  void files.openPendingFiles().finally(() => {
+    if (!disposed) stopTrackingOpenFiles = trackOpenFiles()
+  })
   // The subscribe() below only runs on state transitions; boot has none, so
   // render the initial view (home) explicitly.
   ctx.updateView()
@@ -551,6 +557,7 @@ export function init(roots: AppRoots): () => void {
     roots.editorContainer.removeEventListener('contextmenu', onContextMenu)
     unsubscribeState()
     unsubscribeImages()
+    stopTrackingOpenFiles?.()
     nativeBridge?.notify?.disconnect?.(files.onNativeEvent)
     stopTheme()
     ctx.contextMenu?.hide()
