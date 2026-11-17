@@ -70,6 +70,24 @@ describe('typing a block marker', () => {
     expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
   })
 
+  // A shebang fence fires on the space inside the shebang, so the reader is
+  // still mid-line: the caret used to land *before* `#!` and the rest of the
+  // line went in front of it.
+  it('"```#!/usr/bin/env python3" carries on typing the shebang line', async () => {
+    await emptyDocument(app)
+    await type('```#!/usr/bin/env python3{Enter}print(1)')
+    expect(blockTypes(app)).toEqual(['code_block'])
+    expect(app.doc().firstChild!.textContent).toBe('#!/usr/bin/env python3\nprint(1)')
+  })
+
+  it('"```#!/usr/bin/python3 " hands CodeMirror the caret at the end of the shebang', async () => {
+    // This shebang names a grammar, so the block is drawn by CodeMirror.
+    await emptyDocument(app)
+    await type('```#!/usr/bin/python3 -u')
+    expect(app.doc().firstChild!.textContent).toBe('#!/usr/bin/python3 -u')
+    expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
+  })
+
   it('"---" on its own line becomes a horizontal rule', async () => {
     await emptyDocument(app)
     await type('---')

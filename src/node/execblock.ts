@@ -594,7 +594,11 @@ function focusOpenedFence(view: EditorView): void {
   const dom = view.nodeDOM(pos)
   const host = dom instanceof HTMLElement ? dom.querySelector<HTMLElement>('.cm-editor') : null
   const cm = host ? CMEditorView.findFromDOM(host) : null
-  cm?.focus()
+  if (!cm) return
+  cm.focus()
+  // A fresh fence holds only what was typed on the marker line (a shebang), so
+  // the end of the document is where the reader was typing.
+  cm.dispatch({ selection: { anchor: cm.state.doc.length } })
 }
 
 export const codeBlockNodeViewPlugin = new Plugin<number | null>({

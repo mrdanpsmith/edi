@@ -102,6 +102,36 @@ describe('block-start input rules', () => {
     expect(block.textContent.startsWith('#!sh')).toBe(true)
   })
 
+  it('fence: a shebang keeps its space and the caret stays at the end, so typing continues the line', () => {
+    const view = createBlockEditor(document.body, '').getView()
+    typeText(view, '```#!/usr/bin/env ')
+    expect(firstBlock(view).textContent).toBe('#!/usr/bin/env ')
+    const { $head } = view.state.selection
+    expect($head.parent.type.name).toBe('code_block')
+    expect($head.parentOffset).toBe('#!/usr/bin/env '.length)
+
+    typeText(view, 'python3')
+    expect(firstBlock(view).textContent).toBe('#!/usr/bin/env python3')
+    expect(view.state.doc.childCount).toBe(1)
+  })
+
+  it('fence: Enter after a shebang puts the caret on the second line of the block', () => {
+    const view = createBlockEditor(document.body, '').getView()
+    typeText(view, '```#!/bin/sh')
+    expect(dispatchKeydown(view, 'Enter')).toBe(true)
+    expect(firstBlock(view).textContent).toBe('#!/bin/sh\n')
+    const { $head } = view.state.selection
+    expect($head.parent.type.name).toBe('code_block')
+    expect($head.parentOffset).toBe('#!/bin/sh\n'.length)
+  })
+
+  it('fence: a language fence opens an empty block with the caret inside it', () => {
+    const view = createBlockEditor(document.body, '').getView()
+    typeText(view, '```js ')
+    expect(firstBlock(view).textContent).toBe('')
+    expect(view.state.selection.$head.parent.type.name).toBe('code_block')
+  })
+
   it('fence: Enter after an unterminated ``` / ```lang converts too', () => {
     for (const marker of ['```', '```js', '```python']) {
       const view = createBlockEditor(document.body, '').getView()

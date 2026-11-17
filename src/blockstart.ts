@@ -69,16 +69,22 @@ const horizontalRule = (): InputRule =>
  * whose mode is set by `insertFence` (which owns the transaction, and therefore
  * the record); a `#!` info string becomes the shebang first line of a runnable
  * code block; anything else is a code block with that language.
+ *
+ * `typed` is the key that closed the marker (a space, or `\n` for Enter). For a
+ * language tag it is only the trigger, but a shebang is text the reader is still
+ * writing: ```` ```#!/usr/bin/env ```` + space is half of `#!/usr/bin/env
+ * python3`, so the space stays in the line, and Enter starts the second line.
  */
 export function fenceNode(
   state: EditorState,
   info: string,
+  typed = '',
 ): { node: import('prosemirror-model').Node } | null {
   if (info === 'mermaid') {
     return { node: state.schema.nodes.mermaid_block.create({ value: '' }) }
   }
   if (info.startsWith('#!')) {
-    return { node: state.schema.nodes.code_block.create(null, [state.schema.text(info)]) }
+    return { node: state.schema.nodes.code_block.create(null, [state.schema.text(info + typed)]) }
   }
   return { node: state.schema.nodes.code_block.create({ language: info }) }
 }
@@ -94,9 +100,15 @@ function blockRangeOf(state: EditorState, inside: number): { from: number; to: n
   return { from: range.start, to: range.end }
 }
 
-function insertFence(state: EditorState, blockFrom: number, blockTo: number, info: string): Transaction {
+function insertFence(
+  state: EditorState,
+  blockFrom: number,
+  blockTo: number,
+  info: string,
+  typed: string,
+): Transaction {
   const tr = state.tr
-  const built = fenceNode(state, info)
+  const built = fenceNode(state, info, typed)
   if (!built) return tr
   tr.replaceWith(blockFrom, blockTo, [built.node])
 
@@ -119,11 +131,13 @@ function insertFence(state: EditorState, blockFrom: number, blockTo: number, inf
     return tr
   }
 
-  // code_block is a textblock: park the caret on its first content position so
-  // the next keystroke goes into the block. A block CodeMirror draws has no DOM
+  // code_block is a textblock: park the caret at the end of its content so the
+  // next keystroke continues what was typed — the end of a shebang line, or the
+  // only position of an empty block. (It used to be the first position, which
+  // put the caret *before* a shebang.) A block CodeMirror draws has no DOM
   // caret for that selection, so the tag tells `codeBlockNodeViewPlugin`
   // (`node/execblock.ts`) to hand it the focus once the block is drawn.
-  tr.setSelection(TextSelection.create(tr.doc, blockFrom + 1))
+  tr.setSelection(TextSelection.create(tr.doc, blockFrom + 1 + built.node.content.size))
   tr.setMeta(FENCE_OPENED_META, blockFrom)
   return tr
 }
@@ -180,7 +194,8 @@ const fenceRule = (): InputRule =>
     if (textAfterMarker(state, end) !== '') return null
     const info = match[1] ?? ''
     const { from, to } = blockRangeOf(state, start)
-    return insertFence(state, from, to, info)
+    // The rule fires on any whitespace; what a shebang keeps is a plain space.
+    return insertFence(state, from, to, info, ' ')
   })
 
 const bulletRule = (): InputRule => {
@@ -283,7 +298,7 @@ export function blockStartKeymap() {
       if (FENCE_MATCH.test(text)) {
         if (kept !== '') return false
         const info = text.match(FENCE_MATCH)?.[1] ?? ''
-        tr = insertFence(state, blockFrom, blockTo, info)
+        tr = insertFence(state, blockFrom, blockTo, info, '\n')
       } else if (TASK_MATCH.test(text)) {
         tr = replaceWithList(state, blockFrom, blockTo, 'bullet_list', kept, null,
           { checked: /[xX]/.test(text) })
