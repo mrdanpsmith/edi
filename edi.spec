@@ -229,7 +229,10 @@ if sys.platform == 'darwin':
             'CFBundleDisplayName': 'Edi',
             'CFBundleShortVersionString': _VERSION_STR or '0.0.0',
             'CFBundleVersion': _VERSION_STR or '0.0.0',
-            'LSMinimumSystemVersion': '11.0',
+            # PySide6 6.11's own binding modules are built for macOS 15. Raise
+            # this with the PySide6 pin; scripts/check-macos-minos.sh fails the
+            # build when any bundled binary needs newer than it says.
+            'LSMinimumSystemVersion': '15.0',
             'NSHighResolutionCapable': True,
             'CFBundleDevelopmentRegion': 'en',
             # Markdown is Edi's document type, so Finder can offer it in

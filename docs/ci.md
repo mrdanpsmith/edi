@@ -248,7 +248,10 @@ back to `0.0.0` for validation runs.
   (45-minute timeout, `needs: frontend`). The runners are pre-warmed (measured
   at about 4 seconds to provision), so VM spin-up is not a concern; the job
   consumes the `edi-web` artifact and needs no Node.
-- `build-macos` runs on a free arm64 `macos-15` runner.
+- `build-macos` runs on a free arm64 `macos-26` runner (what `macos-latest`
+  points to, and where GitHub keeps most macOS capacity). Its Python comes from
+  `actions/setup-python`, not the image; see
+  [distribution.md](distribution.md#macos-build) for why that matters.
 
 A PyInstaller or macOS regression therefore surfaces only on a tag or a manual
 run.

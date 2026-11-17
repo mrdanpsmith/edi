@@ -299,11 +299,22 @@ Windows job calls this same file as its structural gate.
 ## macOS build
 
 `scripts/build-macos.sh` is Darwin-only. It always builds with Python 3.12
-(`BUILD_PYTHON_VERSION`), brew-installing it if needed, never with whatever
-`python3` the runner image defaults to: macos-15's default moved to 3.15,
-which PySide6 6.11.x has no wheels for, and under 3.14 the bundle fails
-`codesign` on `QtWebEngineCore.framework`. Move the version only with a full
-local build, when the PySide6 pin moves. It mirrors the Linux steps into `dist-app/Edi.app`, ad-hoc code-signs
+(`BUILD_PYTHON_VERSION`), never with whatever `python3` the runner image
+defaults to: PySide6 6.11.x has no wheels for 3.15, and under 3.14 the bundle
+fails `codesign` on `QtWebEngineCore.framework`. Move the version only with a
+full local build, when the PySide6 pin moves.
+
+**The bundled Python decides the oldest macOS the app runs on.** The app
+declares `LSMinimumSystemVersion` 15.0 in `edi.spec`, the floor set by PySide6
+6.11's own binding modules. A Homebrew Python is compiled for the macOS it is
+installed on, so bundling one built on macOS 26 makes the app need macOS 26
+while still declaring 15. CI therefore takes Python 3.12 from
+`actions/setup-python`, whose macOS builds target older releases, and the
+script falls back to Homebrew only when no `python3.12` is on `PATH`.
+`scripts/check-macos-minos.sh` reads every Mach-O binary's `minos` in the
+finished bundle and fails the build if any needs a newer macOS than declared.
+A local build on a recent Mac with a Homebrew Python fails that check; build
+with the python.org 3.12 installer instead. It mirrors the Linux steps into `dist-app/Edi.app`, ad-hoc code-signs
 the bundle (`codesign --force --deep -s -`; arm64 will not launch unsigned),
 asserts the Markdown and Mermaid document types are in the sealed Info.plist, smoke-tests
 a throwaway copy of the bundle (the verdict comes from `EDI_SELFTEST_OUT`; the

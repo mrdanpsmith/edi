@@ -20,8 +20,9 @@
 #
 # The Linux onedir bundle is built inside the SAME glibc 2.35 base, so the packaged
 # binary runs on older desktop Linux (Ubuntu 22.04 pin; glibc compatibility is
-# guaranteed by construction). macOS is built natively on macos-15 (arm64) by
-# scripts/build-macos.sh. Windows is built natively on a windows-2025 runner
+# guaranteed by construction). macOS is built natively on macos-26 (arm64) by
+# scripts/build-macos.sh, with a setup-python interpreter so the bundle still
+# runs on the older macOS it declares. Windows is built natively on a windows-2025 runner
 # (scripts/build-windows.ps1).
 
 name: Release
@@ -292,7 +293,7 @@ jobs:
   build-macos:
     needs: frontend
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -311,6 +312,13 @@ jobs:
         with:
           name: edi-web
           path: .
+      # The interpreter the app bundles, built for older macOS. Without it the
+      # script falls back to Homebrew, whose Python is compiled for this runner's
+      # own macOS and would raise the app's real minimum to it.
+      # build-macos.sh checks every bundled binary against LSMinimumSystemVersion.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Build macOS app + dmg + curl archive
         run: ./scripts/build-macos.sh "${VER#v}"
       - name: Upload macOS artifacts

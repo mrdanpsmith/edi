@@ -4,7 +4,7 @@
 #
 # PyInstaller cannot cross-compile, so this must run on macOS. CI (GitHub
 # Actions, `build-macos` job in .github/workflows/release.yml) runs it natively on
-# an arm64 `macos-15` runner for v* tags; this script is also the local path —
+# an arm64 `macos-26` runner for v* tags; this script is also the local path —
 # run it on a Mac when cutting a release without CI.
 #
 # It does NOT build the frontend or the icons: the `frontend` job builds both
@@ -54,8 +54,12 @@ export HOMEBREW_NO_AUTO_UPDATE
 # script runs npm. Only the Python venv below needs a toolchain check.
 #
 # **Python 3.12, exactly — never whatever `python3` is.** The runner image's
-# default moves on its own: macos-15 went to 3.15, which PySide6 6.11.x has no
-# wheels for, so pip found no PySide6 at all. And "any version PySide6 accepts"
+# default moves on its own: it has gone to 3.15, which PySide6 6.11.x has no
+# wheels for, so pip found no PySide6 at all.
+# In CI `python3.12` is actions/setup-python's, built for older macOS. The
+# Homebrew fallback is compiled for *this* machine's macOS, so a bundle made
+# with it on a recent Mac fails check-macos-minos.sh below; locally, prefer the
+# python.org 3.12 installer. And "any version PySide6 accepts"
 # is not enough either: under 3.14 the bundle fails `codesign` on
 # QtWebEngineCore.framework ("embedded framework contains modified or invalid
 # version"). 3.12 is the version this build is verified with end to end;
@@ -147,6 +151,12 @@ if [[ "$MARKDOWN_TYPE" != "net.daringfireball.markdown" || \
   echo "       UTImportedTypeDeclarations: Markdown='$MARKDOWN_UTI' Mermaid='$MERMAID_UTI'" >&2
   exit 1
 fi
+
+# --- Every binary runs on the macOS the bundle declares -------------------------
+# A library compiled for the build machine's own macOS (a Homebrew Python on a
+# newer runner) would make the app open on an older Mac and then fail.
+print_step "Checking no bundled binary needs a newer macOS than declared"
+"$ROOT/scripts/check-macos-minos.sh" "$APP"
 
 # --- Offscreen smoke test ------------------------------------------------------
 # Headless QtWebEngine (same flags CI uses for the Linux binary; the app exits
