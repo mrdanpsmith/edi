@@ -1,4 +1,4 @@
-import { Plugin, PluginKey } from 'prosemirror-state'
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import type { EditorState } from 'prosemirror-state'
 import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
@@ -10,7 +10,7 @@ import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
 import { exitCodeBlock } from '../codeBlockExit'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { FENCE_OPENED_META } from '../blockstart'
-import { codeLanguageFor, shebangLanguage } from '../codeLanguages'
+import { codeLanguageFor, codeLanguageLabel, shebangLanguage } from '../codeLanguages'
 import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../formulaDefs'
 import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
 import { CHECK_ICON, COPY_ICON, RUN_ICON, STOP_ICON, paintIcon } from '../icons'
@@ -201,6 +201,8 @@ class RunnableBlockNodeView implements NodeView {
   private controlsLayer: HTMLElement | null = null
   private controls: BlockControls | null = null
   private shebang: string | null
+  /** The grammar this view was built for (`codeLanguageLabel`), null for plain text. */
+  private grammar: string | null
   private lastContent: string
   private running = false
   private activeHandle: StreamHandle<CodeResult> | null = null
@@ -220,21 +222,8 @@ class RunnableBlockNodeView implements NodeView {
 
     const langTag = String(node.attrs.language ?? '').trim()
     const info = codeLanguageFor(langTag || null, node.textContent)
-    const badge =
-      langTag ||
-      (info?.formula ? info.label : '') ||
-      (this.shebang ? shebangLanguage(this.shebang) ?? '' : '')
-    if (badge) {
-      this.langBar = document.createElement('div')
-      this.langBar.className = 'code-lang-bar'
-      this.langBar.setAttribute('data-language', badge)
-      const label = document.createElement('span')
-      label.className = 'code-lang-badge'
-      label.textContent = badge
-      this.langBar.appendChild(label)
-      this.dom.appendChild(this.langBar)
-      this.dom.classList.add('has-code-lang')
-    }
+    this.grammar = info?.label ?? null
+    this.syncBadge()
 
     if (info) {
       const host = document.createElement('div')
@@ -264,6 +253,36 @@ class RunnableBlockNodeView implements NodeView {
 
     this.attachControls()
     if (info?.formula) this.buildFormulaStatus()
+  }
+
+  /**
+   * The language badge: the tag, else a formula block's label, else the shebang's
+   * interpreter. It follows the text in place — typing `#!/usr/bin/env pyt…`
+   * renames it on every key, which must not rebuild the block.
+   */
+  private syncBadge(): void {
+    const langTag = String(this.node.attrs.language ?? '').trim()
+    const badge =
+      langTag ||
+      (this.grammar === 'edi-formula' ? this.grammar : '') ||
+      (this.shebang ? shebangLanguage(this.shebang) ?? '' : '')
+    this.dom.classList.toggle('has-code-lang', badge !== '')
+    if (!badge) {
+      this.langBar?.remove()
+      this.langBar = null
+      return
+    }
+    if (!this.langBar) {
+      this.langBar = document.createElement('div')
+      this.langBar.className = 'code-lang-bar'
+      const label = document.createElement('span')
+      label.className = 'code-lang-badge'
+      this.langBar.appendChild(label)
+      this.dom.prepend(this.langBar)
+    }
+    if (this.langBar.getAttribute('data-language') === badge) return
+    this.langBar.setAttribute('data-language', badge)
+    this.langBar.firstElementChild!.textContent = badge
   }
 
   /**
@@ -329,11 +348,29 @@ class RunnableBlockNodeView implements NodeView {
     // schema.text('') throws, so a cleared editor becomes an empty block.
     const content = value ? this.node.type.schema.text(value) : null
     const newNode = this.node.type.create(this.node.attrs, content)
-    this.view.dispatch(
-      this.view.state.tr
-        .replaceWith(pos, pos + this.node.nodeSize, newNode)
-        .setMeta('addToHistory', true),
-    )
+    const tr = this.view.state.tr
+      .replaceWith(pos, pos + this.node.nodeSize, newNode)
+      .setMeta('addToHistory', true)
+
+    const langTag = String(this.node.attrs.language ?? '').trim()
+    if (codeLanguageLabel(langTag || null, value) === this.grammar) {
+      this.view.dispatch(tr)
+      return
+    }
+    // **This edit changes the grammar, so it rebuilds the block — and this
+    // CodeMirror, which has the caret, goes with it.** ProseMirror's selection is
+    // put where CodeMirror's caret was, and the replacement takes it: a new
+    // CodeMirror if the block still has a grammar, ProseMirror's contentDOM if it
+    // is plain text now. Deferred out of CodeMirror's own update, which this runs
+    // inside of and which must not see its view destroyed under it.
+    const head = Math.min(this.editor?.view.state.selection.main.head ?? value.length, value.length)
+    tr.setSelection(TextSelection.create(tr.doc, pos + 1 + head))
+    const view = this.view
+    queueMicrotask(() => {
+      if (view.state.doc !== tr.before) return
+      view.dispatch(tr)
+      if (!focusCodeEditorAt(view, pos, head)) view.focus()
+    })
   }
 
   private buildFormulaStatus(): void {
@@ -505,6 +542,12 @@ class RunnableBlockNodeView implements NodeView {
     // A change to the language tag can swap the grammar, the badge, or the
     // code/plaintext renderer — rebuild from scratch rather than reconcile.
     if (node.attrs.language !== this.node.attrs.language) return false
+    // So can the text, through the shebang: finishing `#!/usr/bin/env python3`
+    // turns a plain block into a Python one, and deleting the interpreter turns
+    // it back. The view that is taking the typing goes, so the caret is handed to
+    // its replacement (`handCaretToCodeEditor`, `commitEditorText`).
+    const langTag = String(node.attrs.language ?? '').trim()
+    if (codeLanguageLabel(langTag || null, node.textContent) !== this.grammar) return false
     this.node = node
     const newShebang = shebangOf(node.textContent)
     // Rebuild the controls/output whenever the block's text changes, not just
@@ -527,6 +570,7 @@ class RunnableBlockNodeView implements NodeView {
         }
       }
       this.attachControls()
+      this.syncBadge()
     }
     if (this.formulaErrors) this.renderFormulaStatus()
     return true
@@ -591,14 +635,43 @@ const codeBlockNodeViewKey = new PluginKey<number | null>('EDI_CODEBLOCK_NODEVIE
 function focusOpenedFence(view: EditorView): void {
   const pos = codeBlockNodeViewKey.getState(view.state)
   if (pos === null || pos === undefined) return
+  // A fresh fence holds only what was typed on the marker line (a shebang), so
+  // the end of the document is where the reader was typing.
+  focusCodeEditorAt(view, pos, Infinity)
+}
+
+/**
+ * Focus the CodeMirror drawing the code block at `pos`, caret at `offset` into
+ * its text (clamped). False when that block is not drawn by CodeMirror.
+ */
+function focusCodeEditorAt(view: EditorView, pos: number, offset: number): boolean {
   const dom = view.nodeDOM(pos)
   const host = dom instanceof HTMLElement ? dom.querySelector<HTMLElement>('.cm-editor') : null
   const cm = host ? CMEditorView.findFromDOM(host) : null
-  if (!cm) return
+  if (!cm) return false
   cm.focus()
-  // A fresh fence holds only what was typed on the marker line (a shebang), so
-  // the end of the document is where the reader was typing.
-  cm.dispatch({ selection: { anchor: cm.state.doc.length } })
+  cm.dispatch({ selection: { anchor: Math.min(offset, cm.state.doc.length) } })
+  return true
+}
+
+/**
+ * **A plain block that becomes a CodeMirror one keeps the caret.**
+ *
+ * Typing the end of `#!/usr/bin/env python3` into a plain block gives it a
+ * grammar, and its node view is rebuilt around CodeMirror (see `update`). The
+ * typing was in ProseMirror's own contentDOM, so the focus is still on
+ * ProseMirror's root, holding a selection inside a block that now has no DOM
+ * caret. Only on a change to the document, and only when ProseMirror's own root
+ * has the focus — so this cannot take it from a grid, a dialog or another
+ * CodeMirror, which is what a node view `setSelection` did (see above).
+ */
+function handCaretToCodeEditor(view: EditorView, prev: EditorState): void {
+  if (prev.doc === view.state.doc || document.activeElement !== view.dom) return
+  const { selection } = view.state
+  if (!(selection instanceof TextSelection)) return
+  const { $head } = selection
+  if ($head.parent.type.name !== 'code_block') return
+  focusCodeEditorAt(view, $head.before(), $head.parentOffset)
 }
 
 export const codeBlockNodeViewPlugin = new Plugin<number | null>({
@@ -610,7 +683,12 @@ export const codeBlockNodeViewPlugin = new Plugin<number | null>({
       return typeof pos === 'number' ? pos : null
     },
   },
-  view: () => ({ update: focusOpenedFence }),
+  view: () => ({
+    update(view, prev) {
+      focusOpenedFence(view)
+      handCaretToCodeEditor(view, prev)
+    },
+  }),
   props: {
     nodeViews: {
       code_block(node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView {

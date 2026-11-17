@@ -80,6 +80,40 @@ describe('typing a block marker', () => {
     expect(app.doc().firstChild!.textContent).toBe('#!/usr/bin/env python3\nprint(1)')
   })
 
+  it('finishing the interpreter switches a plain shebang block to highlighting, and typing carries on', async () => {
+    // `#!/usr/bin/env` names no grammar, so the block opens plain; `python`
+    // gives it one, and the rest of the typing has to reach the CodeMirror
+    // that replaced the plain block mid-word.
+    await emptyDocument(app)
+    await type('```#!/usr/bin/env pyt')
+    expect(app.editor.querySelector('.runnable-block .cm-editor')).toBeNull()
+    expect(app.editor.querySelector('.code-lang-badge')?.textContent).toBe('pyt')
+    await type('hon3{Enter}print(1)')
+    expect(app.doc().firstChild!.textContent).toBe('#!/usr/bin/env python3\nprint(1)')
+    expect(app.editor.querySelector('.runnable-block .cm-editor')).not.toBeNull()
+    expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
+    expect(app.editor.querySelector('.code-lang-badge')?.textContent).toBe('python3')
+  })
+
+  it('removing the interpreter switches back to plain text, and back again, without losing the caret', async () => {
+    await emptyDocument(app)
+    await type('```#!/bin/sh{Enter}echo hi')
+    expect(app.editor.querySelector('.runnable-block .cm-editor')).not.toBeNull()
+    await press('ArrowUp')
+    await press('End')
+    await press('Backspace')
+    await press('Backspace')
+    expect(app.editor.querySelector('.runnable-block .cm-editor')).toBeNull()
+    await type('xx')
+    expect(app.doc().firstChild!.textContent).toBe('#!/bin/xx\necho hi')
+    await press('Backspace')
+    await press('Backspace')
+    await type('bash')
+    expect(app.doc().firstChild!.textContent).toBe('#!/bin/bash\necho hi')
+    expect(app.editor.querySelector('.runnable-block .cm-editor')).not.toBeNull()
+    expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
+  })
+
   it('"```#!/usr/bin/python3 " hands CodeMirror the caret at the end of the shebang', async () => {
     // This shebang names a grammar, so the block is drawn by CodeMirror.
     await emptyDocument(app)

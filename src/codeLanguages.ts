@@ -85,23 +85,26 @@ export function shebangLanguage(text: string): string | null {
   return (name.split('/').pop() ?? '').replace(/\.exe$/, '').toLowerCase() || null
 }
 
+/** The name of the grammar a code block resolves to — its language tag first,
+ * then its shebang — or null for plain text. Cheap: it builds no grammar, so a
+ * node view can ask it on every keystroke whether its renderer still fits. */
+export function codeLanguageLabel(language: string | null, text: string): string | null {
+  // Own keys only: a shebang naming `constructor` must not find Object's.
+  const known = (name: string | null): name is string =>
+    !!name && Object.hasOwn(CODE_LANGUAGE_ALIASES, name)
+  const tag = (language ?? '').trim().toLowerCase()
+  if (known(tag)) return tag
+  const interpreter = shebangLanguage(text)
+  return known(interpreter) ? interpreter : null
+}
+
 /** Resolve the grammar for a code block from its language tag first, then its
  * shebang. Returns null when the block should render as plain text. */
 export function codeLanguageFor(
   language: string | null,
   text: string,
 ): CodeLanguageInfo | null {
-  const tag = (language ?? '').trim().toLowerCase()
-  if (tag) {
-    const factory = CODE_LANGUAGE_ALIASES[tag]
-    if (factory) {
-      return { label: tag, extension: factory(), formula: tag === 'edi-formula' }
-    }
-  }
-  const interpreter = shebangLanguage(text)
-  if (interpreter) {
-    const factory = CODE_LANGUAGE_ALIASES[interpreter]
-    if (factory) return { label: interpreter, extension: factory(), formula: false }
-  }
-  return null
+  const label = codeLanguageLabel(language, text)
+  if (label === null) return null
+  return { label, extension: CODE_LANGUAGE_ALIASES[label](), formula: label === 'edi-formula' }
 }
