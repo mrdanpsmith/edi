@@ -172,7 +172,10 @@ def _temp_roots() -> tuple[str, ...]:
     """Where the system keeps temporary files, as the store spells paths."""
     roots = {os.path.realpath(tempfile.gettempdir())}
     if os.name != "nt":
-        roots |= {"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/var/folders", "/private/var/folders"}
+        # Only compared against stored paths, to group them; nothing is ever
+        # created or written here.
+        roots |= {"/tmp", "/var/tmp"}  # nosec B108
+        roots |= {"/private/tmp", "/private/var/tmp", "/var/folders", "/private/var/folders"}
     return tuple(sorted(roots))
 
 
