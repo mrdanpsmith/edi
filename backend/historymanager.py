@@ -14,14 +14,16 @@ lets the tests drive each prompt.
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QFontDatabase, QFontMetrics, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -32,6 +34,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -49,17 +54,148 @@ STATUS_LABELS = {
     "blocked": "Something else there",
 }
 
-#: The filter's choices: its label, and which statuses it shows.
-FILTERS = (
-    ("All documents", None),
-    ("Missing from disk", {"missing", "folderMissing", "noDrive", "blocked"}),
-    ("On disk", {"exists"}),
+_NOT_ON_DISK = {"missing", "folderMissing", "noDrive", "blocked"}
+
+#: The filter's choices: its label, and which documents it shows, given a
+#: document and whether it is in a temporary folder.
+FILTERS: tuple[tuple[str, Callable[[dict, bool], bool]], ...] = (
+    ("All documents", lambda _doc, _temp: True),
+    ("Missing from disk", lambda doc, _temp: doc["status"] in _NOT_ON_DISK),
+    ("On disk", lambda doc, _temp: doc["status"] == "exists"),
+    ("Temporary files", lambda _doc, temp: temp),
 )
+
+#: The one row every document in a temporary folder is grouped under.
+TEMPORARY_LABEL = "Temporary files"
 
 #: The most of a version the preview shows.
 PREVIEW_BYTES = 200_000
 
+#: A document row's path; folder rows have none.
 _PATH_ROLE = Qt.ItemDataRole.UserRole
+#: A document row's status key (``exists``, ``missing``…).
+_STATUS_ROLE = Qt.ItemDataRole.UserRole + 1
+#: What a column sorts by, which is not always what it shows.
+_SORT_ROLE = Qt.ItemDataRole.UserRole + 2
+#: Text drawn dimmed after a row's own, in the first column: a folder's parent,
+#: or a temporary document's folder.
+_DIM_ROLE = Qt.ItemDataRole.UserRole + 3
+
+#: Extra height per row, over the style's own, so the list is not packed tight.
+_ROW_PADDING = 6
+
+#: Statuses that belong to the folder rather than the document: every document
+#: in it shares them, so the folder row says so once.
+_FOLDER_STATUSES = ("folderMissing", "noDrive")
+
+#: The dot beside a document: its colour, and whether it is filled.
+_DOTS = {
+    "exists": ("#8a8f98", True),
+    "missing": ("#d08700", False),
+    "folderMissing": ("#d08700", False),
+    "noDrive": ("#d08700", False),
+    "blocked": ("#d0453a", True),
+}
+
+
+class _Item(QTreeWidgetItem):
+    """A row that sorts by ``_SORT_ROLE``: names without case, times as numbers."""
+
+    def __lt__(self, other: QTreeWidgetItem) -> bool:
+        column = self.treeWidget().sortColumn() if self.treeWidget() else 0
+        return self.data(column, _SORT_ROLE) < other.data(column, _SORT_ROLE)
+
+
+def _dot(status: str) -> QIcon:
+    color, filled = _DOTS.get(status, ("#8a8f98", True))
+    size = 16
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.setDevicePixelRatio(2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(color), 1.5))
+    painter.setBrush(QColor(color) if filled else Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(QRectF(4.5, 4.5, 7, 7))
+    painter.end()
+    return QIcon(pixmap)
+
+
+class _Delegate(QStyledItemDelegate):
+    """Roomier rows, and a row's ``_DIM_ROLE`` text drawn after its own in the
+    placeholder colour, elided in the middle to whatever room is left."""
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
+        size = super().sizeHint(option, index)
+        return QSize(size.width(), size.height() + _ROW_PADDING)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        dim = index.data(_DIM_ROLE)
+        if not dim:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        widget = opt.widget
+        style = widget.style() if widget else QApplication.style()
+        # The room for text, measured while the row still has its text; then
+        # the row is drawn without it (background, selection, icon) and both
+        # parts of the text are drawn here.
+        rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, widget).adjusted(2, 0, -2, 0)
+        text = opt.text
+        opt.text = ""
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        palette = opt.palette
+        main = palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
+        if selected:
+            faint = QColor(main)
+            faint.setAlphaF(0.7)
+        else:
+            faint = palette.color(QPalette.ColorRole.PlaceholderText)
+        metrics = QFontMetrics(opt.font)
+        name = metrics.elidedText(text, Qt.TextElideMode.ElideMiddle, rect.width())
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(main)
+        flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        painter.drawText(rect, flags, name)
+        rest = rect.adjusted(metrics.horizontalAdvance(name + "   "), 0, 0, 0)
+        if rest.width() > metrics.horizontalAdvance("……"):
+            painter.setPen(faint)
+            painter.drawText(rest, flags, metrics.elidedText(dim, Qt.TextElideMode.ElideMiddle, rest.width()))
+        painter.restore()
+
+
+def _temp_roots() -> tuple[str, ...]:
+    """Where the system keeps temporary files, as the store spells paths."""
+    roots = {os.path.realpath(tempfile.gettempdir())}
+    if os.name != "nt":
+        roots |= {"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/var/folders", "/private/var/folders"}
+    return tuple(sorted(roots))
+
+
+def _temp_root(path: str, roots: tuple[str, ...]) -> str | None:
+    """The temporary root ``path`` is below, if any (the deepest one)."""
+    found = [root for root in roots if path.startswith(root.rstrip(os.sep) + os.sep)]
+    return max(found, key=len) if found else None
+
+
+def _when(stamp: float, now: float | None = None) -> str:
+    """A version's time the short way: today's and yesterday's by the clock,
+    this year's by the day, older ones by the date."""
+    moment = time.localtime(stamp)
+    today = time.localtime(now if now is not None else time.time())
+    yesterday = time.localtime((now if now is not None else time.time()) - 86_400)
+    day = moment[:3]
+    if day == today[:3]:
+        return time.strftime("Today %H:%M", moment)
+    if day == yesterday[:3]:
+        return time.strftime("Yesterday %H:%M", moment)
+    if moment.tm_year == today.tm_year:
+        return f"{time.strftime('%b', moment)} {moment.tm_mday}"
+    return time.strftime("%Y-%m-%d", moment)
 
 
 def _tilde(path: str) -> str:
@@ -92,7 +228,14 @@ class HistoryManager(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Manage Version History")
         self.setWindowModality(Qt.WindowModality.WindowModal)
-        self.resize(860, 520)
+        # Most of the window it belongs to, not a fixed size: a long store
+        # needs the rows, and the preview the width.
+        width, height = 860, 520
+        if parent is not None:
+            width = max(width, int(parent.width() * 0.8))
+            height = max(height, int(parent.height() * 0.8))
+        self.resize(width, height)
+        self._temp_roots = _temp_roots()
         self._open_files = open_files
         self._flash = flash
         self._watched = watched
@@ -116,14 +259,22 @@ class HistoryManager(QDialog):
         top.addWidget(self.count)
         layout.addLayout(top)
 
+        # Documents grouped under their folder: the folder is said once, not on
+        # every row, and a missing folder or drive is said on the folder.
         self.tree = QTreeWidget()
-        self.tree.setColumnCount(5)
-        self.tree.setHeaderLabels(["Document", "Folder", "Status", "Versions", "Last version"])
-        self.tree.setRootIsDecorated(False)
+        self.tree.setColumnCount(2)
+        self.tree.setHeaderLabels(["Document", "History"])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.tree.setSortingEnabled(True)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header = self.tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.setItemDelegate(_Delegate(self.tree))
         self.tree.itemSelectionChanged.connect(self._selection_changed)
+        self._folder_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        self._dots = {status: _dot(status) for status in _DOTS}
 
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
@@ -168,7 +319,7 @@ class HistoryManager(QDialog):
         self._fill()
 
     def _fill(self) -> None:
-        statuses = FILTERS[self.filter.currentIndex()][1]
+        shows = FILTERS[self.filter.currentIndex()][1]
         # Quiet while the rows are replaced: clearing a selection of documents
         # the store no longer has would report it, and the selection is read
         # once, below, when the list is whole again.
@@ -176,25 +327,49 @@ class HistoryManager(QDialog):
         self.tree.setSortingEnabled(False)
         self.tree.clear()
         shown = 0
+        now = time.time()
+        folders: dict[str, list[str]] = {}
+        temporary: list[str] = []
         for path, doc in self._documents.items():
-            if statuses is not None and doc["status"] not in statuses:
+            temp = _temp_root(path, self._temp_roots) is not None
+            if not shows(doc, temp):
                 continue
-            status: str = doc["status"]
-            columns: list[str] = [
-                os.path.basename(path),
-                _tilde(os.path.dirname(path)),
-                STATUS_LABELS.get(status) or status,
-                str(doc["versions"]),
-                time.strftime("%Y-%m-%d %H:%M", time.localtime(doc["time"])) if doc["time"] else "",
-            ]
-            item = QTreeWidgetItem(columns)
-            item.setData(0, _PATH_ROLE, path)
-            item.setToolTip(1, path)
-            item.setTextAlignment(3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.tree.addTopLevelItem(item)
-            shown += 1
+            if temp:
+                temporary.append(path)
+            else:
+                folders.setdefault(os.path.dirname(path), []).append(path)
+        for folder, paths in folders.items():
+            # The folder's own name first, its parent dimmed after it.
+            name = os.path.basename(folder) or folder
+            parent = self._group_item(name, paths)
+            parent.setData(0, _DIM_ROLE, _tilde(os.path.dirname(folder)) if os.path.basename(folder) else "")
+            parent.setToolTip(0, folder)
+            parent.setIcon(0, self._folder_icon)
+            shared = {self._documents[path]["status"] for path in paths}
+            if len(shared) == 1 and (status := shared.pop()) in _FOLDER_STATUSES:
+                parent.setText(1, STATUS_LABELS[status])
+            for path in paths:
+                parent.addChild(self._document_item(path, self._documents[path], now))
+            shown += len(paths)
+            self.tree.addTopLevelItem(parent)
+            parent.setExpanded(True)
+        if temporary:
+            # Scratch files from other tools: one row, folded away unless asked
+            # for, so they do not bury the documents that matter.
+            parent = self._group_item(TEMPORARY_LABEL, temporary)
+            parent.setToolTip(0, "Documents in the system's temporary folders")
+            parent.setIcon(0, self._folder_icon)
+            parent.setText(1, _plural(len(temporary), "document"))
+            for path in temporary:
+                item = self._document_item(path, self._documents[path], now)
+                root = _temp_root(path, self._temp_roots) or ""
+                item.setData(0, _DIM_ROLE, os.path.dirname(path)[len(root) :].lstrip(os.sep))
+                parent.addChild(item)
+            shown += len(temporary)
+            self.tree.addTopLevelItem(parent)
+            parent.setExpanded(not folders)
         self.tree.setSortingEnabled(True)
-        self.tree.sortByColumn(4, Qt.SortOrder.DescendingOrder)
+        self.tree.sortByColumn(1, Qt.SortOrder.DescendingOrder)
         self.tree.blockSignals(False)
         total = len(self._documents)
         self.count.setText(
@@ -204,16 +379,49 @@ class HistoryManager(QDialog):
         )
         self._selection_changed()
 
+    def _group_item(self, label: str, paths: list[str]) -> QTreeWidgetItem:
+        item = _Item([label, ""])
+        item.setData(0, _SORT_ROLE, label.casefold())
+        item.setData(1, _SORT_ROLE, max(self._documents[path]["time"] or 0 for path in paths))
+        return item
+
+    def _document_item(self, path: str, doc: dict, now: float) -> QTreeWidgetItem:
+        status: str = doc["status"]
+        when = _when(doc["time"], now) if doc["time"] else ""
+        item = _Item([os.path.basename(path), " · ".join(filter(None, [_plural(doc["versions"], "version"), when]))])
+        if doc["time"]:
+            item.setToolTip(1, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(doc["time"])))
+        item.setIcon(0, self._dots.get(status) or self._dots["exists"])
+        item.setToolTip(0, f"{path}\n{STATUS_LABELS.get(status) or status}")
+        item.setData(0, _PATH_ROLE, path)
+        item.setData(0, _STATUS_ROLE, status)
+        item.setData(0, _SORT_ROLE, os.path.basename(path).casefold())
+        item.setData(1, _SORT_ROLE, doc["time"] or 0)
+        return item
+
+    def _document_items(self):
+        for index in range(self.tree.topLevelItemCount()):
+            folder = self.tree.topLevelItem(index)
+            if folder is None:
+                continue
+            for child in range(folder.childCount()):
+                yield folder.child(child)
+
     def selected_paths(self) -> list[str]:
-        return [item.data(0, _PATH_ROLE) for item in self.tree.selectedItems()]
+        """The selected documents; a selected folder stands for all of its own."""
+        paths: dict[str, None] = {}
+        for item in self.tree.selectedItems():
+            members = [item] if item.parent() else [item.child(i) for i in range(item.childCount())]
+            for member in members:
+                paths[member.data(0, _PATH_ROLE)] = None
+        return list(paths)
 
     def select(self, paths: list[str]) -> None:
         """Select exactly these documents (as a click would)."""
         wanted = set(paths)
         self.tree.clearSelection()
-        for index in range(self.tree.topLevelItemCount()):
-            item = self.tree.topLevelItem(index)
-            if item is not None and item.data(0, _PATH_ROLE) in wanted:
+        for item in self._document_items():
+            if item.data(0, _PATH_ROLE) in wanted:
                 item.setSelected(True)
 
     def _selection_changed(self) -> None:

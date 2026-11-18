@@ -217,12 +217,29 @@ or a history deleted. It is the shell's own dialog and has no page command or
 bridge method: listing every stored path, deleting histories and writing
 recovered files are out of reach of anything running in the page.
 
-**The list** comes from `history.stored_documents`: name, folder, where the
-document stands on disk, how many versions it has and when the newest was
-recorded, newest first. A filter shows all documents (the default), those
-missing from disk, or those on disk. Several can be selected. A preview shows
-the selected document's newest version, read-only. Older versions are Version
-History's job once the document is back.
+**The list** comes from `history.stored_documents`, grouped under one row per
+folder. A folder row shows the folder's own name, with its parent dimmed after
+it, and says "Folder missing" or "Drive not connected" when that holds for all
+of its documents. A document row has a dot for where it stands on disk (grey
+filled: on disk; amber ring: missing; red filled: something else there; the
+tooltip says which in words) and, in the History column, how many versions it
+has and when the newest was recorded: "Today 13:54", "Yesterday 09:52", "Nov 14"
+this year, a date before that, and the exact time in the tooltip.
+
+Documents in the system's temporary folders (`tempfile.gettempdir()`, and on
+macOS and Linux `/tmp`, `/var/tmp` and `/var/folders`) are scratch files from
+other tools, not documents anyone keeps. They share one **Temporary files** row,
+folded away, each with its folder below the temporary root dimmed after its
+name. It is expanded only when nothing else is listed.
+
+Folders and documents sort newest first by default, or by name. A filter shows
+all documents (the default), those missing from disk, those on disk, or only
+the temporary ones. Several can be selected, and a selected folder stands for
+every document under it, so selecting Temporary files and deleting clears them
+all. A preview shows the selected document's newest version, read-only. Older
+versions are Version History's job once the document is back.
+
+The dialog opens at 80% of the window, and never smaller than 860×520.
 
 Where a document stands is `history.location_status`:
 
