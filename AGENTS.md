@@ -7,6 +7,11 @@ tree uncommitted and unbranched; the user reviews and commits them. Do not run
 `git commit`, `git checkout -b`, `git branch`, or push. If a task asks for a
 branch, implement the changes on the current branch and stop.
 
+**Rebuild `dist/` before handing a frontend change over.** After changing
+`src/`, run `npm run build` before asking the user to try it in the real app,
+and tell them to restart Edi. `run_edi.py` loads `dist/`, and the browser
+tests don't rebuild it.
+
 Keep the docs honest. When behaviour changes, update the topic document in
 `docs/` rather than growing this file; `AGENTS.md` is the entry point, not the
 manual.
