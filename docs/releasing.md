@@ -75,6 +75,14 @@ automatically. A range containing only such commits prints:
 
 Both behaviours are pinned by `tests/test_changelog.py`.
 
+## Format changes
+
+From 1.0, what Edi reads and writes is specified in [format.md](format.md),
+and a 1.x release may only add to it. A commit that changes the format says
+so in its subject, never carries `[skip changelog]`, and names any new
+built-in function, because a built-in takes precedence over a document's own
+function of the same name. Removing anything format.md lists waits for 2.0.
+
 ## Release guards
 
 - `release` refuses to run unless `$GITHUB_REF_NAME` equals

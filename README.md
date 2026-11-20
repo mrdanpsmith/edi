@@ -105,8 +105,8 @@ note, so a half-typed label never leaves a blank block behind.
 A code block with a shebang line — in the fence info or as its first line —
 gets a **Run** button, and its output, stderr and exit code land in a result
 cell under it (**Stop** cancels a hung run, and a run is killed after 30
-seconds). `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/env node`, … all work, with
-the same shell-style argument parsing.
+seconds). `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/env node`, … all work in
+either place; the line is split on whitespace, without shell quoting.
 
 ### Encrypted fields
 

@@ -33,6 +33,7 @@ real application is `run_edi.py`.
 | Document | Read before changing… |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Anything structural. Frontend/backend split, document model, repository map. |
+| [docs/format.md](docs/format.md) | Any syntax Edi reads or writes, a built-in function, an interpreter name or the encryption envelope. |
 | [docs/editor-marks.md](docs/editor-marks.md) | Inline mark input rules, arrow exit, `storedMarks`. |
 | [docs/block-modes.md](docs/block-modes.md) | Visual/source and editing modes, block controls, hover band. |
 | [docs/code-blocks.md](docs/code-blocks.md) | Code block renderers, fences, paste, deleting, frame press and drags. |

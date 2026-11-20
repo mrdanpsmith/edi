@@ -7,6 +7,7 @@ user-facing guide is the repository [README](../README.md); the in-app
 | Document | What it covers |
 | --- | --- |
 | [architecture.md](architecture.md) | The frontend/backend split, the document model and the repository map. |
+| [format.md](format.md) | Every construct Edi reads and writes beyond CommonMark and GFM, and the 1.x compatibility rules. |
 | [editor-marks.md](editor-marks.md) | Inline mark behaviour and the `storedMarks` rules. |
 | [block-modes.md](block-modes.md) | Visual/source and viewing/editing modes, the block control cluster and the hover band. |
 | [find-replace.md](find-replace.md) | The search plugin, matching layer and the find/replace panel. |

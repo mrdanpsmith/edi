@@ -19,7 +19,7 @@ shell and loads the built frontend.
 
 A document is plain markdown on disk. Tables, Mermaid diagrams and encrypted
 fields are represented in the markdown itself, so none of them needs a sidecar
-file. The live editor works on a ProseMirror document and serializes it back to
+file; [format.md](format.md) specifies each construct. The live editor works on a ProseMirror document and serializes it back to
 markdown; a resolved table or diagram is stored in its node's `attrs.value`.
 
 The markdown file remains the source of truth. Undo, save, export and search

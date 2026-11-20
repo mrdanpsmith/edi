@@ -37,6 +37,15 @@ const CANONICAL = [
   '**bold** *em* ~~strike~~ ==mark== ~sub~ ^sup^ `code`\n',
   'a  \nb\n',
   '| Item | Total |\n| --- | --- |\n| \\*not em\\* and 5 * 3 | =2*3 |\n',
+  // Edi's own constructs, as docs/format.md specifies them.
+  '## Setup {#install}\n',
+  'H~2~O and x^2^\n',
+  'Key: !masked[AgABAg==] and !masked[AgABAg==]{label="say \\"hi\\""}\n',
+  '```encrypted label="Credentials"\nAgABAg==\n```\n',
+  '| Item | Q1 | Total |\n| --- | --- | --- |\n| Widget | 120 | 120 |\n\n<!-- edi-fml {"C2":"=SUM(B2)"} -->\n',
+  '```edi-formula\nTAX(amount) = ROUND(amount * 0.2, 2)\n```\n',
+  '```\n#!/usr/bin/env python3 -u\nprint(1)\n```\n',
+  '```mermaid\nkanban\n  todo[To do]\n    a[Write the spec]\n```\n',
 ]
 
 /** Input in other styles: the saved form may differ, but must read back as the
@@ -51,6 +60,7 @@ const NON_CANONICAL = [
   'Trailing ## closed ##\n',
   '<span>inline</span> html and **<i>marked</i>**\n',
   'a\\\\b and C:\\path\\x\n',
+  '```#!python3 -u\nprint(1)\n```\n',
 ]
 
 describe('markdown round trip', () => {
@@ -62,6 +72,10 @@ describe('markdown round trip', () => {
     const once = save(md)
     expect(parse(once).eq(parse(md))).toBe(true)
     expect(save(once)).toBe(once)
+  })
+
+  it('writes an info-string shebang as the first line of a bare fence', () => {
+    expect(save('```#!python3 -u\nprint(1)\n```\n')).toBe('```\n#!python3 -u\nprint(1)\n```\n')
   })
 
   it('writes CRLF input with one line ending', () => {
