@@ -211,7 +211,12 @@ export function emojiPlugin(): Plugin<EmojiPluginState> {
         if (!token) return EMPTY
         const changed =
           !prev.token || prev.token.from !== token.from || prev.token.query !== token.query
-        if (changed) return { token, open: true, active: 0 }
+        // **Typing opens the card; putting the caret somewhere does not.** A click or
+        // an arrow that lands after a `:` already in the text (`badged "HTML":`) is
+        // not a request for emoji, so a selection-only move tracks the token closed —
+        // unless it stays inside the token whose card is already open.
+        const sameOpenToken = prev.open && prev.token?.from === token.from
+        if (changed) return { token, open: tr.docChanged || sameOpenToken, active: 0 }
         return { token, open: prev.open, active: prev.active }
       },
     },
