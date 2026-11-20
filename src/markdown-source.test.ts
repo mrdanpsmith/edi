@@ -69,7 +69,8 @@ describe('an edit rewrites only the block it touched', () => {
   it('keeps the gaps around a block edited in place, down to a single newline', () => {
     const defs = '[a]: one.md\n[b]: two.md\n[c]: three.md\n'
     const { doc, source } = parseMarkdown(defs, schema)
-    const edited = doc.copy(doc.content.replaceChild(1, schema.node('source_block', { markdown: '[b]: moved.md' })))
+    const raw = schema.node('code_block', { language: 'markdown', raw: true }, [schema.text('[b]: moved.md')])
+    const edited = doc.copy(doc.content.replaceChild(1, raw))
     expect(proseToMarkdown(edited, undefined, source)).toBe('[a]: one.md\n[b]: moved.md\n[c]: three.md\n')
   })
 

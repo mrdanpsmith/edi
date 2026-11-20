@@ -390,7 +390,7 @@ async function mainSideNodeViews(): Promise<MainSideNodeViews> {
       new Plugin({
         props: {
           nodeViews: Object.fromEntries(
-            [...blockview.BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockview.blockNodeView]),
+            [...blockview.BLOCK_NODE_TYPES].map((name) => [name, blockview.blockNodeView]),
           ),
         },
       }),

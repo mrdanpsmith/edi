@@ -367,11 +367,6 @@ export function serializeDocToHtml(
     return ['span', { class: 'masked-field' }, label ? `•••••••••••• (${label})` : '••••••••••••']
   }
 
-  nodes.source_block = (node) => {
-    const markdown = String(node.attrs.markdown ?? '')
-    return ['pre', ['code', markdown]]
-  }
-
   nodes.heading = (node) => {
     const level = node.attrs.level as number
     return [`h${level}`, 0]

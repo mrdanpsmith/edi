@@ -15,7 +15,7 @@ import {
 import { shebangFromFenceInfo } from './exec'
 import { isFormula } from './spreadsheet'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
-import { headingSlug } from './schema'
+import { headingSlug, rawBlockLanguage } from './schema'
 import {
   formatTableCarrier,
   hydrateResolvedTable,
@@ -356,7 +356,7 @@ function mdastToProse(node: MdastNode, schema: Schema, ctx: ParseContext): Prose
     case 'html':
       // Raw HTML is kept as written: as paragraph text it would be escaped on
       // save and stop being HTML.
-      return schema.node('source_block', { markdown: node.value ?? '' })
+      return rawCodeBlock(schema, node.value ?? '')
 
     case 'break':
       return schema.node('hard_break')
@@ -377,12 +377,26 @@ function mdastToProse(node: MdastNode, schema: Schema, ctx: ParseContext): Prose
       // A block the editor has no model for (a link or footnote definition, …)
       // is kept as the markdown it was written as.
       const source = sourceOf(node, ctx)
-      if (source) return schema.node('source_block', { markdown: source })
+      if (source) return rawCodeBlock(schema, source)
       const text = node.value ?? ''
       if (text) return schema.node('paragraph', {}, [schema.text(text)])
       return schema.node('paragraph')
     }
   }
+}
+
+/**
+ * Markdown the editor has no model for (an HTML block, front matter, a link or
+ * footnote definition), kept exactly as written. It is a code block marked `raw`,
+ * so it is shown, selected and edited as one; the serializer writes its text with
+ * no fences, which is what keeps the file byte for byte.
+ */
+function rawCodeBlock(schema: Schema, markdown: string): ProseNode {
+  return schema.node(
+    'code_block',
+    { language: rawBlockLanguage(markdown), raw: true },
+    markdown ? [schema.text(markdown)] : [],
+  )
 }
 
 /** An image from an `image` node, or an `imageReference` resolved through its
@@ -410,7 +424,10 @@ function parseInline(
   marks: Mark[] = [],
 ): ProseNode[] {
   const result: ProseNode[] = []
-  for (const child of children) {
+  // An inline HTML span consumes the siblings up to its closing tag.
+  let skipTo = -1
+  for (const [index, child] of children.entries()) {
+    if (index <= skipTo) continue
     if (child.type === 'text') {
       // `schema.text('')` throws; an empty run is nothing to keep.
       if (child.value) result.push(schema.text(child.value, marks))
@@ -432,8 +449,18 @@ function parseInline(
         reference: { type: child.referenceType ?? 'full', label: child.label ?? '', url: target?.url ?? '' },
       })
       result.push(...parseInline(child.children ?? [], schema, ctx, [...marks, mark]))
-    } else if (child.type === 'html' || child.type === 'footnoteReference') {
-      const markdown = child.type === 'html' ? (child.value ?? '') : (sourceOf(child, ctx) ?? `[^${child.label ?? ''}]`)
+    } else if (child.type === 'html') {
+      // Inline HTML is raw inline code: an opening tag runs to its own closing tag,
+      // so `<a href="…">link</a>` is one editable run, written back exactly as read.
+      let close = closingTagIndex(children, index)
+      const span = close === -1 ? null : rawSpanSource(child, children[close]!, ctx)
+      if (span === null) close = -1
+      const markdown = span ?? child.value ?? ''
+      const rawCode = schema.marks.code.create({ raw: true })
+      if (markdown) result.push(schema.text(markdown, [...marks, rawCode]))
+      if (close !== -1) skipTo = close
+    } else if (child.type === 'footnoteReference') {
+      const markdown = sourceOf(child, ctx) ?? `[^${child.label ?? ''}]`
       if (markdown) result.push(schema.node('inline_source', { markdown }, undefined, marks))
     } else if (isMarkType(child.type)) {
       const markType = schema.marks[MARK_TYPE_ALIASES[child.type] ?? child.type]
@@ -458,6 +485,42 @@ function parseInline(
     }
   }
   return result
+}
+
+/** The tag name an inline HTML node opens, or null for a closing, self-closing or other tag. */
+function openedTag(html: string): string | null {
+  const m = /^<([A-Za-z][A-Za-z0-9-]*)(?:\s[^>]*)?>$/s.exec(html)
+  return m && !html.endsWith('/>') ? m[1]!.toLowerCase() : null
+}
+
+/**
+ * The index of the sibling that closes the inline HTML tag at `open`, counting
+ * nested tags of the same name, or -1 when it opens nothing or is never closed.
+ */
+function closingTagIndex(children: MdastNode[], open: number): number {
+  const name = openedTag(children[open]!.value ?? '')
+  if (name === null) return -1
+  let depth = 0
+  for (let i = open + 1; i < children.length; i++) {
+    const node = children[i]!
+    if (node.type !== 'html') continue
+    const value = node.value ?? ''
+    if (openedTag(value) === name) depth++
+    else if (new RegExp(`^</${name}\\s*>$`, 'i').test(value)) {
+      if (depth === 0) return i
+      depth--
+    }
+  }
+  return -1
+}
+
+/**
+ * The source text from an opening tag through its closing tag, exactly as written,
+ * or null when the parse did not record where they are.
+ */
+function rawSpanSource(open: MdastNode, close: MdastNode, ctx: ParseContext): string | null {
+  if (!open.position || !close.position) return null
+  return sourceOf({ ...open, position: { start: open.position.start, end: close.position.end } }, ctx)
 }
 
 /** A table cell's inline markdown. A formula cell is written raw — it is the
@@ -566,6 +629,8 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
     }
 
     case 'code_block': {
+      // Raw markdown is written exactly as it was read: no fences.
+      if (node.attrs.raw === true) return indentLines(node.textContent, indent)
       const lang = (node.attrs.language as string) ?? ''
       // A runnable block just has its shebang as the first content line; the
       // info string must stay empty so it round-trips as a bare fence.
@@ -577,8 +642,6 @@ function serializeNode(node: ProseNode, indent = '', env: FormulaEnv = BUILTIN_E
       return fencedBlock(node.textContent, info, indent)
     }
 
-    case 'source_block':
-      return indentLines((node.attrs.markdown as string) ?? '', indent)
 
     case 'inline_source':
       return (node.attrs.markdown as string) ?? ''
@@ -686,8 +749,10 @@ function serializeInlineRun(nodes: readonly ProseNode[], escape: boolean): strin
       syncTo(child.marks)
       const text = child.text ?? ''
       const atLineStart = lineStart && out.length === before
-      const code = child.marks.some((m) => m.type.name === 'code')
-      out.push(code ? codeSpan(text) : escape ? escapeText(text, atLineStart, delimiters[index]!) : text)
+      const code = child.marks.find((m) => m.type.name === 'code')
+      // Raw inline code (inline HTML) is written exactly as it was read.
+      const written = code ? (code.attrs.raw === true ? text : codeSpan(text)) : null
+      out.push(written ?? (escape ? escapeText(text, atLineStart, delimiters[index]!) : text))
       for (let i = 0; i < covered.length; i++) covered[i] += text
     } else {
       syncTo(INLINE_ATOMS_IN_MARKS.has(child.type.name) ? child.marks : [])
@@ -739,6 +804,8 @@ function delimiterEscapes(nodes: readonly ProseNode[]): Set<number>[] {
   const runs: DelimiterRun[] = []
   nodes.forEach((node, index) => {
     for (const m of node.marks) {
+      // Raw inline code is written with no backticks, so it pairs with nothing.
+      if (m.type.name === 'code' && m.attrs.raw === true) continue
       const ch = MARK_DELIMITER_CHAR[m.type.name]
       if (ch) marked.add(ch)
     }
@@ -1050,7 +1117,7 @@ export function parseMarkdown(
   const spans = bodySpans.map((s) => (s ? ([s[0] + frontMatter.length, s[1] + frontMatter.length] as [number, number]) : null))
   if (frontMatter) {
     const markdownOfBlock = frontMatter.replace(/\n$/, '')
-    children.unshift(mdSchema.node('source_block', { markdown: markdownOfBlock }))
+    children.unshift(rawCodeBlock(mdSchema, markdownOfBlock))
     spans.unshift([0, markdownOfBlock.length])
   } else if (children.length === 0) {
     // A document always holds a block; an empty file's is written nowhere.

@@ -149,12 +149,16 @@ export const BLOCK_MODE_FORM_CLASS = `${BLOCK_MODE_CLASS}-form`
 const INTERACTIVE_BLOCKS = new Set(['mermaid_block', 'encrypted_block'])
 
 /**
- * A block that *is* its source: `source_block` has no `markdown` attr and no
- * rendering to go back to, so it is permanently in the source form and never
- * takes part in the record. Everything else can be shown as markdown, which is
- * why this is an exclusion rather than a list — the list would drift.
+ * A block that *is* its source: a raw code block (`code_block` with `raw`, the
+ * markdown the editor has no model for, such as an HTML block or front matter)
+ * is written with no fences, so its Source form would be its own text again. It
+ * has one state and never takes part in the record. Everything else can be
+ * shown as markdown, which is why this is an exclusion rather than a list — the
+ * list would drift.
  */
-const SOURCE_ONLY_BLOCKS = new Set(['source_block'])
+function isSourceOnly(node: ProseNode): boolean {
+  return node.type.name === 'code_block' && node.attrs.raw === true
+}
 
 /**
  * A table's forms, named in **the app's own vocabulary for modes** rather than a
@@ -200,7 +204,7 @@ function isDefaultForm(descriptor: BlockModeDescriptor, form: string): boolean {
 }
 
 export function blockModeFor(node: ProseNode): BlockModeDescriptor {
-  if (SOURCE_ONLY_BLOCKS.has(node.type.name)) {
+  if (isSourceOnly(node)) {
     return { representation: false, interaction: 'none' }
   }
   return {
@@ -960,7 +964,7 @@ function chromeOwnsClick(event: MouseEvent): boolean {
  *
  * **The gesture acts on the block it names, and on nothing else.** A press that
  * names no block does nothing, and neither does one naming a block that has no
- * modes to toggle (`source_block`, which *is* its source form and so has one state).
+ * modes to toggle (a raw code block, which *is* its source form and so has one state).
  *
  * That used to be a fallback that finished whatever was open, and it looked like the
  * cheap way out of a working state: a click anywhere on the page, without having to find
@@ -1477,8 +1481,8 @@ export interface BlockControls {
  * is a snapshot of a position the document is free to move.
  *
  * Returns null when there is nothing to put in it — a nested block (§6.7), or a
- * type with no modes at all, which is what keeps `source_block` (permanently in
- * its source form, so with neither a banner nor a cluster) out of it.
+ * block with no modes and no actions of its own. A raw code block has no modes
+ * but keeps its code block's actions (Copy), so it gets a cluster without Source.
  *
  * **A block in its source form gets the same cluster**, not a toolbar inside the
  * editor chrome: the source node views attach this, and its representation button
@@ -1500,9 +1504,8 @@ export function attachBlockControls(
 
   const descriptor = blockModeFor(node)
   // Everything the row carries but Source, then Source itself: the order is the
-  // answer, so it is read here and nowhere else. A block with neither (a
-  // `source_block`) has already been turned away above, so `source` is null only
-  // for a type that can contribute actions and nothing else.
+  // answer, so it is read here and nowhere else. `source` is null for a block with
+  // one state (a raw code block), which contributes its actions and nothing else.
   //
   // **A block in its source form has no interaction axis on screen.** The raw
   // markdown editor is not the block's editing layer, so offering Edit there

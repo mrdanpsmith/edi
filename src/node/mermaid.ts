@@ -457,8 +457,8 @@ export const mermaidNodeViewPlugin = new Plugin({
   props: {
     nodeViews: {
       [MERMAID_TYPE]: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
-        // The source form is the record's business and is asked of it directly
-        // (`mermaid_block` is never a `source_block`); `blockNodeView` then
+        // The source form is the record's business and is asked of it directly;
+        // `blockNodeView` then
         // builds the same raw-markdown editor every other block type gets.
         if (showsSource(view, getPos())) {
           return blockNodeView(node, view, getPos) as NodeView

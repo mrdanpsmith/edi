@@ -464,7 +464,7 @@ export function createBlockEditor(
       props: {
         nodeViews: {
           ...Object.fromEntries(
-            [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+            [...BLOCK_NODE_TYPES].map((name) => [name, blockNodeView]),
           ),
           ...(resolveImageSrc
             ? { image: imageNodeView(resolveImageSrc) }

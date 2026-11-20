@@ -10,6 +10,26 @@ export function headingSlug(text: string): string | undefined {
   return id === '' ? undefined : id
 }
 
+/**
+ * What a raw code block holds — markdown the editor keeps as written — named for
+ * its badge the way a fenced block's badge names its language.
+ */
+export function rawBlockLabel(markdown: string): string {
+  if (/^---[ \t]*\n/.test(markdown)) return 'Front matter'
+  if (/^ {0,3}\[\^[^\]\n]+\]:/.test(markdown)) return 'Footnote'
+  if (/^ {0,3}\[[^\]\n]+\]:/.test(markdown)) return 'Link definition'
+  if (/^ {0,3}</.test(markdown)) return 'HTML'
+  return 'Markdown'
+}
+
+/** The grammar a raw code block is highlighted with, from what it holds. */
+export function rawBlockLanguage(markdown: string): string {
+  const label = rawBlockLabel(markdown)
+  if (label === 'Front matter') return 'yaml'
+  if (label === 'HTML') return 'html'
+  return 'markdown'
+}
+
 const nodes: SchemaSpec['nodes'] = {
   doc: {
     content: 'block+',
@@ -109,20 +129,33 @@ const nodes: SchemaSpec['nodes'] = {
     marks: '',
     code: true,
     // `meta` is the rest of the fence's info string (` ```js title="a.js" `).
-    attrs: { language: { default: '' }, meta: { default: '' } },
+    //
+    // `raw` marks markdown the editor has no model for (an HTML block, front
+    // matter, a link or footnote definition): it is shown and edited as a code
+    // block, and written back as its text with no fences (`rawCodeBlock`).
+    attrs: { language: { default: '' }, meta: { default: '' }, raw: { default: false } },
     parseDOM: [{
       tag: 'pre',
       preserveWhitespace: 'full',
       getAttrs(dom: HTMLElement) {
         const code = dom.querySelector('code')
         const lang = code?.className?.match(/language-(\S+)/)?.[1] ?? ''
-        return { language: lang }
+        return { language: lang, raw: dom.hasAttribute('data-raw') }
+      },
+    }, {
+      // The clipboard form older builds wrote for raw markdown.
+      tag: '[data-source-block]',
+      preserveWhitespace: 'full',
+      getAttrs(dom: HTMLElement) {
+        return { language: rawBlockLanguage(dom.textContent ?? ''), raw: true }
       },
     }],
     toDOM(node) {
       const lang = node.attrs.language as string
       // Confluence reads a pasted block's language from `pre[data-language]`.
-      return ['pre', lang ? { 'data-language': lang } : {}, ['code', { class: lang ? `language-${lang}` : '' }, 0]]
+      const attrs: Record<string, string> = lang ? { 'data-language': lang } : {}
+      if (node.attrs.raw === true) attrs['data-raw'] = ''
+      return ['pre', attrs, ['code', { class: lang ? `language-${lang}` : '' }, 0]]
     },
   },
 
@@ -308,25 +341,6 @@ const nodes: SchemaSpec['nodes'] = {
     },
   },
 
-  source_block: {
-    group: 'block',
-    marks: '',
-    code: true,
-    atom: true,
-    attrs: {
-      markdown: { default: '' },
-    },
-    parseDOM: [{
-      tag: '[data-source-block]',
-      getAttrs(dom: HTMLElement) {
-        return { markdown: dom.textContent ?? '' }
-      },
-    }],
-    toDOM(node) {
-      return ['div', { 'data-source-block': '' }, node.attrs.markdown as string]
-    },
-  },
-
   text: {
     inline: true,
     group: 'inline',
@@ -349,9 +363,18 @@ const marks: SchemaSpec['marks'] = {
   },
 
   code: {
-    parseDOM: [{ tag: 'code' }],
-    toDOM() {
-      return ['code', 0]
+    // `raw` marks inline HTML the editor has no model for (`<a href="…">link</a>`):
+    // shown and edited as inline code, written back as its text with no backticks.
+    // The inline counterpart of a raw code block.
+    attrs: { raw: { default: false } },
+    parseDOM: [{
+      tag: 'code',
+      getAttrs(dom: HTMLElement) {
+        return { raw: dom.hasAttribute('data-raw') }
+      },
+    }],
+    toDOM(mark) {
+      return mark.attrs.raw === true ? ['code', { 'data-raw': '' }, 0] : ['code', 0]
     },
   },
 

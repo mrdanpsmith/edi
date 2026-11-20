@@ -299,7 +299,8 @@ under the pointer between the two modes that block type has:
 
 So a diagram under the pointer goes out of Edit, and a block under it that is
 merely being viewed goes into Source. A click naming no block finishes whatever
-is editing. So does a press on `source_block`, which has one state.
+is editing. A press on a raw code block (HTML, front matter), which has one
+state, does nothing.
 
 It replaced the double click this used to be, so the gesture that turns the
 mode off need not land back on the diagram. A bare double click is the

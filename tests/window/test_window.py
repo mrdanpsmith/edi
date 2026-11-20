@@ -7885,18 +7885,18 @@ def test_select_all_marks_every_selected_object(window):
         f"select-all should paint every cell of every table: {painted}")
 
 
-def test_a_source_block_does_not_take_focus_on_load_so_ctrl_a_selects_the_document(window):
+def test_a_raw_block_does_not_take_focus_on_load_so_ctrl_a_selects_the_document(window):
     """An HTML comment under the title, then `Ctrl+A`: the whole document is selected.
 
-    A `source_block` (raw HTML, front matter) is drawn by the same view as a block the
-    reader has put into source, and that view focused its CodeMirror when it was built —
-    which for a `source_block` is every load. The caret landed in the comment, so
-    `Ctrl+A` went to CodeMirror and selected the comment alone.
+    A raw block (raw HTML, front matter) is a code block drawn by a CodeMirror, and it
+    comes from parsing, so it is built on every load. If building it focused that
+    CodeMirror, the caret would land in the comment and `Ctrl+A` would go to CodeMirror
+    and select the comment alone.
     """
     doc = "# Title\n\n<!--\n  a note\n-->\n\nFirst paragraph.\n\nSecond paragraph.\n"
     window._web.page().runJavaScript("window.ediSetContent(%s); true" % json.dumps(doc))
     _wait(window, "(() => ({ n: document.querySelectorAll("
-                  "'#editor-container .block-source-mode .cm-content').length }))()",
+                  "'#editor-container .runnable-block .cm-content').length }))()",
           lambda d: d.get("n") == 1, timeout=25)
     _dump(window, "(() => { document.querySelector('#editor-container .ProseMirror').focus();"
                   " return { focused: true }; })()")
@@ -10117,6 +10117,55 @@ def test_code_block_keys_with_real_key_events(window, fence):
     key(Qt.Key_Delete)
     got = _wait(window, _CODE_KEY_BLOCKS, lambda d: len(d.get("blocks") or []) == 2, timeout=10)
     assert got["blocks"] == ["p:before", "p:after"], got
+
+
+def test_a_raw_block_takes_code_block_keys_with_real_key_events(window):
+    """An HTML block is a raw code block, so a code block's keys work on it in QtWebEngine.
+
+    The same reason as the test above: a key the page does not take is handled natively by
+    the engine, which only real key events show. Escape selects the block and Delete removes
+    it; Backspace at the start of the line after selects it, keeping the line.
+    """
+    from PySide6.QtTest import QTest
+
+    doc = "before\n\n<div>first</div>\n\nafter\n"
+    target = window._web.focusProxy() or window._web
+    raw = "code:<div>first</div>"
+
+    def load(caret_js):
+        _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()" % json.dumps(doc))
+        _wait(window, _CODE_KEY_BLOCKS, lambda d: (d.get("blocks") or [None, None])[1] == raw, timeout=15)
+        window._web.setFocus()
+        _dump(window, "(() => { %s; return { d: 1 }; })()" % caret_js)
+        _settle(window)
+
+    def key(k):
+        QTest.keyClick(target, k)
+        _settle(window)
+
+    in_block = """
+      const cm = document.querySelector('.runnable-block .cm-content'); cm.focus();
+      const text = document.createTreeWalker(cm, NodeFilter.SHOW_TEXT).nextNode();
+      const r = document.createRange(); r.setStart(text, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r)"""
+    after_start = """
+      document.querySelector('#editor-container > .ProseMirror').focus();
+      const p = [...document.querySelectorAll('#editor-container p')].find((el) => el.textContent === 'after');
+      const r = document.createRange(); r.setStart(p.firstChild, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r)"""
+
+    load(in_block)
+    key(Qt.Key_Escape)
+    got = _wait(window, _CODE_KEY_BLOCKS, lambda d: "[selected]" in str(d.get("blocks")), timeout=10)
+    assert got["blocks"][1] == raw + " [selected]", got
+    key(Qt.Key_Delete)
+    got = _wait(window, _CODE_KEY_BLOCKS, lambda d: len(d.get("blocks") or []) == 2, timeout=10)
+    assert got["blocks"] == ["p:before", "p:after"], got
+
+    load(after_start)
+    key(Qt.Key_Backspace)
+    got = _wait(window, _CODE_KEY_BLOCKS, lambda d: "[selected]" in str(d.get("blocks")), timeout=10)
+    assert got["blocks"] == ["p:before", raw + " [selected]", "p:after"], got
 
 
 def test_a_move_rebases_only_references_that_name_something(window, tmp_path, monkeypatch):

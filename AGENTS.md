@@ -35,7 +35,7 @@ real application is `run_edi.py`.
 | [docs/architecture.md](docs/architecture.md) | Anything structural. Frontend/backend split, document model, repository map. |
 | [docs/editor-marks.md](docs/editor-marks.md) | Inline mark input rules, arrow exit, `storedMarks`. |
 | [docs/block-modes.md](docs/block-modes.md) | Visual/source and editing modes, block controls, hover band. |
-| [docs/code-blocks.md](docs/code-blocks.md) | Code block renderers, fences, paste, deleting, frame press and drags. |
+| [docs/code-blocks.md](docs/code-blocks.md) | Code block renderers, raw blocks (HTML, front matter), fences, paste, deleting, frame press and drags. |
 | [docs/find-replace.md](docs/find-replace.md) | Search matching, decorations or the find panel. |
 | [docs/contract.md](docs/contract.md) | Menu commands, bridge methods or preference names. |
 | [docs/preferences.md](docs/preferences.md) | Persisted app state or the preferences bridge. |

@@ -6,6 +6,42 @@ every key, paste and press behaves in it, depends on which of two renderers
 draws it. Block modes (Visual/Source) are separate and covered in
 [block-modes.md](block-modes.md); this is the Visual form.
 
+## Raw blocks
+
+Markdown the editor has no model for (an HTML block, YAML front matter, a link
+or footnote definition) is a `code_block` with `raw: true`, so it is shown,
+selected and edited exactly as a fenced block is, keys and mouse included. It
+stays that until Edi renders HTML.
+
+- **On disk it is its text.** `rawCodeBlock` (`src/markdown.ts`) builds it from
+  the parse, and the serializer writes a raw block's text with no fences, so a
+  file saves byte for byte (`src/markdown-roundtrip.test.ts`).
+- **It is highlighted by what it holds**: `language` is `html`, `yaml` (front
+  matter) or `markdown` (definitions), from `rawBlockLanguage` in
+  `src/schema.ts`. The badge names it instead of the grammar (`rawBlockLabel`:
+  "HTML", "Front matter", "Link definition", "Footnote", else "Markdown").
+- **It has one state**: no Source form (it would be the same text), so no Source
+  button and Alt+click does nothing (`isSourceOnly` in `src/block-modes.ts`). It
+  is never run, whatever its first line.
+- Backspace at its start turns it into paragraphs, as for any code block.
+- Moving a document rebases the relative references in its text
+  (`src/relink.ts`), as for a link.
+- The clipboard's HTML marks it `pre[data-raw]`, so it pastes back raw.
+  `[data-source-block]`, the form older builds wrote, is read as raw too.
+
+**Inline HTML is the inline counterpart**: raw inline code, a `code` mark with
+`raw: true` (`code[data-raw]` in the DOM). An opening tag runs to its own
+closing tag, counting nested tags of the same name, so `<a href="…">link</a>`
+is one editable run; a tag that closes nothing (`<br>`, a comment) is a run of
+its own. It is written back exactly as written, with no backticks.
+
+Which of the two a tag becomes is CommonMark's rule, not the tag's: a line that
+is only a complete tag (`<img src="…"/>`, `<a href="…">`) starts an HTML block,
+unless it would interrupt a paragraph; a tag with text after it on its line
+(`<a href="…">link</a>`) is inline. Edi's own types are not HTML and are not
+affected; the one comment Edi reads, a table's `<!-- edi-fml … -->` formula
+carrier, is taken with its table before raw HTML is looked at.
+
 ## Two renderers, one node
 
 `RunnableBlockNodeView` (`src/node/execblock.ts`) draws every Visual code block
@@ -181,6 +217,7 @@ editor tracks its own.
 | Typing a fence and a shebang | `src/blockstart.test.ts` | `tests/browser/edit-blocks.browser.test.ts` |
 | Renderer switch and caret handoff | — | `tests/browser/edit-blocks.browser.test.ts` |
 | Backspace / Delete / Esc | `src/codeBlockDelete.test.ts` | `tests/browser/edit-blocks.browser.test.ts` (`code block keys`) |
+| Raw blocks and raw inline code: parse, serialize, paste | `src/markdown.test.ts`, `src/schema.test.ts` | `tests/browser/code-block-keys.browser.test.ts`, `tests/browser/code-block-mouse.browser.test.ts` (`raw block`) |
 | Frame press and drags | — | `tests/browser/code-block-mouse.browser.test.ts` |
 
 The focus, caret and pointer behaviour only exists with real layout and input,

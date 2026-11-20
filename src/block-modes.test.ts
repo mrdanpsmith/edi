@@ -61,7 +61,7 @@ function createEditor(initialMarkdown: string, extraPlugins: Plugin[] = []): Edi
   const nodeViewPlugin = new Plugin({
     props: {
       nodeViews: Object.fromEntries(
-        [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+        [...BLOCK_NODE_TYPES].map((name) => [name, blockNodeView]),
       ),
     },
   })
@@ -144,7 +144,7 @@ describe('the outgoing block commits before the record moves', () => {
 })
 
 describe('blockModeFor', () => {
-  it('offers the source form for every top-level block but a source_block', () => {
+  it('offers the source form for every top-level block but a raw one', () => {
     const view = createEditor('# Heading\n\nPara\n\n- item\n\n```py\nx=1\n```\n\n| A |\n| --- |\n| 1 |\n')
     const kinds: string[] = []
     view.state.doc.forEach((node) => {
@@ -159,16 +159,19 @@ describe('blockModeFor', () => {
     view.destroy()
   })
 
-  it('gives a source_block no source form to go back to', () => {
-    // A source_block has no markdown syntax — it is built programmatically — so
-    // it is the one block type that is *permanently* in its source form, and the
-    // one that must never take the record.
-    const node = schema.nodes.source_block.create({ markdown: '# hi\n' })
+  it('gives a raw code block no source form to go back to', () => {
+    // A raw code block (an HTML block, front matter) is written with no fences, so
+    // its source form would be its own text again: it is the one block that has a
+    // single state, and the one that must never take the record.
+    const view = createEditor('<div>hi</div>')
+    const node = view.state.doc.firstChild!
+    expect(node.attrs.raw).toBe(true)
     expect(blockModeFor(node)).toEqual({ representation: false, interaction: 'none' })
     // No node type carries a representation attr any more, so a block cannot
     // claim a mode by saying so about itself.
-    expect(schema.nodes.source_block.create({ markdown: 'x' }).attrs._source).toBeUndefined()
+    expect(node.attrs._source).toBeUndefined()
     expect(schema.nodes.heading.create().attrs._source).toBeUndefined()
+    view.destroy()
   })
 
   it('declares the interaction axis for mermaid only', () => {
@@ -427,9 +430,7 @@ describe('one cluster per top-level block', () => {
   it('gives every top-level block exactly one, and a nested block none', async () => {
     const view = createEditor(DOC)
     await vi.waitFor(() => expect(view.dom.querySelector('.mermaid')).not.toBeNull())
-    // heading, paragraph, list, blockquote, code block, diagram, table. A
-    // `source_block` is deliberately absent: it is permanently in its source
-    // form, so it carries the banner and no cluster (§6.5).
+    // heading, paragraph, list, blockquote, code block, diagram, table.
     expect(clusters(view).length).toBe(7)
     expect(view.dom.querySelectorAll('li > .block-controls').length).toBe(0)
     expect(view.dom.querySelectorAll('blockquote .block-controls').length).toBe(0)
@@ -749,14 +750,10 @@ describe('the Alt+click gesture (§5.2)', () => {
   })
 
   it('has no modes to toggle on a block that is permanently its own source', () => {
-    // `source_block` has no markdown syntax — it is built programmatically — and
-    // it *is* its source form, so `toggleBlockModeFromGesture` declines it, and with
-    // the fallback gone the gesture declines it too: a press on a block with no modes
-    // does nothing to any other block either.
-    const view = createEditor('# Hello')
-    const only = view.state.schema.nodes.source_block.create({ markdown: 'plain text\n' })
-    const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, only)
-    view.dispatch(tr)
+    // A raw code block *is* its source form, so `toggleBlockModeFromGesture`
+    // declines it, and with the fallback gone the gesture declines it too: a press
+    // on a block with no modes does nothing to any other block either.
+    const view = createEditor('<div>plain text</div>')
 
     expect(blockModeFor(view.state.doc.nodeAt(0)!).representation).toBe(false)
     expect(toggleBlockModeFromGesture(view, 0)).toBe(false)
@@ -961,14 +958,13 @@ it('still hands an Alt+click on a real control to that control', () => {
   })
 
   it('does nothing for a press on a block with no modes of its own', () => {
-    // `source_block` *is* its source form, so it has one state and nothing to toggle
-    // to — and a press on it used to end whatever other block was open, which is the
-    // same one-press handover in a different costume. Built programmatically, because
-    // it has no markdown syntax.
-    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```')
+    // A raw code block *is* its source form, so it has one state and nothing to
+    // toggle to — and a press on it must not end whatever other block is open,
+    // which would be a one-press handover in a different costume.
+    const view = createEditor('```mermaid\ngraph TD\n  A[Alpha]\n```\n\n<div>plain text</div>')
     const [board] = allBlockPositions(view)
-    const source = view.state.schema.nodes.source_block.create({ markdown: 'plain text\n' })
-    view.dispatch(view.state.tr.insert(view.state.doc.content.size, source))
+    const source = view.state.doc.lastChild!
+    expect(source.attrs.raw).toBe(true)
     enterDiagramEditMode(view, board)
 
     const box = view.nodeDOM(view.state.doc.content.size - source.nodeSize)

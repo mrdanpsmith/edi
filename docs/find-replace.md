@@ -7,10 +7,11 @@
 
 Search runs over the document's raw flat text:
 
-- every text node, including fenced code blocks;
+- every text node, including fenced code blocks and raw blocks (HTML, front
+  matter, link and footnote definitions);
 - the `attrs.value` markup of `table` and `mermaid_block` atoms.
 
-Masked fields, images and source blocks contribute no searchable text.
+Masked fields and images contribute no searchable text.
 
 Matches are highlighted on the rendered editor with inline decorations.
 Matches that land on an atom use a whole-block `NodeSelection`.

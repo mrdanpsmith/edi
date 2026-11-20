@@ -87,8 +87,9 @@
   padding: 0.15em 0.35em;
 }
 
-/* Inline markdown kept verbatim (inline HTML, a footnote reference): shown as
-   its source, dimmed, so it reads as markup rather than as text. */
+/* Inline markdown kept verbatim (a footnote reference): shown as its source,
+   dimmed, so it reads as markup rather than as text. Inline HTML is raw inline
+   code instead (`code[data-raw]`), styled as any inline code. */
 .ProseMirror .inline-source {
   font-family: var(--font-mono);
   font-size: 0.85em;

@@ -35,16 +35,28 @@ describe('schema parseDOM', () => {
     expect(doc.child(0).attrs.value).toBe('graph TD\nA')
   })
 
-  it('parses a source block and mermaid block', () => {
+  it('parses a raw block (and the older source-block form) and a mermaid block', () => {
     const container = document.createElement('div')
     container.innerHTML =
+      '<pre data-raw><code class="language-html">&lt;b&gt;x&lt;/b&gt;</code></pre>' +
       '<div data-source-block>md text</div>' +
       '<div data-mermaid-block>graph TD\nA</div>'
     const doc = DOMParser.fromSchema(schema).parse(container)
-    expect(doc.child(0).type.name).toBe('source_block')
-    expect(doc.child(0).attrs.markdown).toBe('md text')
-    expect(doc.child(1).type.name).toBe('mermaid_block')
-    expect(doc.child(1).attrs.value).toBe('graph TD\nA')
+    expect(doc.child(0).type.name).toBe('code_block')
+    expect(doc.child(0).attrs).toMatchObject({ raw: true, language: 'html' })
+    expect(doc.child(0).textContent).toBe('<b>x</b>')
+    expect(doc.child(1).type.name).toBe('code_block')
+    expect(doc.child(1).attrs).toMatchObject({ raw: true, language: 'markdown' })
+    expect(doc.child(1).textContent).toBe('md text')
+    expect(doc.child(2).type.name).toBe('mermaid_block')
+    expect(doc.child(2).attrs.value).toBe('graph TD\nA')
+  })
+
+  it('a pasted fenced block is not raw', () => {
+    const container = document.createElement('div')
+    container.innerHTML = '<pre><code class="language-js">x</code></pre>'
+    const doc = DOMParser.fromSchema(schema).parse(container)
+    expect(doc.child(0).attrs).toMatchObject({ raw: false, language: 'js' })
   })
 
   describe('table', () => {
@@ -118,13 +130,13 @@ describe('schema parseDOM', () => {
 describe('schema toDOM via a plain view', () => {
   it('renders custom-block HTML', () => {
     const doc = schema.nodes.doc.create(null, [
-      schema.nodes.source_block.create({ markdown: 'src' }),
+      schema.nodes.code_block.create({ language: 'html', raw: true }, schema.text('src')),
       schema.nodes.mermaid_block.create({ value: 'graph TD\nA' }),
     ])
     const editor = new EditorView(document.body, {
       state: EditorState.create({ schema, doc }),
     })
-    expect(editor.dom.querySelector('[data-source-block]')?.textContent).toBe('src')
+    expect(editor.dom.querySelector('pre[data-raw]')?.textContent).toBe('src')
     expect(editor.dom.querySelector('[data-mermaid-block]')?.textContent).toContain('graph TD')
     editor.destroy()
   })
