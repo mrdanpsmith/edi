@@ -161,6 +161,15 @@ export function hasBridge(): boolean {
   return Boolean(window.bridge)
 }
 
+/**
+ * Whether the page runs inside Edi's shell, even before the channel is up: the
+ * shell injects the transport before the page's first script runs. Plain
+ * `vite dev` in a browser has neither.
+ */
+export function inNativeShell(): boolean {
+  return Boolean(window.bridge || window.qt?.webChannelTransport)
+}
+
 export function onBridgeReady(callback: (bridge: BridgeObject | undefined) => void): void {
   void ensureChannel().then(() => callback(window.bridge))
 }

@@ -32,6 +32,7 @@ from .historymanager import HistoryManager
 from .files import check_rename_target, check_typed_open_path, resolve_typed_path, trash_name
 from .preferences import Preferences
 from .printing import PrintJob
+from .remote import shared_hosts
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
@@ -325,6 +326,9 @@ class MainWindow(QMainWindow):
         self._build_menus()
 
     def _setup_web(self) -> None:
+        # Before the first load: no request leaves for a site the reader has
+        # not allowed (`backend/remote.py`).
+        self._image_hosts = shared_hosts()
         settings = self._web.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         settings.setAttribute(
@@ -635,6 +639,12 @@ class MainWindow(QMainWindow):
         self._link_command(self._hover_band_action, "toggleHoverBand")
         view_menu.addAction(self._hover_band_action)
 
+        # The shell's own: the page can allow a site, on the reader's click,
+        # but only this native prompt takes the answers back.
+        forget_sites_action = QAction("&Forget Allowed Image Sites…", self)
+        forget_sites_action.triggered.connect(lambda _checked=False: self._forget_image_hosts())
+        view_menu.addAction(forget_sites_action)
+
         view_menu.addSeparator()
 
         # Zoom shortcuts are registered as *real* QAction shortcuts, unlike the
@@ -697,6 +707,32 @@ class MainWindow(QMainWindow):
         dialog.finished.connect(lambda _result: dialog.deleteLater())
         dialog.open()
         return dialog
+
+    def allowed_image_hosts(self) -> list[str]:
+        """Every site the page may load from now (`backend/remote.py`)."""
+        return self._image_hosts.allowed()
+
+    def allow_image_hosts(self, hosts: list[str], remember: bool) -> list[str]:
+        """Allow ``hosts`` until Edi quits, or for good when ``remember``."""
+        self._image_hosts.allow(hosts, remember)
+        return self._image_hosts.allowed()
+
+    def _forget_image_hosts(self) -> None:
+        """View › Forget Allowed Image Sites…: after a prompt naming them."""
+        sites = self._image_hosts.allowed()
+        if not sites:
+            self._flash("No image sites are allowed.")
+            return
+        shown = ", ".join(sites[:8]) + (f" and {len(sites) - 8} more" if len(sites) > 8 else "")
+
+        def answered(accepted: bool) -> None:
+            if not accepted:
+                return
+            self._image_hosts.forget()
+            self.push_event({"type": "imageHostsChanged", "allowed": []})
+            self._flash("Images from other sites will ask again.")
+
+        self.confirm(f"Forget the sites Edi may load images from?\n\n{shown}", answered)
 
     def _flash(self, message: str) -> None:
         """Say something in the page's status bar (a `flashStatus` native event)."""

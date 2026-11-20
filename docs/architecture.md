@@ -91,6 +91,20 @@ reaches outside it have explicit limits:
   (`test_page_refuses_injected_script`) checks it in the real WebEngine. Test
   probes go through `runJavaScript`, which the policy does not cover, never
   through an `eval` in the page.
+- **Remote requests** (`backend/remote.py`). A request to a server tells it the
+  document was opened, so the web engine requests nothing over `http`, `https`
+  or `ws` from a host the reader has not allowed. A `QWebEngineUrlRequestInterceptor`
+  on the default profile enforces it for every view on that profile (the app's
+  page and the print view) and every kind of request: an image, a CSS `url()`,
+  an image inside a diagram. The page shows what is held back and asks
+  (`src/remoteImages.ts`): a remote image resolves to a local placeholder, and a
+  bar offers the sites. The bridge's `allowImageHosts` only adds sites, and
+  only the app's own code can call it, since the policy above runs nothing a
+  document brings; View › Forget Allowed Image Sites… takes them back in a
+  native prompt. The interceptor and its sites are one per process, parented to
+  the application, because the profile does not own its interceptor and would
+  otherwise outlive it. `test_remote_images_load_only_from_a_site_the_reader_allows`
+  checks this against a local server.
 
 - **Links.** `http`, `https` and `mailto` open directly. Any other scheme, and any
   local file that is not a document Edi opens itself, is handed to the OS only

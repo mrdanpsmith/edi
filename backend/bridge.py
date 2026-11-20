@@ -36,6 +36,7 @@ from .files import (
     trash_file,
     write_text_file,
 )
+from .remote import MAX_HOSTS_PER_REQUEST, normalize_host
 from .tables import parse_table_file
 from .watcher import DiskWatcher
 
@@ -221,6 +222,8 @@ class Bridge(QObject):
             "streamCodeBlock": self._stream_code_block,
             "stopCodeBlock": self._stop_code_block,
             "openUrl": self._open_url,
+            "allowedImageHosts": self._allowed_image_hosts,
+            "allowImageHosts": self._allow_image_hosts,
             "printHtml": self._print_html,
             "setDirty": self._set_dirty,
             "setTitle": self._set_title,
@@ -817,6 +820,27 @@ class Bridge(QObject):
             return
         self._window.open_external_url(url)
         self._reply(request_id, None)
+
+    def _allowed_image_hosts(self, request_id: int, _args: dict) -> None:
+        self._reply(request_id, self._window.allowed_image_hosts())
+
+    def _allow_image_hosts(self, request_id: int, args: dict) -> None:
+        """Allow the sites the reader agreed to load images from, on the page's
+        bar. Only the app's own code can call this (the page's
+        Content-Security-Policy runs nothing a document brings), and it can
+        only add sites; taking them back is the View menu's, in a native prompt
+        (`backend/remote.py`)."""
+        hosts = args.get("hosts")
+        if not isinstance(hosts, list) or not all(isinstance(host, str) for host in hosts):
+            self._reply_error(request_id, "Expected a list of hosts")
+            return
+        if len(hosts) > MAX_HOSTS_PER_REQUEST:
+            self._reply_error(request_id, f"At most {MAX_HOSTS_PER_REQUEST} hosts")
+            return
+        if any(normalize_host(host) is None for host in hosts):
+            self._reply_error(request_id, "Not a host name")
+            return
+        self._reply(request_id, self._window.allow_image_hosts(hosts, bool(args.get("remember"))))
 
     def _print_html(self, request_id: int, args: dict) -> None:
         html = str(args.get("html") or "")

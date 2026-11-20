@@ -75,6 +75,7 @@ interface NativeEvent {
   paths?: unknown
   path?: unknown
   message?: unknown
+  allowed?: unknown
 }
 
 /** What a save writes, and which tab, edit and document it was read from. */
@@ -169,6 +170,11 @@ export function createFileController(ctx: AppContext): FileController {
     // A document changed or vanished on disk (`backend/watcher.py`).
     if ((event.type === 'diskChanged' || event.type === 'diskDeleted') && typeof event.path === 'string') {
       ctx.disk?.onEvent(event.type, event.path)
+      return
+    }
+    // View › Forget Allowed Image Sites… (`backend/remote.py`).
+    if (event.type === 'imageHostsChanged' && Array.isArray(event.allowed)) {
+      ctx.remoteImages?.allowedChanged(event.allowed.filter((host): host is string => typeof host === 'string'))
       return
     }
     // The shell reporting the outcome of one of its own dialogs.

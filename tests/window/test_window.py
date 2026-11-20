@@ -1070,6 +1070,86 @@ def test_page_refuses_injected_script(window):
     assert set(state["blocked"]) <= {"script-src-attr", "script-src-elem", "script-src"}
 
 
+_PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+)
+
+
+@pytest.fixture
+def image_site():
+    """A local HTTP server standing in for a remote image host, recording every
+    path it is asked for."""
+    import http.server
+    import threading
+
+    requested: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 (http.server name)
+            requested.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(_PNG_1PX)))
+            self.end_headers()
+            self.wfile.write(_PNG_1PX)
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}", requested
+    server.shutdown()
+    server.server_close()
+
+
+def test_remote_images_load_only_from_a_site_the_reader_allows(window, image_site):
+    """Nothing is requested from a site until the reader allows it on the bar:
+    not the document's image, and not an image the page never offered, which
+    only the shell's request interceptor can stop (`backend/remote.py`)."""
+    base, requested = image_site
+    window._image_hosts.forget()
+    try:
+        _set_document(window, f"# Pictures\n\n![chart]({base}/doc.png)\n", "Pictures")
+        _dump(
+            window,
+            "(() => { const i = document.createElement('img');"
+            f" i.src = {json.dumps(base + '/sneaky.png')}; document.body.append(i); return {{ added: true }}; }})()",
+        )
+        state = {}
+
+        def bar_shown():
+            state.update(
+                _dump(
+                    window,
+                    "(() => { const b = document.querySelector('.edi-remote-images-bar');"
+                    " const img = document.querySelector('.ProseMirror img.edi-image');"
+                    " return { bar: b ? b.textContent : null,"
+                    "   blocked: img ? img.classList.contains('edi-image-blocked') : null }; })()",
+                )
+            )
+            return bool(state.get("bar"))
+
+        assert _pump_until(bar_shown, timeout=5), f"no bar: {state}"
+        assert state["blocked"] is True
+        assert "an image from 127.0.0.1" in state["bar"]
+        _pump_until(lambda: False, timeout=1)
+        assert requested == []
+
+        _dump(
+            window,
+            "(() => { const b = [...document.querySelectorAll('.edi-remote-images-bar button')]"
+            ".find((x) => x.textContent === 'Load images'); b.click(); return { clicked: true }; })()",
+        )
+        assert _pump_until(lambda: "/doc.png" in requested, timeout=5), f"requested: {requested}"
+        assert window._image_hosts.saved() == []
+        assert "/sneaky.png" not in requested
+    finally:
+        window._image_hosts.forget()
+        _dump(window, "(() => { document.querySelectorAll('body > img').forEach((i) => i.remove()); return { ok: true }; })()")
+
+
 def test_load_app_icon_none_when_no_icon_file(monkeypatch):
     monkeypatch.setattr(window_module, "_find_icon", lambda: None)
     assert window_module.load_app_icon() is None

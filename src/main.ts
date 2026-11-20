@@ -29,6 +29,7 @@ import { createContextMenuController } from './contextMenuController'
 import { createEditController, type EditController } from './editController'
 import { createFileController, type FileController } from './fileController'
 import { createDiskController } from './diskChanges'
+import { createRemoteImagesBar, gateRemoteImage, loadAllowedImageHosts } from './remoteImages'
 import { createZoomController, type ZoomController } from './zoomController'
 import { trackOpenFiles } from './session'
 
@@ -94,7 +95,7 @@ function resolveInternalPath(href: string): string | null {
  * disk actually render.
  */
 function resolveImageFileUrl(src: string): string {
-  if (isExternalUrl(src) || src.startsWith('#')) return src
+  if (isExternalUrl(src) || src.startsWith('#')) return gateRemoteImage(src)
   let path = src
   if (!isAbsolutePath(path)) {
     const active = getActive()
@@ -337,6 +338,11 @@ export function init(roots: AppRoots): () => void {
     new URLSearchParams(window.location.search).has('selftest'),
   )
   ctx.disk = createDiskController(ctx)
+  ctx.remoteImages = createRemoteImagesBar({
+    container: roots.editorContainer,
+    activeId: () => getActive()?.id ?? null,
+    resolveImages: () => ctx.blockEditor?.resolveImages(),
+  })
   const files = createFileController(ctx)
   const edit = createEditController(ctx)
   const menus = createContextMenuController(ctx, edit)
@@ -366,6 +372,8 @@ export function init(roots: AppRoots): () => void {
     onChange: () => {
       setActiveDirty(!(ctx.blockEditor?.isAtSavedPoint() ?? false))
       ctx.disk?.edited()
+      // An edit can add a remote image or remove the last one.
+      ctx.remoteImages?.refresh()
     },
     onModeChange: (mode) => ctx.renderModeChip(mode),
     resolveImageSrc: resolveImageFileUrl,
@@ -535,6 +543,12 @@ export function init(roots: AppRoots): () => void {
     if (disposed) return
     nativeBridge = bridge
     bridge?.notify?.connect(files.onNativeEvent)
+    // Until the shell answers, every remote image is held back; draw them
+    // again against the sites it already allows.
+    if (bridge)
+      void loadAllowedImageHosts()
+        .then((hosts) => ctx.remoteImages?.allowedChanged(hosts))
+        .catch(() => undefined)
   })
   // Reopen the last session's documents and any Edi was launched with
   // (silently ignored when there is no native shell, e.g. plain `vite dev` in
@@ -563,6 +577,7 @@ export function init(roots: AppRoots): () => void {
     stopTheme()
     ctx.contextMenu?.hide()
     ctx.disk?.destroy()
+    ctx.remoteImages?.destroy()
     ctx.blockEditor?.destroy()
     ctx.tabs.destroy()
     if (window.ediSetContent === setContent) delete window.ediSetContent

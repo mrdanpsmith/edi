@@ -63,6 +63,16 @@ by the store. The ladder belongs to the frontend. `Edi.conf` is a file a person
 can edit, so `_as_bool`/`_as_float` in the store exist to read a hand-edited
 file, not to second-guess the ladder.
 
+## Allowed image sites
+
+The sites the reader chose **Always load from these sites** for are kept under
+`allowedImageHosts`, a list of host names (`backend/remote.py`). They are not a
+preference: the page may add to them, on the reader's click, but cannot read
+them back as settings or remove them, and View › Forget Allowed Image Sites…
+clears them behind the shell's own prompt. Sites allowed with **Load images**
+live only until Edi quits. See [architecture.md](architecture.md), "What a
+document can make the machine do".
+
 ## The last session
 
 The documents open in the window are kept too, under `session/paths` (in tab

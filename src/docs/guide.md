@@ -162,6 +162,20 @@ two lines, which Mermaid has no way to read back.
 
 Right-click the diagram for Copy image / Save image…
 
+## Images from the web
+
+An image from a website tells that site you opened the document, so Edi
+doesn't load one until you say so. Until then it shows a placeholder, and a bar
+above the document names the sites its images come from:
+
+- **Load images** loads them until you quit Edi.
+- **Always load from these sites** loads images from those sites in every
+  document.
+- **Not now** hides the bar for this tab.
+
+Images on your own computer always load. `View → Forget Allowed Image Sites…`
+takes back every site you allowed.
+
 ## Runnable code blocks
 
 A fenced code block whose first line is a shebang becomes runnable:

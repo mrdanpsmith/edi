@@ -42,6 +42,8 @@
   "bridgeMethods": {
     "addRecentFile": true,
     "alert": true,
+    "allowImageHosts": true,
+    "allowedImageHosts": true,
     "clearHistory": true,
     "confirm": true,
     "confirmWritePath": true,

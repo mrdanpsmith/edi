@@ -11,6 +11,7 @@ import { canZoomIn, canZoomOut, DEFAULT_ZOOM } from './zoom'
 import type { BlockEditor } from './editor'
 import type { ContextMenu } from './contextmenu'
 import type { DiskController } from './diskChanges'
+import type { RemoteImagesBar } from './remoteImages'
 import type { HomeScreen } from './home'
 import type { SearchPanel } from './searchPanel'
 import type { Tabs } from './tabs'
@@ -46,6 +47,8 @@ export interface AppContext {
   searchPanel: SearchPanel | null
   /** Documents changed on disk by something else (`src/diskChanges.ts`). */
   disk: DiskController | null
+  /** The bar offering a document's remote images (`src/remoteImages.ts`). */
+  remoteImages: RemoteImagesBar | null
   tabs: Tabs
   documentZoom: number
   lastNativeTitle: string
@@ -201,6 +204,7 @@ function afterActivate(ctx: AppContext): void {
   syncMenuState(ctx)
   // A tab shown again may have changed on disk while it was out of view.
   ctx.disk?.refresh()
+  ctx.remoteImages?.refresh()
 }
 
 function flashStatus(ctx: AppContext, message: string): void {
@@ -223,6 +227,7 @@ export function createAppContext(roots: AppRoots, selftest: boolean): AppContext
     contextMenu: null,
     searchPanel: null,
     disk: null,
+    remoteImages: null,
     // Assigned by `init` before any controller can be used.
     tabs: undefined as unknown as Tabs,
     documentZoom: DEFAULT_ZOOM,

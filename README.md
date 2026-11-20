@@ -133,6 +133,11 @@ match.
 - `Insert → Spreadsheet…` reads CSV, TSV, ODS and XLSX files as a table.
 - `Insert → Text File…` and `Insert → Image…` insert a file at the cursor;
   a local image is referenced relatively, so the document stays portable.
+- An image from the web loads only once you allow its site: a bar above the
+  document names the sites and offers **Load images** (until Edi quits) or
+  **Always load from these sites**. `View → Forget Allowed Image Sites…` takes
+  them back. Loading one tells that site you opened the document, so nothing
+  remote is requested before then.
 - Every table has a **Copy** button that puts HTML *and* tab-separated text on
   the clipboard, for Word, Excel and email.
 - Right-click a rendered diagram for **Copy image** / **Save image…**.
@@ -164,7 +169,7 @@ remembered between runs (`~/.config/Edi/Edi.conf`).
 | **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename or Move…, Move to Trash…, Revert, Copy File Path, Export HTML…, Print…, Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
-| **View** | Toolbar, Hover Band, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
+| **View** | Toolbar, Hover Band, Forget Allowed Image Sites…, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
 | **Help** | Edi Guide…, Formula Reference…, About Edi… |
 
 `Revert`, `Rename or Move…` and `Move to Trash…` need a document that has been

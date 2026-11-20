@@ -43,6 +43,8 @@ class StubWindow(QObject):
         self.recent_files_list: list[str] = []
         self.printed: list[tuple[str, str | None]] = []
         self.print_outcome: tuple[bool, str | None] = (True, None)
+        self.image_hosts: set[str] = set()
+        self.image_host_grants: list[tuple[list[str], bool]] = []
 
     def confirm(self, message, callback=None) -> None:
         self.confirm_messages.append(message)
@@ -144,6 +146,14 @@ class StubWindow(QObject):
 
     def forget_recent_file(self, path: str) -> None:
         self.recent_files_list = [entry for entry in self.recent_files_list if entry != path]
+
+    def allowed_image_hosts(self) -> list[str]:
+        return sorted(self.image_hosts)
+
+    def allow_image_hosts(self, hosts, remember) -> list[str]:
+        self.image_host_grants.append((list(hosts), remember))
+        self.image_hosts |= {host.lower() for host in hosts}
+        return sorted(self.image_hosts)
 
 
 @pytest.fixture
@@ -705,6 +715,28 @@ def test_print_html_missing_html_errors(bridge):
     assert message["ok"] is False
     assert "Missing html" in message["error"]
     assert window.printed == []
+
+
+def test_allow_image_hosts_adds_sites_and_answers_the_allowed_list(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "allowImageHosts", {"hosts": ["I.Imgur.com", "example.org"], "remember": True})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is True
+    assert message["data"] == ["example.org", "i.imgur.com"]
+    assert window.image_host_grants == [(["I.Imgur.com", "example.org"], True)]
+    _invoke(bridge_obj, "allowedImageHosts", request_id=2)
+    assert _wait_for(lambda: result.get(2))["data"] == ["example.org", "i.imgur.com"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"hosts": "example.org"}, {"hosts": [1]}, {"hosts": ["exa mple.org"]}, {"hosts": ["a/b"]}, {"hosts": ["x.org"] * 101}],
+)
+def test_allow_image_hosts_refuses_anything_but_host_names(bridge, payload):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "allowImageHosts", payload)
+    assert _wait_for(lambda: result.get(1))["ok"] is False
+    assert window.image_host_grants == []
 
 
 def test_open_url_missing_url_errors(bridge):
