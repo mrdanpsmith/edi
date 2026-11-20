@@ -108,6 +108,12 @@ cell under it (**Stop** cancels a hung run, and a run is killed after 30
 seconds). `#!python3`, `#!/bin/bash -e`, `#!/usr/bin/env node`, … all work in
 either place; the line is split on whitespace, without shell quoting.
 
+Code can do anything you can, so the first Run of a block asks first, showing
+the interpreter and the code. Edi remembers the code you agreed to, so that
+block runs again without asking until its code changes; "Don't ask again for
+this document until Edi quits" covers a document you are writing code in.
+`View → Forget Approved Code…` makes every block ask again.
+
 ### Encrypted fields
 
 The toolbar's **Encrypted field** stores a value as ciphertext: the markdown
@@ -169,7 +175,7 @@ remembered between runs (`~/.config/Edi/Edi.conf`).
 | **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename or Move…, Move to Trash…, Revert, Copy File Path, Export HTML…, Print…, Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
-| **View** | Toolbar, Hover Band, Forget Allowed Image Sites…, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
+| **View** | Toolbar, Hover Band, Forget Allowed Image Sites…, Forget Approved Code…, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
 | **Help** | Edi Guide…, Formula Reference…, About Edi… |
 
 `Revert`, `Rename or Move…` and `Move to Trash…` need a document that has been

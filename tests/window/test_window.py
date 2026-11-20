@@ -1580,10 +1580,28 @@ def test_about_dialog_non_drag_mouse_events(visible):
     assert dialog._drag_offset is None
 
 
+def _run_prompt(window, timeout=5):
+    """The shell's run prompt, once it is open (`backend/rundialog.py`)."""
+    from backend.rundialog import RUN_DIALOG_NAME, RunCodeDialog
+
+    found = {}
+
+    def opened():
+        # An answered prompt lingers until its deleteLater runs: take the open one.
+        for dialog in window.findChildren(RunCodeDialog, RUN_DIALOG_NAME):
+            if dialog.isVisible():
+                found["dialog"] = dialog
+        return "dialog" in found
+
+    assert _pump_until(opened, timeout=timeout), "run prompt never opened"
+    return found["dialog"]
+
+
 def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
     import json as _json
 
     window = visible
+    window._bridge.approvals.forget()
     result = {}
 
     def js(code, cb):
@@ -1615,6 +1633,13 @@ def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
     assert _pump_until(run_button_clicked, timeout=5), "Run button not rendered"
     assert button["click"] == "CLICKED"
 
+    # The shell asks first, showing what would run, with Cancel the default.
+    prompt = _run_prompt(window)
+    assert prompt.code.toPlainText() == 'print("Hello, World!")'
+    assert "python3" in prompt.findChildren(QLabel)[0].text()
+    assert prompt.cancel_button.isDefault()
+    prompt.run_button.click()
+
     # Output appears incrementally while the run is in flight: the run streams
     # stdout live (line by line via a pty), so the cell fills up before the
     # process exits. Wait for the run to finish (Run returns to its idle state)
@@ -1641,6 +1666,45 @@ def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
 
     assert _pump_until(read_output, timeout=20), "output cell never populated"
     assert result["out"] == "Hello, World!"
+
+
+def test_a_code_block_runs_only_after_the_reader_agrees(visible, tmp_path):
+    """Cancel in the shell's prompt runs nothing and shows nothing; Run does,
+    and the same code then runs again without asking (`backend/approvals.py`)."""
+    window = visible
+    window._bridge.approvals.forget()
+    marker = tmp_path / "ran"
+    _set_document(window, f"# Run\n\n```\n#!/bin/sh\necho ran >> '{marker}'\necho done\n```\n", "Run")
+
+    def click_run():
+        _dump(window, "(() => { document.querySelector('.exec-run').click(); return { clicked: true }; })()")
+
+    def output():
+        return _dump(
+            window,
+            "(() => { const o = document.querySelector('.exec-output');"
+            " const b = document.querySelector('.exec-run');"
+            " return { hidden: o ? o.hidden : null, text: o ? o.textContent : null,"
+            "   label: b ? b.getAttribute('aria-label') : null }; })()",
+        )
+
+    click_run()
+    _run_prompt(window).cancel_button.click()
+    assert _pump_until(lambda: output()["label"] == "Run", timeout=5)
+    assert output()["hidden"] is True
+    assert not marker.exists()
+
+    click_run()
+    _run_prompt(window).run_button.click()
+    assert _pump_until(lambda: output()["text"] == "done", timeout=20), output()
+    assert marker.read_text() == "ran\n"
+
+    click_run()
+    assert _pump_until(lambda: marker.read_text() == "ran\nran\n", timeout=20)
+    from backend.rundialog import RUN_DIALOG_NAME, RunCodeDialog
+
+    assert not any(d.isVisible() for d in window.findChildren(RunCodeDialog, RUN_DIALOG_NAME))
+    window._bridge.approvals.forget()
 
 
 # --- Right-click on a link (src/editor.ts, src/main.ts) ---------------------------

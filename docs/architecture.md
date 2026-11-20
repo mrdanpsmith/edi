@@ -139,6 +139,18 @@ reaches outside it have explicit limits:
   only a yes there moves it, to the system Trash and never a permanent delete.
   It is refused before the prompt for a file the page may not write and Edi
   never opened.
+- **Running code** (`backend/approvals.py`). A block runs only after the reader
+  has seen its command and code in the shell's own prompt
+  (`backend/rundialog.py`), which the page can neither draw nor answer; Cancel
+  is the default. The bridge asks before it spawns anything, for
+  `streamCodeBlock` and `runCodeBlock` alike, and a no answers with the
+  `runDeclined` error code. What is approved is the code: a SHA-256 of the
+  shebang and the source, kept in `QSettings`. So an unchanged block runs again
+  freely, and any change to it, from an edit or from another tool, asks again.
+  "Don't ask again for this document until Edi quits" trusts the page's name
+  for the document (its path, or `untitled:<tab>`) for this run of Edi. A
+  shebang Edi cannot run asks nothing, since the run only reports why. View ›
+  Forget Approved Code… takes every answer back.
 - **Runnable code blocks** (`backend/exec.py`). On POSIX each run leads its own
   process group, and Stop, the 30-second timeout and quitting the app
   (`Bridge.shutdown`, on `aboutToQuit`) kill the whole group; Windows uses

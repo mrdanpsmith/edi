@@ -4,7 +4,8 @@ import type { Node as ProseNode } from 'prosemirror-model'
 import type { NodeView, EditorView } from 'prosemirror-view'
 import { blockNodeView, showsSource } from '../blockview'
 import { attachBlockControls, type BlockControls } from '../block-modes'
-import { hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
+import { BridgeError, hasBridge, invoke, invokeStream, type StreamHandle } from '../bridge'
+import { getActive } from '../state'
 import type { CodeResult } from '../exec'
 import { createCodeEditor, type BlockCodeMirror } from '../codemirror-block'
 import { exitCodeBlock } from '../codeBlockExit'
@@ -26,6 +27,14 @@ import { CHECK_ICON, COPY_ICON, RUN_ICON, STOP_ICON, paintIcon } from '../icons'
 function shebangOf(text: string): string | null {
   const line = text.split('\n', 1)[0] ?? ''
   return line.startsWith('#!') ? line : null
+}
+
+/** The document a run comes from, as the shell's run prompt keys it: its path,
+ * or `untitled:<tab>` for a tab never saved. */
+function runDocument(): string {
+  const active = getActive()
+  if (!active) return ''
+  return active.path ?? `untitled:${active.id}`
 }
 
 function sourceOf(text: string, shebang: string): string {
@@ -483,7 +492,9 @@ class RunnableBlockNodeView implements NodeView {
     this.setRunState(true)
     let handle: StreamHandle<CodeResult> | null = null
     try {
-      handle = invokeStream<CodeResult>('streamCodeBlock', { shebang, source })
+      // The shell asks before running code it has not seen approved
+      // (`backend/approvals.py`); `document` names where it lives in that prompt.
+      handle = invokeStream<CodeResult>('streamCodeBlock', { shebang, source, document: runDocument() })
       // capture before `await` so Stop knows the live handle
       this.activeHandle = handle
       handle.onChunk((event) => {
@@ -501,6 +512,13 @@ class RunnableBlockNodeView implements NodeView {
       this.showOutput(this.runStopped ? ({ stopped: true } as CodeResult) : result)
     } catch (error) {
       if (epoch !== this.runEpoch) return
+      // The reader said no in the shell's prompt: nothing ran, so there is
+      // nothing to show.
+      if (error instanceof BridgeError && error.code === 'runDeclined') {
+        this.output.hidden = true
+        if (this.outputCopy) this.outputCopy.style.display = 'none'
+        return
+      }
       this.showOutput({ error: error instanceof Error ? error.message : String(error) })
     } finally {
       if (handle) {

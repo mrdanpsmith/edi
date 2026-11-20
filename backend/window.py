@@ -33,6 +33,7 @@ from .files import check_rename_target, check_typed_open_path, resolve_typed_pat
 from .preferences import Preferences
 from .printing import PrintJob
 from .remote import shared_hosts
+from .rundialog import RunCodeDialog
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
@@ -644,6 +645,10 @@ class MainWindow(QMainWindow):
         forget_sites_action = QAction("&Forget Allowed Image Sites…", self)
         forget_sites_action.triggered.connect(lambda _checked=False: self._forget_image_hosts())
         view_menu.addAction(forget_sites_action)
+        # The same for the code blocks the reader agreed to run.
+        forget_code_action = QAction("Forget Approved &Code…", self)
+        forget_code_action.triggered.connect(lambda _checked=False: self._forget_approved_code())
+        view_menu.addAction(forget_code_action)
 
         view_menu.addSeparator()
 
@@ -733,6 +738,37 @@ class MainWindow(QMainWindow):
             self._flash("Images from other sites will ask again.")
 
         self.confirm(f"Forget the sites Edi may load images from?\n\n{shown}", answered)
+
+    def confirm_run(self, document: str, command: list[str], source: str, can_trust: bool, callback) -> RunCodeDialog:
+        """Ask whether to run ``source`` with ``command`` (`backend/rundialog.py`).
+
+        ``callback(run: bool, trust_document: bool)`` runs when the reader
+        answers. Non-blocking, like ``confirm``.
+        """
+        dialog = RunCodeDialog(self, document, command, source, can_trust)
+
+        def finished(result: int) -> None:
+            accepted = result == int(QDialog.DialogCode.Accepted)
+            callback(accepted, accepted and dialog.trusts_document())
+            dialog.deleteLater()
+
+        dialog.finished.connect(finished)
+        dialog.open()
+        return dialog
+
+    def _forget_approved_code(self) -> None:
+        """View › Forget Approved Code…: every block asks again before it runs."""
+        approvals = self._bridge.approvals
+        if approvals.count() == 0:
+            self._flash("No code is approved to run.")
+            return
+
+        def answered(accepted: bool) -> None:
+            if accepted:
+                approvals.forget()
+                self._flash("Every code block will ask before it runs.")
+
+        self.confirm("Forget all approved code? Every code block will ask again before it runs.", answered)
 
     def _flash(self, message: str) -> None:
         """Say something in the page's status bar (a `flashStatus` native event)."""

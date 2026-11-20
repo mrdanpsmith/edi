@@ -26,7 +26,8 @@ from PySide6.QtCore import Q_ARG, QMimeData, QMetaObject, QObject, Qt, Signal, S
 from PySide6.QtGui import QGuiApplication, QImage
 
 from . import history, session
-from .exec import kill_process_tree, run_code_block, run_code_block_streamed
+from .approvals import CodeApprovals, code_digest
+from .exec import kill_process_tree, run_code_block, run_code_block_streamed, run_command
 from .files import (
     DriveNotConnected,
     FolderMissing,
@@ -65,6 +66,9 @@ CHANGED_ON_DISK = "changedOnDisk"
 FOLDER_MISSING = "folderMissing"
 # A save to a drive that isn't connected, whose folder is never made again.
 NO_DRIVE = "noDrive"
+# The reader said no to running a code block, in the shell's own prompt
+# (`backend/approvals.py`).
+RUN_DECLINED = "runDeclined"
 
 
 class ChangedOnDisk(Exception):
@@ -74,6 +78,15 @@ class ChangedOnDisk(Exception):
 def _file_bytes(path: str) -> bytes:
     with open(os.path.realpath(path), "rb") as handle:
         return handle.read()
+
+
+def _document_label(document: str) -> str:
+    """How the run prompt names the document a block lives in."""
+    if not document:
+        return "this document"
+    if document.startswith("untitled:"):
+        return "an untitled document"
+    return os.path.basename(document.replace("\\", "/").rstrip("/")) or document
 
 
 class NotPermitted(Exception):
@@ -166,6 +179,8 @@ class Bridge(QObject):
         super().__init__()
         self._window = window
         self.grants = PathGrants()
+        # The code the reader has agreed to run (`backend/approvals.py`).
+        self.approvals = CodeApprovals()
         self._pending_files = list(pending_files or [])
         # Named on the command line: the user's own choice, so they may be saved.
         for path in self._pending_files:
@@ -706,6 +721,39 @@ class Bridge(QObject):
 
         self._spawn(work)
 
+    def _when_approved(self, request_id: int, args: dict, start) -> None:
+        """Call ``start`` once the reader has agreed to run this code.
+
+        Code the reader approved before, or any code in a document they trusted
+        until Edi quits, starts at once. Anything else waits on the shell's own
+        prompt, which shows the command and the code; a no answers the request
+        with ``runDeclined`` and nothing runs. A shebang Edi cannot run needs no
+        agreement: the run itself reports why.
+
+        ``document`` is the page's name for where the block lives (its path, or
+        ``untitled:<tab>``). It only labels the prompt and keys "until Edi
+        quits"; what is approved is the code itself (``code_digest``).
+        """
+        shebang = str(args.get("shebang") or "")
+        source = str(args.get("source") or "")
+        document = str(args.get("document") or "")
+        command = run_command(shebang)
+        digest = code_digest(shebang, source)
+        if command is None or self.approvals.is_approved(document, digest):
+            start()
+            return
+
+        def answered(run: bool, trust_document: bool) -> None:
+            if not run:
+                self._reply_error(request_id, "The run was cancelled", code=RUN_DECLINED)
+                return
+            self.approvals.approve(digest)
+            if trust_document:
+                self.approvals.trust_until_quit(document)
+            start()
+
+        self._window.confirm_run(_document_label(document), command, source, bool(document), answered)
+
     def _run_code_block(self, request_id: int, args: dict) -> None:
         shebang = str(args.get("shebang") or "")
         source = str(args.get("source") or "")
@@ -718,7 +766,7 @@ class Bridge(QObject):
             else:
                 self._reply(request_id, result)
 
-        self._spawn(work)
+        self._when_approved(request_id, args, lambda: self._spawn(work))
 
     def _stream_code_block(self, request_id: int, args: dict) -> None:
         """Start a code block run whose output streams over ``stream``.
@@ -762,7 +810,7 @@ class Bridge(QObject):
                 self._send_stream({"id": request_id, "kind": "done", "ok": True})
                 self._reply(request_id, result)
 
-        self._spawn(work)
+        self._when_approved(request_id, args, lambda: self._spawn(work))
 
     def _stop_code_block(self, request_id: int, args: dict) -> None:
         run_id = int(args.get("id", request_id))

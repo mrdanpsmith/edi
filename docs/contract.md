@@ -16,7 +16,9 @@ the Python ↔ TypeScript boundary as bare strings:
   [disk-changes.md](disk-changes.md)). `folderMissing` is a save into a folder
   that no longer exists, which the page may retry with `makeFolders` once the
   reader agrees, and `noDrive` is a save to a drive that isn't connected (both
-  in [disk-changes.md](disk-changes.md)).
+  in [disk-changes.md](disk-changes.md)). `runDeclined` is a code block run the
+  reader said no to in the shell's run prompt (see
+  [architecture.md](architecture.md)).
 
 The first three used to drift silently: a rename on one side left a menu item
 that did nothing, a call that answered `Unknown method`, or a store disagreeing

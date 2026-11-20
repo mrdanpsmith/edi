@@ -73,6 +73,14 @@ clears them behind the shell's own prompt. Sites allowed with **Load images**
 live only until Edi quits. See [architecture.md](architecture.md), "What a
 document can make the machine do".
 
+## Approved code
+
+The code blocks the reader agreed to run are kept under `approvedCode`: SHA-256
+digests of each block's shebang and source, newest first, at most 1000
+(`backend/approvals.py`). The page never sees or sets them; the bridge adds one
+when the reader answers Run in the shell's prompt, and View › Forget Approved
+Code… clears them. A document trusted "until Edi quits" is never stored.
+
 ## The last session
 
 The documents open in the window are kept too, under `session/paths` (in tab

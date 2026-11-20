@@ -6,12 +6,13 @@ import json
 import os
 import time
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QSettings
 from PySide6.QtWidgets import QApplication
 
 import backend.bridge as bridge_module
 import backend.exec as exec_module
-from backend.bridge import Bridge
+from backend.approvals import CodeApprovals
+from backend.bridge import RUN_DECLINED, Bridge
 from backend.exec import parse_shebang, run_code_block, strip_shebang_line
 
 import pytest
@@ -44,6 +45,9 @@ class StubWindow(QObject):
         self.printed: list[tuple[str, str | None]] = []
         self.print_outcome: tuple[bool, str | None] = (True, None)
         self.image_hosts: set[str] = set()
+        self.run_prompts: list[tuple[str, list[str], str, bool]] = []
+        # (run, trust the document until quit): the existing run tests agree.
+        self.run_answer: tuple[bool, bool] = (True, False)
         self.image_host_grants: list[tuple[list[str], bool]] = []
 
     def confirm(self, message, callback=None) -> None:
@@ -147,6 +151,10 @@ class StubWindow(QObject):
     def forget_recent_file(self, path: str) -> None:
         self.recent_files_list = [entry for entry in self.recent_files_list if entry != path]
 
+    def confirm_run(self, document, command, source, can_trust, callback) -> None:
+        self.run_prompts.append((document, list(command), source, can_trust))
+        callback(*self.run_answer)
+
     def allowed_image_hosts(self) -> list[str]:
         return sorted(self.image_hosts)
 
@@ -157,7 +165,7 @@ class StubWindow(QObject):
 
 
 @pytest.fixture
-def bridge(qapp):
+def bridge(qapp, tmp_path):
     window = StubWindow()
     result: dict[int, dict] = {}
 
@@ -166,12 +174,13 @@ def bridge(qapp):
         result[message["id"]] = message
 
     bridge = Bridge(window)
+    bridge.approvals = CodeApprovals(QSettings(str(tmp_path / "approvals.ini"), QSettings.Format.IniFormat))
     bridge.result.connect(on_result)
     return bridge, window, result
 
 
 @pytest.fixture
-def stream_bridge(qapp):
+def stream_bridge(qapp, tmp_path):
     """A bridge that captures both ``result`` replies and ``stream`` chunks."""
     window = StubWindow()
     result: dict[int, dict] = {}
@@ -185,6 +194,7 @@ def stream_bridge(qapp):
         stream_events.append(json.loads(payload))
 
     bridge = Bridge(window)
+    bridge.approvals = CodeApprovals(QSettings(str(tmp_path / "approvals.ini"), QSettings.Format.IniFormat))
     bridge.result.connect(on_result)
     bridge.stream.connect(on_stream)
     return bridge, window, result, stream_events
@@ -791,6 +801,80 @@ def test_run_code_block_unsupported_interpreter(bridge):
     message = _wait_for(lambda: result.get(21))
     assert message["ok"] is False
     assert "Unsupported interpreter" in message["error"]
+
+
+def test_a_run_asks_first_and_shows_what_would_run(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(
+        bridge_obj,
+        "runCodeBlock",
+        {"shebang": "#!/usr/bin/env python3 -u", "source": "print(1)\n", "document": "/notes/plan.md"},
+    )
+    assert _wait_for(lambda: result.get(1))["ok"] is True
+    assert window.run_prompts == [("plan.md", ["python3", "-u"], "print(1)\n", True)]
+
+
+def test_a_declined_run_runs_nothing(bridge, tmp_path):
+    bridge_obj, window, result = bridge
+    window.run_answer = (False, False)
+    marker = tmp_path / "ran"
+    _invoke(bridge_obj, "runCodeBlock", {"shebang": "#!sh", "source": f"touch '{marker}'"})
+    message = _wait_for(lambda: result.get(1))
+    assert message["ok"] is False
+    assert message["code"] == RUN_DECLINED
+    assert not marker.exists()
+
+
+def test_a_declined_stream_runs_nothing(stream_bridge):
+    bridge_obj, window, result, stream_events = stream_bridge
+    window.run_answer = (False, False)
+    _invoke(bridge_obj, "streamCodeBlock", {"shebang": "#!sh", "source": "echo no"}, 60)
+    assert _wait_for(lambda: result.get(60))["code"] == RUN_DECLINED
+    assert stream_events == []
+
+
+def test_approved_code_runs_again_without_asking_until_it_changes(bridge):
+    bridge_obj, window, result = bridge
+    run = {"shebang": "#!sh", "source": "echo same", "document": "/a.md"}
+    _invoke(bridge_obj, "runCodeBlock", run, 1)
+    _invoke(bridge_obj, "runCodeBlock", {**run, "document": "/b.md"}, 2)
+    assert _wait_for(lambda: result.get(2))["ok"] is True
+    assert len(window.run_prompts) == 1
+    _invoke(bridge_obj, "runCodeBlock", {**run, "source": "echo changed"}, 3)
+    _wait_for(lambda: result.get(3))
+    assert len(window.run_prompts) == 2
+    _invoke(bridge_obj, "runCodeBlock", {**run, "shebang": "#!bash"}, 4)
+    _wait_for(lambda: result.get(4))
+    assert len(window.run_prompts) == 3
+
+
+def test_a_document_trusted_until_quit_runs_any_of_its_code(bridge):
+    bridge_obj, window, result = bridge
+    window.run_answer = (True, True)
+    _invoke(bridge_obj, "runCodeBlock", {"shebang": "#!sh", "source": "echo 1", "document": "/a.md"}, 1)
+    _wait_for(lambda: result.get(1))
+    _invoke(bridge_obj, "runCodeBlock", {"shebang": "#!sh", "source": "echo 2", "document": "/a.md"}, 2)
+    _invoke(bridge_obj, "runCodeBlock", {"shebang": "#!sh", "source": "echo 3", "document": "/other.md"}, 3)
+    _wait_for(lambda: result.get(3))
+    assert [prompt[0] for prompt in window.run_prompts] == ["a.md", "other.md"]
+
+
+def test_an_untitled_document_is_named_as_one_and_code_with_no_document_cannot_be_trusted(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "runCodeBlock", {"shebang": "#!sh", "source": "echo u", "document": "untitled:7"}, 1)
+    _invoke(bridge_obj, "runCodeBlock", {"shebang": "#!sh", "source": "echo none"}, 2)
+    _wait_for(lambda: result.get(2))
+    assert [(prompt[0], prompt[3]) for prompt in window.run_prompts] == [
+        ("an untitled document", True),
+        ("this document", False),
+    ]
+
+
+def test_code_edi_cannot_run_needs_no_agreement(bridge):
+    bridge_obj, window, result = bridge
+    _invoke(bridge_obj, "runCodeBlock", {"shebang": "#!brainfuck", "source": "+++"})
+    assert "Unsupported interpreter" in _wait_for(lambda: result.get(1))["error"]
+    assert window.run_prompts == []
 
 
 def test_stream_code_block_outputs_chunks_and_done(stream_bridge):

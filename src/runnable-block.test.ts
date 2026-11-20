@@ -8,6 +8,14 @@ vi.mock('./bridge', () => ({
   invokeStream: vi.fn(),
   hasBridge: () => true,
   confirmAction: vi.fn(),
+  BridgeError: class BridgeError extends Error {
+    constructor(
+      message: string,
+      readonly code: string | null = null,
+    ) {
+      super(message)
+    }
+  },
 }))
 
 import { schema } from './schema'
@@ -101,7 +109,8 @@ describe('runnable code block node view', () => {
     expect(invokeStreamMock).toHaveBeenCalledTimes(1)
     const [method, args] = invokeStreamMock.mock.calls[0] as [string, unknown]
     expect(method).toBe('streamCodeBlock')
-    expect(args).toEqual({ shebang: '#!/usr/bin/env python3', source: 'print("Hello, World!")' })
+    // No tab is open in this test, so the run names no document.
+    expect(args).toEqual({ shebang: '#!/usr/bin/env python3', source: 'print("Hello, World!")', document: '' })
 
     const out = view.dom.querySelector('.exec-output') as HTMLElement
     expect(out.hidden).toBe(false)
@@ -126,6 +135,44 @@ describe('runnable code block node view', () => {
     expect(out.classList.contains('exec-error')).toBe(false)
 
     view.destroy()
+  })
+
+  it('shows nothing and returns to Run when the reader declines in the shell', async () => {
+    const { BridgeError } = await import('./bridge')
+    const handle = streamHandle(undefined)
+    handle.result = Promise.reject(new BridgeError('The run was cancelled', 'runDeclined'))
+    invokeStreamMock.mockReturnValue(handle)
+
+    const view = makeView('```\n#!/bin/sh\necho hi\n```')
+    const btn = view.dom.querySelector('.exec-run') as HTMLButtonElement
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const out = view.dom.querySelector('.exec-output') as HTMLElement
+    expect(out.hidden).toBe(true)
+    expect(out.textContent).toBe('')
+    expect(btn.getAttribute('aria-label')).toBe('Run')
+    view.destroy()
+  })
+
+  it('names the document a run comes from, or the untitled tab', async () => {
+    const { activateSession, closeSession, createSession, setActivePath } = await import('./state')
+    const id = createSession()
+    activateSession(id)
+    invokeStreamMock.mockReturnValue(streamHandle({ exitCode: 0, stdout: '', stderr: '', timedOut: false }))
+    const view = makeView('```\n#!/bin/sh\necho hi\n```')
+    const btn = view.dom.querySelector('.exec-run') as HTMLButtonElement
+    btn.click()
+    expect((invokeStreamMock.mock.calls[0] as [string, { document: string }])[1].document).toBe(`untitled:${id}`)
+    view.destroy()
+
+    setActivePath('/notes/plan.md')
+    invokeStreamMock.mockReturnValue(streamHandle({ exitCode: 0, stdout: '', stderr: '', timedOut: false }))
+    const saved = makeView('```\n#!/bin/sh\necho hi\n```')
+    ;(saved.dom.querySelector('.exec-run') as HTMLButtonElement).click()
+    expect((invokeStreamMock.mock.calls[1] as [string, { document: string }])[1].document).toBe('/notes/plan.md')
+    saved.destroy()
+    closeSession(id)
   })
 
   it('requests a stop and marks the run stopped when Stop is clicked', async () => {

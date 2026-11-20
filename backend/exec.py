@@ -97,6 +97,18 @@ def _resolve_run(shebang: str) -> tuple[str, list[str], dict[str, str]]:
     return program, list(args), env
 
 
+def run_command(shebang: str) -> list[str] | None:
+    """The command a block with ``shebang`` would run, as the reader is shown
+    it before agreeing, or ``None`` when it cannot run at all (and so needs no
+    agreement: the run itself reports why)."""
+    try:
+        program, args, _env = _resolve_run(shebang)
+    except ValueError:
+        return None
+    # The last argument only tells the interpreter to read the code from stdin.
+    return [program, *args[:-1]]
+
+
 def kill_process_tree(proc: subprocess.Popen) -> None:
     """Kill a code block's interpreter and everything it started.
 

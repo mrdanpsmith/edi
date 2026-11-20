@@ -190,6 +190,12 @@ print("Hello from Edi!")
 Hovering a code block shows a **Run** button in its controls; output lands
 beneath the block and **Stop** cancels a hung run.
 
+Code can read and change your files, so the first time you run a block Edi
+shows you the code and asks. It won't ask again for that exact code; change
+the code and it asks again. Tick **Don't ask again for this document until Edi
+quits** while you're writing code, and `View → Forget Approved Code…` makes
+every block ask again.
+
 ## Selecting and deleting a code block
 
 Click a code block's frame (its border or the language bar along the top) to

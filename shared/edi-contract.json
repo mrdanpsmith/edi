@@ -98,6 +98,7 @@
     "changedOnDisk": true,
     "folderMissing": true,
     "noDrive": true,
-    "notPermitted": true
+    "notPermitted": true,
+    "runDeclined": true
   }
 }
