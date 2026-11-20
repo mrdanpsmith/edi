@@ -34,6 +34,7 @@ from .preferences import Preferences
 from .printing import PrintJob
 from .remote import shared_hosts
 from .rundialog import RunCodeDialog
+from .updates import MACOS_INSTALL_COMMAND, UpdateCheck, UpdateResult, UpdateSettings, release_page
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
@@ -314,6 +315,9 @@ class MainWindow(QMainWindow):
         self._print_job: PrintJob | None = None
 
         self._preferences = Preferences()
+        # Whether to look for a newer Edi at launch (`backend/updates.py`).
+        self._update_settings = UpdateSettings()
+        self._update_check: UpdateCheck | None = None
         self._bridge = Bridge(self, pending_files, restore_session)
         # Quitting does not always close the window first (Cmd+Q on macOS), and a
         # code block still running would outlive the app.
@@ -364,6 +368,9 @@ class MainWindow(QMainWindow):
         self._preferences_script.setSourceCode(self._preferences_source())
         self._web.page().scripts().insert(self._preferences_script)
 
+        # The automatic update check waits for the page, whose status bar it
+        # reports to, and runs once per window.
+        self._web.loadFinished.connect(self._maybe_check_for_updates)
         self._web.load(_app_url(is_selftest=os.environ.get("EDI_SELFTEST") == "1"))
 
     def _preferences_source(self) -> str:
@@ -696,6 +703,16 @@ class MainWindow(QMainWindow):
         self._link_command(reference_action, "formulaReference")
         help_menu.addAction(reference_action)
         help_menu.addSeparator()
+        # The shell's own, like the request they make (`backend/updates.py`).
+        check_action = QAction("Check for &Updates…", self)
+        check_action.triggered.connect(lambda _checked=False: self._check_for_updates(manual=True))
+        help_menu.addAction(check_action)
+        self._auto_update_action = QAction("Check for Updates &Automatically", self)
+        self._auto_update_action.setCheckable(True)
+        self._auto_update_action.setChecked(self._update_settings.automatic())
+        self._auto_update_action.toggled.connect(self._update_settings.set_automatic)
+        help_menu.addAction(self._auto_update_action)
+        help_menu.addSeparator()
         about_action = QAction("&About Edi…", self)
         about_action.triggered.connect(lambda _checked=False: self._show_about())
         help_menu.addAction(about_action)
@@ -738,6 +755,67 @@ class MainWindow(QMainWindow):
             self._flash("Images from other sites will ask again.")
 
         self.confirm(f"Forget the sites Edi may load images from?\n\n{shown}", answered)
+
+    def _maybe_check_for_updates(self, ok: bool) -> None:
+        """At launch, once the page is up: check if the reader turned it on and
+        the last check is a day old. Never in the packaged smoke test."""
+        if not ok or self._update_check is not None or os.environ.get("EDI_SELFTEST") == "1":
+            return
+        if self._update_settings.due():
+            self._check_for_updates(manual=False)
+
+    def _check_for_updates(self, manual: bool, fetch=None) -> UpdateCheck:
+        """Ask GitHub for the newest release, off the main thread.
+
+        Help › Check for Updates… answers in a dialog either way; the automatic
+        check says nothing unless there is a newer version, and then only in the
+        page's status bar. ``fetch`` replaces the request, for tests.
+        """
+        check = UpdateCheck(fetch, parent=self) if fetch is not None else UpdateCheck(parent=self)
+        # Bound methods of this window, so the answer is handled on its thread.
+        check.finished.connect(self._manual_update_checked if manual else self._automatic_update_checked)
+        self._update_check = check
+        check.start()
+        return check
+
+    def _automatic_update_checked(self, result: UpdateResult) -> None:
+        if result.latest is None:
+            return  # Offline or refused: try again at the next launch.
+        self._update_settings.mark_checked()
+        if result.newer:
+            self.push_event({"type": "updateAvailable", "version": result.latest, "url": release_page(result.latest)})
+
+    def _manual_update_checked(self, result: UpdateResult) -> QMessageBox:
+        box = QMessageBox(self)
+        box.setWindowTitle("Edi")
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        if result.latest is None:
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setText("Edi couldn't check for updates.")
+            box.setInformativeText(result.error or "")
+            box.addButton(QMessageBox.StandardButton.Ok)
+        elif result.newer:
+            self._update_settings.mark_checked()
+            latest = result.latest
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText(f"Edi {latest} is available. You have {__version__}.")
+            if sys.platform == "darwin":
+                box.setInformativeText(f"To upgrade, run the installer again:\n\n{MACOS_INSTALL_COMMAND}")
+            else:
+                box.setInformativeText("Download it from the release page and install it over this one.")
+            open_button = box.addButton("Open Release Page", QMessageBox.ButtonRole.AcceptRole)
+            later = box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(later)
+            open_button.clicked.connect(lambda: self.open_external_url(release_page(latest)))
+        else:
+            self._update_settings.mark_checked()
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText(f"Edi {__version__} is the newest version.")
+            box.addButton(QMessageBox.StandardButton.Ok)
+        box.finished.connect(lambda _result: box.deleteLater())
+        box.open()
+        return box
 
     def confirm_run(self, document: str, command: list[str], source: str, can_trust: bool, callback) -> RunCodeDialog:
         """Ask whether to run ``source`` with ``command`` (`backend/rundialog.py`).

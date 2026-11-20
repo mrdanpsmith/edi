@@ -104,7 +104,10 @@ reaches outside it have explicit limits:
   native prompt. The interceptor and its sites are one per process, parented to
   the application, because the profile does not own its interceptor and would
   otherwise outlive it. `test_remote_images_load_only_from_a_site_the_reader_allows`
-  checks this against a local server.
+  checks this against a local server. The one request Edi makes on its own
+  account is the update check (`backend/updates.py`): from Python, not the
+  page, only when the reader asks or has turned it on, and reading nothing from
+  the answer but the release's version.
 
 - **Links.** `http`, `https` and `mailto` open directly. Any other scheme, and any
   local file that is not a document Edi opens itself, is handed to the OS only

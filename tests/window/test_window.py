@@ -661,7 +661,15 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
                 "advertise a key that does nothing")
 
     help_labels = [action.text() for action in window._help_menu.actions()]
-    assert help_labels == ["&Edi Guide…", "&Formula Reference…", "", "&About Edi…"]
+    assert help_labels == [
+        "&Edi Guide…",
+        "&Formula Reference…",
+        "",
+        "Check for &Updates…",
+        "Check for Updates &Automatically",
+        "",
+        "&About Edi…",
+    ]
 
     toolbar_actions = [
         action
@@ -1148,6 +1156,63 @@ def test_remote_images_load_only_from_a_site_the_reader_allows(window, image_sit
     finally:
         window._image_hosts.forget()
         _dump(window, "(() => { document.querySelectorAll('body > img').forEach((i) => i.remove()); return { ok: true }; })()")
+
+
+def _open_message_box(window, timeout=5):
+    found = {}
+
+    def opened():
+        for box in window.findChildren(QMessageBox):
+            if box.isVisible():
+                found["box"] = box
+        return "box" in found
+
+    assert _pump_until(opened, timeout=timeout), "no message box opened"
+    return found["box"]
+
+
+def test_check_for_updates_says_what_it_found(window):
+    """Help › Check for Updates… answers in a dialog: newer, current or failed."""
+    window._check_for_updates(manual=True, fetch=lambda: "99.0.0")
+    box = _open_message_box(window)
+    assert box.text() == f"Edi 99.0.0 is available. You have {__version__}."
+    assert [b.text() for b in box.buttons()] == ["Open Release Page", "Later"]
+    box.reject()
+
+    window._check_for_updates(manual=True, fetch=lambda: __version__)
+    box = _open_message_box(window)
+    assert box.text() == f"Edi {__version__} is the newest version."
+    box.accept()
+
+    def offline() -> str:
+        raise OSError("network is unreachable")
+
+    window._check_for_updates(manual=True, fetch=offline)
+    box = _open_message_box(window)
+    assert box.text() == "Edi couldn't check for updates."
+    assert box.informativeText() == "network is unreachable"
+    box.accept()
+
+
+def test_an_automatic_update_check_reports_in_the_status_bar(window):
+    """A newer release found at launch is a status-bar line, not a dialog."""
+    window._check_for_updates(manual=False, fetch=lambda: "99.0.0")
+    state = {}
+
+    def shown():
+        state.update(
+            _dump(
+                window,
+                "(() => { const b = document.querySelector('.status-update');"
+                " return { text: b && !b.hidden ? b.textContent : null }; })()",
+            )
+        )
+        return bool(state.get("text"))
+
+    assert _pump_until(shown, timeout=5), state
+    assert state["text"] == "Edi 99.0.0 is available"
+    assert not any(box.isVisible() for box in window.findChildren(QMessageBox))
+    _dump(window, "(() => { document.querySelector('.status-update').hidden = true; return { ok: true }; })()")
 
 
 def test_load_app_icon_none_when_no_icon_file(monkeypatch):

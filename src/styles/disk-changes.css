@@ -51,8 +51,10 @@
   color: var(--danger);
 }
 
-/* The same marker in the status bar, for the tab in view. */
-.status-disk {
+/* The same marker in the status bar, for the tab in view; the update notice
+   (`src/updateNotice.ts`) is the same kind of clickable note. */
+.status-disk,
+.status-update {
   flex: none;
   padding: 0 6px;
   font: inherit;
@@ -63,10 +65,12 @@
   cursor: pointer;
 }
 
-.status-disk:hover {
+.status-disk:hover,
+.status-update:hover {
   background: var(--surface-raised);
 }
 
-.status-disk[hidden] {
+.status-disk[hidden],
+.status-update[hidden] {
   display: none;
 }

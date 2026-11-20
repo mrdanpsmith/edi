@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QMainWindow
 
 from backend.bridge import Bridge
 from backend.preferences import DEFAULTS, NAMES
+from backend.updates import UpdateSettings
 from backend.window import MainWindow
 from tests.test_bridge import StubWindow
 
@@ -57,6 +58,7 @@ class _MenusOnly(MainWindow):
     def __init__(self) -> None:
         QMainWindow.__init__(self)
         self._zoom_actions = {}
+        self._update_settings = UpdateSettings()
         self._build_menus()
         self._refresh_recent_menu()
 

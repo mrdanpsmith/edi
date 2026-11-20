@@ -176,7 +176,7 @@ remembered between runs (`~/.config/Edi/Edi.conf`).
 | **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
 | **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
 | **View** | Toolbar, Hover Band, Forget Allowed Image Sites…, Forget Approved Code…, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
-| **Help** | Edi Guide…, Formula Reference…, About Edi… |
+| **Help** | Edi Guide…, Formula Reference…, Check for Updates…, Check for Updates Automatically, About Edi… |
 
 `Revert`, `Rename or Move…` and `Move to Trash…` need a document that has been
 saved somewhere.
@@ -291,6 +291,12 @@ the details.
 
 There is no in-app updater — install the newest release artifact. Your settings
 and documents are never touched.
+
+`Help → Check for Updates…` asks GitHub for the newest release and says whether
+it is newer than yours. `Help → Check for Updates Automatically` does the same
+at launch, at most once a day, and shows "Edi X.Y.Z is available" in the status
+bar when there is one. It is off until you turn it on, because the request
+tells GitHub your address; it sends nothing else about you.
 
 - **Windows (installer):** run the new setup over the existing install. It
   replaces the app in `%ProgramFiles%\Edi`, refreshes the shortcuts and the

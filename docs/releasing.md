@@ -102,8 +102,8 @@ Everything Edi keeps between runs stays readable by every later 1.x:
 
 - the `QSettings` keys and the shape of their values: the preferences in
   `shared/edi-contract.json`, `recentFiles`, `session/paths` and
-  `session/active`, `allowedImageHosts` and `approvedCode`
-  ([preferences.md](preferences.md));
+  `session/active`, `allowedImageHosts`, `approvedCode`, `updates/automatic`
+  and `updates/lastCheck` ([preferences.md](preferences.md));
 - the version-history store under the app-data `history/` folder
   ([history.md](history.md)).
 

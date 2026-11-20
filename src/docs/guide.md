@@ -15,6 +15,10 @@ the preview renders it live — and a few block types go much further.
   History…` can still recover it after the Trash is emptied.
 - File actions also live as toolbar buttons; hide that row with
   `View → Toolbar`.
+- `Help → Check for Updates…` tells you whether a newer Edi is out. Turn on
+  `Help → Check for Updates Automatically` to have Edi look at launch, once a
+  day; a newer version shows in the status bar. It's off by default because
+  the check contacts GitHub.
 - Hovering a block puts a faint band behind it, marking which block
   `Alt+click` would alter. `View → Hover Band` turns that band off; it is on by
   default and the answer is remembered.

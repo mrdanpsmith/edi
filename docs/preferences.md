@@ -73,6 +73,15 @@ clears them behind the shell's own prompt. Sites allowed with **Load images**
 live only until Edi quits. See [architecture.md](architecture.md), "What a
 document can make the machine do".
 
+## Update check
+
+`updates/automatic` (off unless the reader turns on Help › Check for Updates
+Automatically) and `updates/lastCheck` (seconds since the epoch of the last
+check that got an answer) belong to `backend/updates.py`. Like the allowed image
+sites they are the shell's, not preferences: only the shell reads them, and the
+page cannot turn the request on. An automatic check runs at launch when it is
+on and the last check is a day old.
+
 ## Approved code
 
 The code blocks the reader agreed to run are kept under `approvedCode`: SHA-256

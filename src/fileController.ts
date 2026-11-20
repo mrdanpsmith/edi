@@ -76,6 +76,8 @@ interface NativeEvent {
   path?: unknown
   message?: unknown
   allowed?: unknown
+  version?: unknown
+  url?: unknown
 }
 
 /** What a save writes, and which tab, edit and document it was read from. */
@@ -175,6 +177,11 @@ export function createFileController(ctx: AppContext): FileController {
     // View › Forget Allowed Image Sites… (`backend/remote.py`).
     if (event.type === 'imageHostsChanged' && Array.isArray(event.allowed)) {
       ctx.remoteImages?.allowedChanged(event.allowed.filter((host): host is string => typeof host === 'string'))
+      return
+    }
+    // The automatic update check found a newer Edi (`backend/updates.py`).
+    if (event.type === 'updateAvailable' && typeof event.version === 'string' && typeof event.url === 'string') {
+      ctx.updateNotice?.show(event.version, event.url)
       return
     }
     // The shell reporting the outcome of one of its own dialogs.

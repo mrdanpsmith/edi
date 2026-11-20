@@ -12,6 +12,7 @@ import type { BlockEditor } from './editor'
 import type { ContextMenu } from './contextmenu'
 import type { DiskController } from './diskChanges'
 import type { RemoteImagesBar } from './remoteImages'
+import type { UpdateNotice } from './updateNotice'
 import type { HomeScreen } from './home'
 import type { SearchPanel } from './searchPanel'
 import type { Tabs } from './tabs'
@@ -49,6 +50,8 @@ export interface AppContext {
   disk: DiskController | null
   /** The bar offering a document's remote images (`src/remoteImages.ts`). */
   remoteImages: RemoteImagesBar | null
+  /** "Edi 1.2.0 is available" in the status bar (`src/updateNotice.ts`). */
+  updateNotice: UpdateNotice | null
   tabs: Tabs
   documentZoom: number
   lastNativeTitle: string
@@ -228,6 +231,7 @@ export function createAppContext(roots: AppRoots, selftest: boolean): AppContext
     searchPanel: null,
     disk: null,
     remoteImages: null,
+    updateNotice: null,
     // Assigned by `init` before any controller can be used.
     tabs: undefined as unknown as Tabs,
     documentZoom: DEFAULT_ZOOM,

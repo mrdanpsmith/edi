@@ -30,6 +30,7 @@ import { createEditController, type EditController } from './editController'
 import { createFileController, type FileController } from './fileController'
 import { createDiskController } from './diskChanges'
 import { createRemoteImagesBar, gateRemoteImage, loadAllowedImageHosts } from './remoteImages'
+import { createUpdateNotice } from './updateNotice'
 import { createZoomController, type ZoomController } from './zoomController'
 import { trackOpenFiles } from './session'
 
@@ -343,6 +344,7 @@ export function init(roots: AppRoots): () => void {
     activeId: () => getActive()?.id ?? null,
     resolveImages: () => ctx.blockEditor?.resolveImages(),
   })
+  ctx.updateNotice = createUpdateNotice(roots.statusLeft)
   const files = createFileController(ctx)
   const edit = createEditController(ctx)
   const menus = createContextMenuController(ctx, edit)
@@ -578,6 +580,7 @@ export function init(roots: AppRoots): () => void {
     ctx.contextMenu?.hide()
     ctx.disk?.destroy()
     ctx.remoteImages?.destroy()
+    ctx.updateNotice?.destroy()
     ctx.blockEditor?.destroy()
     ctx.tabs.destroy()
     if (window.ediSetContent === setContent) delete window.ediSetContent
