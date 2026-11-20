@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { EditorView } from 'prosemirror-view'
 import { TextSelection } from 'prosemirror-state'
+import { GapCursor } from 'prosemirror-gapcursor'
 import { Slice } from 'prosemirror-model'
 import { closeHistory, undo } from 'prosemirror-history'
 import { createBlockEditor } from './editor'
@@ -479,22 +480,36 @@ describe('scroller caret fallback', () => {
     editor.destroy()
   })
 
-  it('opens a new paragraph after a trailing special block', () => {
+  it('puts a gap cursor after a trailing special block, and inserts nothing', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
-    // A code fence has no caret position after it, so clicking below it opens a
-    // paragraph to put the caret in — the half of Ctrl+Shift+Up/Down that makes
-    // the block selectable from below.
+    // A code fence has no text position after it, so a press below it gets a gap
+    // cursor there. A press never edits the document: it used to add a paragraph,
+    // which dirtied a file that was nothing but a code block on a stray click.
     const editor = createBlockEditor(host, 'text\n\n```js\nconst x = 1\n```')
     const view = editor.getView()
-    expect(view.state.doc.childCount).toBe(2)
+    const before = view.state.doc
 
     host.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
 
-    expect(view.state.doc.childCount).toBe(3)
-    expect(view.state.doc.lastChild?.type.name).toBe('paragraph')
-    expect(view.state.selection.empty).toBe(true)
-    expect(view.state.selection.$from.parent.type.name).toBe('paragraph')
+    expect(view.state.doc.eq(before)).toBe(true)
+    expect(view.state.selection).toBeInstanceOf(GapCursor)
+    expect(view.state.selection.from).toBe(view.state.doc.content.size)
+    expect(document.activeElement).toBe(view.dom)
+    editor.destroy()
+  })
+
+  it('a document that is only a code block, too', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const editor = createBlockEditor(host, '```\n#!/usr/bin/env python3\nprint(1)\n```\n')
+    const view = editor.getView()
+    const before = view.state.doc
+
+    host.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+
+    expect(view.state.doc.eq(before)).toBe(true)
+    expect(view.state.selection).toBeInstanceOf(GapCursor)
     editor.destroy()
   })
 

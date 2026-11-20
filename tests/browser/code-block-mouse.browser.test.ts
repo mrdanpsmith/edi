@@ -6,7 +6,9 @@
 // there was no press that selected the block itself; its frame does now (`src/press.ts`).
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { bootApp, pointer, settle, type BootedApp, type Point } from './app'
+import { dirtyCalls } from './block-helpers'
 import { charBox } from './edit-helpers'
 
 let app: BootedApp
@@ -83,6 +85,33 @@ describe('pressing a code block\'s frame', () => {
     await settle()
     expect(plain().classList.contains('ProseMirror-selectednode')).toBe(false)
     expect(document.getSelection()?.isCollapsed).toBe(true)
+  })
+})
+
+// A press never edits the document. Below a document that is only a code block, the
+// empty page is the scroller's own box, and a press there used to add a paragraph and
+// dirty the file; it gets a gap cursor after the block, and typing there makes the line.
+describe('pressing the page below a document that is only a code block', () => {
+  const DOC_ONLY_CODE = '```\n#!/usr/bin/env python3\nprint(1)\n```\n'
+
+  it('changes nothing, and typing there starts a paragraph after the block', async () => {
+    await app.setDocument(DOC_ONLY_CODE)
+    await settle()
+    const before = app.markdown()
+    const dirty = dirtyCalls(app)
+    const block = app.editor.querySelector('.runnable-block')!.getBoundingClientRect()
+    const below = { x: block.left + 40, y: app.editor.getBoundingClientRect().bottom + 80 }
+    expect(document.elementFromPoint(below.x, below.y)).toBe(app.editor.parentElement)
+
+    await pointer.press(below)
+    await settle()
+    expect(app.markdown()).toBe(before)
+    expect(dirtyCalls(app)).toBe(dirty)
+    expect(app.editor.querySelector('.ProseMirror-gapcursor')).not.toBeNull()
+
+    await userEvent.keyboard('next')
+    await settle()
+    expect(app.markdown().trim()).toBe('```\n#!/usr/bin/env python3\nprint(1)\n```\n\nnext')
   })
 })
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EditorView } from 'prosemirror-view'
 import { NodeSelection, TextSelection } from 'prosemirror-state'
+import { GapCursor } from 'prosemirror-gapcursor'
 import { createBlockEditor } from './editor'
 import { SELECTION_EXPAND_KEY, selectionExpandKeymap } from './selectionExpand'
 
@@ -217,9 +218,23 @@ describe('cross-block keyboard selection', () => {
     destroy()
   })
 
+  it('selects a trailing code block from the gap cursor a press below it gives', () => {
+    const { view, destroy } = editorOn('text\n\n```js\nconst x = 1\n```')
+    // The click-below fallback (`attachScrollerCaretFallback`): a gap cursor after it.
+    view.dispatch(view.state.tr.setSelection(new GapCursor(view.state.doc.resolve(view.state.doc.content.size))))
+
+    expect(gesture(view, 'ArrowUp')).toBe(true)
+    const sel = view.state.selection
+    expect(view.dom.querySelector('.edi-block-selected, .ProseMirror-selectednode')).not.toBeNull()
+    const { text } = view.serializeForClipboard(sel.content())
+    expect(text).toContain('const x = 1')
+    expect(text).not.toContain('text')
+    destroy()
+  })
+
   it('selects a trailing code block from an empty paragraph below it', () => {
     const { view, destroy } = editorOn('text\n\n```js\nconst x = 1\n```')
-    // Simulate the click-below fallback: a new empty paragraph and the caret.
+    // An empty line typed below it, then the gesture.
     const tr = view.state.tr.insert(
       view.state.doc.content.size,
       view.state.schema.nodes.paragraph.create(),

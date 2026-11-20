@@ -265,6 +265,13 @@ a gap cursor on the pressed side. That press used to do nothing, which left a
 selected table with no way to deselect it. A gap cursor creates no block; typing
 at it does.
 
+A press in the empty page below the document, when its last block is a code
+block, table or diagram, also answers with a gap cursor after that block
+(`attachScrollerCaretFallback` in `src/editor.ts`). Inserting a paragraph there
+would mark a file dirty on a stray click. `code_block` sets `createGapCursor`
+so a gap cursor may sit beside one, and `Ctrl+Shift+Up` from that gap cursor
+selects the block (`src/selectionExpand.ts`).
+
 While a gap cursor sits before the first block, its widget is the editor's first
 child, so `editor.css` gives the block after it the first-child zero margin as
 well.

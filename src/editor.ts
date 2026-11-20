@@ -723,16 +723,17 @@ function attachScrollerCaretFallback(view: EditorView, parent: HTMLElement): (ev
     view.focus()
     const doc = view.state.doc
     const last = doc.lastChild
-    // A trailing special block (a board, a table, a code fence) has no
-    // caret-capable position after it, so clicking below it opens a new
-    // paragraph to put the caret in. That is the only way to then select the
-    // block itself from below — a range from above always includes the text
-    // before it. Its own position is asked of the block, because a fence in its
-    // source form is one of these too and only the record says so.
+    // A trailing special block (a board, a table, a code fence) has no text
+    // position after it, so a press below it gets a **gap cursor** after it: a
+    // caret that inserts nothing until the reader types, when it becomes a
+    // paragraph. A press never edits the document (`src/press.ts`), and a stray
+    // click below a lone code block used to add a paragraph and dirty the file.
+    // Its own position is asked of the block, because a fence in its source form
+    // is one of these too and only the record says so.
+    // Every block that is one of these is an atom or a code block, both of which a
+    // gap cursor may sit beside (`createGapCursor` on `code_block`).
     if (last && isSelectionAtom(view.state, last, doc.content.size - last.nodeSize)) {
-      const tr = view.state.tr.insert(doc.content.size, view.state.schema.nodes.paragraph.create())
-      tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
-      view.dispatch(tr)
+      view.dispatch(view.state.tr.setSelection(new GapCursor(doc.resolve(doc.content.size))))
     } else {
       view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(doc)))
     }
