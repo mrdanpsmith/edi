@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -38,15 +39,33 @@ def _next_patch(version: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
-@pytest.fixture
-def repo(tmp_path: Path) -> Path:
-    path = tmp_path / "repo"
+# Every test starts from this release, whatever the repository itself is on:
+# the repository spends time on candidates (1.0.0-rc.1), and a candidate is
+# exactly what `bump patch` refuses.
+START_VERSION = "4.5.6"
+
+
+def _copy_version_files(path: Path) -> None:
+    """The script and the three files it versions, set to START_VERSION."""
     (path / "scripts").mkdir(parents=True)
     (path / "backend").mkdir()
     shutil.copy2(SCRIPT, path / "scripts" / "version.sh")
-    shutil.copy2(ROOT / "package.json", path / "package.json")
-    shutil.copy2(ROOT / "package-lock.json", path / "package-lock.json")
-    shutil.copy2(ROOT / "backend" / "__init__.py", path / "backend" / "__init__.py")
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    package["version"] = START_VERSION
+    (path / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+    lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    lock["version"] = START_VERSION
+    lock.get("packages", {}).get("", {})["version"] = START_VERSION
+    (path / "package-lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    init = (ROOT / "backend" / "__init__.py").read_text(encoding="utf-8")
+    init = re.sub(r'^__version__ = ".*"', f'__version__ = "{START_VERSION}"', init, flags=re.M)
+    (path / "backend" / "__init__.py").write_text(init, encoding="utf-8")
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    path = tmp_path / "repo"
+    _copy_version_files(path)
     _git(path, "init", "-q", "-b", "main")
     _git(path, "config", "user.email", "test@example.com")
     _git(path, "config", "user.name", "Test")
@@ -138,12 +157,7 @@ def test_no_commit_leaves_the_bump_uncommitted_and_prints_the_commands(repo: Pat
 
 def test_refuses_to_bump_before_changing_files_outside_a_git_work_tree(tmp_path: Path):
     path = tmp_path / "not-a-repo"
-    (path / "scripts").mkdir(parents=True)
-    (path / "backend").mkdir()
-    shutil.copy2(SCRIPT, path / "scripts" / "version.sh")
-    shutil.copy2(ROOT / "package.json", path / "package.json")
-    shutil.copy2(ROOT / "package-lock.json", path / "package-lock.json")
-    shutil.copy2(ROOT / "backend" / "__init__.py", path / "backend" / "__init__.py")
+    _copy_version_files(path)
     old = _version(path)
 
     result = _run(path, "bump", "patch")
