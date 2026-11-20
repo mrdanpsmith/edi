@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isMisleadingLink, launchConfirmation } from './linkSecurity'
+import { isMisleadingLink, isScriptUrl, launchConfirmation } from './linkSecurity'
 
 describe('launchConfirmation', () => {
   it('opens web and mail links without asking', () => {
@@ -54,5 +54,27 @@ describe('isMisleadingLink', () => {
 
   it('does not flag different-host links with non-URL prose text', () => {
     expect(isMisleadingLink('https://attacker.address', 'click here')).toBe(false)
+  })
+})
+
+describe('isScriptUrl', () => {
+  it('recognises script schemes the way a browser parses them', () => {
+    for (const url of [
+      'javascript:alert(1)',
+      'JavaScript:x',
+      ' javascript:x',
+      '\tjava\nscript:x',
+      '\u0000javascript:x',
+      'vbscript:x',
+      'data:text/html,<b>x</b>',
+    ]) {
+      expect(isScriptUrl(url), JSON.stringify(url)).toBe(true)
+    }
+  })
+
+  it('leaves every other destination alone', () => {
+    for (const url of ['https://example.com/javascript:x', 'mailto:a@b.c', 'vscode://x', 'notes.md', '#install', './javascript.md', 'javascript', '']) {
+      expect(isScriptUrl(url), JSON.stringify(url)).toBe(false)
+    }
   })
 })

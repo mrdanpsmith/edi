@@ -1039,6 +1039,37 @@ def test_main_frame_index_navigation_is_accepted(visible):
     )
 
 
+_INJECT_SCRIPT = """(() => {
+  window.__cspRan = []
+  window.__cspBlocked = []
+  document.addEventListener('securitypolicyviolation', (e) => window.__cspBlocked.push(e.effectiveDirective))
+  const host = document.createElement('div')
+  host.innerHTML = '<img src="data:," onerror="window.__cspRan.push(\\'onerror\\')">'
+  document.body.appendChild(host)
+  const range = document.createRange()
+  host.appendChild(range.createContextualFragment("<script>window.__cspRan.push('script')<\\/script>"))
+  try { setTimeout("window.__cspRan.push('string timer')", 0) } catch (e) {}
+  return { injected: true }
+})()"""
+
+
+def test_page_refuses_injected_script(window):
+    """Markup that reaches the DOM from a document cannot run script: the page's
+    Content-Security-Policy allows only the app's own bundle. Script in the page
+    can call the bridge, and the bridge runs code blocks, so this is the backstop
+    behind every place the page builds HTML."""
+    assert _dump(window, _INJECT_SCRIPT)["injected"]
+    state = {}
+
+    def settled():
+        state.update(_dump(window, "(() => ({ ran: window.__cspRan, blocked: window.__cspBlocked }))()"))
+        return len(state.get("blocked", [])) >= 3
+
+    assert _pump_until(settled, timeout=5), f"violations not all reported: {state}"
+    assert state["ran"] == []
+    assert set(state["blocked"]) <= {"script-src-attr", "script-src-elem", "script-src"}
+
+
 def test_load_app_icon_none_when_no_icon_file(monkeypatch):
     monkeypatch.setattr(window_module, "_find_icon", lambda: None)
     assert window_module.load_app_icon() is None

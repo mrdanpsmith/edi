@@ -303,4 +303,16 @@ describe('serializeDocToHtml', () => {
     expect(html).not.toContain('>SUM(A2:B2)<')
     expect(html).not.toContain('>B2-A2<')
   })
+
+  it('writes no script link into the exported page, in text or in a table', () => {
+    const md =
+      '[click](javascript:alert(1)) and <javascript:alert(2)> and [ok](https://example.com)\n\n' +
+      '| a |\n| --- |\n| [c](JavaScript:alert(4)) |\n'
+    const div = document.createElement('div')
+    div.innerHTML = serializeDocToHtml(docFrom(md))
+    const hrefs = [...div.querySelectorAll('a')].map((a) => a.getAttribute('href'))
+    expect(hrefs.filter((href) => href !== null)).toEqual(['https://example.com'])
+    expect(div.textContent).toContain('click')
+    expect(div.querySelector('td a')?.textContent).toBe('c')
+  })
 })

@@ -54,7 +54,9 @@ def _dump(win, script):
     """
     js = win._web.page().runJavaScript
     out = {}
-    js(f"window.ediDump({json.dumps(script)})", lambda v: out.update(json.loads(v) if isinstance(v, str) else {}))
+    # Evaluated by `runJavaScript` itself, not by an `eval` in the page: the
+    # page's Content-Security-Policy refuses string evaluation.
+    js(f"JSON.stringify(({script}) ?? null)", lambda v: out.update(json.loads(v) if isinstance(v, str) else {}))
     _pump_until(lambda: bool(out), timeout=5)
     return out
 

@@ -480,6 +480,16 @@ These shapes come from paste tests against Confluence Cloud:
   `image/png` pastes as that image alone. The PNG stays in the HTML for other
   targets; in Confluence, paste each diagram with its own image copy.
 
+### Exported HTML
+
+Export HTML embeds each diagram as a PNG snapshot followed by its source. A
+diagram with no snapshot is written as a `div.mermaid` and the file loads
+Mermaid from jsDelivr to draw it, pinned to the bundled version with a
+Subresource Integrity hash (`src/mermaidCdn.ts`), so the file never runs a
+Mermaid nobody checked. `src/mermaidCdn.test.ts` fails when a Mermaid upgrade
+leaves the pin stale; recompute the hash from
+`node_modules/mermaid/dist/mermaid.min.js`, which that test does.
+
 ## One walk, one field
 
 `buildScope(svg, source)` parses the source once and walks the drawing once,

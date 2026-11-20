@@ -37,6 +37,10 @@ function baseMermaidConfig(
 ): Record<string, unknown> {
   return {
     startOnLoad: false,
+    // Mermaid's own default, stated so no upgrade or config change relaxes it:
+    // labels are sanitized and click callbacks are off. A diagram's `%%{init}%%`
+    // directive cannot change it (Mermaid keeps it in its secure keys).
+    securityLevel: 'strict',
     // Theme choice matters: 'base' (+ a handful of overrides) is a *light* theme
     // and its unoverridden defaults stay light, so dark mode must use mermaid's
     // complete built-in 'dark' palette (backgrounds, actor fills, pie swatches,

@@ -39,6 +39,8 @@ const CANONICAL = [
   '| Item | Total |\n| --- | --- |\n| \\*not em\\* and 5 * 3 | =2*3 |\n',
   // Edi's own constructs, as docs/format.md specifies them.
   '## Setup {#install}\n',
+  // Left out of every HTML copy (`isScriptUrl`), but the file keeps it.
+  '[run](javascript:alert(1))\n',
   'H~2~O and x^2^\n',
   'Key: !masked[AgABAg==] and !masked[AgABAg==]{label="say \\"hi\\""}\n',
   '```encrypted label="Credentials"\nAgABAg==\n```\n',

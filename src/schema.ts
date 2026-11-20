@@ -1,6 +1,7 @@
 import { Schema } from 'prosemirror-model'
 import type { SchemaSpec } from 'prosemirror-model'
 import { domTableToPipes, richTableDom } from './spreadsheet-util'
+import { isScriptUrl } from './linkSecurity'
 
 export function headingSlug(text: string): string | undefined {
   const id = text
@@ -382,11 +383,14 @@ const marks: SchemaSpec['marks'] = {
       },
     ],
     toDOM(mark) {
+      const href = mark.attrs.href as string
       const attrs: Record<string, string> = {
-        href: mark.attrs.href as string,
         // Native browser tooltip on hover: show the real destination.
-        title: mark.attrs.href as string,
+        title: href,
       }
+      // Every HTML copy of the document is built from this, Export and Copy
+      // included, and a browser follows a `javascript:` href on a click.
+      if (!isScriptUrl(href)) attrs['href'] = href
       return ['a', attrs, 0]
     },
   },

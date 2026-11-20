@@ -1,5 +1,24 @@
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i
 
+const SCRIPT_SCHEMES = new Set(['javascript', 'vbscript', 'data'])
+
+/**
+ * Whether a link destination would run script, or load a document, where an
+ * `<a href>` is followed: `javascript:`, `vbscript:` and `data:`.
+ *
+ * Read the way a browser's URL parser reads it, which is what decides: leading
+ * and trailing control characters and spaces are dropped, tabs and newlines are
+ * removed anywhere, and the scheme is case-insensitive. So `\tjava\nscript:x` is
+ * one. Every HTML link Edi writes (the editor, Copy, a table's Copy and Export
+ * HTML) leaves such a destination out of `href`; the markdown keeps it.
+ */
+export function isScriptUrl(href: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = href.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '')
+  const match = /^([a-z][a-z0-9+.-]*):/i.exec(cleaned)
+  return match !== null && SCRIPT_SCHEMES.has(match[1]!.toLowerCase())
+}
+
 function looksLikeUrl(s: string): boolean {
   return URL_SCHEME.test(s) || /^www\./i.test(s)
 }

@@ -78,14 +78,29 @@ never touches the editor or switches tabs.
 
 ## What a document can make the machine do
 
-A markdown file can come from anywhere, so two features that reach outside the
-page have explicit limits:
+A markdown file can come from anywhere, so the page and everything in it that
+reaches outside it have explicit limits:
+
+- **Script in the page.** The bridge trusts the page: `runCodeBlock` runs what
+  it is sent, and the page may read local files (`LocalContentCanAccessFileUrls`).
+  So script that a document smuggles into the DOM would have the machine.
+  `index.html` carries a Content-Security-Policy that allows only the app's own
+  bundle (`script-src 'self'`, no inline script, handlers or string evaluation)
+  and no plugins, frames, `<base>` or form posts. It is the backstop behind every
+  place the page builds HTML; `tests/window/test_window.py`
+  (`test_page_refuses_injected_script`) checks it in the real WebEngine. Test
+  probes go through `runJavaScript`, which the policy does not cover, never
+  through an `eval` in the page.
 
 - **Links.** `http`, `https` and `mailto` open directly. Any other scheme, and any
   local file that is not a document Edi opens itself, is handed to the OS only
   after a confirmation naming the target (`launchConfirmation` in
   `src/linkSecurity.ts`): the OS handler for a `.command`, an `.app` or a
-  custom scheme can run a program.
+  custom scheme can run a program. A `javascript:`, `vbscript:` or `data:`
+  destination never becomes an `href` (`isScriptUrl`): the link mark's `toDOM`
+  and a table cell's HTML leave it out, so an exported file or copied HTML
+  opened in a browser has nothing to run. The markdown keeps the destination
+  as written.
 - **Files** (`PathGrants` in `backend/bridge.py`). The bridge writes only files
   the user named outside the page: a native Open, Save, Export or Save Image
   dialog, the shell's Open Path prompt (`pickTypedOpenPath`: the page sends

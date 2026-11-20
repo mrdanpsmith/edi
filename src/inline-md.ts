@@ -15,7 +15,7 @@ import { highlight } from './remark/highlight'
 import { subscript } from './remark/sub'
 import { superscript } from './remark/sup'
 import { remarkPlugin as maskedFieldRemarkPlugin, maskedFieldToMarkdown } from './node/masked'
-import { isMisleadingLink } from './linkSecurity'
+import { isMisleadingLink, isScriptUrl } from './linkSecurity'
 
 export type CellMark = 'strong' | 'em' | 'del' | 'code' | 'highlight' | 'sub' | 'sup'
 
@@ -332,7 +332,9 @@ export function renderCellHtml(
     }
     const title = seg.hrefTitle ? ` title="${escapeCellHtml(seg.hrefTitle)}"` : ''
     const cls = markMisleading && isMisleadingLink(seg.href, text) ? ' class="ml-misleading"' : ''
-    out += `<a href="${escapeCellHtml(seg.href)}"${title}${cls}>`
+    // A table's HTML reaches Export and Copy too; see `isScriptUrl`.
+    const href = isScriptUrl(seg.href) ? '' : ` href="${escapeCellHtml(seg.href)}"`
+    out += `<a${href}${title}${cls}>`
     for (let k = i; k < j; k++) out += renderSegmentBody(segs[k]!, nextMasked)
     out += '</a>'
     i = j

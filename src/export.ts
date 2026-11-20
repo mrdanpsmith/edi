@@ -5,6 +5,7 @@ import { computeSpreadsheet } from './spreadsheet'
 import { BUILTIN_ENV, type FormulaEnv } from './formulas'
 import { escapeHtml } from './utils'
 import type { MermaidPngMap } from './mermaid-export'
+import { MERMAID_CDN_INTEGRITY, MERMAID_CDN_URL } from './mermaidCdn'
 
 const EXPORT_CSS = `
 :root {
@@ -404,9 +405,9 @@ export function serializeDocToHtml(
 export function buildExportHtml(title: string, bodyHtml: string): string {
   const mermaidScript = bodyHtml.includes('<div class="mermaid"')
     ? `
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script src="${MERMAID_CDN_URL}" integrity="${MERMAID_CDN_INTEGRITY}" crossorigin="anonymous"></script>
     <script>
-      mermaid.initialize({startOnLoad:false,theme:'default'})
+      mermaid.initialize({startOnLoad:false,theme:'default',securityLevel:'strict'})
       mermaid.run({ querySelector: '.mermaid' })
         .catch(() => {})
         .finally(() => {
