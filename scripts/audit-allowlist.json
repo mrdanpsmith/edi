@@ -1,8 +1,1 @@
-{
-  "GHSA-fc5q-39xc-vjpf": {
-    "package": "picomatch",
-    "reason": "ReDoS from an attacker-supplied glob pattern; no patched release exists. Dev-only (vite, vitest, typescript-eslint glob their own config's patterns); not in the shipped bundle.",
-    "added": "2026-11-17",
-    "reviewBy": "2027-02-15"
-  }
-}
+{}
