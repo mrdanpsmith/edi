@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { EditorView } from 'prosemirror-view'
+import { TextSelection } from 'prosemirror-state'
 import { undoNoScroll } from 'prosemirror-history'
 import { createBlockEditor } from './editor'
 
@@ -47,6 +48,23 @@ describe('emoji autocomplete in body text', () => {
     type(view, 'gr')
     const top = rows()[0]!
     expect(top.querySelector('.emoji-row-name')!.textContent).toContain('grinning')
+    destroy()
+  })
+
+  // A `:` already in the text is a token only to the caret's eye: the card is opened by
+  // typing, so clicking to the end of `badged "HTML":` does not offer emoji.
+  it('does not open when the caret is only put after a `:` already there', () => {
+    const { view, destroy } = editorOn('Badged "HTML":')
+    const end = view.state.doc.firstChild!.nodeSize - 1
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, end)))
+    expect(suggest()).toBeNull()
+    // Typing there is the reader asking, so it opens then.
+    type(view, 'sm')
+    expect(suggest()).not.toBeNull()
+    // And moving back inside the token being typed keeps it open.
+    const at = view.state.selection.from - 1
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, at)))
+    expect(suggest()).not.toBeNull()
     destroy()
   })
 
