@@ -128,6 +128,10 @@ const nodes: SchemaSpec['nodes'] = {
     content: 'text*',
     marks: '',
     code: true,
+    // A gap cursor may sit beside a code block, as beside a table or a diagram, so a
+    // press below one that ends the document has a caret to give that inserts nothing
+    // (`attachScrollerCaretFallback` in `editor.ts`). prosemirror-gapcursor reads it.
+    createGapCursor: true,
     // `meta` is the rest of the fence's info string (` ```js title="a.js" `).
     //
     // `raw` marks markdown the editor has no model for (an HTML block, front

@@ -25,6 +25,7 @@
 import { NodeSelection, Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import type { EditorState, Selection } from 'prosemirror-state'
 import { keymap } from 'prosemirror-keymap'
+import { GapCursor } from 'prosemirror-gapcursor'
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import type { EditorView } from 'prosemirror-view'
 import type { Node as ProseNode, Slice } from 'prosemirror-model'
@@ -36,6 +37,8 @@ type Dir = 1 | -1
 type Rung =
   | { kind: 'text'; anchor: number; head: number }
   | { kind: 'node'; pos: number }
+  /** A gap cursor between blocks: where a press below a trailing block leaves the caret. */
+  | { kind: 'gap'; pos: number }
 
 export interface ExpandState {
   /** Every selection the gesture has visited; `rungs[0]` is where it began. */
@@ -127,6 +130,7 @@ function isSelectionTextblock(state: EditorState, node: ProseNode, pos: number):
 
 function rungFromSelection(sel: Selection): Rung {
   if (sel instanceof NodeSelection) return { kind: 'node', pos: sel.from }
+  if (sel instanceof GapCursor) return { kind: 'gap', pos: sel.head }
   return { kind: 'text', anchor: sel.anchor, head: sel.head }
 }
 
@@ -136,6 +140,7 @@ function selectionForRung(doc: ProseNode, rung: Rung): Selection {
     const $pos = doc.resolve(Math.min(rung.pos, doc.content.size))
     return TextSelection.near($pos)
   }
+  if (rung.kind === 'gap') return new GapCursor(doc.resolve(Math.min(rung.pos, doc.content.size)))
   return TextSelection.create(doc, rung.anchor, rung.head)
 }
 
@@ -222,6 +227,13 @@ export function nextRung(state: EditorState, sel: Selection, dir: Dir): Rung | n
     if (idx < 0) idx = units.findIndex((u) => sel.from >= u.pos && sel.from < u.pos + u.size)
     if (idx < 0) return null
     const unit = units[idx + dir]
+    return unit ? unitRung(unit) : null
+  }
+
+  // From a gap cursor (a press below a trailing code block or table leaves one),
+  // the first step selects the block beside it whole.
+  if (sel instanceof GapCursor) {
+    const unit = adjacentUnit(state, null, sel.head, dir)
     return unit ? unitRung(unit) : null
   }
 
