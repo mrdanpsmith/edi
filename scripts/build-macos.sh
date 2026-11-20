@@ -31,8 +31,8 @@ cd "$ROOT"
 
 VERSION="${1:-$(./scripts/version.sh current)}"
 VERSION="${VERSION#v}"
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "error: invalid version '$VERSION' (expected x.y.z)" >&2
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]; then
+  echo "error: invalid version '$VERSION' (expected x.y.z or x.y.z-rc.N)" >&2
   exit 1
 fi
 

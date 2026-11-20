@@ -20,7 +20,7 @@ user-facing guide is the repository [README](../README.md); the in-app
 | [distribution.md](distribution.md) | Platform builds, PyInstaller constraints and Linux packaging. |
 | [macos-installer.md](macos-installer.md) | The curl installer, file associations and macOS open-document events. |
 | [ci.md](ci.md) | GitHub Actions pipelines, coverage and the release DAG. |
-| [releasing.md](releasing.md) | Versioning, tags, the changelog and what a 1.x upgrade keeps. |
+| [releasing.md](releasing.md) | Versioning, tags, release candidates, the changelog and what a 1.x upgrade keeps. |
 
 ## Working with an agent
 

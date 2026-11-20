@@ -44,17 +44,27 @@ LAST_CHECK_KEY = "updates/lastCheck"
 CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 TIMEOUT_SECONDS = 10
 
-_VERSION = re.compile(r"^v?(\d{1,4})\.(\d{1,4})\.(\d{1,6})$")
+_VERSION = re.compile(r"^v?(\d{1,4})\.(\d{1,4})\.(\d{1,6})(?:-rc\.([1-9]\d{0,3}))?$")
 
 
-def parse_version(text: str) -> tuple[int, int, int] | None:
-    """``1.2.3`` or ``v1.2.3`` as numbers; ``None`` for anything else,
-    pre-releases included, since GitHub's "latest" never names one."""
+def parse_version(text: str) -> tuple[int, int, int, int, int] | None:
+    """A release (``1.2.3``) or a release candidate (``1.2.3-rc.1``), with or
+    without a leading ``v``, as a tuple that sorts the way releases do: every
+    candidate before its release, and ``rc.10`` after ``rc.2``. ``None`` for
+    anything else.
+
+    GitHub's latest release is never a candidate, so only the running version
+    is ever one: someone on ``1.2.3-rc.2`` is told when ``1.2.3`` is out, and
+    nobody is told about a candidate.
+    """
     match = _VERSION.match(text.strip())
     if match is None:
         return None
-    major, minor, patch = (int(part) for part in match.groups())
-    return major, minor, patch
+    major, minor, patch = (int(part) for part in match.groups()[:3])
+    candidate = match.group(4)
+    if candidate is None:
+        return major, minor, patch, 1, 0
+    return major, minor, patch, 0, int(candidate)
 
 
 def is_newer(latest: str, current: str = __version__) -> bool:

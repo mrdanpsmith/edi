@@ -92,7 +92,9 @@ if [[ -z "$VERSION" ]]; then
     | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p')"
   [[ -n "$VERSION" ]] || die "could not determine latest version (set EDI_VERSION=x.y.z to pin one)"
 fi
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid version '$VERSION'"
+# A release, or a release candidate pinned by EDI_VERSION (the latest release is
+# never a candidate).
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] || die "invalid version '$VERSION'"
 ASSET="${APP_NAME}-${VERSION}-arm64.zip"
 BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
 

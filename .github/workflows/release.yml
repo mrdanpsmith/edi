@@ -277,7 +277,9 @@ jobs:
           $setup = Join-Path $PWD "dist-app/Edi-$v-win64-setup.exe"
           # build-windows.ps1 already removed the selftest console twin from
           # the bundle, so the installer ships exactly what the zip does.
-          & $mk "-DVERSION=$v" "-DBUNDLE=$bundle" "-DICO=$ico" "-DOUTEXE=$setup" packaging/edi.nsi
+          # The version resource is numbers only: 1.0.0-rc.1 gives it 1.0.0.
+          $numbers = $v -replace '-.*$', ''
+          & $mk "-DVERSION=$v" "-DVERSION_NUMBERS=$numbers" "-DBUNDLE=$bundle" "-DICO=$ico" "-DOUTEXE=$setup" packaging/edi.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed: $LASTEXITCODE" }
           Get-ChildItem dist-app | Select-Object Name, Length
       - name: Upload Windows artifacts
@@ -441,8 +443,17 @@ jobs:
           printf '## Changes in %s\n\n' "$GITHUB_REF_NAME" > /tmp/CHANGELOG.md
           # Commits marked `[skip changelog]` / `[no changelog]` are dropped.
           ./scripts/changelog.sh "$RANGE" >> /tmp/CHANGELOG.md
-          printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
-          printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: unzip `Edi-%s-win64.zip` and run `Edi\\Edi.exe` instead of the old file); settings and documents are untouched. Linux: upgrade via your package manager. macOS: run the curl installer (`curl -fsSL https://github.com/%s/releases/latest/download/install.sh | bash`) or replace the app bundle. Full instructions in README → Upgrading.\n' "${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}" "$GITHUB_REPOSITORY" >> /tmp/CHANGELOG.md
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$VERSION" == *-rc.* ]]; then
+            # A candidate is never the latest release, so the usual installer
+            # URL would install the last stable one: pin this candidate, with
+            # the installer from this release (an older one may not read it).
+            printf '\n\n## Release candidate\n\n' >> /tmp/CHANGELOG.md
+            printf 'This is a release candidate for testing. The update check in Edi and the curl installer never offer it; install it by hand. Windows: run `Edi-%s-win64-setup.exe`. Linux: install the `.deb`, `.rpm` or AppImage. macOS: `curl -fsSL https://github.com/%s/releases/download/%s/install.sh | EDI_VERSION=%s bash`. The final release installs over it.\n' "$VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$VERSION" >> /tmp/CHANGELOG.md
+          else
+            printf '\n\n## Upgrading\n\n' >> /tmp/CHANGELOG.md
+            printf 'Windows: download and run `Edi-%s-win64-setup.exe` over the existing install (portable users: unzip `Edi-%s-win64.zip` and run `Edi\\Edi.exe` instead of the old file); settings and documents are untouched. Linux: upgrade via your package manager. macOS: run the curl installer (`curl -fsSL https://github.com/%s/releases/latest/download/install.sh | bash`) or replace the app bundle. Full instructions in README → Upgrading.\n' "$VERSION" "$VERSION" "$GITHUB_REPOSITORY" >> /tmp/CHANGELOG.md
+          fi
       - name: Create GitHub release
         run: |
           mapfile -t FILES < <(find artifacts -type f | sort)
@@ -453,7 +464,13 @@ jobs:
           fi
           echo "Uploading ${#FILES[@]} release files:"
           printf '  %s\n' "${FILES[@]}"
+          # A release candidate is a prerelease and never "latest", which is
+          # what keeps it out of the update check and the curl installer: both
+          # read GitHub's latest release, which skips prereleases.
+          CANDIDATE=()
+          if [[ "$GITHUB_REF_NAME" == *-rc.* ]]; then CANDIDATE=(--prerelease --latest=false); fi
           gh release create "$GITHUB_REF_NAME" \
             --title "Edi $GITHUB_REF_NAME" \
             --notes-file /tmp/CHANGELOG.md \
+            "${CANDIDATE[@]}" \
             "${FILES[@]}"

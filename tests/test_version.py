@@ -72,6 +72,49 @@ def test_bump_stages_and_commits_the_version_files(repo: Path):
     assert "Committed: Bump version" in result.stdout
 
 
+def _init_version(repo: Path) -> str:
+    return (repo / "backend" / "__init__.py").read_text(encoding="utf-8")
+
+
+def test_a_release_candidate_is_set_bumped_and_released(repo: Path):
+    assert _run(repo, "set", "9.0.0-rc.1", "--no-commit").returncode == 0
+    assert _version(repo) == "9.0.0-rc.1"
+    assert '__version__ = "9.0.0-rc.1"' in _init_version(repo)
+    assert _run(repo, "check").returncode == 0
+
+    result = _run(repo, "bump", "rc", "--no-commit")
+    assert result.returncode == 0, result.stderr
+    assert _version(repo) == "9.0.0-rc.2"
+    assert '__version__ = "9.0.0-rc.2"' in _init_version(repo)
+
+    assert _run(repo, "set", "9.0.0", "--no-commit").returncode == 0
+    assert _version(repo) == "9.0.0"
+
+
+def test_leaving_a_candidate_is_always_an_explicit_set(repo: Path):
+    assert _run(repo, "set", "9.0.0-rc.1", "--no-commit").returncode == 0
+    for part in ("patch", "minor", "major"):
+        result = _run(repo, "bump", part, "--no-commit")
+        assert result.returncode != 0
+        assert "use 'set 9.0.0' to release it" in result.stderr
+    assert _version(repo) == "9.0.0-rc.1"
+
+
+def test_bump_rc_needs_a_candidate_to_bump(repo: Path):
+    old = _version(repo)
+    result = _run(repo, "bump", "rc", "--no-commit")
+    assert result.returncode != 0
+    assert "start one with 'set x.y.z-rc.1'" in result.stderr
+    assert _version(repo) == old
+
+
+@pytest.mark.parametrize("version", ["9.0.0-rc.0", "9.0.0-rc1", "9.0.0-beta.1", "9.0.0-rc.1.2", "9.0"])
+def test_set_refuses_any_other_shape(repo: Path, version: str):
+    result = _run(repo, "set", version, "--no-commit")
+    assert result.returncode != 0
+    assert "expected x.y.z or x.y.z-rc.N" in result.stderr
+
+
 def test_no_commit_leaves_the_bump_uncommitted_and_prints_the_commands(repo: Path):
     old = _version(repo)
     new = _next_patch(old)

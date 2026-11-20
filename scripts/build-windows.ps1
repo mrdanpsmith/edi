@@ -48,8 +48,8 @@ function Test-Command([string]$Name) {
 }
 
 $Version = $Version.TrimStart('v')
-if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-    throw "invalid version '$Version' (expected x.y.z)"
+if ($Version -notmatch '^\d+\.\d+\.\d+(-rc\.[1-9]\d*)?$') {
+    throw "invalid version '$Version' (expected x.y.z or x.y.z-rc.N)"
 }
 
 Write-Host "==> Building Edi $Version for Windows"

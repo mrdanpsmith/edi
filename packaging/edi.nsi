@@ -21,6 +21,12 @@
 !ifndef OUTEXE
   !define OUTEXE "dist-app\Edi-${VERSION}-win64-setup.exe"
 !endif
+; The version resource takes numbers only (x.y.z.w), so a release candidate
+; (VERSION=1.0.0-rc.1) passes its release's numbers too: /DVERSION_NUMBERS=1.0.0.
+; A release's VERSION already is its numbers.
+!ifndef VERSION_NUMBERS
+  !define VERSION_NUMBERS "${VERSION}"
+!endif
 
 Name "Edi ${VERSION}"
 OutFile "${OUTEXE}"
@@ -28,8 +34,8 @@ InstallDir "$PROGRAMFILES64\Edi"
 RequestExecutionLevel admin
 Unicode true
 
-VIProductVersion "${VERSION}.0"
-VIFileVersion "${VERSION}.0"
+VIProductVersion "${VERSION_NUMBERS}.0"
+VIFileVersion "${VERSION_NUMBERS}.0"
 VIAddVersionKey "ProductName" "Edi"
 VIAddVersionKey "FileDescription" "Edi Installer"
 VIAddVersionKey "FileVersion" "${VERSION}"

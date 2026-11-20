@@ -5,10 +5,12 @@
 # Usage: ./scripts/version.sh <command> [args]
 #
 # Commands:
-#   current            Print the current version (e.g. 0.1.0)
-#   set <x.y.z>        Set the version in package.json, package-lock.json,
-#                      and backend/__init__.py
-#   bump <part>        Bump the patch, minor, or major part of the version
+#   current            Print the current version (e.g. 0.1.0, 1.0.0-rc.1)
+#   set <version>      Set the version (x.y.z, or x.y.z-rc.N for a release
+#                      candidate) in package.json, package-lock.json, and
+#                      backend/__init__.py
+#   bump <part>        Bump the patch, minor, or major part of the version, or
+#                      rc for the next candidate (1.0.0-rc.1 -> 1.0.0-rc.2)
 #   check              Verify all declarations agree on a valid version
 #   tag                Create an annotated git tag v<current-version>
 #
@@ -22,6 +24,8 @@
 #   ./scripts/version.sh bump patch
 #   ./scripts/version.sh bump patch --no-commit
 #   ./scripts/version.sh set 1.2.0
+#   ./scripts/version.sh set 1.3.0-rc.1
+#   ./scripts/version.sh bump rc
 #   ./scripts/version.sh check
 #   ./scripts/version.sh tag
 #   ./scripts/version.sh tag --move
@@ -48,10 +52,12 @@ usage() {
 Usage: ./scripts/version.sh <command> [args]
 
 Commands:
-  current            Print the current version (e.g. 0.1.0)
-  set <x.y.z>        Set the version in package.json, package-lock.json,
-                     and backend/__init__.py
-  bump <part>        Bump the patch, minor, or major part of the version
+  current            Print the current version (e.g. 0.1.0, 1.0.0-rc.1)
+  set <version>      Set the version (x.y.z, or x.y.z-rc.N for a release
+                     candidate) in package.json, package-lock.json, and
+                     backend/__init__.py
+  bump <part>        Bump the patch, minor, or major part of the version, or
+                     rc for the next candidate (1.0.0-rc.1 -> 1.0.0-rc.2)
   check              Verify all declarations agree on a valid version
   tag                Create an annotated git tag v<current-version>
 
@@ -70,6 +76,8 @@ Examples:
   ./scripts/version.sh bump patch
   ./scripts/version.sh bump patch --no-commit
   ./scripts/version.sh set 1.2.0
+  ./scripts/version.sh set 1.3.0-rc.1
+  ./scripts/version.sh bump rc
   ./scripts/version.sh check
   ./scripts/version.sh tag
   ./scripts/version.sh tag --move
@@ -88,8 +96,11 @@ get_version() {
   node -p "require('./package.json').version"
 }
 
+# A release is x.y.z; a release candidate is x.y.z-rc.N (N from 1). Nothing else:
+# every packager maps exactly these two shapes (docs/releasing.md, "Release
+# candidates").
 valid_semver() {
-  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]
 }
 
 apply_version() {
@@ -155,7 +166,7 @@ cmd_current() {
 cmd_set() {
   local version="$1"
   if ! valid_semver "$version"; then
-    echo "error: invalid version '$version' (expected x.y.z)" >&2
+    echo "error: invalid version '$version' (expected x.y.z or x.y.z-rc.N)" >&2
     exit 1
   fi
   local old
@@ -173,13 +184,29 @@ cmd_set() {
 cmd_bump() {
   local part="$1"
   case "$part" in
-    patch | minor | major) ;;
-    *) echo "error: invalid part '$part' (expected patch, minor, or major)" >&2; exit 1 ;;
+    patch | minor | major | rc) ;;
+    *) echo "error: invalid part '$part' (expected patch, minor, major, or rc)" >&2; exit 1 ;;
   esac
   local old new
   old="$(get_version)"
+  if [[ "$old" == *-rc.* ]] && [ "$part" != rc ]; then
+    # npm would turn 1.0.0-rc.2 into 1.0.0 for `patch`, but 1.1.0 for `minor`
+    # only sometimes: leaving a candidate is always an explicit `set`.
+    echo "error: $old is a release candidate; use 'set ${old%%-*}' to release it, or 'bump rc' for the next candidate" >&2
+    exit 1
+  fi
+  if [ "$part" = rc ] && [[ "$old" != *-rc.* ]]; then
+    # npm's prerelease bump would make 1.0.0 into 1.0.1-rc.0: say which release
+    # the candidate is for instead.
+    echo "error: $old is not a release candidate; start one with 'set x.y.z-rc.1'" >&2
+    exit 1
+  fi
   require_git_for_commit
-  npm version "$part" --no-git-tag-version >/dev/null
+  if [ "$part" = rc ]; then
+    npm version prerelease --preid=rc --no-git-tag-version >/dev/null
+  else
+    npm version "$part" --no-git-tag-version >/dev/null
+  fi
   new="$(get_version)"
   apply_version "$new"
   finish_bump "$old" "$new"

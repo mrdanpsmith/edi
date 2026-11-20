@@ -15,6 +15,16 @@ curl -fsSL https://github.com/mrdanpsmith/edi/releases/latest/download/install.s
 
 Add `EDI_FORCE=1` to reinstall the version already installed.
 
+A release candidate is never the latest release, so it is only installed when
+pinned, and with the installer from its own release, since an older one
+refuses the `-rc.N` suffix ([releasing.md](releasing.md), "Release
+candidates"):
+
+```sh
+curl -fsSL https://github.com/mrdanpsmith/edi/releases/download/v1.3.0-rc.1/install.sh \
+  | EDI_VERSION=1.3.0-rc.1 bash
+```
+
 The installer downloads the arm64 zip and its `.sha256` over HTTPS, verifies
 both and the code signature, quits a running Edi, swaps the bundle with
 rollback, clears any quarantine xattr, and re-registers the bundle with Launch

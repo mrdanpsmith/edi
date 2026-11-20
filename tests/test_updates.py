@@ -36,7 +36,17 @@ def settings(tmp_path):
 
 @pytest.mark.parametrize(
     ("text", "expected"),
-    [("1.2.3", (1, 2, 3)), ("v10.0.1", (10, 0, 1)), (" 1.0.0 ", (1, 0, 0)), ("1.2", None), ("1.2.3-rc1", None), ("v", None)],
+    [
+        ("1.2.3", (1, 2, 3, 1, 0)),
+        ("v10.0.1", (10, 0, 1, 1, 0)),
+        (" 1.0.0 ", (1, 0, 0, 1, 0)),
+        ("1.0.0-rc.2", (1, 0, 0, 0, 2)),
+        ("1.2", None),
+        ("1.2.3-rc1", None),
+        ("1.2.3-rc.0", None),
+        ("1.2.3-beta.1", None),
+        ("v", None),
+    ],
 )
 def test_parse_version(text, expected):
     assert parse_version(text) == expected
@@ -47,6 +57,14 @@ def test_is_newer_compares_numerically():
     assert not is_newer("1.2.0", "1.2.0")
     assert not is_newer("1.1.9", "1.2.0")
     assert not is_newer("garbage", "1.2.0")
+
+
+def test_a_release_is_newer_than_its_candidates():
+    assert is_newer("1.0.0", "1.0.0-rc.3")
+    assert is_newer("1.0.1", "1.0.0-rc.1")
+    assert not is_newer("0.32.0", "1.0.0-rc.1")
+    assert is_newer("1.0.0-rc.10", "1.0.0-rc.2")
+    assert not is_newer("1.0.0-rc.1", "1.0.0")
 
 
 def test_release_page_is_built_from_the_version_alone():

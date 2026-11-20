@@ -13,7 +13,9 @@ The version is tracked in three places:
 ```sh
 ./scripts/version.sh current      # print the current version
 ./scripts/version.sh set 0.2.0    # set an explicit version
+./scripts/version.sh set 1.3.0-rc.1  # start a release candidate
 ./scripts/version.sh bump patch   # or minor / major
+./scripts/version.sh bump rc      # the next candidate: 1.3.0-rc.1 -> 1.3.0-rc.2
 ./scripts/version.sh check        # verify all declarations agree
 ./scripts/version.sh tag          # create annotated tag v<current-version>
 ./scripts/version.sh tag --move   # move that tag to HEAD, if not pushed yet
@@ -57,6 +59,45 @@ The `release` job stages `install.sh` from the checkout with
 release is published.
 
 See [ci.md](ci.md) for the job DAG and artifact handling.
+
+## Release candidates
+
+A release candidate is `X.Y.Z-rc.N`, N from 1, and nothing else:
+`version.sh`, the platform build scripts and `install.sh` all refuse any other
+suffix. It goes through the same steps as a release:
+
+1. `./scripts/version.sh set 1.3.0-rc.1`, then `tag` and push the tag.
+2. For each fix, `./scripts/version.sh bump rc` (to `rc.2`, …) and tag again.
+3. `./scripts/version.sh set 1.3.0` for the release itself. `bump patch`,
+   `minor` and `major` refuse a candidate, because npm would read them
+   differently for each; `bump rc` refuses a release, because npm's prerelease
+   bump would make 1.3.0 into 1.3.1-rc.0.
+
+**Nobody on a release is offered a candidate.** The `release` job publishes an
+`-rc.` tag with `--prerelease --latest=false`, and both Edi's update check
+(`backend/updates.py`) and the curl installer only ever read GitHub's latest
+release, which is never a prerelease. A tester installs a candidate on purpose:
+the release notes say how, with the installer from that release pinned to it
+(`curl -fsSL …/releases/download/v1.3.0-rc.1/install.sh | EDI_VERSION=1.3.0-rc.1 bash`).
+The latest release's installer may predate candidates and refuse the version.
+
+**A tester is told when the release is out.** The update check sorts every
+candidate before its release, so `1.3.0-rc.2` is told about `1.3.0`. It is not
+told about `rc.3`: the latest release never names a candidate.
+
+**Where the version has to be numbers only**, a candidate gives its release's:
+
+| Where | A candidate's version |
+| --- | --- |
+| File names of every artifact | `1.3.0-rc.1` |
+| `.deb` and `.rpm` metadata (`package-linux.sh`) | `1.3.0~rc.1`: dpkg and rpm sort `~` first, so the release upgrades it, and rpm refuses `-` in Version |
+| Windows version resource (`edi.spec`, `VIProductVersion` in `edi.nsi`) | `1.3.0`; the installer's display version and `DisplayVersion` say `1.3.0-rc.1` |
+| macOS `CFBundleShortVersionString` / `CFBundleVersion` (`edi.spec`) | `1.3.0` |
+| Edi's About box and the update check | `1.3.0-rc.1` |
+
+The release notes leave candidates out of their range (see Changelog), so a
+release's notes run from the previous release and include everything its
+candidates shipped.
 
 ## Changelog
 

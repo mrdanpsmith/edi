@@ -12,7 +12,8 @@
 # Usage: ./scripts/package-linux.sh [path/to/bundle] [version]
 #
 #   path    the onedir bundle (holds edi + _internal/)  (default: ./dist-app/edi)
-#   version x.y.z used in names and metadata    (default: scripts/version.sh current)
+#   version x.y.z or x.y.z-rc.N, used in names and metadata
+#           (default: scripts/version.sh current)
 #
 # Output (into ./dist-app):
 #   edi_<ver>_amd64.deb
@@ -64,10 +65,15 @@ if [ $# -ge 2 ]; then
 else
   VER="$(./scripts/version.sh current)"
 fi
-if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "error: invalid version '$VER' (expected x.y.z)" >&2
+if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]; then
+  echo "error: invalid version '$VER' (expected x.y.z or x.y.z-rc.N)" >&2
   exit 1
 fi
+# The version inside the .deb and the .rpm. A candidate is x.y.z~rc.N there:
+# dpkg and rpm sort `~` before anything, so 1.0.0~rc.1 is older than 1.0.0 and
+# the final release upgrades it. RPM does not allow `-` in Version at all. File
+# names keep $VER, the release's own spelling.
+PKG_VER="${VER/-rc./~rc.}"
 
 DEB_ARCH="amd64"
 RPM_ARCH="x86_64"
@@ -168,7 +174,7 @@ print_step "Building .deb (xz compression)"
 DEB_DIR="$STAGE/deb"
 cp -a "$TREE" "$DEB_DIR"
 mkdir -p "$DEB_DIR/DEBIAN"
-sed -e "s|@VERSION@|$VER|" \
+sed -e "s|@VERSION@|$PKG_VER|" \
   -e "s|@DEPENDS@|$(join_comma "${DEB_DEPENDS[@]}")|" \
   "$ROOT/packaging/control.in" > "$DEB_DIR/DEBIAN/control"
 DEB_NAME="edi_${VER}_${DEB_ARCH}.deb"
@@ -184,7 +190,7 @@ fi
 RPM_DIR="$STAGE/rpm"
 mkdir -p "$RPM_DIR/"{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
 cp -a "$TREE/usr" "$RPM_DIR/SOURCES/usr"
-sed -e "s|@VERSION@|$VER|" \
+sed -e "s|@VERSION@|$PKG_VER|" \
   -e "s|@REQUIRES@|$(join_space "${RPM_REQUIRES[@]}")|" \
   "$ROOT/packaging/edi.spec.in" > "$RPM_DIR/SPECS/edi.spec"
 rpmbuild -bb \

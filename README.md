@@ -230,7 +230,10 @@ shortcut would shadow exactly that.
 
 ## Installing a release
 
-Each `vX.Y.Z` tag publishes the artifacts below.
+Each `vX.Y.Z` tag publishes the artifacts below. A `vX.Y.Z-rc.N` tag publishes
+the same set as a GitHub prerelease, a release candidate for testing: Edi's
+update check and the curl installer never offer one, and its release notes say
+how to install it.
 
 **Linux** — the `package-linux` job wraps the onedir bundle (it never rebuilds it, so
 the portability guarantee is inherited):
