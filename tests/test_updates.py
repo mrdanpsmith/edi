@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import io
 import json
+import ssl
 import threading
 import time
+
+import truststore
 
 from PySide6.QtCore import QObject, QSettings
 from PySide6.QtWidgets import QApplication
@@ -63,22 +66,27 @@ class _Response(io.BytesIO):
 def test_fetch_reads_only_the_tag_and_names_no_one():
     seen = {}
 
-    def opener(request, timeout):
+    def opener(request, timeout, context):
         seen["url"] = request.full_url
         seen["agent"] = request.get_header("User-agent")
         seen["timeout"] = timeout
+        seen["context"] = context
         return _Response(json.dumps({"tag_name": "v1.4.2", "html_url": "https://evil.example"}).encode())
 
     assert fetch_latest_version(opener) == "1.4.2"
     assert seen["url"] == LATEST_RELEASE_API
     assert seen["agent"] == f"Edi/{__version__}"
     assert seen["timeout"] > 0
+    # Verified against the OS trust store, with hostname checks on.
+    assert isinstance(seen["context"], truststore.SSLContext)
+    assert seen["context"].verify_mode == ssl.CERT_REQUIRED
+    assert seen["context"].check_hostname
 
 
 @pytest.mark.parametrize("body", [{"tag_name": "nightly"}, {}, ["v1.0.0"]])
 def test_fetch_refuses_an_answer_that_names_no_version(body):
     with pytest.raises(ValueError):
-        fetch_latest_version(lambda _request, timeout: _Response(json.dumps(body).encode()))
+        fetch_latest_version(lambda _request, timeout, context: _Response(json.dumps(body).encode()))
 
 
 def test_automatic_checks_are_off_until_turned_on(settings):

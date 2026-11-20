@@ -463,3 +463,14 @@ Edi needs no git on the host. It reaches the builds through the same
 a build that misses them is slower but still correct. `backend/bridge.py`
 imports the module at startup, so a build missing dulwich entirely fails the
 frozen smoke test rather than shipping.
+
+`backend/updates.py` verifies the update check's HTTPS with **`truststore`**,
+which hands certificate checks to the OS: the Security framework on macOS, the
+certificate store on Windows, the system CA bundle on Linux. A frozen build's
+own OpenSSL looks for CA files at the paths the build machine had
+(`/opt/homebrew/etc/openssl@3/cert.pem` from a Homebrew Python), so without it
+the check fails with `CERTIFICATE_VERIFY_FAILED` on any machine that lacks them.
+Nothing in Edi carries a CA list that would need updating; the OS keeps the
+store current. It reaches the builds through `requirements.txt` too, and
+`backend/window.py` imports it at startup, so a build missing it fails the
+smoke test.

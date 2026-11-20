@@ -107,7 +107,9 @@ reaches outside it have explicit limits:
   checks this against a local server. The one request Edi makes on its own
   account is the update check (`backend/updates.py`): from Python, not the
   page, only when the reader asks or has turned it on, and reading nothing from
-  the answer but the release's version.
+  the answer but the release's version. Its TLS is verified against the OS
+  trust store (`truststore`), never a CA list shipped with Edi or the CA paths
+  the build machine's OpenSSL was compiled with.
 
 - **Links.** `http`, `https` and `mailto` open directly. Any other scheme, and any
   local file that is not a document Edi opens itself, is handed to the OS only

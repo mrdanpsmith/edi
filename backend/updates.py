@@ -11,18 +11,27 @@ page's: the page loads nothing remote unasked (``backend/remote.py``), and it
 should not be the part of Edi that talks to the network. Only the release's tag
 is read from the answer. The link offered to the reader is built here from that
 version, not taken from the response.
+
+**The server is verified against the operating system's trust store**
+(``truststore``: the Security framework on macOS, the certificate store on
+Windows, the system CA bundle on Linux). A frozen build's own OpenSSL looks for
+CA files where the build machine kept them (``/opt/homebrew/…`` from a Homebrew
+Python), which a reader's machine need not have; a bundled CA list would only be
+as current as the last Edi release. The OS store is kept current by the OS.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import ssl
 import threading
 import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import truststore
 from PySide6.QtCore import QObject, QSettings, Signal
 
 from . import __version__
@@ -69,8 +78,9 @@ def fetch_latest_version(opener: Callable = urllib.request.urlopen) -> str:
         LATEST_RELEASE_API,
         headers={"Accept": "application/vnd.github+json", "User-Agent": f"Edi/{__version__}"},
     )
+    context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     # A fixed https URL, not one from a document or the page.
-    with opener(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310
+    with opener(request, timeout=TIMEOUT_SECONDS, context=context) as response:  # nosec B310
         data = json.loads(response.read().decode("utf-8"))
     tag = data.get("tag_name") if isinstance(data, dict) else None
     if not isinstance(tag, str) or parse_version(tag) is None:

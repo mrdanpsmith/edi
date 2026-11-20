@@ -2,3 +2,6 @@
 PySide6==6.11.1
 defusedxml==0.7.1
 dulwich==1.2.21
+# HTTPS verified against the OS trust store, not a bundled CA list
+# (backend/updates.py).
+truststore==0.10.5
