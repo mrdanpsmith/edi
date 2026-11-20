@@ -81,9 +81,13 @@ the release notes say how, with the installer from that release pinned to it
 (`curl -fsSL …/releases/download/v1.3.0-rc.1/install.sh | EDI_VERSION=1.3.0-rc.1 bash`).
 The latest release's installer may predate candidates and refuse the version.
 
-**A tester is told when the release is out.** The update check sorts every
-candidate before its release, so `1.3.0-rc.2` is told about `1.3.0`. It is not
-told about `rc.3`: the latest release never names a candidate.
+**A tester is told about the next candidate and the release.** Running a
+candidate, the update check reads GitHub's recent releases instead of the
+latest one, and offers the newest release or candidate past the running one
+(drafts and other tags are passed over). The update check sorts every
+candidate before its release, so `1.3.0-rc.2` is told about `rc.3`, then about
+`1.3.0`; once on `1.3.0` it asks only for the latest release again. On macOS
+the upgrade line it shows for a candidate is the pinned one above.
 
 **Where the version has to be numbers only**, a candidate gives its release's:
 

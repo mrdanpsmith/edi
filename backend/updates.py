@@ -38,7 +38,8 @@ from . import __version__
 
 REPOSITORY = "mrdanpsmith/edi"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
-MACOS_INSTALL_COMMAND = f"curl -fsSL https://github.com/{REPOSITORY}/releases/latest/download/install.sh | bash"
+# The newest releases, candidates included: asked only by a candidate.
+RELEASES_API = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=30"
 AUTOMATIC_KEY = "updates/automatic"
 LAST_CHECK_KEY = "updates/lastCheck"
 CHECK_INTERVAL_SECONDS = 24 * 60 * 60
@@ -52,10 +53,6 @@ def parse_version(text: str) -> tuple[int, int, int, int, int] | None:
     without a leading ``v``, as a tuple that sorts the way releases do: every
     candidate before its release, and ``rc.10`` after ``rc.2``. ``None`` for
     anything else.
-
-    GitHub's latest release is never a candidate, so only the running version
-    is ever one: someone on ``1.2.3-rc.2`` is told when ``1.2.3`` is out, and
-    nobody is told about a candidate.
     """
     match = _VERSION.match(text.strip())
     if match is None:
@@ -65,6 +62,11 @@ def parse_version(text: str) -> tuple[int, int, int, int, int] | None:
     if candidate is None:
         return major, minor, patch, 1, 0
     return major, minor, patch, 0, int(candidate)
+
+
+def is_candidate(version: str) -> bool:
+    parts = parse_version(version)
+    return parts is not None and parts[3] == 0
 
 
 def is_newer(latest: str, current: str = __version__) -> bool:
@@ -79,33 +81,70 @@ def release_page(version: str) -> str:
     return f"https://github.com/{REPOSITORY}/releases/tag/v{version.lstrip('v')}"
 
 
-def fetch_latest_version(opener: Callable = urllib.request.urlopen) -> str:
-    """The newest published release's version, e.g. ``"1.2.0"``.
+def macos_install_command(version: str) -> str:
+    """The curl installer line that upgrades a Mac to ``version``. A candidate
+    is never the latest release, so it is pinned, with its own release's
+    installer (``docs/releasing.md``, "Release candidates")."""
+    if is_candidate(version):
+        tag = f"v{version.lstrip('v')}"
+        return (
+            f"curl -fsSL https://github.com/{REPOSITORY}/releases/download/{tag}/install.sh"
+            f" | EDI_VERSION={version.lstrip('v')} bash"
+        )
+    return f"curl -fsSL https://github.com/{REPOSITORY}/releases/latest/download/install.sh | bash"
 
-    Sends a generic client name and nothing about the reader.
-    """
+
+def _get_json(url: str, opener: Callable) -> object:
     request = urllib.request.Request(
-        LATEST_RELEASE_API,
+        url,
         headers={"Accept": "application/vnd.github+json", "User-Agent": f"Edi/{__version__}"},
     )
     context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     # A fixed https URL, not one from a document or the page.
     with opener(request, timeout=TIMEOUT_SECONDS, context=context) as response:  # nosec B310
-        data = json.loads(response.read().decode("utf-8"))
-    tag = data.get("tag_name") if isinstance(data, dict) else None
-    if not isinstance(tag, str) or parse_version(tag) is None:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_latest_version(opener: Callable = urllib.request.urlopen, current: str = __version__) -> str:
+    """The newest version the reader should be offered, e.g. ``"1.2.0"``.
+
+    On a release that is GitHub's latest release, which is never a candidate,
+    so nobody on a release is offered one. On a candidate it is the newest of
+    the recent releases, candidates included: a tester on ``1.2.0-rc.1`` hears
+    about ``rc.2`` and then about ``1.2.0``. Drafts, and tags that are not a
+    release or a candidate, are passed over.
+
+    Sends a generic client name and nothing about the reader.
+    """
+    if not is_candidate(current):
+        data = _get_json(LATEST_RELEASE_API, opener)
+        tag = data.get("tag_name") if isinstance(data, dict) else None
+        if not isinstance(tag, str) or parse_version(tag) is None:
+            raise ValueError("GitHub did not name a release version")
+        return tag.strip().lstrip("v")
+    data = _get_json(RELEASES_API, opener)
+    tags = [
+        release["tag_name"].strip().lstrip("v")
+        for release in (data if isinstance(data, list) else [])
+        if isinstance(release, dict)
+        and not release.get("draft")
+        and isinstance(release.get("tag_name"), str)
+        and parse_version(release["tag_name"]) is not None
+    ]
+    if not tags:
         raise ValueError("GitHub did not name a release version")
-    return tag.strip().lstrip("v")
+    return max(tags, key=lambda tag: parse_version(tag) or ())
 
 
 @dataclass(frozen=True)
 class UpdateResult:
     latest: str | None
     error: str | None
+    current: str = __version__
 
     @property
     def newer(self) -> bool:
-        return self.latest is not None and is_newer(self.latest)
+        return self.latest is not None and is_newer(self.latest, self.current)
 
 
 class UpdateSettings:

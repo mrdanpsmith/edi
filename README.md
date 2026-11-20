@@ -296,7 +296,8 @@ There is no in-app updater — install the newest release artifact. Your setting
 and documents are never touched.
 
 `Help → Check for Updates…` asks GitHub for the newest release and says whether
-it is newer than yours. `Help → Check for Updates Automatically` does the same
+it is newer than yours. On a release candidate it also looks at newer
+candidates; on a release it never offers one. `Help → Check for Updates Automatically` does the same
 at launch, at most once a day, and shows "Edi X.Y.Z is available" in the status
 bar when there is one. It is off until you turn it on, because the request
 tells GitHub your address; it sends nothing else about you.

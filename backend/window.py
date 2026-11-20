@@ -34,7 +34,7 @@ from .preferences import Preferences
 from .printing import PrintJob
 from .remote import shared_hosts
 from .rundialog import RunCodeDialog
-from .updates import MACOS_INSTALL_COMMAND, UpdateCheck, UpdateResult, UpdateSettings, release_page
+from .updates import UpdateCheck, UpdateResult, UpdateSettings, macos_install_command, release_page
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
@@ -799,9 +799,9 @@ class MainWindow(QMainWindow):
             self._update_settings.mark_checked()
             latest = result.latest
             box.setIcon(QMessageBox.Icon.Information)
-            box.setText(f"Edi {latest} is available. You have {__version__}.")
+            box.setText(f"Edi {latest} is available. You have {result.current}.")
             if sys.platform == "darwin":
-                box.setInformativeText(f"To upgrade, run the installer again:\n\n{MACOS_INSTALL_COMMAND}")
+                box.setInformativeText(f"To upgrade, run the installer again:\n\n{macos_install_command(latest)}")
             else:
                 box.setInformativeText("Download it from the release page and install it over this one.")
             open_button = box.addButton("Open Release Page", QMessageBox.ButtonRole.AcceptRole)
@@ -811,7 +811,7 @@ class MainWindow(QMainWindow):
         else:
             self._update_settings.mark_checked()
             box.setIcon(QMessageBox.Icon.Information)
-            box.setText(f"Edi {__version__} is the newest version.")
+            box.setText(f"Edi {result.current} is the newest version.")
             box.addButton(QMessageBox.StandardButton.Ok)
         box.finished.connect(lambda _result: box.deleteLater())
         box.open()

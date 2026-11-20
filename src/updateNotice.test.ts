@@ -38,6 +38,11 @@ describe('the update notice', () => {
     expect(button().hidden).toBe(true)
   })
 
+  it('offers a newer release candidate to someone running one', () => {
+    notice.show('1.0.0-rc.2', 'https://github.com/mrdanpsmith/edi/releases/tag/v1.0.0-rc.2')
+    expect(button().textContent).toBe('Edi 1.0.0-rc.2 is available')
+  })
+
   it('never offers a link outside Edi\'s own releases', () => {
     notice.show('1.2.0', 'https://example.com/releases/tag/v1.2.0')
     notice.show('1.2.0 now', 'https://github.com/mrdanpsmith/edi/releases/tag/v1.2.0')

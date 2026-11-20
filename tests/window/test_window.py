@@ -1194,6 +1194,16 @@ def test_check_for_updates_says_what_it_found(window):
     box.accept()
 
 
+def test_a_candidate_is_offered_the_next_candidate_with_its_own_installer(window):
+    from backend.updates import UpdateResult
+
+    box = window._manual_update_checked(UpdateResult("1.0.0-rc.2", None, "1.0.0-rc.1"))
+    assert box.text() == "Edi 1.0.0-rc.2 is available. You have 1.0.0-rc.1."
+    if sys.platform == "darwin":
+        assert "releases/download/v1.0.0-rc.2/install.sh | EDI_VERSION=1.0.0-rc.2 bash" in box.informativeText()
+    box.reject()
+
+
 def test_an_automatic_update_check_reports_in_the_status_bar(window):
     """A newer release found at launch is a status-bar line, not a dialog."""
     window._check_for_updates(manual=False, fetch=lambda: "99.0.0")

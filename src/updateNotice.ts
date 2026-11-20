@@ -30,7 +30,8 @@ export function createUpdateNotice(after: HTMLElement | null | undefined): Updat
 
   return {
     show(version, link) {
-      if (!link.startsWith(RELEASES) || !/^\d+\.\d+\.\d+$/.test(version)) return
+      // A release, or, for someone running a candidate, a newer candidate.
+      if (!link.startsWith(RELEASES) || !/^\d+\.\d+\.\d+(-rc\.[1-9]\d*)?$/.test(version)) return
       url = link
       button.textContent = `Edi ${version} is available`
       button.title = 'Open the release page'
