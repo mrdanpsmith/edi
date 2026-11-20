@@ -135,13 +135,15 @@ source` walk it replaced put a document edit — commit the buffer, re-parse the
 block, re-render the drawing — on the way out of a mode, which is not a price
 a toggle should charge to get back where it started.
 
-Only `source_block` has nothing to toggle to. A click naming no block finishes
+Only a raw code block (HTML, front matter, a definition) has nothing to toggle
+to: it is written with no fences, so its Source form would be its own text, and
+it has no Source button. A click naming no block finishes
 whatever is editing. Double click is the browser's again, in every block type.
 
-A block entering source focuses its CodeMirror; a `source_block` never does. It
-is always in source and only comes from parsing (raw HTML, front matter), so
-focusing it would take the caret on every load and redecoration — an HTML
-comment under the title then swallowed `Ctrl+A` and Edit → Select All.
+A block entering source focuses its CodeMirror. A raw code block is never
+entered and never takes focus by being drawn: it comes from parsing, so taking
+the caret on load would let an HTML comment under the title swallow `Ctrl+A`
+and Edit → Select All.
 
 `Ctrl+A` and Edit → Select All are one command (`editSelectAll` in
 `src/editController.ts`; the key is taken in the capture phase in `main.ts`). It

@@ -13,6 +13,7 @@ import { codeBlockKey } from '../codeBlockDelete'
 import { EditorView as CMEditorView } from '@codemirror/view'
 import { FENCE_OPENED_META } from '../blockstart'
 import { codeLanguageFor, codeLanguageLabel, shebangLanguage } from '../codeLanguages'
+import { rawBlockLabel } from '../schema'
 import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../formulaDefs'
 import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
 import { CHECK_ICON, COPY_ICON, RUN_ICON, STOP_ICON, paintIcon } from '../icons'
@@ -35,6 +36,11 @@ function runDocument(): string {
   const active = getActive()
   if (!active) return ''
   return active.path ?? `untitled:${active.id}`
+}
+
+/** A code block's shebang. A raw block (markdown kept as written) is never run. */
+function shebangOfNode(node: ProseNode): string | null {
+  return node.attrs.raw === true ? null : shebangOf(node.textContent)
 }
 
 function sourceOf(text: string, shebang: string): string {
@@ -224,7 +230,7 @@ class RunnableBlockNodeView implements NodeView {
     this.node = node
     this.view = view
     this.getPos = getPos
-    this.shebang = shebangOf(node.textContent)
+    this.shebang = shebangOfNode(node)
     this.lastContent = node.textContent
 
     this.dom = document.createElement('div')
@@ -281,7 +287,10 @@ class RunnableBlockNodeView implements NodeView {
    */
   private syncBadge(): void {
     const langTag = String(this.node.attrs.language ?? '').trim()
+    // A raw block (markdown kept as written) names what it holds rather than the
+    // grammar it is highlighted with: "HTML", "Front matter", "Link definition".
     const badge =
+      (this.node.attrs.raw === true ? rawBlockLabel(this.node.textContent) : '') ||
       langTag ||
       (this.grammar === 'edi-formula' ? this.grammar : '') ||
       (this.shebang ? shebangLanguage(this.shebang) ?? '' : '')
@@ -570,6 +579,7 @@ class RunnableBlockNodeView implements NodeView {
     // A change to the language tag can swap the grammar, the badge, or the
     // code/plaintext renderer — rebuild from scratch rather than reconcile.
     if (node.attrs.language !== this.node.attrs.language) return false
+    if (node.attrs.raw !== this.node.attrs.raw) return false
     // So can the text, through the shebang: finishing `#!/usr/bin/env python3`
     // turns a plain block into a Python one, and deleting the interpreter turns
     // it back. The view that is taking the typing goes, so the caret is handed to
@@ -577,7 +587,7 @@ class RunnableBlockNodeView implements NodeView {
     const langTag = String(node.attrs.language ?? '').trim()
     if (codeLanguageLabel(langTag || null, node.textContent) !== this.grammar) return false
     this.node = node
-    const newShebang = shebangOf(node.textContent)
+    const newShebang = shebangOfNode(node)
     // Rebuild the controls/output whenever the block's text changes, not just
     // when the shebang line changes. ProseMirror reuses this node view across
     // updates at the same position (including whole-document swaps when tabs
@@ -641,7 +651,7 @@ class RunnableBlockNodeView implements NodeView {
 }
 
 export function isRunnableCodeBlock(node: ProseNode): boolean {
-  return node.type.name === 'code_block' && shebangOf(node.textContent) !== null
+  return node.type.name === 'code_block' && shebangOfNode(node) !== null
 }
 
 const codeBlockNodeViewKey = new PluginKey<number | null>('EDI_CODEBLOCK_NODEVIEW')
@@ -726,7 +736,7 @@ export const codeBlockNodeViewPlugin = new Plugin<number | null>({
     nodeViews: {
       code_block(node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView {
         // `blockNodeView` answers "is this fence showing its source" from the
-        // mode record; `code_block` is never a `source_block`.
+        // mode record (a raw code block never is: it has one state).
         if (showsSource(view, getPos())) {
           return blockNodeView(node, view, getPos) as unknown as NodeView
         }

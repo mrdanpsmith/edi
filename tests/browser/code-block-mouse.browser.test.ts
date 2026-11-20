@@ -85,3 +85,27 @@ describe('pressing a code block\'s frame', () => {
     expect(document.getSelection()?.isCollapsed).toBe(true)
   })
 })
+
+// A raw block (an HTML block, front matter, a definition) is a code block, so the mouse
+// treats it as one: its frame selects it and a drag takes it in whole.
+describe('the mouse on a raw block', () => {
+  const raw = () => app.editor.querySelector<HTMLElement>('.runnable-block')!
+
+  beforeEach(async () => {
+    await app.setDocument('above line\n\n<div>\nraw html\n</div>\n\nbelow line')
+    await settle()
+  })
+
+  it('the label bar selects it', async () => {
+    const bar = raw().querySelector('.code-lang-bar')!.getBoundingClientRect()
+    await pointer.press({ x: bar.left + 200, y: bar.top + bar.height / 2 })
+    await settle()
+    expect(raw().classList.contains('ProseMirror-selectednode')).toBe(true)
+  })
+
+  it('a drag from the text above into it takes in the whole block', async () => {
+    await pointer.drag(at('above line'), at('raw html', 2))
+    await settle()
+    expect(raw().classList.contains('edi-block-selected')).toBe(true)
+  })
+})

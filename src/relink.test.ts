@@ -124,6 +124,18 @@ describe('BlockEditor.rebaseLinks', () => {
     editor.destroy()
   })
 
+  // A definition is a raw code block whose text grows when rebased, which moves every
+  // position after it: a link further down must still be found and rewritten.
+  it('rebases a link that follows a definition the rebase made longer', () => {
+    const md = '[r]: ref.md\n\nSee [a link](other.md) and ![img](img/a.png).\n'
+    const editor = createBlockEditor(document.body, md)
+    const rebased = editor.rebaseLinks(FROM, '/home/reader/archive/deeper/draft.md')!
+    expect(rebased.markdown).toBe(
+      '[r]: ../../notes/ref.md\n\nSee [a link](../../notes/other.md) and ![img](../../notes/img/a.png).\n',
+    )
+    editor.destroy()
+  })
+
   it('changes only the destinations: reference images and definition layout are kept', () => {
     const md = [
       'Images: ![full][logo], ![logo][], ![logo] and ![inline](img/a.png).',

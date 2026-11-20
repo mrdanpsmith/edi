@@ -127,7 +127,10 @@ export function rebaseLinksTransaction(
   if (fromPath === toPath) return null
   const tr = state.tr
   let changed = false
-  state.doc.descendants((node: ProseNode, pos: number) => {
+  state.doc.descendants((node: ProseNode, from: number) => {
+    // A raw block's rewrite changes its length, so every position is read
+    // through what the transaction has done so far.
+    const pos = tr.mapping.map(from)
     if (node.isInline) {
       for (const mark of node.marks) {
         if (mark.type.name !== 'link') continue
@@ -157,13 +160,16 @@ export function rebaseLinksTransaction(
         )
         changed = true
       }
-    } else if (node.type.name === 'source_block') {
-      const markdown = (node.attrs.markdown as string) ?? ''
+    } else if (node.type.name === 'code_block' && node.attrs.raw === true) {
+      // Raw markdown (a link definition, an HTML block) holds its references as text.
+      const markdown = node.textContent
       const next = rebaseDefinitions(markdown, fromPath, toPath, exists)
       if (next !== markdown) {
-        tr.setNodeMarkup(pos, undefined, { ...node.attrs, markdown: next })
+        const text = next ? [state.schema.text(next)] : []
+        tr.replaceWith(pos + 1, pos + 1 + node.content.size, text)
         changed = true
       }
+      return false
     }
     return true
   })

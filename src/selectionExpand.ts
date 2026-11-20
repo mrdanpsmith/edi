@@ -425,8 +425,6 @@ function atomClipboardText(node: ProseNode): string {
       return `\`\`\`mermaid\n${String(node.attrs.value ?? '')}\n\`\`\``
     case 'table':
       return String(node.attrs.value ?? '')
-    case 'source_block':
-      return String(node.attrs.markdown ?? '')
     case 'encrypted_block':
       return '[encrypted block]'
     case 'image':

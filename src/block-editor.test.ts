@@ -45,7 +45,7 @@ function createEditor(initialMarkdown: string, extraPlugins: Plugin[] = []) {
   const nodeViewPlugin = new Plugin({
     props: {
       nodeViews: Object.fromEntries(
-        [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+        [...BLOCK_NODE_TYPES].map((name) => [name, blockNodeView]),
       ),
     },
   })

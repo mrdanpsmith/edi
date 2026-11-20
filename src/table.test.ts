@@ -43,7 +43,7 @@ function createEditor(md: string, withHistory = false): EditorView {
   const nodeViewPlugin = new Plugin({
     props: {
       nodeViews: Object.fromEntries(
-        [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+        [...BLOCK_NODE_TYPES].map((name) => [name, blockNodeView]),
       ),
     },
   })
@@ -77,7 +77,7 @@ function createPlainTable(md: string): EditorView {
   const nodeViewPlugin = new Plugin({
     props: {
       nodeViews: Object.fromEntries(
-        [...BLOCK_NODE_TYPES, 'source_block'].map((name) => [name, blockNodeView]),
+        [...BLOCK_NODE_TYPES].map((name) => [name, blockNodeView]),
       ),
     },
   })

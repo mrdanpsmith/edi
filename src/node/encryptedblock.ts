@@ -775,7 +775,7 @@ export const encryptedBlockNodeViewPlugin = new Plugin({
     nodeViews: {
       encrypted_block: (node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView => {
         // `blockNodeView` answers "is this block showing its source" from the
-        // mode record; `encrypted_block` is never a `source_block`.
+        // mode record.
         if (showsSource(view, getPos())) {
           return blockNodeView(node, view, getPos) as NodeView
         }

@@ -216,8 +216,9 @@ describe('resolved tables', () => {
     expect(doc.firstChild!.type.name).toBe('table')
     expect(doc.firstChild!.attrs._resolved).toBe(false)
     const last = doc.content.child(doc.childCount - 1)
-    expect(last.type.name).toBe('source_block')
-    expect(last.attrs.markdown).toBe('<!-- hello -->')
+    expect(last.type.name).toBe('code_block')
+    expect(last.attrs.raw).toBe(true)
+    expect(last.textContent).toBe('<!-- hello -->')
   })
 })
 
@@ -230,11 +231,107 @@ describe('further parse paths', () => {
     expect(serialize('2. b\n3. c')).toBe('2. b\n3. c\n')
   })
 
-  it('keeps raw html as a source block', () => {
+  it('keeps raw html as a raw code block, written without fences', () => {
     const doc = markdownToProse('<div>hi</div>', schema)
-    expect(doc.firstChild?.type.name).toBe('source_block')
-    expect(doc.firstChild?.attrs.markdown).toBe('<div>hi</div>')
+    expect(doc.firstChild?.type.name).toBe('code_block')
+    expect(doc.firstChild?.attrs).toMatchObject({ raw: true, language: 'html' })
+    expect(doc.firstChild?.textContent).toBe('<div>hi</div>')
     expect(serialize('<div>hi</div>')).toBe('<div>hi</div>\n')
+  })
+
+  it('keeps front matter and definitions as raw code blocks highlighted by what they hold', () => {
+    const doc = markdownToProse('---\ntitle: x\n---\n\nSee [a].\n\n[a]: https://a.example\n', schema)
+    expect(doc.firstChild?.attrs).toMatchObject({ raw: true, language: 'yaml' })
+    expect(doc.lastChild?.attrs).toMatchObject({ raw: true, language: 'markdown' })
+    expect(doc.lastChild?.textContent).toBe('[a]: https://a.example')
+  })
+
+  /** A paragraph's inline runs as `text` or `raw:text` (raw inline code). */
+  function runs(markdown: string, block = 0): string[] {
+    const out: string[] = []
+    markdownToProse(markdown, schema).child(block).descendants((node) => {
+      if (!node.isText) return true
+      const raw = node.marks.some((m) => m.type.name === 'code' && m.attrs.raw === true)
+      out.push(raw ? `raw:${node.text}` : node.text!)
+      return false
+    })
+    return out
+  }
+
+  /** Written fresh (no source record), the way an edited block is. */
+  const fresh = (markdown: string) => proseToMarkdown(markdownToProse(markdown, schema))
+
+  it('makes inline HTML one raw inline code run from its opening tag to its closing tag', () => {
+    const md = 'An HTML <a href="https://example.com">link</a> in prose.'
+    expect(runs(md)).toEqual(['An HTML ', 'raw:<a href="https://example.com">link</a>', ' in prose.'])
+    expect(fresh(md)).toBe(`${md}\n`)
+  })
+
+  it('keeps the reported example: a link, a soft break and an image in one paragraph', () => {
+    const md = '<a href="https://www.google.com">hi!</a>\n<img src="https://www.images.com/some-image.png"/>'
+    expect(runs(md)).toEqual([
+      'raw:<a href="https://www.google.com">hi!</a>',
+      '\n',
+      'raw:<img src="https://www.images.com/some-image.png"/>',
+    ])
+    expect(fresh(md)).toBe(`${md}\n`)
+  })
+
+  it('runs to the matching close past nested tags of the same name, markdown inside kept as written', () => {
+    const md = 'x <span>a <span>**b**</span> c</span> y'
+    expect(runs(md)).toEqual(['x ', 'raw:<span>a <span>**b**</span> c</span>', ' y'])
+    expect(fresh(md)).toBe(`${md}\n`)
+  })
+
+  it('keeps a tag that closes nothing as a raw run of its own', () => {
+    expect(runs('one<br>two <!-- note --> </i> three')).toEqual([
+      'one', 'raw:<br>', 'two ', 'raw:<!-- note -->', ' ', 'raw:</i>', ' three',
+    ])
+    expect(fresh('one<br>two <!-- note --> </i> three')).toBe('one<br>two <!-- note --> </i> three\n')
+  })
+
+  it('stays inside the marks around it', () => {
+    const md = '**bold <b>x</b> text** and `real code`'
+    expect(fresh(md)).toBe(`${md}\n`)
+  })
+
+  // Edi's own types are not HTML, and the one comment it reads (a table's formula
+  // carrier) is taken with its table before inline or raw HTML is looked at.
+  it('leaves custom types alone: masked fields, highlights, diagrams, formula tables', () => {
+    const md = [
+      'A !masked[secret]{label="pin"} beside <b>html</b> and ==marked== text.',
+      '',
+      '| A | B |',
+      '| --- | --- |',
+      '| 1 | 2 |',
+      // The blank line is how a formula table is written; the carrier is read either way.
+      '',
+      '<!-- edi-fml {"B2":"=A2*2"} -->',
+      '',
+      '```mermaid',
+      'graph TD',
+      '  A --> B',
+      '```',
+    ].join('\n')
+    const doc = markdownToProse(md, schema)
+    expect([...Array(doc.childCount).keys()].map((i) => doc.child(i).type.name))
+      .toEqual(['paragraph', 'table', 'mermaid_block'])
+    const inline: string[] = []
+    doc.child(0).forEach((n) => inline.push(n.isText ? (n.marks.map((m) => m.type.name).join('+') || 'text') : n.type.name))
+    expect(inline).toEqual(['text', 'masked_field', 'text', 'code', 'text', 'highlight', 'text'])
+    expect(doc.child(1).attrs._resolved).toBe(true)
+    expect(doc.child(1).attrs.value).toContain('=A2*2')
+    expect(fresh(md)).toBe(`${md}\n`)
+  })
+
+  it('keeps a span that crosses a line in a list item', () => {
+    const md = '- item <b>one\n  two</b> end'
+    expect(fresh(md)).toBe(`${md}\n`)
+  })
+
+  it('writes an edited raw block as its text, with no fences', () => {
+    const raw = schema.node('code_block', { language: 'html', raw: true }, [schema.text('<p>edited</p>')])
+    expect(proseToMarkdown(schema.node('doc', null, [raw]))).toBe('<p>edited</p>\n')
   })
 
   it('keeps a hard break inline', () => {

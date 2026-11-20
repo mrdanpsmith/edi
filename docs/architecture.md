@@ -39,8 +39,11 @@ values cannot go stale. `replaceMarkdown` (a change on disk, a restored version)
 adopts the new text's record even when it parses to the same document.
 `src/markdown-source.test.ts` covers this. Within an edited block, `src/markdown.ts` keeps what the
 editor has no model for as the markdown it was written as: HTML blocks, link and
-footnote definitions and YAML front matter become a `source_block`, and inline
-HTML and footnote references an `inline_source` atom. Reference links and
+footnote definitions and YAML front matter become a raw `code_block` (`raw: true`,
+written back as its text with no fences; see [code-blocks.md](code-blocks.md)). Inline
+HTML becomes raw inline code (a `code` mark with `raw: true`, one run from an opening tag
+to its closing tag, written back with no backticks), and a footnote reference an
+`inline_source` atom. Reference links and
 reference images are ordinary links and images that are written back in
 reference form while their target is unchanged. Text is escaped only where a character could start a construct, so a
 lone `*` or `snake_case` is written as typed. Table cells are escaped the same
