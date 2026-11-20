@@ -49,7 +49,7 @@ real application is `run_edi.py`.
 | [docs/distribution.md](docs/distribution.md) | PyInstaller builds, packaging and platform constraints. |
 | [docs/macos-installer.md](docs/macos-installer.md) | The curl installer, file associations, open-document events. |
 | [docs/ci.md](docs/ci.md) | GitHub Actions, coverage, builder images, release DAG. |
-| [docs/releasing.md](docs/releasing.md) | Version bumps, tags and changelogs. |
+| [docs/releasing.md](docs/releasing.md) | Version bumps, tags, changelogs, and anything a 1.x upgrade must keep: stored settings, the installer, file associations. |
 
 ## Non-negotiable rules
 

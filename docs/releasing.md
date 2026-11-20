@@ -75,13 +75,73 @@ automatically. A range containing only such commits prints:
 
 Both behaviours are pinned by `tests/test_changelog.py`.
 
-## Format changes
+## What 1.x keeps
 
-From 1.0, what Edi reads and writes is specified in [format.md](format.md),
-and a 1.x release may only add to it. A commit that changes the format says
-so in its subject, never carries `[skip changelog]`, and names any new
-built-in function, because a document that defines the same name gets
-`#NAME?` errors where it had results. Removing anything format.md lists waits for 2.0.
+From 1.0 the version says what an upgrade can do to a reader:
+
+- **patch** (1.2.3 → 1.2.4): fixes only;
+- **minor** (1.2 → 1.3): additions, within the rules below;
+- **major** (1.x → 2.0): anything that breaks one of the promises below.
+
+A reader can install any 1.x over any earlier 1.x and keep their documents,
+their settings and the way they start Edi. Installing an older 1.x over a newer
+one is not promised: nothing enforces version order, and a newer release may
+have written state the older one does not know.
+
+### Documents
+
+What Edi reads and writes is specified in [format.md](format.md), and a 1.x
+release may only add to it, in a form an earlier 1.x keeps intact ("Changing the
+format" there). A commit that changes the format says so in its subject, never
+carries `[skip changelog]`, and names any new built-in function, because a
+document that defines the same name gets `#NAME?` errors where it had results.
+
+### Stored state
+
+Everything Edi keeps between runs stays readable by every later 1.x:
+
+- the `QSettings` keys and the shape of their values: the preferences in
+  `shared/edi-contract.json`, `recentFiles`, `session/paths` and
+  `session/active`, `allowedImageHosts` and `approvedCode`
+  ([preferences.md](preferences.md));
+- the version-history store under the app-data `history/` folder
+  ([history.md](history.md)).
+
+A key or layout that has to change is migrated: the new release reads the old
+form for the rest of 1.x and writes the new one. A preference's **default** may
+change in a minor release, since it only applies to a reader who never set it,
+and the changelog says so. A setting the reader gave up (a site allowed, code
+approved) is never quietly reset by an upgrade.
+
+### Starting and installing Edi
+
+- `edi <file>…` opens each file in a tab; nothing else on the command line is
+  promised.
+- The curl installer stays at `releases/latest/download/install.sh` and keeps
+  `EDI_VERSION`, `EDI_FORCE` and `EDI_SET_DEFAULT`
+  ([macos-installer.md](macos-installer.md)).
+- Release asset names stay as they are: the README's "Installing a release"
+  lists them, and `install.sh` downloads `Edi-X.Y.Z-arm64.zip` and its
+  `.sha256`. `EDI_VERSION` pins an older release, which the current installer
+  fetches by name.
+- Edi stays registered for `.md`, `.markdown`, `.mmd` and `.mermaid`, and an
+  upgrade never changes which app the reader chose as their default.
+- The platforms stay: Linux x86_64, Windows x64 and macOS on Apple Silicon.
+  Dropping one is a 2.0 change. The oldest Linux a build runs on follows the
+  Ubuntu LTS it is built on (glibc 2.35 on 22.04 today,
+  [distribution.md](distribution.md)) and may rise in a minor release, with a
+  changelog line naming the new floor.
+
+### Not promised
+
+These are free to change in any release, with a changelog line where a reader
+would notice:
+
+- the bridge contract, `shared/edi-contract.json`'s menu commands, bridge
+  methods and error codes: the page and the shell ship together, so they only
+  have to agree with each other;
+- menus, toolbars, dialogs, keyboard shortcuts and the look of the page;
+- the Python and TypeScript modules, and anything under `tests/` or `scripts/`.
 
 ## Release guards
 
