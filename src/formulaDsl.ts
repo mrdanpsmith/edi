@@ -12,6 +12,11 @@
  * that collides with a builtin, repeats another definition, or forms a
  * dependency cycle is rejected (and reported as an issue for the block's
  * inline error state).
+ *
+ * A name that collides with a builtin is also a **conflict**: in that document
+ * a call to it is an error, neither the builtin nor the definition. Running the
+ * definition would let a document pass its own `SUM` off as Edi's; running the
+ * builtin would let a later release silently change the document's results.
  */
 import {
   BUILTIN_ENV,
@@ -49,6 +54,26 @@ export interface FormulaDefIssue {
 export interface DocumentFunctions {
   functions: FormulaFunction[]
   issues: FormulaDefIssue[]
+  /** Builtin names the document also defines; see {@link conflictFunction}. */
+  conflicts: string[]
+}
+
+/**
+ * What a conflicted name resolves to in its document: a function that only
+ * reports the conflict. It accepts any arguments, so the cell shows this error
+ * and not an arity one.
+ */
+export function conflictFunction(name: string): FormulaFunction {
+  return {
+    name,
+    category: 'custom',
+    signature: `${name}(…)`,
+    summary: `Defined by both this document and Edi`,
+    minArgs: 0,
+    maxArgs: Infinity,
+    lazy: true,
+    call: () => err('#NAME?', `"${name}" is defined by both this document and Edi; rename the document's function`),
+  }
 }
 
 interface RawDefinition {
@@ -150,9 +175,11 @@ export function buildDocumentFunctions(sources: readonly string[]): DocumentFunc
 
   const byName = new Map<string, RawDefinition>()
   const accepted: RawDefinition[] = []
+  const conflicts = new Set<string>()
   for (const def of raw) {
     if (isBuiltinName(def.name)) {
-      issues.push({ ...def, message: `"${def.name}" is a built-in and cannot be redefined` })
+      issues.push({ ...def, message: `"${def.name}" is a built-in; calls to it are errors until this is renamed` })
+      conflicts.add(upper(def.name))
       continue
     }
     const key = upper(def.name)
@@ -215,7 +242,7 @@ export function buildDocumentFunctions(sources: readonly string[]): DocumentFunc
     }
     functions.push(makeFormulaFunction(def))
   }
-  return { functions, issues }
+  return { functions, issues, conflicts: [...conflicts] }
 }
 
 /** A validation environment: builtins plus a stub per accepted document

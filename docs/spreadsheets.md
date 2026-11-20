@@ -49,6 +49,12 @@ starts a comment.
 - duplicate names;
 - cycles.
 
+A builtin-name collision is also returned in `conflicts`, and `src/formulaDefs.ts`
+maps each such name to `conflictFunction`, which answers every call with
+`#NAME?`. In that document neither the builtin nor the definition runs, so a
+document cannot pass its own `SUM` off as Edi's, and a new builtin cannot
+silently change a document's results ([format.md](format.md)).
+
 `src/formulaDefs.ts` is an editor plugin that compiles every such block
 (document-wide) into a `FormulaEnv` in plugin state. It decorates rejected
 blocks with `.edi-formula-invalid` and exposes the environment through

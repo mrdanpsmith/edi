@@ -11,7 +11,7 @@ import { Plugin, PluginKey, type EditorState } from 'prosemirror-state'
 import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view'
 import type { Node as ProseNode } from 'prosemirror-model'
 import { BUILTIN_ENV, buildFunctionMap, type FormulaEnv, type FormulaFunction } from './formulas'
-import { buildDocumentFunctions, type FormulaDefIssue } from './formulaDsl'
+import { buildDocumentFunctions, conflictFunction, type FormulaDefIssue } from './formulaDsl'
 
 export const FORMULA_DEF_LANGUAGE = 'edi-formula'
 
@@ -49,8 +49,12 @@ export function collectFormulaBlocks(doc: ProseNode): SourceBlock[] {
 export function buildFormulaDefsState(doc: ProseNode): FormulaDefsState {
   const blocks = collectFormulaBlocks(doc)
   if (blocks.length === 0) return EMPTY_STATE
-  const { functions, issues } = buildDocumentFunctions(blocks.map((block) => block.source))
-  return { env: { functions: buildFunctionMap(functions) }, functions, issues }
+  const { functions, issues, conflicts } = buildDocumentFunctions(blocks.map((block) => block.source))
+  const map = buildFunctionMap(functions)
+  // A conflicted builtin name is the one place a document changes what a
+  // builtin's name means here: to an error (see `conflictFunction`).
+  for (const name of conflicts) map.set(name, conflictFunction(name))
+  return { env: { functions: map }, functions, issues }
 }
 
 function buildDecorations(doc: ProseNode, state: FormulaDefsState): DecorationSet | null {

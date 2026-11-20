@@ -69,6 +69,15 @@ describe('formulaDefsPlugin', () => {
     expect(classes).toContain('edi-formula-invalid')
   })
 
+  it('makes a builtin the document also defines an error, in cells and in other definitions', () => {
+    const state = stateFrom('```edi-formula\nSUM(x) = 42\nTOTAL(x) = SUM(x)\n```')
+    const env = formulaEnvFor(state)
+    expect(applyFunction('SUM', [num(1), num(2)], env)).toMatchObject({ kind: 'error', message: '#NAME?' })
+    expect(applyFunction('TOTAL', [num(1)], env)).toMatchObject({ kind: 'error', message: '#NAME?' })
+    expect(applyFunction('AVERAGE', [num(1), num(3)], env)).toEqual(num(2))
+    expect(applyFunction('SUM', [num(1), num(2)], formulaEnvFor(stateFrom('```edi-formula\nF(x) = x\n```')))).toEqual(num(3))
+  })
+
   it('adds no decorations when every definition is valid', () => {
     const state = stateFrom('```edi-formula\nDOUBLE(x) = x * 2\n```')
     expect(decorationsOf(state)).toBeNull()

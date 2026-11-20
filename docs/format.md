@@ -90,11 +90,14 @@ outside a string literal. Every block in the document contributes to one set
 - A repeated name keeps its first definition.
 - A definition in, or depending on, a cycle is dropped.
 
-A rejected definition marks its block invalid and the cells that call it show
-an error; the file itself is unchanged.
+A rejected definition marks its block invalid; the file itself is unchanged.
 
-Because a built-in wins over a definition, **adding a built-in can break a
-document** that already defines that name. See
+A name that is both a built-in and defined by the document is a conflict. In
+that document every call to it, from a cell or from another definition, is a
+`#NAME?` error, until the document's function is renamed. Neither version
+runs: running the document's would let a document pass off its own `SUM` as
+Edi's, and running the built-in would let a later release change the
+document's results without a visible sign. See
 [Changing the format](#changing-the-format).
 
 ## Encrypted fields and blocks
@@ -194,9 +197,9 @@ Within 1.x a change may only add, and what it adds must degrade in an older
   back unchanged, so a document round-trips through it. New inline punctuation
   does not qualify: an older release would read it as text and escape it on
   the next edit.
-- **New built-in functions** are additive for cells but collide with a
-  document function of the same name, which then stops working. The commit
-  that adds one names it in its subject, so the changelog does too
+- **New built-in functions** are additive for cells, but a document that
+  already defines the same name turns its calls into conflict errors. The
+  commit that adds one names it in its subject, so the changelog does too
   ([releasing.md](releasing.md)).
 - **Removing or renaming** a built-in, an interpreter name, an attribute or a
   marker is a 2.0 change.

@@ -75,7 +75,8 @@ TAX(amount) = ROUND(amount * 0.2, 2)
 
 Call them like any built-in: `=TAX(B2)`. A parameter can be a number, a
 cell, or a range (delivered to `SUM`/`AVERAGE`/… as its values). Names may
-not collide with built-ins, repeat, or form a loop.
+not repeat or form a loop. A name that is also a built-in makes every call to
+it an error in this document until you rename your function.
 
 ## Encryption
 

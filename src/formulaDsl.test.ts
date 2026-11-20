@@ -16,7 +16,7 @@ import {
   type FormulaEnv,
   type FormulaFunction,
 } from './formulas'
-import { buildDocumentFunctions, countDefinitions, validateBody } from './formulaDsl'
+import { buildDocumentFunctions, conflictFunction, countDefinitions, validateBody } from './formulaDsl'
 
 function envFor(functions: readonly FormulaFunction[]): FormulaEnv {
   return { functions: buildFunctionMap(functions) }
@@ -116,10 +116,23 @@ describe('buildDocumentFunctions', () => {
   })
 
   it('rejects a definition that collides with a builtin', () => {
-    const { functions, issues } = buildDocumentFunctions(['SUM(a) = a'])
+    const { functions, issues, conflicts } = buildDocumentFunctions(['SUM(a) = a'])
     expect(functions).toEqual([])
     expect(issues).toHaveLength(1)
     expect(issues[0]!.message).toMatch(/built-in/)
+    expect(conflicts).toEqual(['SUM'])
+  })
+
+  it('reports a conflict once per name, whatever its case', () => {
+    const { conflicts } = buildDocumentFunctions(['sum(a) = a', 'Sum(a, b) = a + b', 'F(x) = x'])
+    expect(conflicts).toEqual(['SUM'])
+  })
+
+  it('makes a conflicted name an error for any arguments', () => {
+    const fn = conflictFunction('SUM')
+    expect(applyFunction('SUM', [num(1), num(2), num(3)], { functions: new Map([['SUM', fn]]) })).toEqual(
+      err('#NAME?', `"SUM" is defined by both this document and Edi; rename the document's function`),
+    )
   })
 
   it('rejects a duplicate name and keeps the first definition', () => {

@@ -50,5 +50,7 @@ TAX(amount) = ROUND(amount * 0.2, 2)
 Use them like any built-in, e.g. `=MYAVG(B2, C2)`. Parameters may receive
 numbers, cells, or ranges; a range arrives as the list of its numeric values,
 so it can be passed straight to `SUM`, `AVERAGE`, and friends. Definitions
-may call built-ins and other document functions. A name that collides with a
-built-in, repeats another definition, or forms a loop is rejected.
+may call built-ins and other document functions. A name that repeats another
+definition or forms a loop is rejected. A name that is also a built-in is
+rejected too, and every call to it in the document returns `#NAME?` until the
+document's function is renamed.
