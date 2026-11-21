@@ -726,6 +726,7 @@ class MainWindow(QMainWindow):
             open_files=self.open_files,
             flash=self._flash,
             watched=self._bridge.disk.watched,
+            moved=self.move_recent_file,
         )
         dialog.finished.connect(lambda _result: dialog.deleteLater())
         dialog.open()
@@ -897,7 +898,9 @@ class MainWindow(QMainWindow):
 
     def _manage_recents(self) -> RecentsManager:
         """File › Open Recent › Manage Recent Documents…. Non-blocking."""
-        dialog = RecentsManager(self, open_files=self.open_files, changed=self._recents_changed)
+        dialog = RecentsManager(
+            self, open_files=self.open_files, changed=self._recents_changed, flash=self._flash
+        )
         dialog.finished.connect(lambda _result: dialog.deleteLater())
         dialog.open()
         return dialog
@@ -1007,10 +1010,6 @@ class MainWindow(QMainWindow):
     def add_recent_file(self, path: str) -> None:
         """Count an open of ``path`` in the recent documents."""
         Recents().opened(path)
-
-    def forget_recent_file(self, path: str) -> None:
-        """Drop ``path`` and its history, for a file Edi itself trashed."""
-        Recents().forget(path)
 
     def move_recent_file(self, old_path: str, new_path: str) -> None:
         """Carry a renamed document's history to its new path."""

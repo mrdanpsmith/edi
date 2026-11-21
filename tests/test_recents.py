@@ -98,17 +98,57 @@ def test_a_missing_file_does_not_take_a_shown_place(store, missing, clock):
     assert "/doc-0.md" not in shown
 
 
-def test_the_history_is_capped(store, settings, clock):
+def test_the_number_of_documents_is_capped_but_not_the_opens(store, settings, clock):
     for index in range(recents.TRACKED + 10):
         store.opened(f"/doc-{index}.md")
         clock.days(0.01)
     stored = json.loads(settings.value(recents.KEY))
     assert len(stored) == recents.TRACKED
-    for _ in range(recents.OPENS_KEPT + 5):
+    for _ in range(250):
         store.opened("/doc-0.md")
+    busy = next(row for row in store.history() if row["path"] == "/doc-0.md")
+    assert busy["opens"] == 250
+
+
+def test_the_running_score_is_the_sum_of_every_open_decayed(store, clock):
+    # Opens 14, 7 and 0 days ago weigh 1/4, 1/2 and 1.
+    store.opened("/a.md")
+    clock.days(7)
+    store.opened("/a.md")
+    clock.days(7)
+    store.opened("/a.md")
+    (row,) = store.history()
+    assert row["score"] == pytest.approx(1.75)
+    clock.days(7)
+    (row,) = store.history()
+    assert row["score"] == pytest.approx(0.875)
+    assert row["opens"] == 3
+
+
+def test_entries_holding_open_times_are_read_as_a_count_and_a_score(store, settings, clock):
+    week = 7 * DAY
+    settings.setValue(
+        recents.KEY,
+        json.dumps([{"path": "/old-shape.md", "opens": [clock.now, clock.now - week, clock.now - 2 * week]}]),
+    )
+    (row,) = store.history()
+    assert row["opens"] == 3
+    assert row["score"] == pytest.approx(1.75)
+    store.opened("/old-shape.md")
     stored = json.loads(settings.value(recents.KEY))
-    entry = next(entry for entry in stored if entry["path"] == "/doc-0.md")
-    assert len(entry["opens"]) == recents.OPENS_KEPT
+    assert stored == [{"path": "/old-shape.md", "count": 4, "last": clock.now, "score": pytest.approx(2.75)}]
+
+
+def test_move_onto_a_remembered_name_merges_the_two(store, clock):
+    store.opened("/new.md")
+    clock.days(7)
+    store.opened("/old.md")
+    store.opened("/old.md")
+    store.move("/old.md", "/new.md")
+    (row,) = store.history()
+    assert row["path"] == "/new.md"
+    assert row["opens"] == 3
+    assert row["score"] == pytest.approx(2.5)
 
 
 def test_forget_drops_the_document_and_its_history(store):

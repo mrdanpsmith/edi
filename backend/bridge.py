@@ -609,9 +609,9 @@ class Bridge(QObject):
             except Exception as exc:  # noqa: BLE001
                 self._reply_error(request_id, str(exc))
             else:
-                # Its name no longer names anything: nothing to offer a click
-                # away, and nothing for the watcher to report as deleted.
-                self._window.forget_recent_file(path)
+                # Nothing for the watcher to report as deleted. The recent
+                # list keeps it: a missing file is left off the list but keeps
+                # its rank, for Manage Recent Documents to recover.
                 self.disk.forget(path)
                 self._reply(request_id, True)
 

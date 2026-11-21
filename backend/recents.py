@@ -1,11 +1,17 @@
 """The recent documents: File › Open Recent and the launcher's list.
 
-Ranked by *frecency*, not by last open alone. Each document keeps the times it
-was last opened, every open counts toward its score, and an open's weight
-halves every ``HALF_LIFE_DAYS``. A document opened every day stays near the
-top through a week of one-off files; a file opened once sinks within days.
-Ranking by last open alone would push a daily document off the list after a
-handful of other files.
+Ranked by *frecency*, not by last open alone. Every open counts toward a
+document's score, and an open's weight halves every ``HALF_LIFE_DAYS``. A
+document opened every day stays near the top through a week of one-off files;
+a file opened once sinks within days. Ranking by last open alone would push a
+daily document off the list after a handful of other files.
+
+The score is kept as a running total rather than worked out from every open:
+each document stores its open count, its last open, and its score as of that
+open. At any later moment the score is that value decayed by the time since,
+and an open decays it to now and adds 1. That is exactly the sum of every
+open's decayed weight, with nothing to cap: the count grows as long as the
+document is opened.
 
 The ``SHOWN`` documents on the list are the best-scored ones that still exist,
 plus the ``ALWAYS_SHOWN`` most recently opened, so a file opened a minute ago
@@ -13,15 +19,17 @@ is never missing from the list just because it has no history yet.
 
 A document whose file is gone is skipped but keeps its history: a git branch
 switch, an unmounted drive or a sync tool can bring the file back, and it
-returns with its rank. It leaves the history only by ageing out, or straight
-away when Edi itself renames or trashes it.
+returns with its rank. That holds for a file Edi itself moved to the Trash, so
+Manage Recent Documents can recover it. It leaves the history only by ageing
+out, or when removed there.
 
 Only opens count. A save is not the reader choosing the document again, and
 counting saves would rank a document by how often it was saved.
 
 Stored as JSON under ``recentDocuments`` in ``QSettings``, one entry per
-document, best first. The older ``recentFiles`` list (last opened first) is
-read once and replaced.
+document, best first. Two older shapes are read and replaced on the next
+write: entries holding a list of open times (``opens``), and the ``recentFiles``
+list (last opened first).
 
 Every path here came in with a write grant (``Bridge._add_recent_file``), and
 the shown list grants write access again when a path on it is reopened.
@@ -46,26 +54,52 @@ ALWAYS_SHOWN = 3
 #: Documents remembered, shown or not. Room for the files that fall off the
 #: shown list in a busy week to come back when they are opened again.
 TRACKED = 50
-#: Opens remembered per document. Older opens weigh almost nothing anyway.
-OPENS_KEPT = 10
 HALF_LIFE_DAYS = 7.0
 
 _DAY = 86400.0
 
-Entry = dict  # {"path": str, "opens": [epoch seconds, newest first]}
+#: ``{"path": str, "count": int, "last": epoch seconds, "score": score at last}``
+Entry = dict
+
+
+def _decay(seconds: float) -> float:
+    return 0.5 ** (max(seconds, 0.0) / _DAY / HALF_LIFE_DAYS)
 
 
 def _score(entry: Entry, now: float) -> float:
-    return sum(0.5 ** (max(now - opened, 0.0) / _DAY / HALF_LIFE_DAYS) for opened in entry["opens"])
-
-
-def _last_open(entry: Entry) -> float:
-    return entry["opens"][0] if entry["opens"] else 0.0
+    return entry["score"] * _decay(now - entry["last"])
 
 
 def _ranked(entries: list[Entry], now: float) -> list[Entry]:
     """Best score first; the later last open breaks a tie."""
-    return sorted(entries, key=lambda entry: (_score(entry, now), _last_open(entry)), reverse=True)
+    return sorted(entries, key=lambda entry: (_score(entry, now), entry["last"]), reverse=True)
+
+
+def _number(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value == value else None  # not NaN
+
+
+def _entry(item) -> Entry | None:
+    """One stored entry, in either shape, or ``None`` if a hand edit broke it."""
+    if not isinstance(item, dict):
+        return None
+    path = item.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    opens = item.get("opens")
+    if isinstance(opens, list):
+        # The shape before running scores: the last open times themselves.
+        stamps = sorted((stamp for stamp in map(_number, opens) if stamp is not None), reverse=True)
+        if not stamps:
+            return None
+        last = stamps[0]
+        return {"path": path, "count": len(stamps), "last": last, "score": sum(_decay(last - t) for t in stamps)}
+    count, last, score = item.get("count"), _number(item.get("last")), _number(item.get("score"))
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1 or last is None or score is None or score <= 0:
+        return None
+    return {"path": path, "count": count, "last": last, "score": score}
 
 
 def _clean(raw) -> list[Entry]:
@@ -73,19 +107,10 @@ def _clean(raw) -> list[Entry]:
     entries: list[Entry] = []
     seen: set[str] = set()
     for item in raw if isinstance(raw, list) else []:
-        if not isinstance(item, dict):
-            continue
-        path = item.get("path")
-        opens = item.get("opens")
-        if not isinstance(path, str) or not path or path in seen or not isinstance(opens, list):
-            continue
-        stamps = sorted(
-            (float(stamp) for stamp in opens if isinstance(stamp, (int, float)) and not isinstance(stamp, bool)),
-            reverse=True,
-        )
-        if stamps:
-            seen.add(path)
-            entries.append({"path": path, "opens": stamps[:OPENS_KEPT]})
+        entry = _entry(item)
+        if entry is not None and entry["path"] not in seen:
+            seen.add(entry["path"])
+            entries.append(entry)
     return entries
 
 
@@ -99,7 +124,7 @@ def _legacy(value, now: float) -> list[Entry]:
         value = [value] if value else []
     paths = [str(path) for path in value if path] if isinstance(value, (list, tuple)) else []
     unique = list(dict.fromkeys(paths))
-    return [{"path": path, "opens": [now - 60.0 * index]} for index, path in enumerate(unique)]
+    return [{"path": path, "count": 1, "last": now - 60.0 * index, "score": 1.0} for index, path in enumerate(unique)]
 
 
 class Recents:
@@ -142,7 +167,7 @@ class Recents:
 
     def _shown(self, entries: list[Entry], now: float) -> list[str]:
         existing = [entry for entry in entries if self._exists(entry["path"])]
-        latest = sorted(existing, key=_last_open, reverse=True)[:ALWAYS_SHOWN]
+        latest = sorted(existing, key=lambda entry: entry["last"], reverse=True)[:ALWAYS_SHOWN]
         best = _ranked(existing, now)
         chosen = {entry["path"] for entry in latest}
         for entry in best:
@@ -159,8 +184,8 @@ class Recents:
         """Every tracked document, best first, for File › Open Recent › Manage.
 
         Each is ``{"path", "opens", "lastOpened", "score", "exists", "shown"}``:
-        ``opens`` counts the opens remembered (at most ``OPENS_KEPT``), and
-        ``shown`` says whether it is on the list right now.
+        ``opens`` is every open counted, and ``shown`` says whether it is on
+        the list right now.
         """
         now = self._now()
         entries = self._load()
@@ -168,8 +193,8 @@ class Recents:
         return [
             {
                 "path": entry["path"],
-                "opens": len(entry["opens"]),
-                "lastOpened": _last_open(entry),
+                "opens": entry["count"],
+                "lastOpened": entry["last"],
                 "score": _score(entry, now),
                 "exists": self._exists(entry["path"]),
                 "shown": entry["path"] in shown,
@@ -189,30 +214,39 @@ class Recents:
         entries = self._load()
         entry = next((entry for entry in entries if entry["path"] == path), None)
         if entry is None:
-            entry = {"path": path, "opens": []}
-            entries.append(entry)
-        entry["opens"] = [now, *entry["opens"]][:OPENS_KEPT]
+            entries.append({"path": path, "count": 1, "last": now, "score": 1.0})
+        else:
+            entry.update(count=entry["count"] + 1, score=_score(entry, now) + 1.0, last=now)
         self._save(_ranked(entries, now)[:TRACKED])
 
     def forget(self, path: str) -> None:
-        """Drop ``path`` and its history, for a file Edi itself trashed."""
+        """Drop ``path`` and its history (Manage Recent Documents' Remove)."""
         entries = self._load()
         kept = [entry for entry in entries if entry["path"] != path]
         if len(kept) != len(entries):
             self._save(kept)
 
     def move(self, old_path: str, new_path: str) -> None:
-        """Carry ``old_path``'s history to ``new_path``, for a rename or move.
+        """Carry ``old_path``'s history to ``new_path``, for a rename, a move or
+        a recovery to another folder.
 
-        The renamed document is the same document, so it keeps its rank. A
-        history ``new_path`` already had (an older file of that name, now
-        overwritten) is merged in.
+        The document is the same one, so it keeps its rank. A history
+        ``new_path`` already had (an older file of that name, now overwritten)
+        is merged in: counts add, and both scores are taken to the later open.
         """
         entries = self._load()
         old = next((entry for entry in entries if entry["path"] == old_path), None)
-        if old is None:
+        if old is None or old_path == new_path:
             return
-        rest = [entry for entry in entries if entry["path"] not in (old_path, new_path)]
         target = next((entry for entry in entries if entry["path"] == new_path), None)
-        opens = sorted([*old["opens"], *(target["opens"] if target else [])], reverse=True)
-        self._save(_ranked([*rest, {"path": new_path, "opens": opens[:OPENS_KEPT]}], self._now()))
+        rest = [entry for entry in entries if entry["path"] not in (old_path, new_path)]
+        merged = {**old, "path": new_path}
+        if target is not None:
+            last = max(old["last"], target["last"])
+            merged = {
+                "path": new_path,
+                "count": old["count"] + target["count"],
+                "last": last,
+                "score": _score(old, last) + _score(target, last),
+            }
+        self._save(_ranked([*rest, merged], self._now()))

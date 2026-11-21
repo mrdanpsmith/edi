@@ -1408,13 +1408,9 @@ def test_open_recent_menu_lists_stored_recent_files(window, stored_recents, tmp_
     assert all(action.isEnabled() for action in entries)
 
 
-def test_forget_and_move_recent_file(window, stored_recents, tmp_path):
-    a, b, renamed = _files(tmp_path, "a.md", "b.md", "renamed.md")
+def test_move_recent_file(window, stored_recents, tmp_path):
+    a, renamed = _files(tmp_path, "a.md", "renamed.md")
     window.add_recent_file(a)
-    window.add_recent_file(b)
-
-    window.forget_recent_file(b)
-    assert window.recent_files() == [a]
 
     window.move_recent_file(a, renamed)
     assert window.recent_files() == [renamed]
@@ -1448,7 +1444,7 @@ def test_open_recent_menu_replaces_previous_entries(window, stored_recents, tmp_
     first, second = _files(tmp_path, "docs/a.md", "other/b.md")
     window.add_recent_file(first)
     window._refresh_recent_menu()
-    window.forget_recent_file(first)
+    Path(first).unlink()
     window.add_recent_file(second)
     window._refresh_recent_menu()
 

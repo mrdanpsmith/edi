@@ -34,7 +34,7 @@ def docs(tmp_path):
 
 @pytest.fixture
 def manager(qapp, qtbot):
-    calls = {"opened": [], "flashed": [], "watched": []}
+    calls = {"opened": [], "flashed": [], "watched": [], "moved": []}
 
     def make() -> HistoryManager:
         dialog = HistoryManager(
@@ -42,6 +42,7 @@ def manager(qapp, qtbot):
             open_files=calls["opened"].extend,
             flash=calls["flashed"].append,
             watched=lambda: list(calls["watched"]),
+            moved=lambda old, new: calls["moved"].append((old, new)),
         )
         dialog.calls = calls
         dialog.show()
@@ -292,6 +293,8 @@ def test_recover_to_another_folder_keeps_the_name_and_the_history(manager, docs,
     assert (elsewhere / "a.md").read_text(encoding="utf-8") == "two\n"
     assert len(history.list_versions(str(elsewhere / "a.md"))) == 2
     assert not folder.exists()
+    # The recent list is told, so the document keeps its rank at its new place.
+    assert dialog.calls["moved"] == [(os.path.realpath(folder / "a.md"), str(elsewhere / "a.md"))]
 
 
 def test_recover_reports_what_it_could_not_put_back(manager, docs, qtbot, monkeypatch):
