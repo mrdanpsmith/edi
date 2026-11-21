@@ -8,7 +8,9 @@ import {
   moveSession,
   setActivePath,
   setDiskNote,
+  settleActiveLauncher,
   subscribe,
+  type SessionMeta,
 } from './state'
 
 export interface TabCallbacks {
@@ -291,36 +293,79 @@ export class Tabs {
     })
   }
 
+  /**
+   * Open `content` as a document. On a launcher tab it opens **in** that tab, the
+   * way a browser's new-tab page becomes the page you go to, so picking
+   * something from the launcher never leaves a stray launcher behind.
+   */
   addSession(content = '', path: string | null = null): void {
+    // Decided inside the queue: a switch ahead of this one may change which
+    // tab is active by the time it runs.
     void this.enqueue(() => {
-      const snapshotted = this.snapshotActiveNow()
-      const open = (): void | Promise<void> => {
-        const id = createSession()
-        // A brand-new tab starts scrolled to the top.
-        this.scrolls.set(id, 0)
-        if (this.supportsStates()) {
-          this.states.set(id, this.content.createState!(content))
-        } else {
-          this.snapshots.set(id, content)
-        }
-        // Associate the new session with its path BEFORE rendering its content so
-        // any relative image references resolve against the document's directory.
-        if (path !== null) {
-          setActivePath(path)
-        }
-        const settle = (): void => {
-          this.content.setScroll?.(0)
-          this.appliedSession = id
-          this.render()
-          this.notifyActive()
-        }
-        if (this.supportsStates()) {
-          return Tabs.after(this.content.setState!(this.states.get(id)), settle)
-        }
-        return Tabs.after(this.content.setMarkdown(content), settle)
-      }
-      return Tabs.after(snapshotted, open)
+      const active = getActive()
+      return active?.launcher
+        ? this.fillLauncherNow(active, content, path)
+        : this.openTabNow(content, path, false)
     })
+  }
+
+  /** Open a launcher tab ("New Tab"): the launcher, in a tab of its own. */
+  addLauncher(): void {
+    void this.enqueue(() => this.openTabNow('', null, true))
+  }
+
+  private fillLauncherNow(
+    active: SessionMeta,
+    content: string,
+    path: string | null,
+  ): void | Promise<void> {
+    this.content.discardPending?.()
+    if (path !== null) setActivePath(path)
+    const settle = (): void => {
+      this.content.setScroll?.(0)
+      this.appliedSession = active.id
+      settleActiveLauncher()
+      this.notifyActive()
+    }
+    if (this.supportsStates()) {
+      const state = this.content.createState!(content)
+      this.states.set(active.id, state)
+      return Tabs.after(this.content.setState!(state), settle)
+    }
+    return Tabs.after(this.content.setMarkdown(content), () => {
+      this.snapshots.set(active.id, content)
+      settle()
+    })
+  }
+
+  private openTabNow(content: string, path: string | null, launcher: boolean): void | Promise<void> {
+    const snapshotted = this.snapshotActiveNow()
+    const open = (): void | Promise<void> => {
+      const id = createSession({ launcher })
+      // A brand-new tab starts scrolled to the top.
+      this.scrolls.set(id, 0)
+      if (this.supportsStates()) {
+        this.states.set(id, this.content.createState!(content))
+      } else {
+        this.snapshots.set(id, content)
+      }
+      // Associate the new session with its path BEFORE rendering its content so
+      // any relative image references resolve against the document's directory.
+      if (path !== null) {
+        setActivePath(path)
+      }
+      const settle = (): void => {
+        this.content.setScroll?.(0)
+        this.appliedSession = id
+        this.render()
+        this.notifyActive()
+      }
+      if (this.supportsStates()) {
+        return Tabs.after(this.content.setState!(this.states.get(id)), settle)
+      }
+      return Tabs.after(this.content.setMarkdown(content), settle)
+    }
+    return Tabs.after(snapshotted, open)
   }
 
   activate(id: string): void {
@@ -427,7 +472,10 @@ export class Tabs {
       tab.title = session.path ?? ''
       tab.setAttribute('aria-selected', String(session.id === activeId))
 
-      const name = session.path ? session.path.split('/').pop()! : 'Untitled'
+      const name = session.launcher
+        ? 'New Tab'
+        : session.path ? session.path.split('/').pop()! : 'Untitled'
+      if (session.launcher) tab.classList.add('tab-launcher')
       const title = document.createElement('span')
       title.className = 'tab-title'
       title.textContent = session.dirty ? `* ${name}` : name
@@ -487,8 +535,8 @@ export class Tabs {
     const add = document.createElement('button')
     add.type = 'button'
     add.className = 'tab-new'
-    add.ariaLabel = 'New document'
-    add.title = 'New document (Ctrl+N)'
+    add.ariaLabel = 'New tab'
+    add.title = 'New tab (Ctrl+T)'
     add.textContent = '+'
     add.addEventListener('click', () => this.callbacks.onNewTab())
 

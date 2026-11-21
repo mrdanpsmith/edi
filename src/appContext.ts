@@ -6,7 +6,7 @@ import { fileTextForDisplay } from './documentFormat'
 import { UNTITLED } from './files'
 import { isHoverBandEnabled } from './hoverBand'
 import { currentPreferences } from './preferences'
-import { getActive, getState, isAnyDirty } from './state'
+import { getActive, getActiveDocument, getState, isAnyDirty } from './state'
 import { canZoomIn, canZoomOut, DEFAULT_ZOOM } from './zoom'
 import type { BlockEditor } from './editor'
 import type { ContextMenu } from './contextmenu'
@@ -83,11 +83,13 @@ export function rootsFromDocument(): AppRoots {
 function updateView(): void {
   const app = document.querySelector<HTMLElement>('#app')
   if (!app) return
-  app.dataset.view = getState().sessions.length === 0 ? 'home' : 'editor'
+  // `home`: no tab at all. `launcher`: a launcher tab, so the tab strip stays.
+  app.dataset.view =
+    getState().sessions.length === 0 ? 'home' : getActive()?.launcher ? 'launcher' : 'editor'
 }
 
 function updateTitle(ctx: AppContext): void {
-  const active = getActive()
+  const active = getActiveDocument()
   if (!active) {
     document.title = 'Edi'
     if (document.title !== ctx.lastNativeTitle) {
@@ -106,7 +108,7 @@ function updateTitle(ctx: AppContext): void {
 }
 
 function updateStatus(ctx: AppContext): void {
-  const active = getActive()
+  const active = getActiveDocument()
   if (!active) {
     ctx.roots.statusLeft.textContent = ''
     ctx.roots.statusRight.textContent = ''
@@ -178,9 +180,9 @@ function syncDirty(): void {
 }
 
 function syncMenuState(ctx: AppContext): void {
-  const active = getActive()
+  const active = getActiveDocument()
   void invoke('setMenuState', {
-    // False on the home screen: there is nothing to export or print.
+    // False on the home screen and a launcher tab: there is nothing to export or print.
     hasDocument: Boolean(active),
     canRevert: Boolean(active?.path),
     canCopyPath: Boolean(active?.path),
@@ -201,6 +203,7 @@ function afterActivate(ctx: AppContext): void {
   syncMenuState(ctx)
   // A tab shown again may have changed on disk while it was out of view.
   ctx.disk?.refresh()
+  if (getActive()?.launcher) ctx.homeScreen?.focus()
 }
 
 function flashStatus(ctx: AppContext, message: string): void {

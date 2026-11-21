@@ -8520,7 +8520,8 @@ def test_who_owns_each_edit_menu_key(window):
     never the evidence.
     """
     shell = {a.text(): a.shortcut().toString() for a in window._file_menu.actions()}
-    for label, sequence in (("&New", "Ctrl+N"), ("&Open…", "Ctrl+O"), ("&Save", "Ctrl+S"),
+    for label, sequence in (("&New", "Ctrl+N"), ("New &Tab", "Ctrl+T"),
+                            ("&Open…", "Ctrl+O"), ("&Save", "Ctrl+S"),
                             ("Save &As…", "Ctrl+Shift+S"), ("&Quit", "Ctrl+Q"),
                             ("Copy File &Path", "Ctrl+Alt+Shift+C")):
         assert shell.get(label) == sequence, f"{label}: {shell.get(label)!r}"

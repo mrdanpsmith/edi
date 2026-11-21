@@ -295,12 +295,14 @@ const DOM_TEMPLATE = `
           <button type="button" class="home-btn home-primary" id="home-open">Open…</button>
           <button type="button" class="home-btn home-primary" id="home-open-path">Open Path…</button>
         </div>
-        <div class="home-recent-box">
-          <button type="button" class="home-btn" id="home-recent-toggle">Recent documents</button>
-          <ul id="home-recent-list" hidden></ul>
+        <div class="home-recent" id="home-recent" hidden>
+          <h2 class="home-section-title">Recent</h2>
+          <ul id="home-recent-list"></ul>
         </div>
         <div class="home-action-row">
-          <button type="button" class="home-btn" id="home-welcome">Open Welcome</button>
+          <button type="button" class="home-btn" id="home-welcome">Welcome</button>
+          <button type="button" class="home-btn" id="home-help">Help Guide</button>
+          <button type="button" class="home-btn" id="home-functions">Function Reference</button>
           <button type="button" class="home-btn" id="home-exit">Exit</button>
         </div>
         <p class="home-hint">Ctrl+N new · Ctrl+O open</p>
@@ -1943,13 +1945,117 @@ describe('print', () => {
   })
 })
 
+describe('launcher tab', () => {
+  function lastMenuState(): { hasDocument?: boolean } {
+    const calls = mainState.invoke.mock.calls.filter((call) => call[0] === 'setMenuState')
+    return calls[calls.length - 1]?.[1] as { hasDocument?: boolean }
+  }
+
+  function homeButton(id: string): HTMLButtonElement {
+    return document.querySelector<HTMLButtonElement>(id)!
+  }
+
+  async function sessions(): Promise<import('./state').SessionMeta[]> {
+    return (await stateModule()).getState().sessions
+  }
+
+  it('opens from Ctrl+T, File › New Tab and the tab bar +, and holds no document', async () => {
+    await loadMain()
+    press('t')
+    await flushAsync()
+    expect(appEl().dataset.view).toBe('launcher')
+    expect(activeTabTitle()).toBe('New Tab')
+    expect(document.title).toBe('Edi')
+    expect(statusRight().textContent).toBe('')
+    expect(lastMenuState().hasDocument).toBe(false)
+
+    menu('newTab')
+    tabbarEl().querySelector<HTMLButtonElement>('.tab-new')!.click()
+    await flushAsync()
+    expect((await sessions()).map((session) => session.launcher)).toEqual([true, true, true])
+  })
+
+  it('keeps Ctrl+N a blank document', async () => {
+    await loadMain()
+    press('n')
+    await flushAsync()
+    expect(appEl().dataset.view).toBe('editor')
+    expect(activeTabTitle()).toBe('Untitled')
+  })
+
+  it('becomes the blank document New makes', async () => {
+    await loadMain()
+    press('t')
+    await flushAsync()
+    homeButton('#home-new').click()
+    await flushAsync()
+    const [only, ...rest] = await sessions()
+    expect(rest).toHaveLength(0)
+    expect(only?.launcher).toBe(false)
+    expect(appEl().dataset.view).toBe('editor')
+    expect(activeTabTitle()).toBe('Untitled')
+    expect(lastMenuState().hasDocument).toBe(true)
+  })
+
+  it('becomes the file opened from it', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    press('t')
+    await flushAsync()
+    homeButton('#home-open').click()
+    await flushAsync()
+    const all = await sessions()
+    expect(all.map((session) => [session.path, session.launcher])).toEqual([['/tmp/notes.md', false]])
+    expect(activeTabTitle()).toBe('notes.md')
+  })
+
+  it('becomes the Help Guide picked from it', async () => {
+    await loadMain()
+    press('t')
+    await flushAsync()
+    homeButton('#home-help').click()
+    await flushAsync()
+    expect(await sessions()).toHaveLength(1)
+    expect(appEl().dataset.view).toBe('editor')
+  })
+
+  it('closes when the file picked from it is already open', async () => {
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    menu('openRecent', '/tmp/notes.md')
+    await flushAsync()
+    press('t')
+    await flushAsync()
+    expect(await sessions()).toHaveLength(2)
+    menu('openRecent', '/tmp/notes.md')
+    await flushAsync()
+    const all = await sessions()
+    expect(all.map((session) => session.path)).toEqual(['/tmp/notes.md'])
+    expect(activeTabTitle()).toBe('notes.md')
+  })
+
+  it('has nothing to save and closes without asking', async () => {
+    await loadMain()
+    press('t')
+    await flushAsync()
+    press('s')
+    await flushAsync()
+    expect(mainState.pickSavePath).not.toHaveBeenCalled()
+    press('w')
+    await flushAsync()
+    expect(mainState.confirmAction).not.toHaveBeenCalled()
+    expect(appEl().dataset.view).toBe('home')
+  })
+})
+
 describe('recent files', () => {
   it('renders recent files on the home screen', async () => {
     mainState.getRecentFiles.mockResolvedValue(['/x/a.md', '/x/b.md'])
     await loadMain()
-    const items = document.querySelectorAll<HTMLElement>('#home-recent-list li')
+    const items = document.querySelectorAll<HTMLElement>('.home-recent-item')
     expect(items).toHaveLength(2)
-    expect(items[0]?.textContent).toBe('a.md')
+    expect(items[0]?.querySelector('.home-recent-name')?.textContent).toBe('a.md')
     expect(items[1]?.dataset.path).toBe('/x/b.md')
   })
 

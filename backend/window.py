@@ -457,6 +457,7 @@ class MainWindow(QMainWindow):
         file_menu = self._file_menu
         for label, command in (
             ("&New\tCtrl+N", "new"),
+            ("New &Tab\tCtrl+T", "newTab"),
             ("&Open…\tCtrl+O", "open"),
         ):
             file_menu.addAction(self._menubar_action(label, command, shell_owns_key=True))

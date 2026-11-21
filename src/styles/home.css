@@ -12,14 +12,23 @@
   text-align: center;
 }
 
-#app[data-view='home'] #home-screen {
+#app[data-view='home'] #home-screen,
+#app[data-view='launcher'] #home-screen {
   display: flex;
 }
 
 #app[data-view='home'] #tabbar,
 #app[data-view='home'] #toolbar,
 #app[data-view='home'] #editor-container,
-#app[data-view='home'] #edi-search-bar {
+#app[data-view='home'] #edi-search-bar,
+#app[data-view='launcher'] #toolbar,
+#app[data-view='launcher'] #editor-container,
+#app[data-view='launcher'] #edi-search-bar {
+  display: none;
+}
+
+/* In a launcher tab, closing the tab is the way out; Exit would quit the app. */
+#app[data-view='launcher'] #home-exit {
   display: none;
 }
 
@@ -39,6 +48,8 @@
 
 .home-action-row {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
   margin-top: 8px;
 }
@@ -76,33 +87,72 @@
   outline-offset: 2px;
 }
 
-.home-recent-box {
+.home-recent {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  width: min(440px, 100%);
+  margin-top: 12px;
+  text-align: left;
+}
+
+.home-recent[hidden] {
+  display: none;
+}
+
+.home-section-title {
+  margin: 0 0 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 #home-recent-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  min-width: 240px;
-  max-height: 240px;
-  overflow-y: auto;
 }
 
-#home-recent-list li {
-  cursor: pointer;
+.home-recent-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
   padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 13px;
+  font: inherit;
+  text-align: left;
   color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
 }
 
-#home-recent-list li:hover {
+.home-recent-item:hover,
+.home-recent-item:focus-visible {
   background: var(--surface);
   color: var(--text-primary);
+}
+
+.home-recent-item:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.home-recent-name,
+.home-recent-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-recent-name {
+  font-size: 14px;
+}
+
+.home-recent-folder {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .home-hint {

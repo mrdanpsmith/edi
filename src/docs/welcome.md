@@ -9,7 +9,7 @@ Edi is a fast markdown editor with Mermaid diagrams, in-line spreadsheets, execu
   table between plain text and the spreadsheet, any other block between its
   rendering and **Source**.
 - Use the **File** and **View** menus for document actions.
-- Open several documents side by side in tabs (`Ctrl+N` for a new tab, `Ctrl+W` to close one).
+- Open several documents side by side in tabs (`Ctrl+N` for a new document, `Ctrl+T` for a New Tab with your recent documents, `Ctrl+W` to close one).
 - Insert a spreadsheet, text file, or image with `Insert → …`.
 
 ## Mermaid diagrams
