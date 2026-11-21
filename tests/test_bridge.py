@@ -145,6 +145,9 @@ class StubWindow(QObject):
     def forget_recent_file(self, path: str) -> None:
         self.recent_files_list = [entry for entry in self.recent_files_list if entry != path]
 
+    def move_recent_file(self, old_path: str, new_path: str) -> None:
+        self.recent_files_list = [new_path if entry == old_path else entry for entry in self.recent_files_list]
+
 
 @pytest.fixture
 def bridge(qapp):
@@ -996,7 +999,7 @@ def test_write_text_file_error(bridge, tmp_path):
     assert message["ok"] is False
 
 
-def test_rename_text_file_renames_and_drops_the_old_recent(bridge, tmp_path):
+def test_rename_text_file_renames_and_moves_the_recent(bridge, tmp_path):
     bridge_obj, window, result = bridge
     old = tmp_path / "notes.md"
     old.write_text("stale", encoding="utf-8")
@@ -1015,8 +1018,9 @@ def test_rename_text_file_renames_and_drops_the_old_recent(bridge, tmp_path):
     assert message["ok"] is True
     assert new.read_text(encoding="utf-8") == "# Edited"
     assert not old.exists()
-    # The old name no longer names anything, so it is not left in the recents.
-    assert window.recent_files_list == ["/other.md"]
+    # The old name no longer names anything; the document keeps its place
+    # under the new one.
+    assert window.recent_files_list == [str(new), "/other.md"]
 
 
 @pytest.fixture

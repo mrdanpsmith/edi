@@ -1145,12 +1145,13 @@ def test_app_url_selftest_query():
     )
 
 
-def test_recent_files_single_entry_reads_back_across_processes(window, stored_recents):
+def test_recent_files_reads_the_old_single_entry_list(window, stored_recents, tmp_path):
     # QSettings' native format stores a one-element QStringList as a scalar
     # (`recentFiles=/only/x.md`), so a fresh process reads a str, not a list.
-    # Simulate that persisted shape and confirm it still round-trips.
-    stored_recents.setValue("recentFiles", "/only/x.md")
-    assert window.recent_files() == ["/only/x.md"]
+    only = tmp_path / "x.md"
+    only.write_text("x", encoding="utf-8")
+    stored_recents.setValue("recentFiles", str(only))
+    assert window.recent_files() == [str(only)]
 
 
 def test_right_click_context_menu_is_suppressed(window):
@@ -1167,46 +1168,58 @@ def test_right_click_context_menu_is_suppressed(window):
     assert QApplication.activePopupWidget() is None
 
 
-def test_add_recent_file_deduplicates_and_caps(window, stored_recents):
+def _files(folder: Path, *names: str) -> list[str]:
+    paths = []
+    for name in names:
+        path = folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name, encoding="utf-8")
+        paths.append(str(path))
+    return paths
+
+
+def test_recent_files_rank_repeat_opens_and_skip_missing_files(window, stored_recents, tmp_path):
+    # The ranking itself is `tests/test_recents.py`; this is the window's wiring.
+    a, b, c = _files(tmp_path, "a.md", "b.md", "c.md")
     assert window.recent_files() == []
 
-    window.add_recent_file("/x/a.md")
-    window.add_recent_file("/x/b.md")
-    window.add_recent_file("/x/a.md")  # dup moves back to the front
-    assert window.recent_files() == ["/x/a.md", "/x/b.md"]
+    window.add_recent_file(a)
+    window.add_recent_file(a)
+    window.add_recent_file(b)
+    window.add_recent_file(c)
+    # Opened twice, `a` outranks the files opened once since.
+    assert window.recent_files()[0] == a
 
-    for i in range(10):
-        window.add_recent_file(f"/x/f{i}.md")
-    recent = window.recent_files()
-    assert len(recent) == window_module.RECENT_LIMIT
-    assert recent[0] == "/x/f9.md"
-    assert "/x/b.md" not in recent
+    Path(b).unlink()
+    assert b not in window.recent_files()
+    Path(b).write_text("back", encoding="utf-8")
+    assert b in window.recent_files()
 
 
-def test_open_recent_menu_lists_stored_recent_files(window, stored_recents):
-    stored_recents.setValue("recentFiles", ["/docs/a.md", "/other/b.md"])
+def test_open_recent_menu_lists_stored_recent_files(window, stored_recents, tmp_path):
+    first, second = _files(tmp_path, "docs/a.md", "other/b.md")
+    stored_recents.setValue("recentFiles", [first, second])
     window._refresh_recent_menu()
 
     entries = window._recent_menu.actions()
     assert [action.text() for action in entries] == [
-        "a.md — /docs",
-        "b.md — /other",
+        f"a.md — {tmp_path / 'docs'}",
+        f"b.md — {tmp_path / 'other'}",
     ]
-    assert [action.toolTip() for action in entries] == ["/docs/a.md", "/other/b.md"]
+    assert [action.toolTip() for action in entries] == [first, second]
     assert all(action.isEnabled() for action in entries)
 
 
-def test_forget_recent_file_drops_only_the_renamed_document(window, stored_recents):
-    window.add_recent_file("/x/a.md")
-    window.add_recent_file("/x/b.md")
+def test_forget_and_move_recent_file(window, stored_recents, tmp_path):
+    a, b, renamed = _files(tmp_path, "a.md", "b.md", "renamed.md")
+    window.add_recent_file(a)
+    window.add_recent_file(b)
 
-    window.forget_recent_file("/x/b.md")
-    assert window.recent_files() == ["/x/a.md"]
+    window.forget_recent_file(b)
+    assert window.recent_files() == [a]
 
-    # A path that was never in the list leaves it alone (and does not
-    # rewrite the settings with a list QSettings would store as a scalar).
-    window.forget_recent_file("/x/never.md")
-    assert window.recent_files() == ["/x/a.md"]
+    window.move_recent_file(a, renamed)
+    assert window.recent_files() == [renamed]
 
 
 def test_rename_action_is_in_the_file_menu(window, qtbot):
@@ -1233,14 +1246,16 @@ def test_rename_action_invokes_js_command(visible, qtbot):
     _assert_menu_action_sends_command(visible, qtbot, visible._rename_action, "rename")
 
 
-def test_open_recent_menu_replaces_previous_entries(window, stored_recents):
-    stored_recents.setValue("recentFiles", ["/docs/a.md"])
+def test_open_recent_menu_replaces_previous_entries(window, stored_recents, tmp_path):
+    first, second = _files(tmp_path, "docs/a.md", "other/b.md")
+    window.add_recent_file(first)
     window._refresh_recent_menu()
-    stored_recents.setValue("recentFiles", ["/other/b.md"])
+    window.forget_recent_file(first)
+    window.add_recent_file(second)
     window._refresh_recent_menu()
 
     assert [action.text() for action in window._recent_menu.actions()] == [
-        "b.md — /other"
+        f"b.md — {tmp_path / 'other'}"
     ]
 
 
@@ -1258,10 +1273,11 @@ def test_recent_label_falls_back_to_the_raw_path():
 
 
 def test_open_recent_action_invokes_js_command_with_path(
-    visible, qtbot, stored_recents
+    visible, qtbot, stored_recents, tmp_path
 ):
     window = visible
-    stored_recents.setValue("recentFiles", ["/docs/a.md"])
+    (doc,) = _files(tmp_path, "a.md")
+    window.add_recent_file(doc)
     result = {}
 
     _swap_menu_command(window, "window.__menuArgs = cmd + ':' + (arg || '');")
@@ -1277,7 +1293,7 @@ def test_open_recent_action_invokes_js_command_with_path(
         return result.get("value") is not None
 
     qtbot.waitUntil(fetched, timeout=3000)
-    assert result["value"] == "openRecent:/docs/a.md"
+    assert result["value"] == f"openRecent:{doc}"
 
 
 def test_pick_save_path_cancel_returns_none(visible, qtbot):

@@ -74,7 +74,7 @@ export class HomeScreen {
   }
 
   /**
-   * Put the keyboard on the launcher as it comes into view: on the most
+   * Put the keyboard on the launcher as it comes into view: on the first
    * recent document when there is one, so Enter reopens it, else on New.
    */
   focus(): void {

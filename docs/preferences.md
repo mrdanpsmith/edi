@@ -1,7 +1,7 @@
 # Preferences
 
 The app's preferences live in `QSettings` (`backend/preferences.py`), beside
-the recent-files list, in `~/.config/Edi/Edi.conf`.
+the recent documents and the last session, in `~/.config/Edi/Edi.conf`.
 
 There are four:
 
@@ -76,7 +76,7 @@ then starts the new one ([macos-installer.md](macos-installer.md)).
   Tracking starts only after the restore has finished, so a half-done restore
   is never stored over the session it is restoring.
 - **Reopened at launch.** `openPendingFiles` asks `getSession` first and opens
-  those documents in order, without moving them up the recent list. Then it
+  those documents in order, without counting them as opens on the recent list. Then it
   opens any files Edi was launched with, and the last of those is in view.
   Without any, the tab that was in view last time is.
 - **Only documents with a path and a grant.** An untitled tab is not kept, nor
@@ -88,3 +88,37 @@ then starts the new one ([macos-installer.md](macos-installer.md)).
   outside the packaged smoke test. A window built anywhere else, as every test
   does, reopens nothing: the tests share one settings file, and a window must
   not reopen another test's tabs.
+
+## Recent documents
+
+File › Open Recent and the launcher show the same list, `recent_files()` in
+`backend/window.py`, read again each time either is shown. `backend/recents.py`
+keeps it under `recentDocuments`, as JSON: each document with the times it was
+last opened.
+
+- **Ranked by frecency.** Every open counts toward a document's score, and an
+  open's weight halves every week (`HALF_LIFE_DAYS`). A document opened daily
+  stays near the top through a week of one-off files. Ranked by last open
+  alone, it would fall off after eight other files.
+- **The latest opens are always shown.** The list is the 8 best-scored
+  documents (`SHOWN`), but the 3 opened most recently (`ALWAYS_SHOWN`) are on
+  it whatever their score. Otherwise a file opened a minute ago could be
+  missing from the list because it has no history yet.
+- **Only opens count.** `addRecentFile` comes from opening a document, or from
+  saving one under a new name. Saving the same file again does not count, or a
+  document would rank by how often it was saved. Reopening the last session
+  does not count either.
+- **A missing file is hidden, not forgotten.** A file that no longer exists is
+  left off the list but keeps its history. A git branch switch, an unmounted
+  drive or a sync tool can bring it back, with its rank. A history ages out
+  once 50 documents (`TRACKED`) outscore it.
+- **Rename and trash.** Renaming or moving a document in Edi carries its
+  history to the new path (`move_recent_file`), so it keeps its place. Moving
+  it to the Trash drops it and its history (`forget_recent_file`).
+- **Grants.** `addRecentFile` takes only paths that already have a write grant,
+  and reopening a path on the shown list grants it again
+  ([architecture.md](architecture.md)). The page cannot grant itself a path by
+  adding it.
+
+The older `recentFiles` list (last opened first) is read once, as one open
+each a minute apart so its order holds, and then removed.
