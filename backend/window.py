@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QFile, QPoint, QSettings, QUrl, Qt
+from PySide6.QtCore import QCoreApplication, QFile, QPoint, QUrl, Qt
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QKeySequence, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
@@ -32,6 +32,7 @@ from .historymanager import HistoryManager
 from .files import check_rename_target, check_typed_open_path, resolve_typed_path, trash_name
 from .preferences import Preferences
 from .printing import PrintJob
+from .recents import Recents
 from .remote import shared_hosts
 from .rundialog import RunCodeDialog
 from .updates import UpdateCheck, UpdateResult, UpdateSettings, macos_install_command, release_page
@@ -39,8 +40,6 @@ from .updates import UpdateCheck, UpdateResult, UpdateSettings, macos_install_co
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
 CONFIRM_QUIT_MESSAGE = "Unsaved changes will be lost. Quit anyway?"
-
-RECENT_LIMIT = 8
 
 # Mirrors ``ZOOM_LEVELS`` in ``src/zoom.ts``; used to build the View > Zoom
 # submenu. The frontend is the source of truth for clamping, this is only the
@@ -474,9 +473,9 @@ class MainWindow(QMainWindow):
         ):
             file_menu.addAction(self._menubar_action(label, command, shell_owns_key=True))
 
-        # The recent list lives in QSettings and can change between launches, so
-        # the submenu is repopulated every time it is opened rather than once
-        # here. `self._recent_menu` is kept for the same ownership reason as the
+        # The recent list changes as documents are opened and as their files
+        # come and go on disk, so the submenu is repopulated every time it is
+        # opened rather than once here. `self._recent_menu` is kept for the same ownership reason as the
         # other menus above.
         self._recent_menu = file_menu.addMenu("Open &Recent")
         self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
@@ -967,40 +966,25 @@ class MainWindow(QMainWindow):
         self._bridge.emit_event(event)
 
     def recent_files(self) -> list[str]:
-        """Most-recently-opened documents, most recent first (capped).
+        """The recent documents to offer, best first (``backend/recents.py``).
 
-        Stored in QSettings under ``recentFiles``; ``QSettings()`` uses the
-        org="Edi" / app="Edi" names set in ``backend.main`` (Linux:
-        ``~/.config/Edi/Edi.conf``).
-
-        QSettings' native format stores a one-element QStringList as a bare
-        scalar, so a fresh process reads it back as a str rather than a list;
-        treat that as a single-entry list (empty strings are just ignored).
+        Ranked by how often and how lately each was opened; files that no
+        longer exist are left out. The submenu and the launcher read this each
+        time they are shown, so a change reaches both without a refresh.
         """
-        value = QSettings().value("recentFiles", [])
-        if isinstance(value, str):
-            return [value] if value else []
-        return list(value) if isinstance(value, list) else []
+        return Recents().shown()
 
     def add_recent_file(self, path: str) -> None:
-        """Record ``path`` as the most recent document, deduped and capped."""
-        current = self.recent_files()
-        if path in current:
-            current.remove(path)
-        current.insert(0, path)
-        QSettings().setValue("recentFiles", current[:RECENT_LIMIT])
+        """Count an open of ``path`` in the recent documents."""
+        Recents().opened(path)
 
     def forget_recent_file(self, path: str) -> None:
-        """Drop ``path`` from the recents, for when its file no longer exists.
+        """Drop ``path`` and its history, for a file Edi itself trashed."""
+        Recents().forget(path)
 
-        A rename deletes the old file, and the recent list is rebuilt from
-        QSettings every time the submenu opens, so the entry has to go from the
-        settings rather than from the menu.
-        """
-        current = self.recent_files()
-        if path not in current:
-            return
-        QSettings().setValue("recentFiles", [entry for entry in current if entry != path])
+    def move_recent_file(self, old_path: str, new_path: str) -> None:
+        """Carry a renamed document's history to its new path."""
+        Recents().move(old_path, new_path)
 
     def confirm(self, message: str, callback=None) -> None:
         """Show a non-blocking centered Yes/No dialog.

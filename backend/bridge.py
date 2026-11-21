@@ -573,8 +573,9 @@ class Bridge(QObject):
             else:
                 self.grants.allow_write(str(new_path))
                 # The old name no longer names anything, so it is not something
-                # the recent list should offer a click away.
-                self._window.forget_recent_file(str(old_path))
+                # the recent list should offer a click away; the document is
+                # the same one, so its rank goes with it to the new name.
+                self._window.move_recent_file(str(old_path), str(new_path))
                 self.disk.forget(str(old_path))
                 self._seen_written(str(new_path))
                 history.move(str(old_path), str(new_path))

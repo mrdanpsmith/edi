@@ -1582,13 +1582,17 @@ describe('rename', () => {
     expect(statusLeft().textContent).toContain('Renamed to ideas.md')
   })
 
-  it('asks the shell about the current document and remembers the new path', async () => {
+  it('asks the shell about the current document and does not count the rename as an open', async () => {
     await openNotes()
+    mainState.addRecentFile.mockClear()
+    mainState.getRecentFiles.mockClear()
     mainState.pickRenamePath.mockResolvedValue('/tmp/ideas.md')
     menu('rename')
     await flushAsync()
     expect(mainState.pickRenamePath).toHaveBeenCalledWith('/tmp/notes.md')
-    expect(mainState.addRecentFile).toHaveBeenCalledWith('/tmp/ideas.md')
+    // The backend moves the history to the new name; the page only redraws.
+    expect(mainState.addRecentFile).not.toHaveBeenCalled()
+    expect(mainState.getRecentFiles).toHaveBeenCalled()
   })
 
   it('moves the document to another folder', async () => {
@@ -2076,6 +2080,21 @@ describe('recent files', () => {
     menu('save')
     await flushAsync()
     expect(mainState.addRecentFile).toHaveBeenCalledWith('/tmp/new.md')
+  })
+
+  it('does not count saving the same file again as an open', async () => {
+    mainState.pickOpenPath.mockResolvedValue(['/tmp/notes.md'])
+    mainState.readTextFile.mockResolvedValue('hello file')
+    await loadMain()
+    menu('open')
+    await flushAsync()
+    mainState.addRecentFile.mockClear()
+    window.ediSetContent?.('changed')
+    await flushAsync()
+    menu('save')
+    await flushAsync()
+    expect(mainState.writeTextFile).toHaveBeenCalled()
+    expect(mainState.addRecentFile).not.toHaveBeenCalled()
   })
 
   it('opens a document from the Open Recent menu command', async () => {

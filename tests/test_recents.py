@@ -1,0 +1,154 @@
+"""Tests for the recent-documents ranking (`backend/recents.py`)."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from PySide6.QtCore import QSettings
+
+from backend import recents
+from backend.recents import Recents
+
+DAY = 86400.0
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1_800_000_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def days(self, count: float) -> None:
+        self.now += count * DAY
+
+
+@pytest.fixture
+def settings(qapp, tmp_path):
+    return QSettings(str(tmp_path / "recents.ini"), QSettings.Format.IniFormat)
+
+
+@pytest.fixture
+def clock():
+    return Clock()
+
+
+@pytest.fixture
+def missing():
+    return set()
+
+
+@pytest.fixture
+def store(settings, clock, missing):
+    return Recents(settings, now=clock, exists=lambda path: path not in missing)
+
+
+def test_a_document_opened_daily_outranks_a_week_of_one_off_files(store, clock):
+    for day in range(10):
+        store.opened("/daily.md")
+        for index in range(3):
+            store.opened(f"/once-{day}-{index}.md")
+        clock.days(1)
+    shown = store.shown()
+    assert len(shown) == recents.SHOWN
+    assert shown[0] == "/daily.md"
+
+
+def test_the_latest_opens_are_shown_whatever_their_score(store, clock):
+    for index in range(recents.SHOWN):
+        for _ in range(5):
+            store.opened(f"/regular-{index}.md")
+    clock.days(1)
+    store.opened("/new-a.md")
+    store.opened("/new-b.md")
+    shown = store.shown()
+    assert len(shown) == recents.SHOWN
+    # Scored at one open each they would not make the list; they are the
+    # two most recent opens, so they do.
+    assert "/new-a.md" in shown and "/new-b.md" in shown
+
+
+def test_old_opens_fade(store, clock):
+    for _ in range(5):
+        store.opened("/was-busy.md")
+    clock.days(60)
+    store.opened("/today.md")
+    store.opened("/today.md")
+    assert store.shown() == ["/today.md", "/was-busy.md"]
+
+
+def test_a_missing_file_is_hidden_and_comes_back_with_its_rank(store, missing):
+    for _ in range(3):
+        store.opened("/branch-only.md")
+    store.opened("/other.md")
+    missing.add("/branch-only.md")
+    assert store.shown() == ["/other.md"]
+    missing.clear()
+    assert store.shown() == ["/branch-only.md", "/other.md"]
+
+
+def test_a_missing_file_does_not_take_a_shown_place(store, missing, clock):
+    for index in range(recents.SHOWN + 2):
+        store.opened(f"/doc-{index}.md")
+        clock.days(0.01)
+    missing.add("/doc-0.md")
+    shown = store.shown()
+    assert len(shown) == recents.SHOWN
+    assert "/doc-0.md" not in shown
+
+
+def test_the_history_is_capped(store, settings, clock):
+    for index in range(recents.TRACKED + 10):
+        store.opened(f"/doc-{index}.md")
+        clock.days(0.01)
+    stored = json.loads(settings.value(recents.KEY))
+    assert len(stored) == recents.TRACKED
+    for _ in range(recents.OPENS_KEPT + 5):
+        store.opened("/doc-0.md")
+    stored = json.loads(settings.value(recents.KEY))
+    entry = next(entry for entry in stored if entry["path"] == "/doc-0.md")
+    assert len(entry["opens"]) == recents.OPENS_KEPT
+
+
+def test_forget_drops_the_document_and_its_history(store):
+    store.opened("/a.md")
+    store.opened("/b.md")
+    store.forget("/b.md")
+    assert store.shown() == ["/a.md"]
+    store.forget("/never.md")
+    assert store.shown() == ["/a.md"]
+
+
+def test_move_keeps_the_rank_under_the_new_name(store):
+    for _ in range(4):
+        store.opened("/old.md")
+    store.opened("/other.md")
+    store.move("/old.md", "/new.md")
+    assert store.shown() == ["/new.md", "/other.md"]
+    # Moving something never opened is not an open of its new name.
+    store.move("/never.md", "/elsewhere.md")
+    assert store.shown() == ["/new.md", "/other.md"]
+
+
+def test_the_old_list_is_read_once_in_order(store, settings):
+    settings.setValue(recents.LEGACY_KEY, ["/first.md", "/second.md", "/third.md"])
+    assert store.shown() == ["/first.md", "/second.md", "/third.md"]
+    assert not settings.contains(recents.LEGACY_KEY)
+    assert settings.contains(recents.KEY)
+
+
+def test_a_hand_broken_store_reads_as_what_is_still_valid(store, settings):
+    settings.setValue(
+        recents.KEY,
+        json.dumps([
+            {"path": "/good.md", "opens": [1_800_000_000.0]},
+            {"path": "", "opens": [1]},
+            {"path": "/no-opens.md", "opens": []},
+            {"path": "/bad-opens.md", "opens": ["yesterday", True]},
+            "junk",
+        ]),
+    )
+    assert store.shown() == ["/good.md"]
+    settings.setValue(recents.KEY, "{not json")
+    assert store.shown() == []

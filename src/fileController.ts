@@ -42,6 +42,7 @@ import {
   findSessionByPath,
   getActive,
   getActiveDocument,
+  getState,
   markSaved,
   setActiveDirty,
 } from './state'
@@ -230,6 +231,8 @@ export function createFileController(ctx: AppContext): FileController {
       if (remember) void rememberRecent(path)
     } catch (error) {
       ctx.reportError(`Failed to open ${path}`, error)
+      // A file deleted while the launcher was showing it leaves the list now.
+      refreshRecents()
     } finally {
       openingPaths.delete(path)
     }
@@ -366,8 +369,14 @@ export function createFileController(ctx: AppContext): FileController {
     if (chosen) await saveTo(chosen, true)
   }
 
-  /** The document is on disk under `path`, written as `text`: everything that follows. */
-  function afterSave(path: string, snapshot: SaveSnapshot, text: string): void {
+  /**
+   * The document is on disk under `path`, written as `text`: everything that
+   * follows. A save under a new name counts as opening that file for the
+   * recent list; saving the same file again does not, nor does a rename,
+   * whose history the backend moves to the new name itself.
+   */
+  function afterSave(path: string, snapshot: SaveSnapshot, text: string, { renamed = false } = {}): void {
+    const before = getState().sessions.find((session) => session.id === snapshot.id)?.path
     ctx.disk?.noteDiskText(path, text)
     markSaved(snapshot.id, path, snapshot.revision)
     // The editor's saved point is the document the save read. Only for the tab
@@ -377,7 +386,8 @@ export function createFileController(ctx: AppContext): FileController {
     ctx.updateStatus()
     ctx.syncDirty()
     ctx.syncMenuState()
-    void rememberRecent(path)
+    if (renamed) refreshRecents()
+    else if (before !== path) void rememberRecent(path)
   }
 
   /**
@@ -450,7 +460,7 @@ export function createFileController(ctx: AppContext): FileController {
           snapshot = { ...snapshot, markdown, doc: rebased.doc, revision: -1 }
         }
       }
-      afterSave(newPath, snapshot, text)
+      afterSave(newPath, snapshot, text, { renamed: true })
       ctx.flashStatus(dirname(newPath) === dirname(oldPath) ? `Renamed to ${name}` : `Moved to ${newPath}`)
     } catch (error) {
       if (isChangedOnDisk(error)) {

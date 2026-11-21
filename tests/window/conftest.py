@@ -103,7 +103,8 @@ def visible(window, qtbot):
 @pytest.fixture
 def stored_recents():
     settings = QSettings()
-    settings.setValue("recentFiles", [])
+    settings.remove("recentFiles")
+    settings.remove("recentDocuments")
     settings.sync()
     yield settings
 
