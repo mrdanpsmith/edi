@@ -1382,12 +1382,24 @@ def test_recent_files_rank_repeat_opens_and_skip_missing_files(window, stored_re
     assert b in window.recent_files()
 
 
+def _recent_entries(window) -> list:
+    """The submenu's documents: what is above the Manage/Clear separator."""
+    actions = window._recent_menu.actions()
+    return actions[: next(i for i, action in enumerate(actions) if action.isSeparator())]
+
+
+def _recent_tail(window) -> list[tuple[str, bool]]:
+    actions = window._recent_menu.actions()
+    start = next(i for i, action in enumerate(actions) if action.isSeparator()) + 1
+    return [(action.text(), action.isEnabled()) for action in actions[start:]]
+
+
 def test_open_recent_menu_lists_stored_recent_files(window, stored_recents, tmp_path):
     first, second = _files(tmp_path, "docs/a.md", "other/b.md")
     stored_recents.setValue("recentFiles", [first, second])
     window._refresh_recent_menu()
 
-    entries = window._recent_menu.actions()
+    entries = _recent_entries(window)
     assert [action.text() for action in entries] == [
         f"a.md — {tmp_path / 'docs'}",
         f"b.md — {tmp_path / 'other'}",
@@ -1440,7 +1452,7 @@ def test_open_recent_menu_replaces_previous_entries(window, stored_recents, tmp_
     window.add_recent_file(second)
     window._refresh_recent_menu()
 
-    assert [action.text() for action in window._recent_menu.actions()] == [
+    assert [action.text() for action in _recent_entries(window)] == [
         f"b.md — {tmp_path / 'other'}"
     ]
 
@@ -1448,9 +1460,45 @@ def test_open_recent_menu_replaces_previous_entries(window, stored_recents, tmp_
 def test_open_recent_menu_is_disabled_placeholder_when_empty(window, stored_recents):
     window._refresh_recent_menu()
 
-    entries = window._recent_menu.actions()
+    entries = _recent_entries(window)
     assert [action.text() for action in entries] == ["No recent documents"]
     assert entries[0].isEnabled() is False
+    # Nothing to clear; Manage stays, to show that the history is empty.
+    assert _recent_tail(window) == [
+        ("&Manage Recent Documents…", True),
+        ("&Clear Recent Documents…", False),
+    ]
+
+
+def test_clear_recent_documents_is_offered_for_missing_files_too(window, stored_recents, tmp_path):
+    (doc,) = _files(tmp_path, "gone.md")
+    window.add_recent_file(doc)
+    Path(doc).unlink()
+    window._refresh_recent_menu()
+    assert [action.text() for action in _recent_entries(window)] == ["No recent documents"]
+    assert ("&Clear Recent Documents…", True) in _recent_tail(window)
+
+
+def test_clear_recent_documents_asks_then_clears_and_tells_the_page(window, stored_recents, tmp_path, monkeypatch):
+    (doc,) = _files(tmp_path, "a.md")
+    window.add_recent_file(doc)
+    events = []
+    monkeypatch.setattr(window._bridge, "emit_event", events.append)
+    box = window._clear_recents()
+    clear = next(button for button in box.buttons() if button.text() == "Clear")
+    clear.click()
+    assert window.recent_files() == []
+    assert {"type": "recentsChanged"} in events
+
+
+def test_manage_recent_documents_opens_the_dialog(window, stored_recents, tmp_path):
+    (doc,) = _files(tmp_path, "a.md")
+    window.add_recent_file(doc)
+    dialog = window._manage_recents()
+    try:
+        assert [path for path, _status in dialog.rows()] == [doc]
+    finally:
+        dialog.close()
 
 
 def test_recent_label_falls_back_to_the_raw_path():

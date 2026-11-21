@@ -1513,6 +1513,18 @@ describe('move to trash', () => {
     expect(statusLeft().textContent).toContain('Deleted notes.md')
   })
 
+  it('redraws the recent list without the trashed document as the home screen returns', async () => {
+    mainState.getRecentFiles.mockResolvedValue(['/tmp/notes.md', '/tmp/other.md'])
+    await openNotes()
+    // The shell has dropped it by the time its reply arrives.
+    mainState.getRecentFiles.mockResolvedValue(['/tmp/other.md'])
+    mainState.trashDocument.mockResolvedValue(true)
+    menu('moveToTrash')
+    await flushAsync()
+    const items = [...document.querySelectorAll<HTMLElement>('.home-recent-item')]
+    expect(items.map((item) => item.dataset.path)).toEqual(['/tmp/other.md'])
+  })
+
   it('keeps the tab when the reader cancels', async () => {
     await openNotes()
     mainState.trashDocument.mockResolvedValue(false)
@@ -2061,6 +2073,15 @@ describe('recent files', () => {
     expect(items).toHaveLength(2)
     expect(items[0]?.querySelector('.home-recent-name')?.textContent).toBe('a.md')
     expect(items[1]?.dataset.path).toBe('/x/b.md')
+  })
+
+  it('redraws the recent list when the shell says it changed', async () => {
+    mainState.getRecentFiles.mockResolvedValue(['/x/a.md', '/x/b.md'])
+    await loadMain()
+    mainState.getRecentFiles.mockResolvedValue([])
+    for (const handler of mainState.notifyHandlers) handler(JSON.stringify({ type: 'recentsChanged' }))
+    await flushAsync()
+    expect(document.querySelectorAll('.home-recent-item')).toHaveLength(0)
   })
 
   it('records an opened file as recent', async () => {

@@ -544,6 +544,16 @@ export function init(roots: AppRoots): () => void {
       ctx.blockEditor?.resolveImages()
     }
   })
+  // Redraw the recent list each time the home screen or a launcher tab comes
+  // into view. The list drawn last time can be stale by then: a document
+  // trashed in Edi, a file deleted outside it, opens counted since. The
+  // launcher's own `id` too, so moving from one launcher tab to another counts.
+  let lastLauncher: string | null = null
+  const unsubscribeRecents = subscribe((state) => {
+    const launcher = state.sessions.length === 0 ? 'home' : getActive()?.launcher ? state.activeId : null
+    if (launcher !== null && launcher !== lastLauncher) files.refreshRecents()
+    lastLauncher = launcher
+  })
   if (ctx.selftest) {
     // The packaged smoke test probes the rendered editor + mermaid diagram, so
     // boot the welcome document into a tab instead of the home screen.
@@ -586,6 +596,7 @@ export function init(roots: AppRoots): () => void {
     roots.editorContainer.removeEventListener('contextmenu', onContextMenu)
     unsubscribeState()
     unsubscribeImages()
+    unsubscribeRecents()
     stopTrackingOpenFiles?.()
     nativeBridge?.notify?.disconnect?.(files.onNativeEvent)
     stopTheme()

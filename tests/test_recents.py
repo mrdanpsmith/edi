@@ -131,6 +131,28 @@ def test_move_keeps_the_rank_under_the_new_name(store):
     assert store.shown() == ["/new.md", "/other.md"]
 
 
+def test_history_lists_every_document_with_its_rank_and_place(store, missing):
+    for _ in range(3):
+        store.opened("/busy.md")
+    store.opened("/gone.md")
+    missing.add("/gone.md")
+    rows = store.history()
+    assert [row["path"] for row in rows] == ["/busy.md", "/gone.md"]
+    busy, gone = rows
+    assert busy["opens"] == 3 and busy["shown"] and busy["exists"]
+    assert busy["score"] == pytest.approx(3.0)
+    assert not gone["shown"] and not gone["exists"]
+
+
+def test_clear_forgets_everything_including_the_old_list(store, settings):
+    store.opened("/a.md")
+    settings.setValue(recents.LEGACY_KEY, ["/old.md"])
+    store.clear()
+    assert store.history() == []
+    assert store.shown() == []
+    assert not settings.contains(recents.LEGACY_KEY)
+
+
 def test_the_old_list_is_read_once_in_order(store, settings):
     settings.setValue(recents.LEGACY_KEY, ["/first.md", "/second.md", "/third.md"])
     assert store.shown() == ["/first.md", "/second.md", "/third.md"]

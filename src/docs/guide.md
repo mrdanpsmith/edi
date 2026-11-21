@@ -10,6 +10,10 @@ the preview renders it live — and a few block types go much further.
 - `Ctrl+T` (or the `+` at the end of the tabs) opens a **New Tab** with your
   recent documents, Open and the help documents. Whatever you pick opens in
   that tab. Use the arrow keys and `Enter` to pick a recent document.
+- Recent documents are ranked by how often and how lately you open them, so
+  one you open every day stays near the top. Files that are gone are left off.
+  `File → Open Recent → Manage Recent Documents…` shows how each one ranks and
+  removes some or all; `Clear Recent Documents…` forgets them all.
 - `File → Rename or Move…` takes a new name or a path (`../archive/`
   keeps the name). Relative images and links are rewritten so they still
   point at the same files.

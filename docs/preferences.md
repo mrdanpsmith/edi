@@ -119,9 +119,12 @@ then starts the new one ([macos-installer.md](macos-installer.md)).
 ## Recent documents
 
 File › Open Recent and the launcher show the same list, `recent_files()` in
-`backend/window.py`, read again each time either is shown. `backend/recents.py`
-keeps it under `recentDocuments`, as JSON: each document with the times it was
-last opened.
+`backend/window.py`. The submenu reads it each time it opens. The launcher
+reads it each time the home screen or a launcher tab comes into view, and on a
+`recentsChanged` event from the shell. A document trashed in Edi or deleted
+outside it is gone from the list the next time either is shown.
+`backend/recents.py` keeps it under `recentDocuments`, as JSON: each document
+with the times it was last opened.
 
 - **Ranked by frecency.** Every open counts toward a document's score, and an
   open's weight halves every week (`HALF_LIFE_DAYS`). A document opened daily
@@ -146,6 +149,15 @@ last opened.
   and reopening a path on the shown list grants it again
   ([architecture.md](architecture.md)). The page cannot grant itself a path by
   adding it.
+
+- **Managed in the shell.** File › Open Recent › Manage Recent Documents…
+  (`backend/recentsmanager.py`) lists every remembered document, best first,
+  with its score as a bar, its opens and its last open, and whether it is on
+  the list, ranked below it or missing. It opens, removes or clears them all.
+  Clear Recent Documents… is the same Clear All prompt straight from the menu.
+  Both are the shell's own, like Manage Version History: the page can add a
+  granted path and read the shown list, but cannot list or wipe the history.
+  After a change the shell sends `recentsChanged`, and the launcher redraws.
 
 The older `recentFiles` list (last opened first) is read once, as one open
 each a minute apart so its order holds, and then removed.

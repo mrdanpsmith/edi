@@ -50,7 +50,14 @@ export class HomeScreen {
     this.list.addEventListener('keydown', (event) => this.onListKey(event))
   }
 
+  /**
+   * Show `paths`. The list is redrawn each time the launcher comes into view,
+   * often just after `focus` put the keyboard on it, so a focused entry is
+   * focused again in the new list: the same document if it is still there,
+   * else the first.
+   */
   setRecents(paths: string[]): void {
+    const focused = this.items().find((item) => item === document.activeElement)?.dataset.path
     this.list.replaceChildren()
     for (const path of paths) {
       const item = document.createElement('li')
@@ -71,6 +78,10 @@ export class HomeScreen {
       this.list.appendChild(item)
     }
     this.recent.hidden = paths.length === 0
+    if (focused !== undefined) {
+      const again = this.items().find((item) => item.dataset.path === focused) ?? this.items()[0] ?? this.newButton
+      again.focus({ preventScroll: true })
+    }
   }
 
   /**

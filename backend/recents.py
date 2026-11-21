@@ -140,10 +140,8 @@ class Recents:
     def _save(self, entries: list[Entry]) -> None:
         self._store().setValue(KEY, json.dumps(entries, separators=(",", ":")))
 
-    def shown(self) -> list[str]:
-        """The documents to offer, best first: existing files only, ``SHOWN`` at most."""
-        now = self._now()
-        existing = [entry for entry in self._load() if self._exists(entry["path"])]
+    def _shown(self, entries: list[Entry], now: float) -> list[str]:
+        existing = [entry for entry in entries if self._exists(entry["path"])]
         latest = sorted(existing, key=_last_open, reverse=True)[:ALWAYS_SHOWN]
         best = _ranked(existing, now)
         chosen = {entry["path"] for entry in latest}
@@ -152,6 +150,38 @@ class Recents:
                 break
             chosen.add(entry["path"])
         return [entry["path"] for entry in best if entry["path"] in chosen]
+
+    def shown(self) -> list[str]:
+        """The documents to offer, best first: existing files only, ``SHOWN`` at most."""
+        return self._shown(self._load(), self._now())
+
+    def history(self) -> list[dict]:
+        """Every tracked document, best first, for File › Open Recent › Manage.
+
+        Each is ``{"path", "opens", "lastOpened", "score", "exists", "shown"}``:
+        ``opens`` counts the opens remembered (at most ``OPENS_KEPT``), and
+        ``shown`` says whether it is on the list right now.
+        """
+        now = self._now()
+        entries = self._load()
+        shown = set(self._shown(entries, now))
+        return [
+            {
+                "path": entry["path"],
+                "opens": len(entry["opens"]),
+                "lastOpened": _last_open(entry),
+                "score": _score(entry, now),
+                "exists": self._exists(entry["path"]),
+                "shown": entry["path"] in shown,
+            }
+            for entry in _ranked(entries, now)
+        ]
+
+    def clear(self) -> None:
+        """Forget every document and its history."""
+        settings = self._store()
+        settings.setValue(KEY, "[]")
+        settings.remove(LEGACY_KEY)
 
     def opened(self, path: str) -> None:
         """Count an open of ``path``."""

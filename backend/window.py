@@ -33,6 +33,7 @@ from .files import check_rename_target, check_typed_open_path, resolve_typed_pat
 from .preferences import Preferences
 from .printing import PrintJob
 from .recents import Recents
+from .recentsmanager import RecentsManager, confirm_clear
 from .remote import shared_hosts
 from .rundialog import RunCodeDialog
 from .updates import UpdateCheck, UpdateResult, UpdateSettings, macos_install_command, release_page
@@ -875,11 +876,40 @@ class MainWindow(QMainWindow):
         if not paths:
             empty = self._recent_menu.addAction("No recent documents")
             empty.setEnabled(False)
-            return
         for path in paths:
             action = self._recent_menu.addAction(_recent_label(path))
             action.setToolTip(path)
             self._link_command(action, "openRecent", path)
+        # The whole history, not one entry: the shell's own dialog and prompt,
+        # never page commands, so nothing in the page can list or wipe it.
+        # Clear goes by the history, not the shown list: it may hold only
+        # files that are missing right now.
+        self._recent_menu.addSeparator()
+        manage = self._recent_menu.addAction("&Manage Recent Documents…")
+        manage.triggered.connect(lambda _checked=False: self._manage_recents())
+        clear = self._recent_menu.addAction("&Clear Recent Documents…")
+        clear.setEnabled(bool(paths) or bool(Recents().history()))
+        clear.triggered.connect(lambda _checked=False: self._clear_recents())
+
+    def _recents_changed(self) -> None:
+        """Tell the page the recent list changed, so the launcher redraws it."""
+        self._bridge.emit_event({"type": "recentsChanged"})
+
+    def _manage_recents(self) -> RecentsManager:
+        """File › Open Recent › Manage Recent Documents…. Non-blocking."""
+        dialog = RecentsManager(self, open_files=self.open_files, changed=self._recents_changed)
+        dialog.finished.connect(lambda _result: dialog.deleteLater())
+        dialog.open()
+        return dialog
+
+    def _clear_recents(self) -> QMessageBox:
+        """File › Open Recent › Clear Recent Documents…, after a yes."""
+
+        def cleared() -> None:
+            self._recents_changed()
+            self._flash("Cleared the recent documents")
+
+        return confirm_clear(self, Recents(), cleared)
 
     def open_external_url(self, url: str) -> None:
         """Open ``url`` in the system default application (usually a browser).
