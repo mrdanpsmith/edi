@@ -79,6 +79,30 @@ drag start. `moveSession` in `src/state.ts` changes the order only on release,
 and the re-rendered tab glides from the release point into its slot. A reorder
 never touches the editor or switches tabs.
 
+### The launcher and launcher tabs
+
+The launcher (`src/home.ts`, `#home-screen` in `index.html`) shows in two places:
+
+- **The home screen** (`#app[data-view='home']`), when no tab is open. It has an
+  Exit button and no tab strip.
+- **A launcher tab** (`data-view='launcher'`), titled "New Tab" in the strip and
+  opened by the tab strip's `+`, `Ctrl+T` and File › New Tab. The tab strip
+  stays; the toolbar, the editor and Exit are hidden. `Ctrl+N`, File › New and
+  the toolbar's New still open a blank document straight away.
+
+A launcher tab is a session with `launcher: true` (`src/state.ts`). It has no path
+and never becomes dirty, so it is left out of the reopened session and closes
+without asking. The shared editor still holds an empty state for it, so the tab
+machinery treats it like any other tab. `getActiveDocument()` returns no session
+while it is in view, which is what turns off save, print, export, find and the
+context menu there.
+
+Anything that opens a document while a launcher tab is active opens it **in** that
+tab (`Tabs.addSession`), as a browser's new-tab page becomes the page you go to.
+Otherwise every pick from the launcher would leave a stray launcher behind. If
+the file is already open in another tab, Edi switches to that tab and closes the
+launcher tab (`openDocument` in `src/fileController.ts`).
+
 ## What a document can make the machine do
 
 A markdown file can come from anywhere, so the page and everything in it that

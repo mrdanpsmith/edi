@@ -7,6 +7,9 @@ the preview renders it live — and a few block types go much further.
 
 - Documents open in tabs: `Ctrl+N` new, `Ctrl+W` close, `Ctrl+O` open,
   `Ctrl+Shift+O` open a typed path, `Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+Q` quit.
+- `Ctrl+T` (or the `+` at the end of the tabs) opens a **New Tab** with your
+  recent documents, Open and the help documents. Whatever you pick opens in
+  that tab. Use the arrow keys and `Enter` to pick a recent document.
 - `File → Rename or Move…` takes a new name or a path (`../archive/`
   keeps the name). Relative images and links are rewritten so they still
   point at the same files.

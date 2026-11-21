@@ -41,6 +41,7 @@ import { getSession } from './session'
 import {
   findSessionByPath,
   getActive,
+  getActiveDocument,
   markSaved,
   setActiveDirty,
 } from './state'
@@ -204,8 +205,15 @@ export function createFileController(ctx: AppContext): FileController {
     if (existing) {
       // Already-open *and* already-active is not a swap, so there is no settle
       // to be called from — the one case the caller speaks for itself.
-      if (existing.id === ctx.tabs.activeId) ctx.afterActivate()
-      else ctx.tabs.activate(existing.id)
+      if (existing.id === ctx.tabs.activeId) {
+        ctx.afterActivate()
+        return
+      }
+      // Picked from a launcher tab: the launcher has done its job, so it goes
+      // rather than staying behind as a second way to reach the same file.
+      const launcher = getActive()?.launcher ? ctx.tabs.activeId : null
+      ctx.tabs.activate(existing.id)
+      if (launcher) ctx.tabs.close(launcher)
       return
     }
     // A path can be asked for twice before its read finishes: a cold-launch
@@ -228,8 +236,8 @@ export function createFileController(ctx: AppContext): FileController {
   }
 
   async function saveFile(): Promise<void> {
-    if (!getActive()) return
-    const active = getActive()!
+    const active = getActiveDocument()
+    if (!active) return
     let path = active.path ?? null
     if (!path) {
       path = await pickSavePath(UNTITLED)
@@ -241,8 +249,9 @@ export function createFileController(ctx: AppContext): FileController {
   }
 
   async function saveFileAs(): Promise<void> {
-    if (!getActive()) return
-    const defaultName = getActive()!.path?.split('/').pop() ?? UNTITLED
+    const active = getActiveDocument()
+    if (!active) return
+    const defaultName = active.path?.split('/').pop() ?? UNTITLED
     const path = await pickSavePath(defaultName)
     if (!path) {
       return
@@ -329,7 +338,7 @@ export function createFileController(ctx: AppContext): FileController {
    */
   async function snapshotForSave(): Promise<SaveSnapshot | null> {
     await ctx.blockEditor?.flushReveals()
-    const session = getActive()
+    const session = getActiveDocument()
     if (!session) return null
     return {
       id: session.id,
@@ -610,8 +619,9 @@ export function createFileController(ctx: AppContext): FileController {
   }
 
   async function exportHtml(): Promise<void> {
-    if (!getActive()) return
-    const base = getActive()!.path ? fileName(getActive()!.path!) : UNTITLED
+    const active = getActiveDocument()
+    if (!active) return
+    const base = active.path ? fileName(active.path) : UNTITLED
     const path = await pickExportPath(base)
     if (!path) {
       return
@@ -629,7 +639,7 @@ export function createFileController(ctx: AppContext): FileController {
   }
 
   async function printDocument(): Promise<void> {
-    const active = getActive()
+    const active = getActiveDocument()
     if (!active) return
     const title = active.path ? fileName(active.path) : UNTITLED
     try {

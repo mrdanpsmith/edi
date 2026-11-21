@@ -19,7 +19,7 @@ import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
 import { buildWelcomeMarkdown } from './welcomeDoc'
 import { SearchPanel } from './searchPanel'
-import { getActive, getState, setActiveDirty, subscribe } from './state'
+import { getActive, getActiveDocument, getState, setActiveDirty, subscribe } from './state'
 import { HomeScreen } from './home'
 import { Tabs } from './tabs'
 import { isMisleadingLink, launchConfirmation } from './linkSecurity'
@@ -36,6 +36,11 @@ import { trackOpenFiles } from './session'
 
 function openNewTab(ctx: AppContext): void {
   ctx.tabs.addSession()
+}
+
+/** A launcher tab ("New Tab"): the launcher in a tab, which becomes whatever is opened from it. */
+function openLauncherTab(ctx: AppContext): void {
+  ctx.tabs.addLauncher()
 }
 
 function openWelcome(ctx: AppContext): void {
@@ -57,6 +62,8 @@ function buildHomeScreen(ctx: AppContext, files: FileController): HomeScreen {
     onOpen: () => void files.openFile(),
     onOpenPath: () => void files.openTypedPath(),
     onOpenWelcome: () => openWelcome(ctx),
+    onOpenHelpGuide: () => openHelpGuide(ctx),
+    onOpenFunctionReference: () => openFunctionReference(ctx),
     onExit: () => requestQuit(),
     onOpenRecent: (path) => void files.openDocument(path),
   })
@@ -214,7 +221,7 @@ function toggleGitHistory(ctx: AppContext): void {
 }
 
 function openSearch(ctx: AppContext, replace = false): void {
-  if (getState().sessions.length === 0) return
+  if (!getActiveDocument()) return
   // Resolve **now**, while the caret still says which document the reader is in:
   // opening the bar takes the focus away from it, and the panel holds it from then
   // on. See `SearchPanel.open`.
@@ -235,6 +242,9 @@ function registerShortcuts(
     if (key === 'n') {
       event.preventDefault()
       openNewTab(ctx)
+    } else if (key === 't') {
+      event.preventDefault()
+      openLauncherTab(ctx)
     } else if (key === 'w') {
       event.preventDefault()
       void closeTab(ctx, ctx.tabs.activeId)
@@ -415,7 +425,7 @@ export function init(roots: AppRoots): () => void {
       roots.editorContainer.scrollTop = value
     },
   }, {
-    onNewTab: () => openNewTab(ctx),
+    onNewTab: () => openLauncherTab(ctx),
     onCloseTab: (id) => void closeTab(ctx, id),
     onActivate: () => ctx.afterActivate(),
   })
@@ -437,9 +447,9 @@ export function init(roots: AppRoots): () => void {
   const resetZoom = (): void => zoom.set(DEFAULT_ZOOM)
   roots.statusZoom.addEventListener('click', resetZoom)
   // Right-click opens a custom menu (the browser's native one is suppressed by
-  // the desktop shell). On the home screen there is no document to act on.
+  // the desktop shell). On the home screen or a launcher tab there is no document to act on.
   const onContextMenu = (event: MouseEvent): void => {
-    if (getState().sessions.length === 0) return
+    if (!getActiveDocument()) return
     event.preventDefault()
     const entries = menus.buildContextMenu(event)
     if (entries.length === 0) return
@@ -453,8 +463,9 @@ export function init(roots: AppRoots): () => void {
   // Drive content from the native shell (QWebChannel): the desktop shell loads
   // documents and the smoke/selftest harness drives headless runs via this hook.
   const setContent = (markdown: string): void => {
-    if (getState().sessions.length === 0) {
-      // A document arrived on the home screen: create a tab for it.
+    if (!getActiveDocument()) {
+      // A document arrived on the home screen or a launcher tab: give it a tab
+      // (the launcher tab itself, when that is what is showing).
       ctx.tabs.addSession(markdown)
     } else {
       // Loads the document into the current tab, scrolled to the top. The
@@ -468,6 +479,7 @@ export function init(roots: AppRoots): () => void {
   window.ediSetContent = setContent
   bindMenuCommands({
     new: () => openNewTab(ctx),
+    newTab: () => openLauncherTab(ctx),
     open: () => void files.openFile(),
     openPath: () => void files.openTypedPath(),
     save: () => void files.saveFile(),

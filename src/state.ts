@@ -26,6 +26,12 @@ export interface SessionMeta {
    * still the document (see `markSaved`). */
   revision: number
   diskNote: DiskNote | null
+  /**
+   * A launcher tab ("New Tab"): the launcher in a tab of its own, holding no document. It is
+   * never dirty, has no path, and becomes a document in place when something
+   * is opened from it (see `Tabs.addSession`).
+   */
+  launcher: boolean
 }
 
 export interface StateSnapshot {
@@ -55,6 +61,12 @@ export function getActive(): SessionMeta | undefined {
   return sessions.find((session) => session.id === activeId.value)
 }
 
+/** The active session if it holds a document, so not on a launcher tab or the home screen. */
+export function getActiveDocument(): SessionMeta | undefined {
+  const active = getActive()
+  return active && !active.launcher ? active : undefined
+}
+
 export function findSessionByPath(path: string): SessionMeta | undefined {
   return sessions.find((session) => session.path === path)
 }
@@ -64,12 +76,21 @@ export function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener)
 }
 
-export function createSession(): string {
+export function createSession({ launcher = false } = {}): string {
   const id = `tab-${nextId.value++}`
-  sessions.push({ id, path: null, dirty: false, revision: 0, diskNote: null })
+  sessions.push({ id, path: null, dirty: false, revision: 0, diskNote: null, launcher })
   activeId.value = id
   emit()
   return id
+}
+
+/** The active launcher tab now holds a document: it shows the editor from here on. */
+export function settleActiveLauncher(): void {
+  const active = getActive()
+  if (active?.launcher) {
+    active.launcher = false
+    emit()
+  }
 }
 
 export function activateSession(id: string): boolean {
@@ -127,7 +148,9 @@ export function setActivePath(path: string | null): void {
 
 export function setActiveDirty(dirty: boolean): void {
   const active = getActive()
-  if (!active) return
+  // A launcher tab's hidden editor is replaced whole when a document arrives, so
+  // nothing typed or pasted into it is a change worth asking about on close.
+  if (!active || active.launcher) return
   if (dirty) active.revision++
   if (active.dirty !== dirty) {
     active.dirty = dirty
