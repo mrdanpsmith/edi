@@ -142,9 +142,6 @@ class StubWindow(QObject):
             self.recent_files_list.remove(path)
         self.recent_files_list.insert(0, path)
 
-    def forget_recent_file(self, path: str) -> None:
-        self.recent_files_list = [entry for entry in self.recent_files_list if entry != path]
-
     def move_recent_file(self, old_path: str, new_path: str) -> None:
         self.recent_files_list = [new_path if entry == old_path else entry for entry in self.recent_files_list]
 
@@ -1058,8 +1055,9 @@ def test_trash_document_moves_the_file_once_the_user_agrees(bridge, tmp_path, fa
     assert window.trash_confirmations == [(str(doc), True)]
     assert not doc.exists()
     assert (trash / "notes.md").read_text(encoding="utf-8") == "# Notes"
-    # Its name no longer names anything, so it is not offered as a recent.
-    assert window.recent_files_list == ["/other.md"]
+    # Left in the recent history: the real list hides a missing file but keeps
+    # its rank, so Manage Recent Documents can recover it.
+    assert window.recent_files_list == [str(doc), "/other.md"]
 
 
 def test_trash_document_cancel_leaves_everything(bridge, tmp_path, fake_trash):

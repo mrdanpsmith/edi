@@ -17,7 +17,6 @@ import os
 import tempfile
 import time
 from collections.abc import Callable
-from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFontDatabase, QFontMetrics, QIcon, QPainter, QPalette, QPen, QPixmap
@@ -26,7 +25,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -44,7 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import history
-from .files import missing_folders, missing_volume
+from .recovery import Recovery, _plural, _tilde, report_problems
 
 STATUS_LABELS = {
     "exists": "On disk",
@@ -204,15 +202,6 @@ def _when(stamp: float, now: float | None = None) -> str:
     return time.strftime("%Y-%m-%d", moment)
 
 
-def _tilde(path: str) -> str:
-    home = os.path.expanduser("~")
-    return "~" + path[len(home) :] if path == home or path.startswith(home + os.sep) else path
-
-
-def _plural(count: int, word: str) -> str:
-    return f"{count} {word}{'' if count == 1 else 's'}"
-
-
 class HistoryManager(QDialog):
     """The documents with history, a preview of the selected one's newest
     version, and the two things to do with a selection: Recover… and Delete
@@ -220,7 +209,9 @@ class HistoryManager(QDialog):
 
     ``open_files`` opens recovered documents in the page (and grants them, as the
     OS opening a document does); ``flash`` says something in the status bar;
-    ``watched`` names the documents open in Edi now.
+    ``watched`` names the documents open in Edi now; ``moved(old, new)`` is
+    told of a document recovered to another folder, so the recent list can
+    carry its rank there.
     """
 
     def __init__(
@@ -230,6 +221,7 @@ class HistoryManager(QDialog):
         open_files: Callable[[list[str]], None],
         flash: Callable[[str], None],
         watched: Callable[[], list[str]],
+        moved: Callable[[str, str], None] = lambda _old, _new: None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Manage Version History")
@@ -245,11 +237,10 @@ class HistoryManager(QDialog):
         self._open_files = open_files
         self._flash = flash
         self._watched = watched
+        self._moved = moved
         self._documents: dict[str, dict] = {}
-        # A recovery in progress: groups still to ask about, and how it went.
-        self._queue: list[tuple[str, list[str]]] = []
-        self._recovered: list[str] = []
-        self._problems: list[str] = []
+        # A recovery in progress, kept alive while its prompts are up.
+        self._recovery: Recovery | None = None
 
         layout = QVBoxLayout(self)
 
@@ -482,125 +473,21 @@ class HistoryManager(QDialog):
     # ── recovering ──────────────────────────────────────────────────────────
 
     def _start_recovery(self) -> None:
-        """Recover the selected documents, a group at a time.
-
-        Documents whose folder is there go straight back. The others are grouped
-        by what stands in their way — one missing folder, one disconnected
-        drive, or each blocked path on its own — and each group gets one prompt.
-        """
+        """Recover the selected documents (``backend/recovery.py``)."""
         paths = [path for path in self.selected_paths() if self._documents[path]["status"] != "exists"]
-        groups: dict[str, list[str]] = {}
-        for path in sorted(paths):
-            status = self._documents[path]["status"]
-            if status == "noDrive":
-                key = f"noDrive\0{missing_volume(path)}"
-            elif status == "blocked":
-                key = f"blocked\0{path}"
-            else:
-                key = f"{status}\0{os.path.dirname(path)}"
-            groups.setdefault(key, []).append(path)
-        self._queue = [(key.split("\0", 1)[0], members) for key, members in groups.items()]
-        self._recovered = []
-        self._problems = []
-        self._next_group()
+        statuses = {path: self._documents[path]["status"] for path in paths}
+        self._recovery = Recovery(self, statuses, self._finish_recovery)
+        self._recovery.start(paths)
 
-    def _write(self, path: str, destination: str, make_folders: bool = False) -> None:
-        try:
-            history.recover(path, destination, make_folders=make_folders)
-        except Exception as exc:  # noqa: BLE001 — reported with the others, at the end
-            self._problems.append(f"{os.path.basename(path)}: {exc}")
-        else:
-            self._recovered.append(destination)
-
-    def _next_group(self) -> None:
-        if not self._queue:
-            self._finish_recovery()
-            return
-        status, paths = self._queue.pop(0)
-        if status == "missing":
-            for path in paths:
-                self._write(path, path)
-            self._next_group()
-            return
-        names = ", ".join(f"“{os.path.basename(path)}”" for path in paths)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("Recover")
-        recreate = None
-        if status == "folderMissing":
-            folders = missing_folders(paths[0])
-            box.setText(f"The folder “{_tilde(os.path.dirname(paths[0]))}” no longer exists.")
-            box.setInformativeText(
-                f"Recreate it to put {names} back where {'it was' if len(paths) == 1 else 'they were'}? "
-                "Edi will create:\n" + "\n".join(f"  {_tilde(folder)}" for folder in folders)
-            )
-            recreate = box.addButton("Recreate Folder", QMessageBox.ButtonRole.AcceptRole)
-        elif status == "noDrive":
-            volume = missing_volume(paths[0]) or ""
-            box.setText(f"{names} {'was' if len(paths) == 1 else 'were'} on a drive that isn't connected: {volume}")
-            box.setInformativeText(
-                "Connect the drive and choose Recover again to put "
-                f"{'it' if len(paths) == 1 else 'them'} back there, or recover to another folder now."
-            )
-        else:
-            box.setText(f"Something that isn't {names} is now at “{_tilde(paths[0])}”.")
-            box.setInformativeText("Edi will not replace it. Recover to another folder instead?")
-        elsewhere = box.addButton("Choose Another Folder…", QMessageBox.ButtonRole.ActionRole)
-        skip = box.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(recreate or elsewhere)
-        box.setEscapeButton(skip)
-
-        def answered(button) -> None:
-            if recreate is not None and button is recreate:
-                for path in paths:
-                    self._write(path, path, make_folders=True)
-                self._next_group()
-            elif button is elsewhere:
-                self._choose_folder(paths)
-            else:
-                self._next_group()
-
-        box.buttonClicked.connect(answered)
-        box.setWindowModality(Qt.WindowModality.WindowModal)
-        box.finished.connect(lambda _result: box.deleteLater())
-        box.open()
-
-    def _choose_folder(self, paths: list[str]) -> None:
-        """Recover ``paths`` into a folder the user picks, under their own names."""
-        start = Path(paths[0]).parent
-        while not start.is_dir() and start != start.parent:
-            start = start.parent
-        if missing_volume(paths[0]) is not None:
-            start = Path.home()
-        dialog = QFileDialog(self, "Recover to Folder", str(start))
-        dialog.setFileMode(QFileDialog.FileMode.Directory)
-        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
-
-        def done(result) -> None:
-            chosen = dialog.selectedFiles() if result else []
-            dialog.deleteLater()
-            if chosen:
-                for path in paths:
-                    self._write(path, os.path.join(chosen[0], os.path.basename(path)))
-            self._next_group()
-
-        dialog.finished.connect(done)
-        dialog.open()
-
-    def _finish_recovery(self) -> None:
-        recovered = self._recovered
+    def _finish_recovery(self, recovered: list[tuple[str, str]], problems: list[str]) -> None:
+        self._recovery = None
+        for old, new in recovered:
+            if old != new:
+                # Recovered to another folder: its rank on the recent list goes with it.
+                self._moved(old, new)
         if recovered:
-            self._open_files(recovered)
+            self._open_files([new for _old, new in recovered])
             self._flash(f"Recovered {_plural(len(recovered), 'document')}")
         self.refresh()
-        if self._problems:
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Icon.Warning)
-            box.setWindowTitle("Recover")
-            box.setText(f"{_plural(len(self._problems), 'document')} could not be recovered.")
-            box.setInformativeText("\n".join(self._problems))
-            box.addButton(QMessageBox.StandardButton.Ok)
-            box.setWindowModality(Qt.WindowModality.WindowModal)
-            box.finished.connect(lambda _result: box.deleteLater())
-            box.open()
+        report_problems(self, problems)
+

@@ -13,7 +13,9 @@ the preview renders it live — and a few block types go much further.
 - Recent documents are ranked by how often and how lately you open them, so
   one you open every day stays near the top. Files that are gone are left off.
   `File → Open Recent → Manage Recent Documents…` shows how each one ranks and
-  removes some or all; `Clear Recent Documents…` forgets them all.
+  how often you have opened it, sorts by any column, recovers deleted ones from
+  their version history, and removes some or all; `Clear Recent Documents…`
+  forgets them all.
 - `File → Rename or Move…` takes a new name or a path (`../archive/`
   keeps the name). Relative images and links are rewritten so they still
   point at the same files.

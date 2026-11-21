@@ -268,7 +268,10 @@ version, as `clear` gives a single document. Every deletion goes through
 Recover is offered when every selected document is missing from disk. It
 writes each document's newest version back with `history.recover`, then opens
 the recovered documents as the OS opening them would (`open_files`, which
-grants them).
+grants them). The flow is `backend/recovery.py`'s `Recovery`, which File ›
+Open Recent › Manage Recent Documents… uses too
+([preferences.md](preferences.md)). A document recovered to another folder
+takes its rank on the recent list with it.
 
 - **Byte for byte.** The newest version's exact bytes are written, line endings
   and byte-order mark included.

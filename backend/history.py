@@ -264,6 +264,17 @@ def location_status(path: str) -> str:
     return "missing" if folder == Path(path).parent else "folderMissing"
 
 
+def has_history(path: str) -> bool:
+    """Whether the store holds a version of the document at ``path``, without
+    reading it."""
+    with _lock:
+        repo = _open(path)
+        if repo is None:
+            return False
+        with repo:
+            return _head(repo) is not None
+
+
 def latest_bytes(path: str) -> bytes | None:
     """The newest version of a document as the store holds it, or ``None``."""
     with _lock:
