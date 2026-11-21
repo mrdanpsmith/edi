@@ -107,7 +107,10 @@ class _Item(QTreeWidgetItem):
 
 
 def _dot(status: str) -> QIcon:
-    color, filled = _DOTS.get(status, ("#8a8f98", True))
+    return _dot_icon(*_DOTS.get(status, ("#8a8f98", True)))
+
+
+def _dot_icon(color: str, filled: bool) -> QIcon:
     size = 16
     pixmap = QPixmap(size * 2, size * 2)
     pixmap.setDevicePixelRatio(2)

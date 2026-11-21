@@ -173,6 +173,11 @@ export function createFileController(ctx: AppContext): FileController {
       ctx.disk?.onEvent(event.type, event.path)
       return
     }
+    // The shell's Manage or Clear Recent Documents changed the list.
+    if (event.type === 'recentsChanged') {
+      refreshRecents()
+      return
+    }
     // The shell reporting the outcome of one of its own dialogs.
     if (event.type === 'flashStatus' && typeof event.message === 'string') {
       ctx.flashStatus(event.message)
