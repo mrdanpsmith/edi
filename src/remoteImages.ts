@@ -13,7 +13,7 @@
  *
  * The answer is the shell's to keep (`backend/remote.py`), and the shell's
  * request interceptor is what enforces it, for this page and anything it loads.
- * View › Forget Allowed Image Sites… takes the answers back. Outside the shell
+ * Settings › Forget Allowed Image Sites… takes the answers back. Outside the shell
  * (`vite dev` in a browser) nothing is held back.
  */
 import { inNativeShell, invoke } from './bridge'
@@ -68,7 +68,7 @@ export function describeHosts(hosts: readonly string[]): string {
 export interface RemoteImagesBar {
   /** Show, update or hide the bar for what the editor now shows. */
   refresh(): void
-  /** The shell changed the allowed sites (View › Forget…). */
+  /** The shell changed the allowed sites (Settings › Forget Allowed Image Sites…). */
   allowedChanged(hosts: readonly string[]): void
   destroy(): void
 }

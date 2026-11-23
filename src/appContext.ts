@@ -4,9 +4,8 @@ import { invoke, showError } from './bridge'
 import { blockModeFor, interactionLabels, type BlockMode } from './block-modes'
 import { fileTextForDisplay } from './documentFormat'
 import { UNTITLED } from './files'
-import { isHoverBandEnabled } from './hoverBand'
-import { currentPreferences } from './preferences'
 import { getActive, getActiveDocument, getState, isAnyDirty } from './state'
+import { tabName } from './tabs'
 import { canZoomIn, canZoomOut, DEFAULT_ZOOM } from './zoom'
 import type { BlockEditor } from './editor'
 import type { ContextMenu } from './contextmenu'
@@ -187,15 +186,21 @@ function syncDirty(): void {
 
 function syncMenuState(ctx: AppContext): void {
   const active = getActiveDocument()
+  const { sessions, activeId } = getState()
   void invoke('setMenuState', {
+    // The Window menu's list of open tabs, in tab-strip order.
+    tabs: sessions.map((session) => ({
+      id: session.id,
+      title: session.dirty ? `* ${tabName(session)}` : tabName(session),
+      path: session.path ?? '',
+      active: session.id === activeId,
+    })),
     // False on the home screen and a launcher tab: there is nothing to export or print.
     hasDocument: Boolean(active),
     canRevert: Boolean(active?.path),
     canCopyPath: Boolean(active?.path),
     canRename: Boolean(active?.path),
     toolbarVisible: ctx.toolbar?.isVisible() ?? true,
-    hoverBand: isHoverBandEnabled(),
-    gitHistory: currentPreferences().gitHistory,
     zoomFactor: ctx.documentZoom,
     canZoomIn: canZoomIn(ctx.documentZoom),
     canZoomOut: canZoomOut(ctx.documentZoom),

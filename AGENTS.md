@@ -39,7 +39,7 @@ real application is `run_edi.py`.
 | [docs/code-blocks.md](docs/code-blocks.md) | Code block renderers, raw blocks (HTML, front matter), fences, paste, deleting, frame press and drags. |
 | [docs/find-replace.md](docs/find-replace.md) | Search matching, decorations or the find panel. |
 | [docs/contract.md](docs/contract.md) | Menu commands, bridge methods or preference names. |
-| [docs/preferences.md](docs/preferences.md) | Persisted app state or the preferences bridge. |
+| [docs/preferences.md](docs/preferences.md) | Persisted app state, the Settings dialog or the preferences bridge. |
 | [docs/history.md](docs/history.md) | Per-document version history, its store, restore and the diff dialog. |
 | [docs/disk-changes.md](docs/disk-changes.md) | Watching open documents, the changed-on-disk bar, Compare, and the save guard. |
 | [docs/spreadsheets.md](docs/spreadsheets.md) | Formulas, the evaluator, document-local functions. |

@@ -86,7 +86,7 @@ The launcher (`src/home.ts`, `#home-screen` in `index.html`) shows in two places
 - **The home screen** (`#app[data-view='home']`), when no tab is open. It has an
   Exit button and no tab strip.
 - **A launcher tab** (`data-view='launcher'`), titled "New Tab" in the strip and
-  opened by the tab strip's `+`, `Ctrl+T` and File › New Tab. The tab strip
+  opened by the tab strip's `+`, `Ctrl+T` and Window › New Tab. The tab strip
   stays; the toolbar, the editor and Exit are hidden. `Ctrl+N`, File › New and
   the toolbar's New still open a blank document straight away.
 
@@ -127,7 +127,7 @@ reaches outside it have explicit limits:
   (`src/remoteImages.ts`): a remote image resolves to a local placeholder, and a
   bar offers the sites. The bridge's `allowImageHosts` only adds sites, and
   only the app's own code can call it, since the policy above runs nothing a
-  document brings; View › Forget Allowed Image Sites… takes them back in a
+  document brings; Settings › Forget Allowed Image Sites… takes them back in a
   native prompt. The interceptor and its sites are one per process, parented to
   the application, because the profile does not own its interceptor and would
   otherwise outlive it. `test_remote_images_load_only_from_a_site_the_reader_allows`
@@ -182,8 +182,8 @@ reaches outside it have explicit limits:
   freely, and any change to it, from an edit or from another tool, asks again.
   "Don't ask again for this document until Edi quits" trusts the page's name
   for the document (its path, or `untitled:<tab>`) for this run of Edi. A
-  shebang Edi cannot run asks nothing, since the run only reports why. View ›
-  Forget Approved Code… takes every answer back.
+  shebang Edi cannot run asks nothing, since the run only reports why.
+  Settings › Forget Approved Code… takes every answer back.
 - **Runnable code blocks** (`backend/exec.py`). On POSIX each run leads its own
   process group, and Stop, the 30-second timeout and quitting the app
   (`Bridge.shutdown`, on `aboutToQuit`) kill the whole group; Windows uses
@@ -228,7 +228,7 @@ bridge methods and preference defaults are declared in
 | `src/styles.css` | Application stylesheet entry; imports the component sheets in cascade order. |
 | `src/styles/` | One stylesheet per component (`tabs`, `toolbar`, `block-controls`, `tables`, `mermaid`, …). |
 | `src/docs/` | Markdown used by the in-app Help guide. |
-| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, version history (`history.py`, recovering deleted documents in `recovery.py`, and a tracked document's git commits in `githistory.py`), code execution, table import, printing, preferences, recent documents (`recents.py`, and the Manage dialog in `recentsmanager.py`) and theming. |
+| `backend/` | Python shell: `main.py`, `window.py`, `bridge.py`, file IO, version history (`history.py`, recovering deleted documents in `recovery.py`, and a tracked document's git commits in `githistory.py`), code execution, table import, printing, preferences (and the Settings dialog in `settingsdialog.py`), recent documents (`recents.py`, and the Manage dialog in `recentsmanager.py`) and theming. |
 | `shared/edi-contract.json` | Single source of truth for menu-command, bridge-method and preference names. |
 | `tests/` | Python tests, including the real-WebEngine tests in `tests/window/test_window.py` and helpers in `tests/mermaid_render.py`. |
 | `scripts/` | Developer, build, packaging and release scripts. |

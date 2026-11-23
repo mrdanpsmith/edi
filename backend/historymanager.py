@@ -1,4 +1,4 @@
-"""File › Manage Version History…: every document Edi keeps a history for, and
+"""Settings › Manage Version History…: every document Edi keeps a history for, and
 what to do with each one — recover a deleted document, or delete histories.
 
 This is the shell's own dialog, never the page's, for the reason the old Clear

@@ -1,7 +1,7 @@
 /**
  * The hover band — the faint band behind the block under the pointer, which is
  * how the page says *which block would Alt+click alter?* — as a persisted
- * View-menu option, on by default.
+ * option in Edi › Settings…, on by default.
  *
  * The band is a stylesheet affordance and nothing else: one `::before` rule in
  * `src/styles/block-hover.css`, keyed off the control cluster's own block list. So this
@@ -13,7 +13,9 @@
  * the block's paint tree and nothing to reason about at the far end of it.
  *
  * The answer is persisted in the shell's settings store, on by default; see
- * `src/preferences.ts` for why it is not `localStorage`.
+ * `src/preferences.ts` for why it is not `localStorage`. The shell's Settings
+ * dialog writes it there itself and tells the page with a `preferenceChanged`
+ * event, which `src/fileController.ts` applies with `applyHoverBand`.
  */
 import { currentPreferences, savePreference } from './preferences'
 

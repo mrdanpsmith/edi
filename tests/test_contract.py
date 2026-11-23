@@ -47,8 +47,9 @@ class _MenusOnly(MainWindow):
     is called straight instead): it constructs the ``QWebEngineView``, the
     ``Bridge`` and the preference injection, none of which the menu bar reads.
     What ``_build_menus`` needs beyond that is ``_zoom_actions`` — the one
-    attribute it *fills* rather than assigns — plus a recent-files list, so
-    ``openRecent`` is declared like it is in a real window.
+    attribute it *fills* rather than assigns — plus a recent-files list and an
+    open tab, so ``openRecent`` and ``activateTab`` are declared like they are
+    in a real window.
 
     This is the brief's runtime collection route for the menu commands: the
     alternative (a regex over ``window.py``) would be a second parser for the
@@ -59,8 +60,12 @@ class _MenusOnly(MainWindow):
         QMainWindow.__init__(self)
         self._zoom_actions = {}
         self._update_settings = UpdateSettings()
+        self._tab_actions = []
+        self._tab_group = None
+        self._open_tabs = [{"id": "tab-1", "title": "notes.md", "path": "", "active": True}]
         self._build_menus()
         self._refresh_recent_menu()
+        self._refresh_window_menu()
 
     def recent_files(self) -> list[str]:
         # One entry, so the submenu holds an action carrying openRecent; the
@@ -72,9 +77,10 @@ class _MenusOnly(MainWindow):
 def _built_menu_commands() -> set[str]:
     """Every command name carried by an action in a freshly built menu bar.
 
-    Walks the bar's menus recursively, skipping separators and the two actions
-    that are deliberately not commands (Quit closes the window, About opens a
-    dialog — neither is routed to the page, so neither carries a name).
+    Walks the bar's menus recursively, skipping separators and the actions
+    that are deliberately not commands (the app actions, the shell's own data
+    dialogs and macOS's Minimize and Zoom are never routed to the page, so none
+    carries a name).
     """
     window = _MenusOnly()
     commands: set[str] = set()

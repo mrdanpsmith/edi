@@ -12,8 +12,8 @@ import { encryptSelection } from './encrypt'
 import { NEW_ICON, OPEN_ICON, PRINT_ICON, SAVE_AS_ICON, SAVE_ICON, Toolbar } from './toolbar'
 import { bindMenuCommands } from './menus'
 import { applyZoom, clampZoom, DEFAULT_ZOOM, zoomIn, zoomOut } from './zoom'
-import { currentPreferences, savePreference } from './preferences'
-import { applyHoverBand, isHoverBandEnabled, setHoverBand } from './hoverBand'
+import { currentPreferences } from './preferences'
+import { applyHoverBand, isHoverBandEnabled } from './hoverBand'
 import { documentFunctionsFor } from './formulaDefs'
 import { buildFunctionReferenceMarkdown } from './formulaReference'
 import { buildHelpGuideMarkdown } from './helpGuide'
@@ -209,15 +209,13 @@ function toggleToolbar(ctx: AppContext): void {
   ctx.syncMenuState()
 }
 
-function toggleHoverBand(ctx: AppContext): void {
-  setHoverBand(!isHoverBandEnabled())
-  ctx.syncMenuState()
-}
-
-/** File › Include Git Commits in History: read when Version History next opens. */
-function toggleGitHistory(ctx: AppContext): void {
-  savePreference('gitHistory', !currentPreferences().gitHistory)
-  ctx.syncMenuState()
+/** Window › Next Tab / Previous Tab: the neighbouring tab, wrapping at the ends. */
+function activateNeighbourTab(ctx: AppContext, delta: number): void {
+  const { sessions, activeId } = getState()
+  if (sessions.length < 2) return
+  const index = sessions.findIndex((session) => session.id === activeId)
+  const next = sessions[(index + delta + sessions.length) % sessions.length]
+  if (next) ctx.tabs.activate(next.id)
 }
 
 function openSearch(ctx: AppContext, replace = false): void {
@@ -239,6 +237,14 @@ function registerShortcuts(
       return
     }
     const key = event.key.toLowerCase()
+    // Ctrl+Tab is the Control key on every platform: Cmd+Tab is macOS's app
+    // switcher and never reaches the page. The shell's Window › Next Tab owns
+    // the key in the app; this answers it where there is no shell.
+    if (key === 'tab' && event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault()
+      activateNeighbourTab(ctx, event.shiftKey ? -1 : 1)
+      return
+    }
     if (key === 'n') {
       event.preventDefault()
       openNewTab(ctx)
@@ -480,6 +486,14 @@ export function init(roots: AppRoots): () => void {
   bindMenuCommands({
     new: () => openNewTab(ctx),
     newTab: () => openLauncherTab(ctx),
+    closeTab: () => {
+      if (getState().sessions.length > 0) void closeTab(ctx, ctx.tabs.activeId)
+    },
+    nextTab: () => activateNeighbourTab(ctx, 1),
+    previousTab: () => activateNeighbourTab(ctx, -1),
+    activateTab: (id) => {
+      if (id && getState().sessions.some((session) => session.id === id)) ctx.tabs.activate(id)
+    },
     open: () => void files.openFile(),
     openPath: () => void files.openTypedPath(),
     save: () => void files.saveFile(),
@@ -496,8 +510,6 @@ export function init(roots: AppRoots): () => void {
     export: () => void files.exportHtml(),
     print: () => void files.printDocument(),
     toggleToolbar: () => toggleToolbar(ctx),
-    toggleHoverBand: () => toggleHoverBand(ctx),
-    toggleGitHistory: () => toggleGitHistory(ctx),
     zoomIn: () => zoom.set(zoomIn(ctx.documentZoom)),
     zoomOut: () => zoom.set(zoomOut(ctx.documentZoom)),
     zoomReset: () => zoom.set(DEFAULT_ZOOM),

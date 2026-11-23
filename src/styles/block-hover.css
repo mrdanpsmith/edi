@@ -97,7 +97,7 @@
 .ProseMirror > :is(.block-visual-mode, .mermaid, .runnable-block, .spreadsheet, .ss-plain, .encrypted-block):not(.edi-block-mode):not(.encrypted-block-reveal-editor *):hover::before {
   /* **`var()`'s fallback is the band's default: drawn.** One declaration of
      `--hover-band-content` in the whole sheet, below, is what turns it off —
-     which is the whole of the View → Hover Band option (`src/hoverBand.ts`,
+     which is the whole of the Settings → Show the hover band option (`src/hoverBand.ts`,
      one persisted boolean, one class on `documentElement`). Hiding the band by
      restating this selector with a `content: none` of its own would be a
      second spelling of *which block would Alt+click alter?*, and that list is
@@ -166,7 +166,7 @@
   bottom: -1.5em;
 }
 
-/* **View → Hover Band, off.** The band's only shape decision is whether its
+/* **Settings → Show the hover band, off.** The band's only shape decision is whether its
    pseudo-element exists, so this is the whole of the option on the stylesheet
    side: `none` is not a hidden box, it is no box, which leaves a turned-off
    band costing nothing to paint and nothing for the block's own stacking to

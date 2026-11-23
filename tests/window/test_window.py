@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QItemSelectionModel, QPoint, QPointF, QSettings, QSize, QUrl, Qt
-from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QImage, QMouseEvent
+from PySide6.QtGui import QAction, QContextMenuEvent, QGuiApplication, QImage, QMouseEvent
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
     QApplication,
@@ -270,7 +270,7 @@ def test_trash_menu_item_follows_whether_the_document_has_a_path(visible):
 
 def test_manage_version_history_opens_the_shells_own_dialog_over_the_store(visible, qtbot, tmp_path, monkeypatch):
     """The dialog itself is tested in tests/test_historymanager.py; this is the
-    wiring: the menu item, and the window's own open, flash and watched."""
+    wiring: the Settings button, and the window's own open, flash and watched."""
     from backend import history
     from backend.historymanager import HistoryManager
 
@@ -280,19 +280,20 @@ def test_manage_version_history_opens_the_shells_own_dialog_over_the_store(visib
     history.record(str(gone))
     gone.unlink()
 
-    labels = [action.text() for action in visible._file_menu.actions()]
-    assert "&Manage Version History…" in labels
-    assert "Clear Version &History…" not in labels
-
-    dialog = visible._manage_history()
+    settings = visible._show_settings()
     try:
-        qtbot.waitUntil(dialog.isVisible, timeout=3000)
-        assert isinstance(QApplication.activeModalWidget(), HistoryManager)
+        qtbot.waitUntil(settings.isVisible, timeout=3000)
+        settings.buttons["history"].click()
+        qtbot.waitUntil(lambda: isinstance(QApplication.activeModalWidget(), HistoryManager), timeout=3000)
+        dialog = QApplication.activeModalWidget()
+        # On top of Settings, not behind it on the window.
+        assert dialog.parent() is settings
         assert dialog.tree.topLevelItemCount() == 1
         assert dialog._open_files == visible.open_files
         assert dialog._watched == visible._bridge.disk.watched
-    finally:
         dialog.close()
+    finally:
+        settings.close()
         qtbot.waitUntil(lambda: QApplication.activeModalWidget() is None, timeout=3000)
 
 
@@ -590,40 +591,91 @@ def test_pick_image_import_path_cancel_returns_none(visible, qtbot):
     assert result["value"] == "null"
 
 
-def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
+#: The app actions, in order: in the Edi menu, or on macOS appended to Help (with
+#: no separators), which Qt moves them out of into the application menu.
+APP_ACTIONS = ["&About Edi…", "Check for &Updates…", "&Settings…", "&Quit Edi"]
+
+
+def _labels(menu):
+    return [action.text() for action in menu.actions()]
+
+
+def test_the_menu_bar_is_edi_file_edit_insert_view_window_help(visible):
+    from backend.files import trash_name
+
     window = visible
-    menubar = window.menuBar()
-    titles = [action.text() for action in menubar.actions()]
-    assert "&File" in titles
-    assert "&Insert" in titles
-    assert "&View" in titles
-    assert "&Help" in titles
+    titles = _labels(window.menuBar())
+    expected = ["&File", "&Edit", "&Insert", "&View", "&Window", "&Help"]
+    assert titles == (expected if sys.platform == "darwin" else ["&Edi", *expected])
 
-    file_labels = [action.text() for action in window._file_menu.actions()]
-    assert "&New" in file_labels
-    assert "&Open…" in file_labels
-    assert "Open &Recent" in file_labels
-    assert "&Save" in file_labels
-    assert "Save &As…" in file_labels
-    assert "&Revert" in file_labels
-    assert "Copy File &Path" in file_labels
-    # No shortcut: Ctrl+Shift+E is the page's block-source toggle, and a menubar
-    # shortcut would win over the page. The label must not advertise it.
-    assert "&Export HTML…" in file_labels
-    assert not any(label.startswith("&Export HTML…\t") for label in file_labels)
-    assert "&Quit" in file_labels
-    # Open Recent belongs directly under Open.
-    assert file_labels.index("Open &Recent") == file_labels.index("&Open…") + 1
-    assert file_labels.index("Open &Path…") == file_labels.index("Open &Recent") + 1
-
-    insert_labels = [action.text() for action in window._insert_menu.actions()]
-    assert insert_labels == [
-        "&Table…",
-        "&Kanban Board…",
-        "&Spreadsheet…",
-        "&Text File…",
-        "&Image…",
+    assert _labels(window._file_menu) == [
+        "&New", "&Open…", "Open &Path…", "Open &Recent",
+        "",
+        "&Save", "Save &As…", "&Revert",
+        "",
+        "Re&name or Move…", "Copy File &Path", "Version &History…",
+        "",
+        # No shortcut on Export: Ctrl+Shift+E is the page's block-source toggle,
+        # and a menubar shortcut would win over the page.
+        "&Export HTML…", "&Print…",
+        "",
+        f"Move to {trash_name()}…",
     ]
+    assert _labels(window._edit_menu) == [
+        "&Undo", "&Redo",
+        "",
+        "Cu&t", "&Copy", "Copy as &Markdown", "&Paste", "Paste as &Markdown",
+        "",
+        "Select &All",
+        "",
+        "&Encrypt Selection…",
+        "",
+        "&Find…", "&Replace…",
+    ]
+    assert _labels(window._insert_menu) == [
+        "&Table…", "&Kanban Board…", "&Image…",
+        "",
+        "Import &Spreadsheet…", "Import Te&xt File…",
+    ]
+    assert _labels(window._view_menu) == [
+        "&Toolbar",
+        "",
+        "Zoom &In", "Zoom &Out", "&Reset Zoom",
+        "",
+        "&Zoom",
+    ]
+    # The static part: the tab list after it is the page's open tabs.
+    window_items = ["New &Tab", "&Close Tab", "", "&Next Tab", "&Previous Tab"]
+    if sys.platform == "darwin":
+        window_items = ["&Minimize", "&Zoom", "", *window_items]
+    assert _labels(window._window_menu)[: len(window_items)] == window_items
+
+    if sys.platform == "darwin":
+        assert window._app_menu is window._help_menu
+        assert _labels(window._help_menu) == ["&Edi Guide…", "&Formula Reference…", *APP_ACTIONS]
+    else:
+        assert _labels(window._help_menu) == ["&Edi Guide…", "&Formula Reference…"]
+        assert _labels(window._app_menu) == [
+            "&About Edi…", "Check for &Updates…", "", "&Settings…", "", "&Quit Edi",
+        ]
+
+
+def test_the_app_actions_carry_the_roles_that_put_them_in_the_macos_app_menu(visible):
+    roles = {
+        action.text(): action.menuRole()
+        for action in visible._app_menu.actions()
+        if action.text() in APP_ACTIONS
+    }
+    assert roles == {
+        "&About Edi…": QAction.MenuRole.AboutRole,
+        "Check for &Updates…": QAction.MenuRole.ApplicationSpecificRole,
+        "&Settings…": QAction.MenuRole.PreferencesRole,
+        "&Quit Edi": QAction.MenuRole.QuitRole,
+    }
+
+
+def test_the_menu_bar_keys(visible, qtbot):
+    window = visible
 
     # **The shell's own keys really are shortcuts.** Every one of these was a `\t` in
     # a label, which gives a PySide6 `QAction` no shortcut at all — so `Ctrl+S` and
@@ -637,60 +689,39 @@ def test_menu_bar_has_file_insert_view_and_help_menus(visible, qtbot):
     assert shell_shortcuts["&Open…"] == "Ctrl+O", shell_shortcuts
     assert shell_shortcuts["&Save"] == "Ctrl+S", shell_shortcuts
     assert shell_shortcuts["Save &As…"] == "Ctrl+Shift+S", shell_shortcuts
-    assert shell_shortcuts["&Quit"] == "Ctrl+Q", shell_shortcuts
 
-    edit_labels = [action.text() for action in window._edit_menu.actions()]
-    # **No shortcut on any of these**, and that is deliberate rather than missing:
-    # they are document commands, the page implements them, and the page is the
-    # only thing that knows about a CodeMirror buffer's own selection or a
-    # spreadsheet grid's. A window-level shortcut would shadow exactly that.
-    assert "&Undo" in edit_labels
-    assert "&Redo" in edit_labels
-    assert "Cu&t" in edit_labels
-    assert "&Copy" in edit_labels
-    assert "Copy as &Markdown" in edit_labels
-    assert "&Paste" in edit_labels
-    assert "Paste as &Markdown" in edit_labels
-    assert "Select &All" in edit_labels
-    assert "&Find…" in edit_labels
-    assert "&Replace…" in edit_labels
-    for label in edit_labels:
+    app_shortcuts = {action.text(): action.shortcut().toString() for action in window._app_menu.actions()}
+    assert app_shortcuts["&Settings…"] == "Ctrl+,", app_shortcuts
+    assert app_shortcuts["&Quit Edi"] == "Ctrl+Q", app_shortcuts
+
+    tab_shortcuts = {
+        action.text(): [sequence.toString() for sequence in action.shortcuts()]
+        for action in window._window_menu.actions()
+    }
+    assert tab_shortcuts["New &Tab"] == ["Ctrl+T"]
+    assert tab_shortcuts["&Close Tab"] == ["Ctrl+W"]
+    # The Control key on every platform (Qt's `Meta` on macOS, where Cmd+Tab is
+    # the app switcher), and Shift+Tab under both of the names Qt may give it.
+    tab_key = "Meta" if sys.platform == "darwin" else "Ctrl"
+    assert tab_shortcuts["&Next Tab"] == [f"{tab_key}+Tab"]
+    assert tab_shortcuts["&Previous Tab"] == [f"{tab_key}+Shift+Tab", f"{tab_key}+Shift+Backtab"]
+    if sys.platform == "darwin":
+        assert tab_shortcuts["&Minimize"] == ["Ctrl+M"]
+
+    # **No shortcut on any Edit item**, and that is deliberate rather than
+    # missing: they are document commands, the page implements them, and the
+    # page is the only thing that knows about a CodeMirror buffer's own
+    # selection or a spreadsheet grid's. A window-level shortcut would shadow
+    # exactly that.
+    for label in _labels(window._edit_menu):
         if label:
             assert "\t" not in label, (
                 f"a `\\t` in a label is not a shortcut in PySide6 — {label!r} would "
                 "advertise a key that does nothing")
 
-    help_labels = [action.text() for action in window._help_menu.actions()]
-    assert help_labels == [
-        "&Edi Guide…",
-        "&Formula Reference…",
-        "",
-        "Check for &Updates…",
-        "Check for Updates &Automatically",
-        "",
-        "&About Edi…",
-    ]
-
-    toolbar_actions = [
-        action
-        for action in window._view_menu.actions()
-        if action.text().startswith("&Toolbar")
-    ]
-    assert toolbar_actions
-    assert toolbar_actions[0].isCheckable()
-    assert toolbar_actions[0].isChecked() is True
-
-    # The hover band is a View option the reader can turn off, so it has to be
-    # *shown* as one — checkable, and checked at boot because the band is on
-    # unless it has been turned off.
-    band_actions = [
-        action
-        for action in window._view_menu.actions()
-        if action.text().startswith("&Hover Band")
-    ]
-    assert band_actions
-    assert band_actions[0].isCheckable()
-    assert band_actions[0].isChecked() is True
+    toolbar = _menu_action(window._view_menu, "&Toolbar")
+    assert toolbar.isCheckable()
+    assert toolbar.isChecked() is True
 
 
 def test_update_menu_state_disables_export_and_print_without_a_document(visible, qtbot):
@@ -801,49 +832,189 @@ def test_view_menu_toolbar_action_invokes_js_command(visible, qtbot):
     )
 
 
-def test_view_menu_hover_band_action_invokes_js_command(visible, qtbot):
-    _assert_menu_action_sends_command(
-        visible, qtbot, _menu_action(visible._view_menu, "&Hover Band"), "toggleHoverBand"
-    )
+def test_window_menu_tab_items_follow_the_open_tabs(visible):
+    """Driven with ``update_menu_state`` directly: the page republishes its real
+    tabs on its next state change, so nothing here outlives the test."""
+    window = visible
+    window.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True, tabs=[])
+    window._refresh_window_menu()
+    assert not window._close_tab_action.isEnabled()
+    assert not window._next_tab_action.isEnabled()
+    assert not window._previous_tab_action.isEnabled()
+    assert window._tab_actions == []
+
+    tabs = [
+        {"id": "a", "title": "R&D.md", "path": "/tmp/R&D.md", "active": False},
+        {"id": "b", "title": "New Tab", "path": "", "active": True},
+    ]
+    window.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True, tabs=tabs)
+    window._refresh_window_menu()
+    assert window._close_tab_action.isEnabled()
+    assert window._next_tab_action.isEnabled()
+    assert window._previous_tab_action.isEnabled()
+    listed = [action for action in window._tab_actions if not action.isSeparator()]
+    # `&&` shows a literal ampersand rather than underlining the next letter.
+    assert [action.text() for action in listed] == ["R&&D.md", "New Tab"]
+    assert [action.isChecked() for action in listed] == [False, True]
+    assert [action.data() for action in listed] == ["activateTab", "activateTab"]
+    assert listed[0].toolTip() == "/tmp/R&D.md"
+    assert window._tab_actions[0].isSeparator()
+
+    # Drawn again from scratch each time, never appended to.
+    window._refresh_window_menu()
+    assert len([a for a in window._tab_actions if not a.isSeparator()]) == 2
 
 
-def test_file_menu_git_history_action_invokes_js_command_and_follows_the_page(visible, qtbot):
-    action = _menu_action(visible._file_menu, "Include &Git Commits in History")
-    labels = [a.text() for a in visible._file_menu.actions()]
-    # It qualifies Version History, so it sits directly under it.
-    assert labels.index(action.text()) == labels.index("Version &History…") + 1
-    _assert_menu_action_sends_command(visible, qtbot, action, "toggleGitHistory")
-    visible.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True)
-    assert action.isChecked() is True
-    visible.update_menu_state(can_revert=False, can_copy_path=False, toolbar_visible=True, git_history=False)
-    assert action.isChecked() is False
-
-
-def test_update_menu_state_reports_the_hover_band(visible):
-    """The checkmark follows the page's stored answer, and on by default.
-
-    ``hover_band`` defaults to ``True`` for the same reason the option does: a
-    caller that does not know about the option (an older bridge, a test that
-    only cares about the File menu) must not be read as having turned the band
-    off. ``bridge.py``'s ``args.get("hoverBand", True)`` is the other half of
-    that same default, and ``bool(None)`` would have quietly shipped the band
-    switched off for every page that omitted the key.
-    """
+def test_a_window_menu_tab_activates_that_tab_by_id(visible, qtbot):
     window = visible
     window.update_menu_state(
-        can_revert=False, can_copy_path=False, toolbar_visible=True
+        can_revert=False, can_copy_path=False, toolbar_visible=True,
+        tabs=[{"id": "tab-7", "title": "notes.md", "path": "", "active": False}],
     )
-    assert window._hover_band_action.isChecked() is True
+    window._refresh_window_menu()
+    result = {}
+    _swap_menu_command(window, "window.__menuCmd = cmd; window.__menuArgs = arg;")
+    window._tab_actions[1].trigger()
+    _restore_menu_command(window)
 
-    window.update_menu_state(
-        can_revert=False, can_copy_path=False, toolbar_visible=True, hover_band=False
-    )
-    assert window._hover_band_action.isChecked() is False
+    def fetched():
+        window._web.page().runJavaScript(
+            "JSON.stringify([window.__menuCmd, window.__menuArgs])",
+            lambda v: result.__setitem__("value", v),
+        )
+        return result.get("value") not in (None, "[null,null]")
 
+    qtbot.waitUntil(fetched, timeout=3000)
+    assert json.loads(result["value"]) == ["activateTab", "tab-7"]
+
+
+def test_window_menu_tab_actions_invoke_js_commands(visible, qtbot):
+    window = visible
     window.update_menu_state(
-        can_revert=False, can_copy_path=False, toolbar_visible=True, hover_band=True
+        can_revert=False, can_copy_path=False, toolbar_visible=True,
+        tabs=[
+            {"id": "a", "title": "a.md", "path": "", "active": True},
+            {"id": "b", "title": "b.md", "path": "", "active": False},
+        ],
     )
-    assert window._hover_band_action.isChecked() is True
+    for action, command in (
+        (_menu_action(window._window_menu, "New &Tab"), "newTab"),
+        (window._close_tab_action, "closeTab"),
+        (window._next_tab_action, "nextTab"),
+        (window._previous_tab_action, "previousTab"),
+    ):
+        _assert_menu_action_sends_command(window, qtbot, action, command)
+
+
+def _settings(window, qtbot):
+    dialog = window._show_settings()
+    qtbot.waitUntil(dialog.isVisible, timeout=3000)
+    return dialog
+
+
+def _close_settings(dialog, qtbot):
+    dialog.close()
+    qtbot.waitUntil(lambda: QApplication.activeModalWidget() is None, timeout=3000)
+
+
+def test_settings_opens_from_its_menu_item_with_the_stored_answers(visible, qtbot, monkeypatch):
+    window = visible
+    from backend.settingsdialog import SettingsDialog
+
+    monkeypatch.setattr(window._update_settings, "automatic", lambda: True)
+    window.set_preference("gitHistory", False)
+    try:
+        window._settings_action.trigger()
+        qtbot.waitUntil(lambda: isinstance(QApplication.activeModalWidget(), SettingsDialog), timeout=3000)
+        dialog = QApplication.activeModalWidget()
+        boxes = dialog.checkboxes
+        assert list(boxes) == ["hoverBand", "gitHistory", "automaticUpdates"]
+        assert boxes["hoverBand"].isChecked() is window.preferences()["hoverBand"]
+        assert boxes["gitHistory"].isChecked() is False
+        assert boxes["automaticUpdates"].isChecked() is True
+        assert [button.text() for button in dialog.buttons.values()] == [
+            "Manage Version History…",
+            "Manage Recent Documents…",
+            "Forget Allowed Image Sites…",
+            "Forget Approved Code…",
+        ]
+        _close_settings(dialog, qtbot)
+    finally:
+        window.set_preference("gitHistory", True)
+
+
+def test_a_settings_checkbox_stores_the_answer_and_tells_the_page(visible, qtbot, monkeypatch):
+    """Stored first, then the page hears it, and the page writes nothing back."""
+    window = visible
+    pushed = []
+    real_push = window.push_event
+    monkeypatch.setattr(window, "push_event", lambda event: (pushed.append(event), real_push(event)))
+    dialog = _settings(window, qtbot)
+    try:
+        dialog.checkboxes["gitHistory"].click()
+        assert window.preferences()["gitHistory"] is False
+        assert pushed[-1] == {"type": "preferenceChanged", "name": "gitHistory", "value": False}
+        dialog.checkboxes["gitHistory"].click()
+        assert window.preferences()["gitHistory"] is True
+        assert pushed[-1] == {"type": "preferenceChanged", "name": "gitHistory", "value": True}
+    finally:
+        _close_settings(dialog, qtbot)
+
+
+def test_settings_updates_checkbox_is_the_update_check_setting(visible, qtbot, monkeypatch):
+    window = visible
+    answers = []
+    monkeypatch.setattr(window._update_settings, "automatic", lambda: False)
+    monkeypatch.setattr(window._update_settings, "set_automatic", answers.append)
+    dialog = _settings(window, qtbot)
+    try:
+        dialog.checkboxes["automaticUpdates"].click()
+        assert answers == [True]
+    finally:
+        _close_settings(dialog, qtbot)
+
+
+def test_settings_forget_with_nothing_to_forget_still_opens_a_message(visible, qtbot, monkeypatch):
+    """A "…" item promises a dialog, so an empty store answers in one, on top of
+    Settings: a status-bar note would sit behind it, unseen."""
+    window = visible
+    monkeypatch.setattr(window._image_hosts, "allowed", lambda: [])
+    monkeypatch.setattr(window._bridge.approvals, "count", lambda: 0)
+    dialog = _settings(window, qtbot)
+    try:
+        for key, text in (
+            ("imageSites", "No image sites are allowed, so there is nothing to forget."),
+            ("approvedCode", "No code is approved to run, so there is nothing to forget."),
+        ):
+            dialog.buttons[key].click()
+            qtbot.waitUntil(lambda: isinstance(QApplication.activeModalWidget(), QMessageBox), timeout=3000)
+            box = QApplication.activeModalWidget()
+            assert box.text() == text
+            assert box.parent() is dialog
+            box.close()
+            qtbot.waitUntil(lambda: QApplication.activeModalWidget() is dialog, timeout=3000)
+    finally:
+        _close_settings(dialog, qtbot)
+
+
+def test_settings_forget_prompts_stack_on_settings(visible, qtbot, monkeypatch):
+    """The Forget prompts are the window's own, parented to Settings."""
+    window = visible
+    asked = []
+    monkeypatch.setattr(window._image_hosts, "allowed", lambda: ["example.com"])
+    monkeypatch.setattr(window._bridge.approvals, "count", lambda: 1)
+    monkeypatch.setattr(
+        window, "confirm", lambda message, callback=None, *, parent=None: asked.append((message, parent))
+    )
+    dialog = _settings(window, qtbot)
+    try:
+        dialog.buttons["imageSites"].click()
+        dialog.buttons["approvedCode"].click()
+        assert [parent for _message, parent in asked] == [dialog, dialog]
+        assert "example.com" in asked[0][0]
+        assert asked[1][0].startswith("Forget all approved code?")
+    finally:
+        _close_settings(dialog, qtbot)
 
 
 def _read_zoom(window):
@@ -888,7 +1059,8 @@ def test_ctrl_shift_e_reaches_the_page(window):
     # second owner of an object that already has one, and letting that wrapper go
     # deletes the menu out from under every later test.
     for menu in (window._file_menu, window._edit_menu, window._insert_menu,
-                 window._view_menu, window._help_menu):
+                 window._view_menu, window._window_menu, window._help_menu,
+                 window._app_menu):
         for item in menu.actions():
             # A `\t` in a label is how Qt is told a shortcut, and it shows up in
             # the text as well — which is exactly how this went wrong: the Export
@@ -986,7 +1158,7 @@ def test_help_menu_edi_guide_action_invokes_js_command(visible, qtbot):
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):
     window = visible
     about_action = next(
-        action for action in window._help_menu.actions() if "About" in action.text()
+        action for action in window._app_menu.actions() if "About" in action.text()
     )
     about_action.trigger()
 
@@ -1172,7 +1344,7 @@ def _open_message_box(window, timeout=5):
 
 
 def test_check_for_updates_says_what_it_found(window):
-    """Help › Check for Updates… answers in a dialog: newer, current or failed."""
+    """Edi › Check for Updates… answers in a dialog: newer, current or failed."""
     window._check_for_updates(manual=True, fetch=lambda: "99.0.0")
     box = _open_message_box(window)
     assert box.text() == f"Edi 99.0.0 is available. You have {__version__}."
@@ -5127,14 +5299,13 @@ BAND_OPTION_PROBE = """(() => {
 })()""" % BAND_SELECTOR_JS
 
 
-def test_the_hover_band_is_a_view_option_that_actually_turns_the_band_off(window):
-    """View → Hover Band, off, removes the band from the page and is remembered.
+def test_the_hover_band_is_a_settings_option_that_actually_turns_the_band_off(window):
+    """Settings › Show the hover band, off, removes the band from the page and is remembered.
 
-    Driven through the real dispatcher (`window.ediMenuCommand`) rather than by
-    writing the answer and reloading, because the chain this test is about is
-    the whole one: the menu command, the class, the pseudo-element, and the
-    write all the way into the shell's settings store — which is the last leg
-    that never existed while these answers lived in the page's `localStorage`.
+    Driven through the Settings checkbox's own setter (`change_page_preference`)
+    rather than by writing the answer and reloading, because the chain this
+    test is about is the whole one: the shell's settings store, the
+    `preferenceChanged` event, the class and the pseudo-element.
     """
     window._web.page().runJavaScript(
         "window.ediSetContent(%s); true" % json.dumps("```python\nprint(1)\n```\n")
@@ -5143,16 +5314,14 @@ def test_the_hover_band_is_a_view_option_that_actually_turns_the_band_off(window
           lambda d: d.get("c") == 1, timeout=20)
 
     def toggle():
-        window._web.page().runJavaScript("window.ediMenuCommand('toggleHoverBand'); true")
+        window.change_page_preference("hoverBand", not window.preferences()["hoverBand"])
 
     def settle(enabled):
         """Wait for the page's class *and* the shell's store to agree on ``enabled``.
 
-        Two hops, and they disagree about direction: the class reads ``off``
-        while the store holds ``hoverBand``, and the write itself is a
-        ``QWebChannel`` round trip returning a promise the command dispatcher
-        does not wait on — so the class can be set while the write is still in
-        flight, and a test that read the store immediately would race.
+        The store is written first, then the page is told over the channel, so
+        the class follows a moment later: a test that read the class
+        immediately would race.
         """
         _wait(window, "(() => ({ off: document.documentElement"
                        ".classList.contains('edi-hover-band-off') }))()",
@@ -5197,7 +5366,7 @@ def test_the_hover_band_is_a_view_option_that_actually_turns_the_band_off(window
         # live root — so a page left with the band off would leave every later
         # band's geometry measurements measuring nothing. The store is the
         # developer's own, so it goes back too.
-        window.set_preference("hoverBand", True)
+        window.change_page_preference("hoverBand", True)
         window._web.page().runJavaScript(
             "document.documentElement.classList.remove('edi-hover-band-off'); true"
         )
@@ -8829,10 +8998,15 @@ def test_who_owns_each_edit_menu_key(window):
     the action regardless. Read off the actions, never off the labels: the label was
     never the evidence.
     """
-    shell = {a.text(): a.shortcut().toString() for a in window._file_menu.actions()}
+    shell = {
+        a.text(): a.shortcut().toString()
+        for menu in (window._file_menu, window._window_menu, window._app_menu)
+        for a in menu.actions()
+    }
     for label, sequence in (("&New", "Ctrl+N"), ("New &Tab", "Ctrl+T"),
                             ("&Open…", "Ctrl+O"), ("&Save", "Ctrl+S"),
-                            ("Save &As…", "Ctrl+Shift+S"), ("&Quit", "Ctrl+Q"),
+                            ("Save &As…", "Ctrl+Shift+S"), ("&Quit Edi", "Ctrl+Q"),
+                            ("&Close Tab", "Ctrl+W"), ("&Settings…", "Ctrl+,"),
                             ("Copy File &Path", "Ctrl+Alt+Shift+C")):
         assert shell.get(label) == sequence, f"{label}: {shell.get(label)!r}"
 

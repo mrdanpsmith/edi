@@ -1975,7 +1975,7 @@ describe('launcher tab', () => {
     return (await stateModule()).getState().sessions
   }
 
-  it('opens from Ctrl+T, File › New Tab and the tab bar +, and holds no document', async () => {
+  it('opens from Ctrl+T, Window › New Tab and the tab bar +, and holds no document', async () => {
     await loadMain()
     press('t')
     await flushAsync()
@@ -3159,16 +3159,22 @@ describe('document zoom', () => {
   })
 })
 
-describe('persisted View options', () => {
+describe('persisted options', () => {
   const bandOff = (): boolean =>
     document.documentElement.classList.contains('edi-hover-band-off')
 
-  function lastMenuState(): { hoverBand?: boolean; toolbarVisible?: boolean; zoomFactor?: number } {
+  function lastMenuState(): { toolbarVisible?: boolean; zoomFactor?: number } {
     const calls = mainState.invoke.mock.calls.filter((call) => call[0] === 'setMenuState')
     return calls[calls.length - 1]?.[1] as {
-      hoverBand?: boolean
       toolbarVisible?: boolean
       zoomFactor?: number
+    }
+  }
+
+  /** What the shell's Settings dialog sends once it has stored an answer. */
+  function settingsChanged(name: string, value: unknown): void {
+    for (const handler of mainState.notifyHandlers) {
+      handler(JSON.stringify({ type: 'preferenceChanged', name, value }))
     }
   }
 
@@ -3193,7 +3199,6 @@ describe('persisted View options', () => {
   it('draws the band on a first run', async () => {
     await loadMain()
     expect(bandOff()).toBe(false)
-    expect(lastMenuState().hoverBand).toBe(true)
   })
 
   it('honours a saved opt-out at boot, before the first hover', async () => {
@@ -3202,53 +3207,51 @@ describe('persisted View options', () => {
     window.ediPreferences = { hoverBand: false }
     await loadMain()
     expect(bandOff()).toBe(true)
-    expect(lastMenuState().hoverBand).toBe(false)
   })
 
-  it('toggles from the View command, persists, and republishes the checkmark',
-    async () => {
-      await loadMain()
-      menu('toggleHoverBand')
-      await flushAsync()
-      expect(bandOff()).toBe(true)
-      expect(savedPreferences().hoverBand).toBe(false)
-      // The checkmark has to follow the answer, not the press: nothing else tells
-      // the shell what the page decided.
-      expect(lastMenuState().hoverBand).toBe(false)
+  it('follows Settings for the hover band without saving the answer again', async () => {
+    await loadMain()
+    settingsChanged('hoverBand', false)
+    await flushAsync()
+    expect(bandOff()).toBe(true)
+    settingsChanged('hoverBand', true)
+    await flushAsync()
+    expect(bandOff()).toBe(false)
+    // The shell stored it before telling the page; a write back would be a second
+    // writer of the same key.
+    expect(savedPreferences()).toEqual({})
+  })
 
-      menu('toggleHoverBand')
-      await flushAsync()
-      expect(bandOff()).toBe(false)
-      expect(savedPreferences().hoverBand).toBe(true)
-      expect(lastMenuState().hoverBand).toBe(true)
-    })
+  it('ignores a Settings change it cannot use', async () => {
+    await loadMain()
+    settingsChanged('hoverBand', 'off')
+    settingsChanged('noSuchPreference', true)
+    await flushAsync()
+    expect(bandOff()).toBe(false)
+  })
 
-  it('persists every controllable View option through the same store', async () => {
-    // One store, one key per option, and the zoom level on it too — all three
-    // answering to the shell, which is what survives a restart. These answers
-    // used to sit in the page's `localStorage`, which cannot outlive the
-    // process at all: the webview runs on the *default* QtWebEngine profile and
-    // that one is off-the-record (`backend/preferences.py` has the detail).
+  it('persists the View options through the same store', async () => {
+    // One store, one key per option, and the zoom level on it too, answering to
+    // the shell, which is what survives a restart. The webview runs on the
+    // *default* QtWebEngine profile, which is off-the-record, so `localStorage`
+    // would not outlive the process (`backend/preferences.py` has the detail).
     await loadMain()
     menu('toggleToolbar')
-    menu('toggleHoverBand')
     menu('zoomTo', '2')
     await flushAsync()
     expect(savedPreferences()).toEqual({
       toolbarVisible: false,
-      hoverBand: false,
       zoomFactor: 2,
     })
   })
 
-  it('toggles git commits in Version History, and Version History asks for them', async () => {
+  it('follows Settings for git commits in Version History', async () => {
     mainState.pickOpenPath.mockResolvedValue(['/tmp/tracked.md'])
     mainState.readTextFile.mockResolvedValue('tracked')
     mainState.invoke.mockImplementation((method: string) =>
       Promise.resolve(method === 'listHistory' ? { versions: [], git: null } : undefined),
     )
     await loadMain()
-    expect((lastMenuState() as { gitHistory?: boolean }).gitHistory).toBe(true)
     menu('open')
     await flushAsync()
     const listCalls = () => mainState.invoke.mock.calls.filter((call) => call[0] === 'listHistory')
@@ -3258,10 +3261,9 @@ describe('persisted View options', () => {
     document.querySelector<HTMLButtonElement>('.edi-history-dialog .edi-dialog-actions .toolbar-btn:not(.edi-history-clear)')!.click()
     await flushAsync()
 
-    menu('toggleGitHistory')
+    settingsChanged('gitHistory', false)
     await flushAsync()
-    expect(savedPreferences().gitHistory).toBe(false)
-    expect((lastMenuState() as { gitHistory?: boolean }).gitHistory).toBe(false)
+    expect(savedPreferences().gitHistory).toBeUndefined()
     menu('versionHistory')
     await flushAsync()
     expect(listCalls().at(-1)?.[1]).toEqual({ path: '/tmp/tracked.md', git: false })
@@ -3286,7 +3288,94 @@ describe('persisted View options', () => {
     expect(lastMenuState()).toMatchObject({
       zoomFactor: 1.5,
       toolbarVisible: false,
-      hoverBand: false,
     })
+  })
+})
+
+describe('Window menu', () => {
+  interface MenuTab {
+    id: string
+    title: string
+    path: string
+    active: boolean
+  }
+
+  function menuTabs(): MenuTab[] {
+    const calls = mainState.invoke.mock.calls.filter((call) => call[0] === 'setMenuState')
+    return (calls.at(-1)?.[1] as { tabs: MenuTab[] }).tabs
+  }
+
+  const activeTitle = (): string | undefined => menuTabs().find((tab) => tab.active)?.title
+
+  async function openThree(): Promise<void> {
+    mainState.readTextFile.mockResolvedValue('text')
+    for (const path of ['/tmp/a.md', '/tmp/b.md', '/tmp/c.md']) {
+      mainState.pickOpenPath.mockResolvedValueOnce([path])
+      menu('open')
+      await flushAsync()
+    }
+  }
+
+  it('publishes the open tabs, in order, with the active one marked', async () => {
+    await loadMain()
+    expect(menuTabs()).toEqual([])
+    await openThree()
+    expect(menuTabs().map((tab) => [tab.title, tab.path])).toEqual([
+      ['a.md', '/tmp/a.md'],
+      ['b.md', '/tmp/b.md'],
+      ['c.md', '/tmp/c.md'],
+    ])
+    expect(activeTitle()).toBe('c.md')
+    menu('newTab')
+    await flushAsync()
+    expect(activeTitle()).toBe('New Tab')
+  })
+
+  it('moves to the next and previous tab, wrapping at the ends', async () => {
+    await loadMain()
+    await openThree()
+    menu('nextTab')
+    await flushAsync()
+    expect(activeTitle()).toBe('a.md')
+    menu('previousTab')
+    await flushAsync()
+    expect(activeTitle()).toBe('c.md')
+    menu('previousTab')
+    await flushAsync()
+    expect(activeTitle()).toBe('b.md')
+  })
+
+  it('answers Ctrl+Tab and Ctrl+Shift+Tab where there is no shell to', async () => {
+    await loadMain()
+    await openThree()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', ctrlKey: true, cancelable: true }))
+    await flushAsync()
+    expect(activeTitle()).toBe('a.md')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', ctrlKey: true, shiftKey: true, cancelable: true }))
+    await flushAsync()
+    expect(activeTitle()).toBe('c.md')
+  })
+
+  it('activates a tab picked from the list, and ignores one that is gone', async () => {
+    await loadMain()
+    await openThree()
+    const first = menuTabs()[0]!
+    menu('activateTab', first.id)
+    await flushAsync()
+    expect(activeTitle()).toBe('a.md')
+    menu('activateTab', 'no-such-tab')
+    await flushAsync()
+    expect(activeTitle()).toBe('a.md')
+  })
+
+  it('closes the active tab, and does nothing on the home screen', async () => {
+    await loadMain()
+    menu('closeTab')
+    await flushAsync()
+    expect(menuTabs()).toEqual([])
+    await openThree()
+    menu('closeTab')
+    await flushAsync()
+    expect(menuTabs().map((tab) => tab.title)).toEqual(['a.md', 'b.md'])
   })
 })

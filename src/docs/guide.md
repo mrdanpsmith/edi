@@ -10,6 +10,8 @@ the preview renders it live — and a few block types go much further.
 - `Ctrl+T` (or the `+` at the end of the tabs) opens a **New Tab** with your
   recent documents, Open and the help documents. Whatever you pick opens in
   that tab. Use the arrow keys and `Enter` to pick a recent document.
+- `Ctrl+Tab` and `Ctrl+Shift+Tab` move to the next and previous tab (the
+  Control key on a Mac too). The `Window` menu lists every open tab.
 - Recent documents are ranked by how often and how lately you open them, so
   one you open every day stays near the top. Files that are gone are left off.
   `File → Open Recent → Manage Recent Documents…` shows how each one ranks and
@@ -20,17 +22,20 @@ the preview renders it live — and a few block types go much further.
   keeps the name). Relative images and links are rewritten so they still
   point at the same files.
 - `File → Move to Trash…` asks first, then moves the document's file to the
-  Trash (the Recycle Bin on Windows) and closes its tab. `File → Manage Version
-  History…` can still recover it after the Trash is emptied.
+  Trash (the Recycle Bin on Windows) and closes its tab. `Settings → Manage
+  Version History…` can still recover it after the Trash is emptied.
 - File actions also live as toolbar buttons; hide that row with
   `View → Toolbar`.
-- `Help → Check for Updates…` tells you whether a newer Edi is out. Turn on
-  `Help → Check for Updates Automatically` to have Edi look at launch, once a
-  day; a newer version shows in the status bar. It's off by default because
-  the check contacts GitHub.
+- `Edi → Settings…` (`Ctrl+,`) holds Edi's options and lets you manage or
+  forget what it has stored: version history, recent documents, allowed image
+  sites and approved code. On a Mac the `Edi` menu is the application menu.
+- `Edi → Check for Updates…` tells you whether a newer Edi is out. Turn on
+  **Check for updates automatically** in Settings to have Edi look at launch,
+  once a day; a newer version shows in the status bar. It's off by default
+  because the check contacts GitHub.
 - Hovering a block puts a faint band behind it, marking which block
-  `Alt+click` would alter. `View → Hover Band` turns that band off; it is on by
-  default and the answer is remembered.
+  `Alt+click` would alter. **Show the hover band** in Settings turns that band
+  off; it is on by default and the answer is remembered.
 - Hover a block for its controls at the right edge: **Source** shows that
   block's markdown and **Visual** brings the rendering back. `Ctrl+Shift+E`
   does the same for the block the caret is in.
@@ -50,7 +55,7 @@ the preview renders it live — and a few block types go much further.
 ## Spreadsheet tables
 
 `Insert → Table…` (or the toolbar's **Table** button) drops a spreadsheet
-grid into the document; `Insert → Spreadsheet…` imports a CSV/TSV/ODS/XLSX
+grid into the document; `Insert → Import Spreadsheet…` imports a CSV/TSV/ODS/XLSX
 file as a table.
 
 A cell whose text starts with `=` is a formula:
@@ -93,8 +98,8 @@ it an error in this document until you rename your function.
 
 ## Encryption
 
-**Encrypt…** — the toolbar's lock, the Edit menu, or a block's right-click
-menu — encrypts what you have selected:
+**Encrypt…** — the toolbar's lock, `Edit → Encrypt Selection…`, or a block's
+right-click menu — encrypts what you have selected:
 
 - **Nothing selected, or text within one line**: an encrypted field, holding
   the selected text if there is any. The markdown holds only
@@ -186,7 +191,7 @@ above the document names the sites its images come from:
   document.
 - **Not now** hides the bar for this tab.
 
-Images on your own computer always load. `View → Forget Allowed Image Sites…`
+Images on your own computer always load. `Settings → Forget Allowed Image Sites…`
 takes back every site you allowed.
 
 ## Runnable code blocks
@@ -206,7 +211,7 @@ beneath the block and **Stop** cancels a hung run.
 Code can read and change your files, so the first time you run a block Edi
 shows you the code and asks. It won't ask again for that exact code; change
 the code and it asks again. Tick **Don't ask again for this document until Edi
-quits** while you're writing code, and `View → Forget Approved Code…` makes
+quits** while you're writing code, and `Settings → Forget Approved Code…` makes
 every block ask again.
 
 ## Selecting and deleting a code block

@@ -1,4 +1,4 @@
-"""Tests for File › Manage Version History… (`backend/historymanager.py`).
+"""Tests for Settings › Manage Version History… (`backend/historymanager.py`).
 
 The dialog needs Qt widgets but no page, so it is built here on its own with
 stand-ins for what the window hands it.

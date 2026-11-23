@@ -28,7 +28,8 @@ import {
   UNTITLED,
   writeTextFile,
 } from './files'
-import { currentPreferences } from './preferences'
+import { adoptPreference, currentPreferences } from './preferences'
+import { applyHoverBand } from './hoverBand'
 import { buildExportHtml, serializeDocToHtml } from './export'
 import { parseTableFile, toMarkdownTable } from './import'
 import { copyText } from './clipboard'
@@ -80,6 +81,8 @@ interface NativeEvent {
   allowed?: unknown
   version?: unknown
   url?: unknown
+  name?: unknown
+  value?: unknown
 }
 
 /** What a save writes, and which tab, edit and document it was read from. */
@@ -176,7 +179,15 @@ export function createFileController(ctx: AppContext): FileController {
       ctx.disk?.onEvent(event.type, event.path)
       return
     }
-    // View › Forget Allowed Image Sites… (`backend/remote.py`).
+    // Edi › Settings… changed a preference the page applies. The shell has
+    // already stored it, so it is adopted rather than saved again.
+    if (event.type === 'preferenceChanged' && typeof event.name === 'string') {
+      if (adoptPreference(event.name, event.value) && event.name === 'hoverBand') {
+        applyHoverBand(currentPreferences().hoverBand)
+      }
+      return
+    }
+    // Settings › Forget Allowed Image Sites… (`backend/remote.py`).
     if (event.type === 'imageHostsChanged' && Array.isArray(event.allowed)) {
       ctx.remoteImages?.allowedChanged(event.allowed.filter((host): host is string => typeof host === 'string'))
       return

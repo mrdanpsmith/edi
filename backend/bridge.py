@@ -75,6 +75,37 @@ class ChangedOnDisk(Exception):
     """A write that would replace text Edi has never shown the reader."""
 
 
+#: The Window menu lists at most this many tabs; a menu longer than a screen helps nobody.
+MAX_MENU_TABS = 100
+
+
+def _menu_tabs(raw: object) -> list[dict]:
+    """The page's open tabs, for the Window menu, kept only where well formed.
+
+    Each is ``{"id", "title", "path", "active"}``. Anything else (an older
+    page that sends no list, an entry with no id) is left out rather than
+    drawn as a menu item that activates nothing.
+    """
+    if not isinstance(raw, list):
+        return []
+    tabs = []
+    for entry in raw[:MAX_MENU_TABS]:
+        if not isinstance(entry, dict):
+            continue
+        tab_id = entry.get("id")
+        title = entry.get("title")
+        if not isinstance(tab_id, str) or not tab_id or not isinstance(title, str):
+            continue
+        path = entry.get("path")
+        tabs.append({
+            "id": tab_id,
+            "title": title,
+            "path": path if isinstance(path, str) else "",
+            "active": entry.get("active") is True,
+        })
+    return tabs
+
+
 def _file_bytes(path: str) -> bytes:
     with open(os.path.realpath(path), "rb") as handle:
         return handle.read()
@@ -592,7 +623,7 @@ class Bridge(QObject):
         a page that calls this can at most put that question in front of the
         user, and only for a document Edi may write or has itself opened.
 
-        The document's saved versions are kept, so File › Manage Version
+        The document's saved versions are kept, so Settings › Manage Version
         History can still recover it after the Trash is emptied.
         """
         path = args.get("path")
@@ -921,8 +952,7 @@ class Bridge(QObject):
             can_revert=bool(args.get("canRevert")),
             can_copy_path=bool(args.get("canCopyPath")),
             toolbar_visible=bool(args.get("toolbarVisible")),
-            hover_band=bool(args.get("hoverBand", True)),
-            git_history=bool(args.get("gitHistory", True)),
+            tabs=_menu_tabs(args.get("tabs")),
             can_rename=bool(args.get("canRename")),
             zoom_factor=float(args.get("zoomFactor") or 1.0),
             can_zoom_in=bool(args.get("canZoomIn", True)),

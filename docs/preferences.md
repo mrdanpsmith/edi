@@ -55,8 +55,37 @@ the store stays reachable and testable without going through the injection.
 ## The page's own record
 
 `preferences.ts` keeps `current` as the page's own record, seeded from the
-injection. `syncMenuState` publishes the menu checkmarks from it; a re-read of
-the injection would answer with this launch's answers.
+injection. `syncMenuState` publishes the Toolbar checkmark and the zoom level
+from it; a re-read of the injection would answer with this launch's answers.
+
+## The Settings dialog
+
+Edi › Settings… (`Ctrl+,`, the application menu's Settings… on macOS) is
+`backend/settingsdialog.py`, a native dialog the window builds in
+`_show_settings`. It holds every option that is not a View toggle, and the
+shell's stored-data actions:
+
+| Item | Kept in | Written by |
+| --- | --- | --- |
+| Show the hover band | `hoverBand` | `change_page_preference` |
+| Include git commits in Version History | `gitHistory` | `change_page_preference` |
+| Check for updates automatically | `updates/automatic` | `UpdateSettings.set_automatic` |
+| Manage Version History… | the history store | [history.md](history.md) |
+| Manage Recent Documents… | `recentDocuments` | [Recent documents](#recent-documents) |
+| Forget Allowed Image Sites… | `allowedImageHosts` | [Allowed image sites](#allowed-image-sites) |
+| Forget Approved Code… | `approvedCode` | [Approved code](#approved-code) |
+
+It is native rather than a page in the editor because the four actions are the
+shell's own: a dialog drawn by the page would put listing and wiping that data
+within reach of anything running there. Each action's dialog or prompt is
+parented to Settings, so it opens on top of it.
+
+A checkbox takes effect when it is clicked; the only button is Close. The
+dialog reads each value from the store when it opens. For `hoverBand` and
+`gitHistory`, which the page applies, `change_page_preference` writes the
+store and then pushes a `preferenceChanged` event. The page takes the value
+with `adoptPreference` and writes nothing back, so each change has one writer.
+A name the page does not know, or a value of the wrong type, is ignored.
 
 A stored zoom level is clamped by `clampZoom` on the way into the editor, not
 by the store. The ladder belongs to the frontend. `Edi.conf` is a file a person
@@ -68,15 +97,15 @@ file, not to second-guess the ladder.
 The sites the reader chose **Always load from these sites** for are kept under
 `allowedImageHosts`, a list of host names (`backend/remote.py`). They are not a
 preference: the page may add to them, on the reader's click, but cannot read
-them back as settings or remove them, and View › Forget Allowed Image Sites…
+them back as settings or remove them, and Settings › Forget Allowed Image Sites…
 clears them behind the shell's own prompt. Sites allowed with **Load images**
 live only until Edi quits. See [architecture.md](architecture.md), "What a
 document can make the machine do".
 
 ## Update check
 
-`updates/automatic` (off unless the reader turns on Help › Check for Updates
-Automatically) and `updates/lastCheck` (seconds since the epoch of the last
+`updates/automatic` (off unless the reader turns on **Check for updates
+automatically** in Settings) and `updates/lastCheck` (seconds since the epoch of the last
 check that got an answer) belong to `backend/updates.py`. Like the allowed image
 sites they are the shell's, not preferences: only the shell reads them, and the
 page cannot turn the request on. An automatic check runs at launch when it is
@@ -87,8 +116,8 @@ on and the last check is a day old.
 The code blocks the reader agreed to run are kept under `approvedCode`: SHA-256
 digests of each block's shebang and source, newest first, at most 1000
 (`backend/approvals.py`). The page never sees or sets them; the bridge adds one
-when the reader answers Run in the shell's prompt, and View › Forget Approved
-Code… clears them. A document trusted "until Edi quits" is never stored.
+when the reader answers Run in the shell's prompt, and Settings › Forget
+Approved Code… clears them. A document trusted "until Edi quits" is never stored.
 
 ## The last session
 
@@ -156,8 +185,8 @@ with its open count, its last open and its score as of that open.
   and reopening a path on the shown list grants it again
   ([architecture.md](architecture.md)). The page cannot grant itself a path by
   adding it.
-- **Managed in the shell.** File › Open Recent › Manage Recent Documents…
-  (`backend/recentsmanager.py`) lists every remembered document with its score
+- **Managed in the shell.** File › Open Recent › Manage Recent Documents…,
+  also in Settings (`backend/recentsmanager.py`), lists every remembered document with its score
   as a bar, its opens and its last open, best first. Every column sorts. Each
   row says whether the document is on the list, ranked below it, or not on
   disk, and why (missing, folder missing, drive not connected). The dialog

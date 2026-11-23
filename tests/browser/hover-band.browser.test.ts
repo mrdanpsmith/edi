@@ -173,7 +173,7 @@ describe('with the band on (the default)', () => {
   })
 })
 
-describe('the View → Hover Band option', () => {
+describe('the Settings › Show hover band option', () => {
   // Off at boot from the shell's preference snapshot: no pseudo-element at all.
   it('draws no band when the hoverBand preference is off', async () => {
     app = bootApp({ preferences: { hoverBand: false } })
@@ -185,9 +185,9 @@ describe('the View → Hover Band option', () => {
     }
   })
 
-  // The menu command turns it off and on again, and persists each answer in
-  // the shell's settings store (never localStorage).
-  it('toggles from the menu and saves each answer through the bridge', async () => {
+  // The shell's Settings dialog stores the answer itself and tells the page,
+  // which turns the band off and on again without writing the answer back.
+  it('follows the shell when Settings changes it, and saves nothing back', async () => {
     app = bootApp()
     await app.setDocument('A paragraph.')
     const block = topBlocks(app)[0]
@@ -195,17 +195,13 @@ describe('the View → Hover Band option', () => {
     const on = bandOf(block)
     expect(on.content).toBe('""')
 
-    app.menu('toggleHoverBand')
+    app.bridge.notify({ type: 'preferenceChanged', name: 'hoverBand', value: false })
     await settle()
     expect(getComputedStyle(block, '::before').content).toBe('none')
-    app.menu('toggleHoverBand')
+    app.bridge.notify({ type: 'preferenceChanged', name: 'hoverBand', value: true })
     await settle()
     expect(bandOf(block)).toEqual(on)
 
-    await waitFor(() => app.bridge.callsTo('setPreference').length >= 2)
-    expect(app.bridge.callsTo('setPreference').map((c) => c.payload)).toEqual([
-      { name: 'hoverBand', value: false },
-      { name: 'hoverBand', value: true },
-    ])
+    expect(app.bridge.callsTo('setPreference')).toEqual([])
   })
 })

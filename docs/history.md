@@ -75,8 +75,8 @@ own, or for `source: "git"` the repository the document is in.
 ## Documents tracked by git
 
 A document in a git repository already has a history: the commits that changed
-it. When **File › Include Git Commits in History** is on (the `gitHistory`
-preference, on by default), Version History lists those commits beside Edi's
+it. When **Include git commits in Version History** is on in Edi › Settings…
+(the `gitHistory` preference, on by default), Version History lists those commits beside Edi's
 own versions. The reader is `backend/githistory.py`; the merge is
 `history.list_combined`.
 
@@ -211,7 +211,7 @@ gone keeps nothing.
 
 ## Managing the whole store
 
-**File › Manage Version History…** (`backend/historymanager.py`) lists every
+**Settings › Manage Version History…** (`backend/historymanager.py`) lists every
 document Edi keeps a history for, and is where a deleted document is recovered
 or a history deleted. It is the shell's own dialog and has no page command or
 bridge method: listing every stored path, deleting histories and writing

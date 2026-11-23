@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from . import __version__
@@ -36,6 +37,7 @@ from .recents import Recents
 from .recentsmanager import RecentsManager, confirm_clear
 from .remote import shared_hosts
 from .rundialog import RunCodeDialog
+from .settingsdialog import Action, Option, SettingsDialog
 from .updates import UpdateCheck, UpdateResult, UpdateSettings, macos_install_command, release_page
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
@@ -302,12 +304,18 @@ class MainWindow(QMainWindow):
         self._print_action = None
         self._copy_path_action = None
         self._history_action = None
-        self._git_history_action = None
         self._rename_action = None
         self._trash_action = None
         self._toolbar_action = None
-        self._hover_band_action = None
         self._insert_actions = None
+        self._close_tab_action = None
+        self._next_tab_action = None
+        self._previous_tab_action = None
+        # The page's open tabs as of its last `setMenuState`, and the Window
+        # menu actions drawn from them (`_refresh_window_menu`).
+        self._open_tabs: list[dict] = []
+        self._tab_actions: list[QAction] = []
+        self._tab_group: QActionGroup | None = None
         self._zoom_in_action = None
         self._zoom_out_action = None
         self._zoom_actions: dict[float, QAction] = {}
@@ -461,16 +469,26 @@ class MainWindow(QMainWindow):
         return action
 
     def _build_menus(self) -> None:
+        """Edi · File · Edit · Insert · View · Window · Help.
+
+        The Edi menu holds what belongs to the app rather than a document:
+        About, Check for Updates, Settings and Quit. On macOS those four go in
+        the system's application menu instead; see ``_build_app_actions``.
+        """
         menubar = self.menuBar()
 
         # Keep Python references: PySide6 hands ownership of addMenu() results
         # to Python, and dropping them garbage-collects the C++ menus.
+        # `_app_menu` is whichever menu holds the app actions: the Edi menu,
+        # or on macOS the Help menu, which Qt then moves them out of.
+        self._app_menu = None if sys.platform == "darwin" else menubar.addMenu("&Edi")
+
         self._file_menu = menubar.addMenu("&File")
         file_menu = self._file_menu
         for label, command in (
             ("&New\tCtrl+N", "new"),
-            ("New &Tab\tCtrl+T", "newTab"),
             ("&Open…\tCtrl+O", "open"),
+            ("Open &Path…\tCtrl+Shift+O", "openPath"),
         ):
             file_menu.addAction(self._menubar_action(label, command, shell_owns_key=True))
 
@@ -481,12 +499,20 @@ class MainWindow(QMainWindow):
         self._recent_menu = file_menu.addMenu("Open &Recent")
         self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
 
+        file_menu.addSeparator()
+
         for label, command in (
-            ("Open &Path…\tCtrl+Shift+O", "openPath"),
             ("&Save\tCtrl+S", "save"),
             ("Save &As…\tCtrl+Shift+S", "saveAs"),
         ):
             file_menu.addAction(self._menubar_action(label, command, shell_owns_key=True))
+
+        self._revert_action = QAction("&Revert", self)
+        self._revert_action.setEnabled(False)
+        self._link_command(self._revert_action, "revert")
+        file_menu.addAction(self._revert_action)
+
+        file_menu.addSeparator()
 
         # No shortcut: F2 is the spreadsheet cell editor's key to edit in place,
         # and a menubar shortcut wins over the page, so one would cost that.
@@ -494,44 +520,6 @@ class MainWindow(QMainWindow):
         self._rename_action.setEnabled(False)
         self._link_command(self._rename_action, "rename")
         file_menu.addAction(self._rename_action)
-
-        # No shortcut: Cmd/Ctrl+Backspace deletes back to the line start in the
-        # editor, and a menubar shortcut wins over the page. The confirmation is
-        # the shell's own (`confirm_trash`), never the page's.
-        self._trash_action = QAction(f"Move to {trash_name()}…", self)
-        self._trash_action.setEnabled(False)
-        self._link_command(self._trash_action, "moveToTrash")
-        file_menu.addAction(self._trash_action)
-
-        self._revert_action = QAction("&Revert", self)
-        self._revert_action.setEnabled(False)
-        self._link_command(self._revert_action, "revert")
-        file_menu.addAction(self._revert_action)
-
-        # A document's saved versions (`backend/history.py`). Enabled with Copy
-        # File Path below: both need only that the document has a path.
-        self._history_action = QAction("Version &History…", self)
-        self._history_action.setEnabled(False)
-        self._link_command(self._history_action, "versionHistory")
-        file_menu.addAction(self._history_action)
-
-        # Whether Version History lists a git-tracked document's commits beside
-        # Edi's versions (`backend/githistory.py`). A blind toggle like View ›
-        # Hover Band: the page owns the persisted value, and the checkmark
-        # arrives in the next `setMenuState`.
-        self._git_history_action = QAction("Include &Git Commits in History", self)
-        self._git_history_action.setCheckable(True)
-        self._git_history_action.setChecked(True)
-        self._link_command(self._git_history_action, "toggleGitHistory")
-        file_menu.addAction(self._git_history_action)
-
-        # The whole store, not one document: recover deleted documents, delete
-        # histories (`backend/historymanager.py`). The shell's own dialog, never
-        # a page command, so nothing running in the page can list, wipe or write
-        # back every history. Like Quit and About it carries no command name.
-        manage_history_action = QAction("&Manage Version History…", self)
-        manage_history_action.triggered.connect(lambda _checked=False: self._manage_history())
-        file_menu.addAction(manage_history_action)
 
         # Enabled by the frontend only while the document in view has a path.
         # `setShortcut` rather than a `\t` in the label, for the reason
@@ -542,6 +530,13 @@ class MainWindow(QMainWindow):
         self._copy_path_action.setEnabled(False)
         self._link_command(self._copy_path_action, "copyFilePath")
         file_menu.addAction(self._copy_path_action)
+
+        # A document's saved versions (`backend/history.py`). Enabled with Copy
+        # File Path: both need only that the document has a path.
+        self._history_action = QAction("Version &History…", self)
+        self._history_action.setEnabled(False)
+        self._link_command(self._history_action, "versionHistory")
+        file_menu.addAction(self._history_action)
 
         file_menu.addSeparator()
 
@@ -562,10 +557,13 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        quit_action = QAction("&Quit", self)
-        quit_action.setShortcut(QKeySequence("Ctrl+Q"))
-        quit_action.triggered.connect(self.close)
-        file_menu.addAction(quit_action)
+        # No shortcut: Cmd/Ctrl+Backspace deletes back to the line start in the
+        # editor, and a menubar shortcut wins over the page. The confirmation is
+        # the shell's own (`confirm_trash`), never the page's.
+        self._trash_action = QAction(f"Move to {trash_name()}…", self)
+        self._trash_action.setEnabled(False)
+        self._link_command(self._trash_action, "moveToTrash")
+        file_menu.addAction(self._trash_action)
 
         self._edit_menu = menubar.addMenu("&Edit")
         edit_menu = self._edit_menu
@@ -594,7 +592,7 @@ class MainWindow(QMainWindow):
 
         edit_menu.addSeparator()
 
-        encrypt_action = QAction("&Encrypt…", self)
+        encrypt_action = QAction("&Encrypt Selection…", self)
         self._link_command(encrypt_action, "encrypt")
         edit_menu.addAction(encrypt_action)
 
@@ -614,15 +612,18 @@ class MainWindow(QMainWindow):
         kanban_action = QAction("&Kanban Board…", self)
         self._link_command(kanban_action, "insertKanban")
         insert_menu.addAction(kanban_action)
-        import_action = QAction("&Spreadsheet…", self)
-        self._link_command(import_action, "importTable")
-        insert_menu.addAction(import_action)
-        text_action = QAction("&Text File…", self)
-        self._link_command(text_action, "importText")
-        insert_menu.addAction(text_action)
         image_action = QAction("&Image…", self)
         self._link_command(image_action, "insertImage")
         insert_menu.addAction(image_action)
+        insert_menu.addSeparator()
+        # From a file on disk, so named for the file they read rather than the
+        # block they make.
+        import_action = QAction("Import &Spreadsheet…", self)
+        self._link_command(import_action, "importTable")
+        insert_menu.addAction(import_action)
+        text_action = QAction("Import Te&xt File…", self)
+        self._link_command(text_action, "importText")
+        insert_menu.addAction(text_action)
         self._insert_actions = (table_action, kanban_action, import_action, text_action, image_action)
 
         self._view_menu = menubar.addMenu("&View")
@@ -632,31 +633,6 @@ class MainWindow(QMainWindow):
         self._toolbar_action.setChecked(True)
         self._link_command(self._toolbar_action, "toggleToolbar")
         view_menu.addAction(self._toolbar_action)
-
-        # The hover band — the faint band behind the block under the pointer, the
-        # page's answer to "which block would Alt+click alter?". Same shape as the
-        # Toolbar item above, and for the same reason: the page owns the persisted
-        # value, so this action is a blind toggle that never reads its own check
-        # state, and the checkmark arrives in the next `setMenuState`. The
-        # provisional `setChecked(True)` is a boot-time guess only — the option is
-        # on unless the reader has turned it off, and the real answer comes from
-        # storage in the page, which is why the bridge's default here is `True`
-        # rather than `bool(None) == False`.
-        self._hover_band_action = QAction("&Hover Band", self)
-        self._hover_band_action.setCheckable(True)
-        self._hover_band_action.setChecked(True)
-        self._link_command(self._hover_band_action, "toggleHoverBand")
-        view_menu.addAction(self._hover_band_action)
-
-        # The shell's own: the page can allow a site, on the reader's click,
-        # but only this native prompt takes the answers back.
-        forget_sites_action = QAction("&Forget Allowed Image Sites…", self)
-        forget_sites_action.triggered.connect(lambda _checked=False: self._forget_image_hosts())
-        view_menu.addAction(forget_sites_action)
-        # The same for the code blocks the reader agreed to run.
-        forget_code_action = QAction("Forget Approved &Code…", self)
-        forget_code_action.triggered.connect(lambda _checked=False: self._forget_approved_code())
-        view_menu.addAction(forget_code_action)
 
         view_menu.addSeparator()
 
@@ -695,6 +671,8 @@ class MainWindow(QMainWindow):
             zoom_menu.addAction(level_action)
             self._zoom_actions[level] = level_action
 
+        self._build_window_menu(menubar.addMenu("&Window"))
+
         self._help_menu = menubar.addMenu("&Help")
         help_menu = self._help_menu
         guide_action = QAction("&Edi Guide…", self)
@@ -703,26 +681,155 @@ class MainWindow(QMainWindow):
         reference_action = QAction("&Formula Reference…", self)
         self._link_command(reference_action, "formulaReference")
         help_menu.addAction(reference_action)
-        help_menu.addSeparator()
-        # The shell's own, like the request they make (`backend/updates.py`).
-        check_action = QAction("Check for &Updates…", self)
-        check_action.triggered.connect(lambda _checked=False: self._check_for_updates(manual=True))
-        help_menu.addAction(check_action)
-        self._auto_update_action = QAction("Check for Updates &Automatically", self)
-        self._auto_update_action.setCheckable(True)
-        self._auto_update_action.setChecked(self._update_settings.automatic())
-        self._auto_update_action.toggled.connect(self._update_settings.set_automatic)
-        help_menu.addAction(self._auto_update_action)
-        help_menu.addSeparator()
-        about_action = QAction("&About Edi…", self)
-        about_action.triggered.connect(lambda _checked=False: self._show_about())
-        help_menu.addAction(about_action)
 
-    def _manage_history(self) -> HistoryManager:
-        """File › Manage Version History…: every document with history, to
+        if self._app_menu is None:
+            self._app_menu = help_menu
+        self._build_app_actions(self._app_menu)
+
+    def _build_app_actions(self, menu) -> None:
+        """About, Check for Updates, Settings and Quit, into ``menu``.
+
+        Each carries a menu role, which is what puts it in the application menu
+        on macOS (with Cmd+, and Cmd+Q, and "Quit Edi" spelled Qt's way) and is
+        ignored elsewhere. On macOS ``menu`` is Help, which they leave, so no
+        separators go in: they would trail the Help items there. Like Quit
+        always has, none of these carries a command name: each is the shell's
+        own, never routed to the page.
+        """
+        separate = menu is not self._help_menu
+
+        about_action = QAction("&About Edi…", self)
+        about_action.setMenuRole(QAction.MenuRole.AboutRole)
+        about_action.triggered.connect(lambda _checked=False: self._show_about())
+        menu.addAction(about_action)
+
+        # The shell's own, like the request it makes (`backend/updates.py`).
+        check_action = QAction("Check for &Updates…", self)
+        check_action.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
+        check_action.triggered.connect(lambda _checked=False: self._check_for_updates(manual=True))
+        menu.addAction(check_action)
+
+        if separate:
+            menu.addSeparator()
+
+        settings_action = QAction("&Settings…", self)
+        settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        settings_action.setShortcut(QKeySequence("Ctrl+,"))
+        settings_action.setShortcutContext(Qt.WindowShortcut)  # pyright: ignore[reportAttributeAccessIssue]
+        settings_action.triggered.connect(lambda _checked=False: self._show_settings())
+        menu.addAction(settings_action)
+        self._settings_action = settings_action
+
+        if separate:
+            menu.addSeparator()
+
+        quit_action = QAction("&Quit Edi", self)
+        quit_action.setMenuRole(QAction.MenuRole.QuitRole)
+        quit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        quit_action.triggered.connect(self.close)
+        menu.addAction(quit_action)
+
+    def _build_window_menu(self, menu) -> None:
+        """Window: the tabs, then (refilled each time it opens) the tab list.
+
+        On macOS it opens with the system's own Minimize and Zoom, which Qt does
+        not add by itself. Next and Previous Tab are the Control key on every
+        platform: Cmd+Tab is macOS's app switcher, and Qt spells the Control key
+        ``Meta`` there. Shift+Tab can reach Qt as Backtab, so both spellings are
+        bound.
+        """
+        self._window_menu = menu
+        if sys.platform == "darwin":
+            minimize = QAction("&Minimize", self)
+            minimize.setShortcut(QKeySequence("Ctrl+M"))
+            minimize.triggered.connect(lambda _checked=False: self.showMinimized())
+            menu.addAction(minimize)
+            zoom = QAction("&Zoom", self)
+            zoom.triggered.connect(
+                lambda _checked=False: self.showNormal() if self.isMaximized() else self.showMaximized()
+            )
+            menu.addAction(zoom)
+            menu.addSeparator()
+
+        menu.addAction(self._menubar_action("New &Tab\tCtrl+T", "newTab", shell_owns_key=True))
+        self._close_tab_action = self._menubar_action("&Close Tab\tCtrl+W", "closeTab", shell_owns_key=True)
+        self._close_tab_action.setEnabled(False)
+        menu.addAction(self._close_tab_action)
+
+        menu.addSeparator()
+
+        tab_key = "Meta" if sys.platform == "darwin" else "Ctrl"
+        self._next_tab_action = QAction("&Next Tab", self)
+        self._next_tab_action.setShortcuts([QKeySequence(f"{tab_key}+Tab")])
+        self._previous_tab_action = QAction("&Previous Tab", self)
+        self._previous_tab_action.setShortcuts(
+            [QKeySequence(f"{tab_key}+Shift+Tab"), QKeySequence(f"{tab_key}+Shift+Backtab")]
+        )
+        for action, command in (
+            (self._next_tab_action, "nextTab"),
+            (self._previous_tab_action, "previousTab"),
+        ):
+            action.setShortcutContext(Qt.WindowShortcut)  # pyright: ignore[reportAttributeAccessIssue]
+            action.setEnabled(False)
+            self._link_command(action, command)
+            menu.addAction(action)
+
+        menu.aboutToShow.connect(self._refresh_window_menu)
+
+    def _show_settings(self) -> SettingsDialog:
+        """Edi › Settings…: the options and the stored-data actions. Non-blocking.
+
+        Hover band and git commits are page preferences, so they go through
+        ``change_page_preference``; the update check is the shell's own setting.
+        """
+        prefs = self._preferences
+        dialog = SettingsDialog(
+            self,
+            options=[
+                Option(
+                    "hoverBand",
+                    "Show the hover band behind the block under the pointer",
+                    bool(prefs.get("hoverBand")),
+                    lambda value: self.change_page_preference("hoverBand", value),
+                ),
+                Option(
+                    "gitHistory",
+                    "Include git commits in Version History",
+                    bool(prefs.get("gitHistory")),
+                    lambda value: self.change_page_preference("gitHistory", value),
+                ),
+                Option(
+                    "automaticUpdates",
+                    "Check for updates automatically",
+                    self._update_settings.automatic(),
+                    self._update_settings.set_automatic,
+                ),
+            ],
+            actions=[
+                Action("history", "Manage Version History…", lambda parent: self._manage_history(parent)),
+                Action("recents", "Manage Recent Documents…", lambda parent: self._manage_recents(parent)),
+                Action("imageSites", "Forget Allowed Image Sites…", lambda parent: self._forget_image_hosts(parent)),
+                Action("approvedCode", "Forget Approved Code…", lambda parent: self._forget_approved_code(parent)),
+            ],
+        )
+        dialog.finished.connect(lambda _result: dialog.deleteLater())
+        dialog.open()
+        return dialog
+
+    def change_page_preference(self, name: str, value) -> None:
+        """Store a preference the page applies, then tell the page.
+
+        The page adopts it without writing it back (``adoptPreference`` in
+        ``src/preferences.ts``), so the store has one writer per change.
+        """
+        self.set_preference(name, value)
+        self.push_event({"type": "preferenceChanged", "name": name, "value": self._preferences.get(name)})
+
+    def _manage_history(self, parent: QWidget | None = None) -> HistoryManager:
+        """Settings › Manage Version History…: every document with history, to
         recover or delete. Non-blocking, like ``confirm``."""
         dialog = HistoryManager(
-            self,
+            parent or self,
             open_files=self.open_files,
             flash=self._flash,
             watched=self._bridge.disk.watched,
@@ -741,11 +848,11 @@ class MainWindow(QMainWindow):
         self._image_hosts.allow(hosts, remember)
         return self._image_hosts.allowed()
 
-    def _forget_image_hosts(self) -> None:
-        """View › Forget Allowed Image Sites…: after a prompt naming them."""
+    def _forget_image_hosts(self, parent: QWidget | None = None) -> None:
+        """Settings › Forget Allowed Image Sites…: after a prompt naming them."""
         sites = self._image_hosts.allowed()
         if not sites:
-            self._flash("No image sites are allowed.")
+            self._inform("No image sites are allowed, so there is nothing to forget.", parent)
             return
         shown = ", ".join(sites[:8]) + (f" and {len(sites) - 8} more" if len(sites) > 8 else "")
 
@@ -756,7 +863,7 @@ class MainWindow(QMainWindow):
             self.push_event({"type": "imageHostsChanged", "allowed": []})
             self._flash("Images from other sites will ask again.")
 
-        self.confirm(f"Forget the sites Edi may load images from?\n\n{shown}", answered)
+        self.confirm(f"Forget the sites Edi may load images from?\n\n{shown}", answered, parent=parent)
 
     def _maybe_check_for_updates(self, ok: bool) -> None:
         """At launch, once the page is up: check if the reader turned it on and
@@ -769,7 +876,7 @@ class MainWindow(QMainWindow):
     def _check_for_updates(self, manual: bool, fetch=None) -> UpdateCheck:
         """Ask GitHub for the newest release, off the main thread.
 
-        Help › Check for Updates… answers in a dialog either way; the automatic
+        Edi › Check for Updates… answers in a dialog either way; the automatic
         check says nothing unless there is a newer version, and then only in the
         page's status bar. ``fetch`` replaces the request, for tests.
         """
@@ -836,11 +943,11 @@ class MainWindow(QMainWindow):
         dialog.open()
         return dialog
 
-    def _forget_approved_code(self) -> None:
-        """View › Forget Approved Code…: every block asks again before it runs."""
+    def _forget_approved_code(self, parent: QWidget | None = None) -> None:
+        """Settings › Forget Approved Code…: every block asks again before it runs."""
         approvals = self._bridge.approvals
         if approvals.count() == 0:
-            self._flash("No code is approved to run.")
+            self._inform("No code is approved to run, so there is nothing to forget.", parent)
             return
 
         def answered(accepted: bool) -> None:
@@ -848,7 +955,25 @@ class MainWindow(QMainWindow):
                 approvals.forget()
                 self._flash("Every code block will ask before it runs.")
 
-        self.confirm("Forget all approved code? Every code block will ask again before it runs.", answered)
+        self.confirm(
+            "Forget all approved code? Every code block will ask again before it runs.", answered, parent=parent
+        )
+
+    def _inform(self, message: str, parent: QWidget | None = None) -> QMessageBox:
+        """A non-blocking message with one OK, on top of ``parent`` (or the window).
+
+        For a "…" action that turns out to have nothing to do: the item promised
+        a dialog, and a note in the status bar would be hidden by Settings.
+        """
+        box = QMessageBox(parent or self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Edi")
+        box.setText(message)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        box.finished.connect(lambda _result: box.deleteLater())
+        box.open()
+        return box
 
     def _flash(self, message: str) -> None:
         """Say something in the page's status bar (a `flashStatus` native event)."""
@@ -896,10 +1021,10 @@ class MainWindow(QMainWindow):
         """Tell the page the recent list changed, so the launcher redraws it."""
         self._bridge.emit_event({"type": "recentsChanged"})
 
-    def _manage_recents(self) -> RecentsManager:
-        """File › Open Recent › Manage Recent Documents…. Non-blocking."""
+    def _manage_recents(self, parent: QWidget | None = None) -> RecentsManager:
+        """File › Open Recent › Manage Recent Documents…, also in Settings. Non-blocking."""
         dialog = RecentsManager(
-            self, open_files=self.open_files, changed=self._recents_changed, flash=self._flash
+            parent or self, open_files=self.open_files, changed=self._recents_changed, flash=self._flash
         )
         dialog.finished.connect(lambda _result: dialog.deleteLater())
         dialog.open()
@@ -924,21 +1049,60 @@ class MainWindow(QMainWindow):
         if not _xdg_open(url):
             QDesktopServices.openUrl(QUrl(url))
 
+    def _refresh_window_menu(self) -> None:
+        """Redraw the Window menu's tab list from the page's last report.
+
+        Each entry activates its tab by id, with the active one checked; the
+        full path is the tooltip. The list is the page's (``setMenuState``), so
+        it is only as fresh as that, which is every state change.
+        """
+        for action in self._tab_actions:
+            self._window_menu.removeAction(action)
+            action.deleteLater()
+        self._tab_actions = []
+        if self._tab_group is not None:
+            self._tab_group.deleteLater()
+            self._tab_group = None
+        if not self._open_tabs:
+            return
+        self._tab_actions.append(self._window_menu.addSeparator())
+        group = self._tab_group = QActionGroup(self)
+        group.setExclusive(True)
+        for tab in self._open_tabs:
+            # `&&`, or a file called `R&D.md` would show as an underlined D.
+            action = QAction(tab["title"].replace("&", "&&"), group)
+            action.setCheckable(True)
+            action.setChecked(tab["active"])
+            if tab["path"]:
+                action.setToolTip(tab["path"])
+            self._link_command(action, "activateTab", tab["id"])
+            self._window_menu.addAction(action)
+            self._tab_actions.append(action)
+
     def update_menu_state(
         self,
         can_revert: bool,
         can_copy_path: bool,
         toolbar_visible: bool,
         can_rename: bool = False,
-        hover_band: bool = True,
         zoom_factor: float = 1.0,
         can_zoom_in: bool = True,
         can_zoom_out: bool = True,
         has_document: bool = False,
-        git_history: bool = True,
+        tabs: list[dict] | None = None,
     ) -> None:
-        if self._git_history_action is not None:
-            self._git_history_action.setChecked(git_history)
+        """Follow the page: what is enabled, what is checked, and the open tabs.
+
+        ``tabs`` is ``[{"id", "title", "path", "active"}]`` in tab-strip order,
+        already checked by the bridge. It enables Close Tab while any is open
+        and Next/Previous Tab while there is another to go to.
+        """
+        self._open_tabs = list(tabs or [])
+        if self._close_tab_action is not None:
+            self._close_tab_action.setEnabled(bool(self._open_tabs))
+        for action in (self._next_tab_action, self._previous_tab_action):
+            if action is not None:
+                action.setEnabled(len(self._open_tabs) > 1)
         for action in (self._export_action, self._print_action):
             if action is not None:
                 action.setEnabled(has_document)
@@ -954,8 +1118,6 @@ class MainWindow(QMainWindow):
                 action.setEnabled(can_rename)
         if self._toolbar_action is not None:
             self._toolbar_action.setChecked(toolbar_visible)
-        if self._hover_band_action is not None:
-            self._hover_band_action.setChecked(hover_band)
         if self._insert_actions is not None:
             for action in self._insert_actions:
                 action.setEnabled(True)
@@ -1015,14 +1177,17 @@ class MainWindow(QMainWindow):
         """Carry a renamed document's history to its new path."""
         Recents().move(old_path, new_path)
 
-    def confirm(self, message: str, callback=None) -> None:
+    def confirm(self, message: str, callback=None, *, parent: QWidget | None = None) -> None:
         """Show a non-blocking centered Yes/No dialog.
 
         ``callback(accepted: bool)`` runs when the user answers. Non-blocking
         (``open()`` instead of ``exec()``) so the Qt event loop keeps pumping,
         which both lets tests drive the dialog and keeps the webview alive.
+        ``parent`` is the dialog it belongs to, when it is asked from one
+        (Settings), so it stacks on that rather than behind it.
         """
-        box = QMessageBox(self)
+        owner = parent or self
+        box = QMessageBox(owner)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Edi")
         box.setText(message)
@@ -1035,7 +1200,7 @@ class MainWindow(QMainWindow):
         # end up off-screen.
         box.adjustSize()
         frame = box.frameGeometry()
-        frame.moveCenter(self.frameGeometry().center())
+        frame.moveCenter(owner.frameGeometry().center())
         box.move(frame.topLeft())
 
         def done(_result) -> None:
@@ -1310,7 +1475,7 @@ class MainWindow(QMainWindow):
         self._run_dialog(dialog, callback)
 
     def pick_text_import_path(self, callback=None) -> None:
-        dialog = QFileDialog(self, "Insert text file")
+        dialog = QFileDialog(self, "Import text file")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
         dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         dialog.setNameFilter(

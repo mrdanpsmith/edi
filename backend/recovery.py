@@ -1,6 +1,6 @@
 """Putting deleted documents back from their version history.
 
-Shared by File › Manage Version History… and File › Open Recent › Manage
+Shared by Settings › Manage Version History… and File › Open Recent › Manage
 Recent Documents…: both offer Recover… for documents that are no longer on
 disk, and both ask the same questions when the way back is not clear. The
 store's side is ``history.recover``; see ``docs/history.md``.

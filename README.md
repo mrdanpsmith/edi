@@ -113,7 +113,7 @@ Code can do anything you can, so the first Run of a block asks first, showing
 the interpreter and the code. Edi remembers the code you agreed to, so that
 block runs again without asking until its code changes; "Don't ask again for
 this document until Edi quits" covers a document you are writing code in.
-`View → Forget Approved Code…` makes every block ask again.
+`Settings → Forget Approved Code…` makes every block ask again.
 
 ### Encrypted fields
 
@@ -137,12 +137,12 @@ match.
 
 ### Import and export
 
-- `Insert → Spreadsheet…` reads CSV, TSV, ODS and XLSX files as a table.
-- `Insert → Text File…` and `Insert → Image…` insert a file at the cursor;
+- `Insert → Import Spreadsheet…` reads CSV, TSV, ODS and XLSX files as a table.
+- `Insert → Import Text File…` and `Insert → Image…` insert a file at the cursor;
   a local image is referenced relatively, so the document stays portable.
 - An image from the web loads only once you allow its site: a bar above the
   document names the sites and offers **Load images** (until Edi quits) or
-  **Always load from these sites**. `View → Forget Allowed Image Sites…` takes
+  **Always load from these sites**. `Settings → Forget Allowed Image Sites…` takes
   them back. Loading one tells that site you opened the document, so nothing
   remote is requested before then.
 - Every table has a **Copy** button that puts HTML *and* tab-separated text on
@@ -167,17 +167,32 @@ match.
 Document actions live in the native menu bar, with the most common ones
 (New, Open, Save, Save As, Print) also as toolbar buttons; the rest of the toolbar
 toggles markdown formatting on the selection. Hide the row with
-`View → Toolbar`. `View → Hover Band` turns off the band that marks the block
-the pointer is over; it is on by default. Both answers, and the zoom level, are
-remembered between runs (`~/.config/Edi/Edi.conf`).
+`View → Toolbar`. The toolbar, the zoom level and every setting are remembered
+between runs (`~/.config/Edi/Edi.conf`).
 
 | Menu | Items |
 | --- | --- |
-| **File** | New, Open, Open Recent, Open Path…, Save, Save As, Rename or Move…, Move to Trash…, Revert, Copy File Path, Export HTML…, Print…, Quit |
-| **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Find…, Replace… |
-| **Insert** | Table…, Kanban Board…, Spreadsheet…, Text File…, Image… |
-| **View** | Toolbar, Hover Band, Forget Allowed Image Sites…, Forget Approved Code…, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
-| **Help** | Edi Guide…, Formula Reference…, Check for Updates…, Check for Updates Automatically, About Edi… |
+| **Edi** | About Edi…, Check for Updates…, Settings…, Quit Edi |
+| **File** | New, Open…, Open Path…, Open Recent ▸, Save, Save As…, Revert, Rename or Move…, Copy File Path, Version History…, Export HTML…, Print…, Move to Trash… |
+| **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Encrypt Selection…, Find…, Replace… |
+| **Insert** | Table…, Kanban Board…, Image…, Import Spreadsheet…, Import Text File… |
+| **View** | Toolbar, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
+| **Window** | New Tab, Close Tab, Next Tab, Previous Tab, then each open tab |
+| **Help** | Edi Guide…, Formula Reference… |
+
+On macOS the Edi menu is the system's application menu, and the Window menu
+also has Minimize and Zoom. Next and Previous Tab are `Ctrl+Tab` and
+`Ctrl+Shift+Tab` on every platform, macOS included.
+
+`Edi → Settings…` (`Ctrl+,`) holds the options and the stored-data actions:
+
+- **Show the hover band** marks the block the pointer is over; it is on by
+  default.
+- **Include git commits in Version History** lists a git-tracked document's
+  commits beside Edi's own versions.
+- **Check for updates automatically** (see [Upgrading](#upgrading)).
+- **Manage Version History…**, **Manage Recent Documents…**, **Forget Allowed
+  Image Sites…** and **Forget Approved Code…**.
 
 `Revert`, `Rename or Move…` and `Move to Trash…` need a document that has been
 saved somewhere.
@@ -186,8 +201,8 @@ Move to Trash asks first, naming the file, and warns when the document has
 unsaved changes; Cancel is the default. A yes moves the file to the system
 Trash (the Recycle Bin on Windows, where the item is also named for it) and
 closes its tab. It never deletes outright: on a drive with no Trash the file
-stays put and Edi says why. The document's saved versions are kept, so File ›
-Manage Version History can still recover it after the Trash is emptied.
+stays put and Edi says why. The document's saved versions are kept, so
+Settings › Manage Version History can still recover it after the Trash is emptied.
 
 Rename or Move opens on the current name with the stem selected, so typing
 renames in place. A path moves the document instead: relative to its folder,
@@ -211,6 +226,7 @@ shortcut would shadow exactly that.
 | `Ctrl+N` | New document (in a new tab) |
 | `Ctrl+T` | New Tab (the launcher) |
 | `Ctrl+W` | Close tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab (the Control key on macOS too) |
 | `Ctrl+O` | Open file (in a new tab) |
 | `Ctrl+Shift+O` | Open a typed file path (`~`, `$VARS` and paths relative to the current document work) |
 | `Ctrl+S` | Save |
@@ -228,6 +244,7 @@ shortcut would shadow exactly that.
 | `Ctrl+Shift+Up` / `Ctrl+Shift+Down` | Extend / shrink selection across blocks |
 | `Ctrl+F` | Find in current document |
 | `Ctrl+H` | Find & replace in current document |
+| `Ctrl+,` | Settings |
 | `Ctrl+Q` | Quit |
 
 ## Installing a release
@@ -297,9 +314,10 @@ the details.
 There is no in-app updater — install the newest release artifact. Your settings
 and documents are never touched.
 
-`Help → Check for Updates…` asks GitHub for the newest release and says whether
+`Edi → Check for Updates…` asks GitHub for the newest release and says whether
 it is newer than yours. On a release candidate it also looks at newer
-candidates; on a release it never offers one. `Help → Check for Updates Automatically` does the same
+candidates; on a release it never offers one. **Check for updates automatically**
+in `Edi → Settings…` does the same
 at launch, at most once a day, and shows "Edi X.Y.Z is available" in the status
 bar when there is one. It is off until you turn it on, because the request
 tells GitHub your address; it sends nothing else about you.

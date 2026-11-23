@@ -67,8 +67,17 @@ command enters the menubar. It calls `setData(command)` on the action and wires
 - it needs the `qapp` fixture, because a widget with no `QApplication` under
   the offscreen platform segfaults rather than raising.
 
-The gate is therefore the menu **as built**, not a regex over the source. Quit
-and About carry no name because they are not commands the page implements.
+The gate is therefore the menu **as built**, not a regex over the source.
+`_MenusOnly` also gives the window one recent document and one open tab, so
+the dynamic `openRecent` and `activateTab` items are built and walked too. The
+Edi menu's items (About, Check for Updates, Settings, Quit) and macOS's
+Minimize and Zoom carry no name because they are not commands the page
+implements. Neither do the Settings dialog's data actions, which are the
+shell's own.
+
+Preferences the page applies but the shell's Settings dialog changes (the
+hover band, git commits in Version History) travel the other way, as a
+`preferenceChanged` native event naming a preference from the manifest.
 
 An unknown command reaching the page is a `console.error` naming the manifest,
 never a silent drop. `runJavaScript` ignores its result, so a `throw` would

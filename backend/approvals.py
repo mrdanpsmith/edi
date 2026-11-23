@@ -10,7 +10,7 @@ the source. So a block runs again without asking only while it is exactly the
 code the reader approved; an edit, a ``git pull`` or another tool's change asks
 again. The prompt's "Don't ask again for this document until Edi quits" covers
 a document the reader is writing code in, where every edit would otherwise ask.
-View › Forget Approved Code… takes every answer back.
+Settings › Forget Approved Code… takes every answer back.
 
 The hashes are kept in ``QSettings`` under ``approvedCode``, newest first, at
 most ``MAX_APPROVALS``; the oldest fall off and simply ask again.

@@ -1,6 +1,6 @@
 /**
- * Preferences that outlive a run: the View menu's controllable options and the
- * document zoom level.
+ * Preferences that outlive a run: the toolbar row, the options in Edi ›
+ * Settings… that the page applies, and the document zoom level.
  *
  * **The store is the shell's, not the page's.** `window.ediPreferences` is
  * injected by `backend/window.py`'s document-creation script before this bundle
@@ -20,7 +20,8 @@
  * `current` is seeded from the injected snapshot and is then the page's own
  * record of what it has asked for, because the menu checkmarks are published
  * from it (`setMenuState`) and a re-read of the injection would answer with the
- * answers this window booted with.
+ * answers this window booted with. A change made in the shell's Settings dialog
+ * arrives as a `preferenceChanged` event and goes through `adoptPreference`.
  */
 import { type PreferenceName } from './contract'
 import { invoke } from './bridge'
@@ -84,6 +85,22 @@ export function currentPreferences(): Preferences {
 export function savePreference<K extends keyof Preferences>(name: K, value: Preferences[K]): void {
   current[name] = value
   void invoke('setPreference', { name, value }).catch(() => undefined)
+}
+
+/**
+ * Take a value the shell has already stored, from its own Settings dialog (a
+ * `preferenceChanged` event). Nothing is written back: the shell's store is
+ * where the value came from. A name the page does not know, or a value of the
+ * wrong shape, is refused, for the same reason `injected` checks shapes.
+ * Returns whether `current` took it.
+ */
+export function adoptPreference(name: string, value: unknown): boolean {
+  if (!Object.hasOwn(DEFAULT_PREFERENCES, name)) return false
+  const key = name as keyof Preferences
+  if (typeof value !== typeof DEFAULT_PREFERENCES[key]) return false
+  if (typeof value === 'number' && !Number.isFinite(value)) return false
+  ;(current as unknown as Record<string, unknown>)[key] = value
+  return true
 }
 
 /**

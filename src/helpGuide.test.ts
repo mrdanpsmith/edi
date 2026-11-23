@@ -24,7 +24,14 @@ describe('buildHelpGuideMarkdown', () => {
     expect(guide).toContain('`Ctrl+N` new, `Ctrl+W` close, `Ctrl+O` open,')
     expect(guide).toContain('`Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+Q` quit.')
     expect(guide).toContain('`View → Toolbar`')
-    expect(guide).toContain('`View → Hover Band`')
+    expect(guide).toContain('`Ctrl+Tab` and `Ctrl+Shift+Tab` move to the next and previous tab')
+  })
+
+  it('says where the settings are and what they hold', () => {
+    expect(guide).toContain('`Edi → Settings…` (`Ctrl+,`)')
+    expect(guide).toContain('**Show the hover band** in Settings')
+    expect(guide).toContain('**Check for updates automatically** in Settings')
+    expect(guide).not.toContain('View → Hover Band')
   })
 
   it('says how a link is opened and edited', () => {
@@ -41,7 +48,7 @@ describe('buildHelpGuideMarkdown', () => {
 
   it('covers the spreadsheet essentials', () => {
     expect(guide).toContain('`Insert → Table…`')
-    expect(guide).toContain('`Insert → Spreadsheet…`')
+    expect(guide).toContain('`Insert → Import Spreadsheet…`')
     expect(guide).toContain('imports a CSV/TSV/ODS/XLSX')
     expect(guide).toContain('`$B$2`')
     expect(guide).toContain('`B2:C4`')

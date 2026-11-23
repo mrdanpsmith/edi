@@ -33,7 +33,7 @@ class StubWindow(QObject):
         self.can_revert = False
         self.can_rename = False
         self.toolbar_visible = True
-        self.hover_band = True
+        self.tabs: list[dict] = []
         self.preference_store = {
             "zoomFactor": 1.0,
             "toolbarVisible": True,
@@ -70,20 +70,18 @@ class StubWindow(QObject):
         can_copy_path=False,
         toolbar_visible=True,
         can_rename=False,
-        hover_band=True,
         zoom_factor=1.0,
         can_zoom_in=True,
         can_zoom_out=True,
         has_document=False,
-        git_history=True,
+        tabs=None,
     ) -> None:
-        self.git_history = git_history
+        self.tabs = tabs or []
         self.has_document = has_document
         self.can_revert = can_revert
         self.can_copy_path = can_copy_path
         self.toolbar_visible = toolbar_visible
         self.can_rename = can_rename
-        self.hover_band = hover_band
         self.zoom_factor = zoom_factor
         self.can_zoom_in = can_zoom_in
         self.can_zoom_out = can_zoom_out
@@ -267,40 +265,47 @@ def test_set_menu_state(bridge):
     assert window.can_rename is True
 
 
-def test_set_menu_state_defaults_the_hover_band_on(bridge):
-    """A page that does not mention the option has not turned it off.
-
-    ``bool(args.get("hoverBand"))`` would make an omitted key read as ``False``
-    and uncheck View → Hover Band in every window whose frontend predates the
-    option. The option is on by default, so the bridge's default has to say so.
-    """
-    bridge_obj, window, result = bridge
-    _invoke(
-        bridge_obj,
-        "setMenuState",
-        {"canRevert": False, "toolbarVisible": True},
-    )
-    _wait_for(lambda: result.get(1))
-    assert window.hover_band is True
-
-    _invoke(
-        bridge_obj,
-        "setMenuState",
-        {"canRevert": False, "toolbarVisible": True, "hoverBand": False},
-        request_id=2,
-    )
-    _wait_for(lambda: result.get(2))
-    assert window.hover_band is False
-
-
-def test_set_menu_state_defaults_git_history_on_and_passes_it_through(bridge):
+def test_set_menu_state_passes_the_open_tabs_through(bridge):
     bridge_obj, window, result = bridge
     _invoke(bridge_obj, "setMenuState", {"toolbarVisible": True})
     _wait_for(lambda: result.get(1))
-    assert window.git_history is True
-    _invoke(bridge_obj, "setMenuState", {"toolbarVisible": True, "gitHistory": False}, request_id=2)
+    assert window.tabs == []
+
+    tabs = [
+        {"id": "a", "title": "a.md", "path": "/tmp/a.md", "active": False},
+        {"id": "b", "title": "New Tab", "path": "", "active": True},
+    ]
+    _invoke(bridge_obj, "setMenuState", {"toolbarVisible": True, "tabs": tabs}, request_id=2)
     _wait_for(lambda: result.get(2))
-    assert window.git_history is False
+    assert window.tabs == tabs
+
+
+def test_set_menu_state_drops_tabs_it_cannot_draw(bridge):
+    """An entry without an id would be a Window menu item that activates nothing."""
+    bridge_obj, window, result = bridge
+    _invoke(
+        bridge_obj,
+        "setMenuState",
+        {
+            "tabs": [
+                {"id": "a", "title": "a.md"},
+                {"title": "no id"},
+                {"id": "", "title": "empty id"},
+                {"id": "c", "title": 3},
+                "not a tab",
+                {"id": "d", "title": "d.md", "path": 7, "active": "yes"},
+            ]
+        },
+    )
+    _wait_for(lambda: result.get(1))
+    assert window.tabs == [
+        {"id": "a", "title": "a.md", "path": "", "active": False},
+        {"id": "d", "title": "d.md", "path": "", "active": False},
+    ]
+
+    _invoke(bridge_obj, "setMenuState", {"tabs": "a.md"}, request_id=2)
+    _wait_for(lambda: result.get(2))
+    assert window.tabs == []
 
 
 def test_get_preferences_returns_the_whole_store(bridge):

@@ -13,6 +13,12 @@ import {
   type SessionMeta,
 } from './state'
 
+/** What a tab is called: in the tab strip and in the shell's Window menu. */
+export function tabName(session: Pick<SessionMeta, 'launcher' | 'path'>): string {
+  if (session.launcher) return 'New Tab'
+  return session.path ? session.path.split('/').pop()! : 'Untitled'
+}
+
 export interface TabCallbacks {
   onNewTab(): void
   onCloseTab(id: string): void
@@ -472,9 +478,7 @@ export class Tabs {
       tab.title = session.path ?? ''
       tab.setAttribute('aria-selected', String(session.id === activeId))
 
-      const name = session.launcher
-        ? 'New Tab'
-        : session.path ? session.path.split('/').pop()! : 'Untitled'
+      const name = tabName(session)
       if (session.launcher) tab.classList.add('tab-launcher')
       const title = document.createElement('span')
       title.className = 'tab-title'
