@@ -73,7 +73,8 @@ if sys.platform in ('win32', 'darwin'):
     _VERSION_STR = _m.group(1) if _m else None
 # Windows' fixed version numbers and macOS's bundle versions are integers only, so
 # a release candidate (1.0.0-rc.1) gives them its release's numbers (1.0.0); the
-# full version stays in the strings that show it, and in Edi's own About box.
+# full version stays in the strings that show it, in Edi's own About box, and in
+# the macOS Info.plist's EdiVersion, which install.sh compares.
 _VERSION_NUM = (_VERSION_STR or '0.0.0').split('-', 1)[0]
 
 if sys.platform == 'win32':
@@ -233,6 +234,10 @@ if sys.platform == 'darwin':
             'CFBundleDisplayName': 'Edi',
             'CFBundleShortVersionString': _VERSION_NUM,
             'CFBundleVersion': _VERSION_NUM,
+            # The full version, candidate suffix included: the bundle versions
+            # above say 1.3.0 for 1.3.0-rc.1 too, so install.sh reads this one
+            # to tell whether the version it is installing is already there.
+            'EdiVersion': _VERSION_STR or '0.0.0',
             # PySide6 6.11's own binding modules are built for macOS 15. Raise
             # this with the PySide6 pin; scripts/check-macos-minos.sh fails the
             # build when any bundled binary needs newer than it says.

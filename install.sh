@@ -113,7 +113,11 @@ else
 fi
 DEST="${DEST_DIR}/${APP_NAME}.app"
 
-INSTALLED="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+# EdiVersion, not CFBundleShortVersionString: a candidate's bundle version is
+# its release's numbers (1.3.0 for 1.3.0-rc.1), so comparing that would leave a
+# candidate in place of its release. A bundle without the key (built before
+# 1.0.1) reads as empty and is replaced, which at worst reinstalls once.
+INSTALLED="$(/usr/libexec/PlistBuddy -c 'Print :EdiVersion' \
   "$DEST/Contents/Info.plist" 2>/dev/null || true)"
 if [[ "$INSTALLED" == "$VERSION" && -z "${EDI_FORCE:-}" ]]; then
   log "${APP_NAME} ${VERSION} already installed at ${DEST} (set EDI_FORCE=1 to reinstall)"

@@ -96,7 +96,7 @@ the upgrade line it shows for a candidate is the pinned one above.
 | File names of every artifact | `1.3.0-rc.1` |
 | `.deb` and `.rpm` metadata (`package-linux.sh`) | `1.3.0~rc.1`: dpkg and rpm sort `~` first, so the release upgrades it, and rpm refuses `-` in Version |
 | Windows version resource (`edi.spec`, `VIProductVersion` in `edi.nsi`) | `1.3.0`; the installer's display version and `DisplayVersion` say `1.3.0-rc.1` |
-| macOS `CFBundleShortVersionString` / `CFBundleVersion` (`edi.spec`) | `1.3.0` |
+| macOS `CFBundleShortVersionString` / `CFBundleVersion` (`edi.spec`) | `1.3.0`; the bundle's own `EdiVersion` key says `1.3.0-rc.1`, and the curl installer compares that one ([macos-installer.md](macos-installer.md)) |
 | Edi's About box and the update check | `1.3.0-rc.1` |
 
 The release notes leave candidates out of their range (see Changelog), so a

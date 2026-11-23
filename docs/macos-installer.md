@@ -46,6 +46,14 @@ If the requested version is already installed and `EDI_FORCE` is unset, the
 installer exits before the association step, so no prompt appears. Use
 `EDI_FORCE=1` to run the full install and the prompt again.
 
+"Already installed" compares the installed bundle's `EdiVersion` key, the full
+version that `edi.spec` writes into `Info.plist`. `CFBundleShortVersionString`
+can't be used for this, because a release candidate's says its release's
+numbers (`1.3.0` for `1.3.0-rc.1`), and the release would then never replace
+the candidate. A bundle without the key, from before 1.0.1, is always
+replaced. `scripts/build-macos.sh` fails the build if the key is missing or
+differs from `./scripts/version.sh current`.
+
 This is the no-quarantine path: curl does not add the quarantine flag, so it
 avoids the Gatekeeper "Open Anyway" prompt a browser download gets. A
 browser-downloaded `.dmg` is ad-hoc signed but not notarized, so its first open

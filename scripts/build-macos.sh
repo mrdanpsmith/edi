@@ -152,6 +152,16 @@ if [[ "$MARKDOWN_TYPE" != "net.daringfireball.markdown" || \
   exit 1
 fi
 
+# install.sh decides whether this version is already installed from EdiVersion;
+# without it, every run would reinstall. edi.spec writes the declared version
+# (version.sh current), which is not $VERSION on an untagged workflow run (0.0.0).
+BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :EdiVersion' "$INFO" 2>/dev/null || true)"
+DECLARED_VERSION="$(./scripts/version.sh current)"
+if [[ "$BUNDLE_VERSION" != "$DECLARED_VERSION" ]]; then
+  echo "error: Info.plist EdiVersion is '${BUNDLE_VERSION}', expected '${DECLARED_VERSION}'" >&2
+  exit 1
+fi
+
 # --- Every binary runs on the macOS the bundle declares -------------------------
 # A library compiled for the build machine's own macOS (a Homebrew Python on a
 # newer runner) would make the app open on an older Mac and then fail.
