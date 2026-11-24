@@ -1013,8 +1013,10 @@ def test_run_code_block_direct():
 
 def test_run_code_block_streamed_without_pty(monkeypatch):
     """With no pseudo-terminal (Windows: pty import fails on missing termios),
-    stdout must stream over a plain pipe instead of crashing at import time."""
+    stdout and stderr must stream over plain pipes instead of crashing at import
+    time, and the run is not told it has a color terminal."""
     monkeypatch.setattr(exec_module, "pty", None)
+    monkeypatch.setenv("TERM", "dumb")
     events: list[tuple[str, str]] = []
 
     def on_output(stream, text):
@@ -1022,15 +1024,16 @@ def test_run_code_block_streamed_without_pty(monkeypatch):
 
     result = exec_module.run_code_block_streamed(
         "#!/usr/bin/env python3",
-        "print('piped')",
+        "import os, sys\nprint('piped', os.environ['TERM'])\nprint('err', file=sys.stderr)",
         on_output,
         lambda: False,
     )
     assert result["exitCode"] == 0
     assert result["timedOut"] is False
     assert result["stopped"] is False
-    assert result["stdout"].strip() == "piped"
-    assert ("stdout", "piped\n") in events
+    assert result["stdout"] == "piped dumb\n"
+    assert result["stderr"] == "err\n"
+    assert ("stdout", "piped dumb\n") in events
 
 
 def test_invalid_payload_replies_error(bridge):

@@ -17,6 +17,7 @@ import { rawBlockLabel } from '../schema'
 import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../formulaDefs'
 import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
 import { CHECK_ICON, COPY_ICON, RUN_ICON, STOP_ICON, paintIcon } from '../icons'
+import { TerminalOutput } from '../terminal'
 
 // A runnable code block is an ordinary `code_block` whose first line starts
 // with `#!`. Code blocks whose language tag (or shebang) resolves to a code
@@ -213,6 +214,8 @@ class RunnableBlockNodeView implements NodeView {
   private unsubscribeEnv: (() => void) | null = null
   private runButton: HTMLButtonElement | null = null
   private output: HTMLPreElement | null = null
+  /** The current run's screen, drawn into `output` (`src/terminal.ts`). */
+  private terminal: TerminalOutput | null = null
   private outputCopy: HTMLButtonElement | null = null
   private controlsLayer: HTMLElement | null = null
   private controls: BlockControls | null = null
@@ -470,6 +473,7 @@ class RunnableBlockNodeView implements NodeView {
     this.controlsLayer = null
     this.runButton = null
     this.output = null
+    this.terminal = null
     this.outputCopy = null
   }
 
@@ -495,8 +499,10 @@ class RunnableBlockNodeView implements NodeView {
     this.runStopped = false
     this.sawErrorOutput = false
     this.output.hidden = false
-    this.output.textContent = ''
     this.output.classList.remove('exec-error')
+    // Interleaved as it arrives, the way a terminal shows stdout and stderr.
+    const terminal = new TerminalOutput(this.output)
+    this.terminal = terminal
     if (this.outputCopy) this.outputCopy.style.display = ''
     this.setRunState(true)
     let handle: StreamHandle<CodeResult> | null = null
@@ -509,7 +515,7 @@ class RunnableBlockNodeView implements NodeView {
       handle.onChunk((event) => {
         if (!this.output || epoch !== this.runEpoch) return
         if (event.kind === 'output' && event.text) {
-          this.output.textContent += event.text
+          terminal.write(event.text)
           if (event.stream === 'stderr') {
             this.sawErrorOutput = true
             this.output.classList.add('exec-error')
@@ -549,20 +555,28 @@ class RunnableBlockNodeView implements NodeView {
     }
   }
 
+  /**
+   * The run is over: what it printed stays as streamed (colors, overwritten
+   * progress lines and all), with how it ended appended. A run that failed to
+   * start shows only the error.
+   */
   private showOutput(cached: CodeResult | { error: string }): void {
     const out = this.output
     if (!out) return
-    const lines: string[] = []
+    let terminal = this.terminal
+    if (!terminal || 'error' in cached) terminal = this.terminal = new TerminalOutput(out)
+    const status: string[] = []
     if ('error' in cached) {
-      lines.push(`Error: ${cached.error}`)
+      status.push(`Error: ${cached.error}`)
     } else {
-      if (cached.stdout) lines.push(cached.stdout.replace(/\s+$/, ''))
-      if (cached.stderr) lines.push(cached.stderr.replace(/\s+$/, ''))
-      if (cached.timedOut) lines.push('Execution timed out after 30 seconds')
-      if ((cached as CodeResult).stopped) lines.push('Process stopped')
-      if (cached.exitCode && cached.exitCode !== 0) lines.push(`Process exited with code ${cached.exitCode}`)
+      // Nothing streamed (a result that arrived without its chunks): print the
+      // result's own text.
+      if (terminal.isEmpty) terminal.write([cached.stdout, cached.stderr].filter(Boolean).join(''))
+      if (cached.timedOut) status.push('Execution timed out after 30 seconds')
+      if ((cached as CodeResult).stopped) status.push('Process stopped')
+      if (cached.exitCode && cached.exitCode !== 0) status.push(`Process exited with code ${cached.exitCode}`)
     }
-    out.textContent = lines.join('\n')
+    terminal.appendStatus(status)
     out.classList.toggle(
       'exec-error',
       'error' in cached ||

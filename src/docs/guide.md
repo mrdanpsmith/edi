@@ -207,7 +207,9 @@ print("Hello from Edi!")
 ````
 
 Hovering a code block shows a **Run** button in its controls; output lands
-beneath the block and **Stop** cancels a hung run.
+beneath the block and **Stop** cancels a hung run. The output shows what a
+terminal would, so colored output and progress bars that update in place look
+the way they do in your shell.
 
 Code can read and change your files, so the first time you run a block Edi
 shows you the code and asks. It won't ask again for that exact code; change

@@ -112,6 +112,25 @@
   font-size: 0.85em;
   white-space: pre-wrap;
   overflow-x: auto;
+  /* The 16 ANSI colors a run's output can ask for (`src/terminal.ts`). The
+     output is dark in both themes, so one palette suits both: GitHub dark's
+     terminal colors, chosen to read on --exec-bg. */
+  --term-0: #484f58;
+  --term-1: #ff7b72;
+  --term-2: #3fb950;
+  --term-3: #d29922;
+  --term-4: #58a6ff;
+  --term-5: #bc8cff;
+  --term-6: #39c5cf;
+  --term-7: #b1bac4;
+  --term-8: #6e7681;
+  --term-9: #ffa198;
+  --term-10: #56d364;
+  --term-11: #e3b341;
+  --term-12: #79c0ff;
+  --term-13: #d2a8ff;
+  --term-14: #56d4dd;
+  --term-15: #ffffff;
 }
 
 .ProseMirror .exec-output.exec-error {

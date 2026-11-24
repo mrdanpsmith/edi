@@ -227,6 +227,35 @@ describe('runnable code block node view', () => {
     view.destroy()
   })
 
+  it('draws colors and progress as a terminal would, and keeps them when the run ends', async () => {
+    const handle = streamHandle({
+      exitCode: 3,
+      stdout: '\x1b[32mok\x1b[0m\n',
+      stderr: ' 50%\r100%\n',
+      timedOut: false,
+    })
+    invokeStreamMock.mockReturnValue(handle)
+
+    const view = makeView('```\n#!/bin/sh\n./build\n```')
+    ;(view.dom.querySelector('.exec-run') as HTMLButtonElement).click()
+    const out = view.dom.querySelector('.exec-output') as HTMLElement
+
+    handle._emit({ id: handle.id, kind: 'output', stream: 'stdout', text: '\x1b[32mok\x1b[0m\n' })
+    handle._emit({ id: handle.id, kind: 'output', stream: 'stderr', text: ' 50%' })
+    expect(out.textContent).toBe('ok\n 50%')
+    handle._emit({ id: handle.id, kind: 'output', stream: 'stderr', text: '\r100%\n' })
+    expect(out.textContent).toBe('ok\n100%\n')
+    expect((out.querySelector('.term-line span') as HTMLElement).style.color).toBe('var(--term-2)')
+
+    handle._finish()
+    await new Promise((r) => setTimeout(r, 0))
+
+    // Interleaved as streamed, not regrouped stdout-then-stderr from the result.
+    expect(out.textContent).toBe('ok\n100%\nProcess exited with code 3')
+    expect((out.querySelector('.term-line span') as HTMLElement).style.color).toBe('var(--term-2)')
+    view.destroy()
+  })
+
   it('does not inherit a previous document\'s result after switching documents', async () => {
     const host = document.createElement('div')
     document.body.appendChild(host)

@@ -86,6 +86,47 @@ def test_timeout_kills_what_the_block_started(monkeypatch):
     assert _wait_until(lambda: not _alive(_grandchild_pid(events)))
 
 
+def test_a_run_sees_a_sized_color_terminal_on_stdout_and_stderr():
+    # What a tool decides to color by: both streams are ttys, and TERM and the
+    # window size describe what the output area draws.
+    source = (
+        "import os, sys\n"
+        "print(sys.stdout.isatty(), os.environ['TERM'], os.environ['COLORTERM'])\n"
+        "print(*os.get_terminal_size(1))\n"
+        "print('\\033[31mred\\033[0m')\n"
+        "print(sys.stderr.isatty(), file=sys.stderr)\n"
+    )
+
+    result = exec_module.run_code_block_streamed("#!python3", source, lambda s, t: None, lambda: False)
+
+    assert result["exitCode"] == 0
+    assert result["stdout"] == "True xterm-256color truecolor\n80 24\n\x1b[31mred\x1b[0m\n"
+    assert result["stderr"] == "True\n"
+
+
+def test_a_progress_line_streams_its_carriage_returns_before_any_newline():
+    # A progress bar rewrites one line with `\r` and only ends it at the end; each
+    # rewrite must reach the page while the run is still going.
+    source = "printf ' 50%%'\nsleep 1\nprintf '\\r100%%\\n'\n"
+    events: list[tuple[str, str]] = []
+
+    result = exec_module.run_code_block_streamed("#!sh", source, lambda s, t: events.append((s, t)), lambda: False)
+
+    assert events[0] == ("stdout", " 50%")
+    # The pty's `\r\n` is folded to `\n`; the progress line's own `\r` is kept.
+    assert result["stdout"] == " 50%\r100%\n"
+
+
+def test_output_text_keeps_split_characters_and_split_line_endings():
+    output = exec_module._OutputText()
+    euro = "€".encode()
+    assert output.feed(b"a" + euro[:1]) == "a"
+    assert output.feed(euro[1:] + b"\r") == "€"
+    assert output.feed(b"\nb\r") == "\nb"
+    assert output.feed(b"c") == "\rc"
+    assert output.feed(b"\r", final=True) == "\r"
+
+
 def test_a_block_that_writes_before_reading_its_source_does_not_hang():
     # `sh -s` runs the first line before reading the rest: it fills the stderr
     # pipe while most of a large source is still unwritten. Feeding stdin before

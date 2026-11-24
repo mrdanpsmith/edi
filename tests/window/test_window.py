@@ -1947,7 +1947,7 @@ def test_runnable_code_block_result_cell_shows_output(visible, qtbot):
     prompt.run_button.click()
 
     # Output appears incrementally while the run is in flight: the run streams
-    # stdout live (line by line via a pty), so the cell fills up before the
+    # stdout live (as it is read, via a pty), so the cell fills up before the
     # process exits. Wait for the run to finish (Run returns to its idle state)
     # so the final trimmed result is what we assert against.
     def run_finished():

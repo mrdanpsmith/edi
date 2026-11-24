@@ -209,6 +209,48 @@ exactly as `content`. These are not frame:
 The pointer state is per plugin instance, so a revealed encrypted block's
 editor tracks its own.
 
+## Run output
+
+A runnable block's output area shows what a terminal would: colors, and
+progress lines that rewrite themselves. Two halves make that work.
+
+**The shell gives the run a terminal** (`run_code_block_streamed` in
+`backend/exec.py`). stdout and stderr each get a pty of their own, sized 80×24,
+with `TERM=xterm-256color` and `COLORTERM=truecolor`. Tools decide whether to
+color, and how wide to draw a progress bar, from exactly those: given pipes, most
+print plain text and line-buffered interpreters hold output until exit. The two
+ptys keep stdout and stderr distinguishable, since the page marks a run that
+wrote to stderr. Each read is sent as it arrives rather than a line at a time,
+and only `\r\n` is folded to `\n`: a lone `\r` is how a progress line returns to
+its start, so it must reach the page, and a line that has not ended yet must
+show. Windows has no pty, so both streams are pipes there and most tools print
+without color.
+
+**The page draws a terminal screen** (`src/terminal.ts`). `TerminalScreen`
+reads the text, escape sequences included, into lines of styled cells:
+
+- SGR sets color and attributes: the 16 colors (CSS variables `--term-0` …
+  `--term-15` on `.exec-output`, one palette since the output is dark in both
+  themes), the 256-color table, 24-bit color, bold, dim, italic, underline,
+  strikethrough and inverse;
+- `\r`, `\b`, tab, erase in line and display (`K`, `J`) and the cursor moves
+  (`A`–`H`, save and restore) rewrite what is already shown;
+- every other escape sequence (cursor visibility, window titles, hyperlinks) is
+  read to its end and dropped, so none of it shows as text.
+
+The parser keeps its state between writes, because a chunk can end in the
+middle of a sequence. The model does not wrap; the `<pre>` wraps long lines
+visually.
+
+`TerminalOutput` draws a screen as one `<span>` per line, each but the first
+starting with its `\n`, so the element's `textContent` is the plain text the
+Copy button copies. A write redraws from the first line it changed, so a
+progress bar updating its last line many times a second redraws that line
+alone.
+
+When the run ends, what streamed stays, interleaved as it arrived, and how the
+run ended ("Process exited with code 1") is appended below it.
+
 ## Tests
 
 | Behaviour | Unit (jsdom) | Real input (`npm run test:browser`) |
@@ -219,6 +261,7 @@ editor tracks its own.
 | Backspace / Delete / Esc | `src/codeBlockDelete.test.ts` | `tests/browser/edit-blocks.browser.test.ts` (`code block keys`) |
 | Raw blocks and raw inline code: parse, serialize, paste | `src/markdown.test.ts`, `src/schema.test.ts` | `tests/browser/code-block-keys.browser.test.ts`, `tests/browser/code-block-mouse.browser.test.ts` (`raw block`) |
 | Frame press and drags | — | `tests/browser/code-block-mouse.browser.test.ts` |
+| Run output: colors, `\r` and cursor moves | `src/terminal.test.ts`, `src/runnable-block.test.ts` | — (the run's terminal: `tests/test_exec.py`) |
 
 The focus, caret and pointer behaviour only exists with real layout and input,
 which is why most of it is tested in the browser project and not in jsdom. A
