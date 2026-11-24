@@ -1,4 +1,4 @@
-"""Tests for Edi › Settings… (`backend/settingsdialog.py`).
+"""Tests for Settings… (`backend/settingsdialog.py`).
 
 The dialog on its own, with stand-ins for the setters and actions the window
 hands it. The window's wiring (which preference each option writes, what the

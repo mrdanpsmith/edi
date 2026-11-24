@@ -60,7 +60,7 @@ from it; a re-read of the injection would answer with this launch's answers.
 
 ## The Settings dialog
 
-Edi › Settings… (`Ctrl+,`, the application menu's Settings… on macOS) is
+Edit › Settings… (`Ctrl+,`, the application menu's Settings… on macOS) is
 `backend/settingsdialog.py`, a native dialog the window builds in
 `_show_settings`. It holds every option that is not a View toggle, and the
 shell's stored-data actions:

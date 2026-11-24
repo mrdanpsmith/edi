@@ -179,7 +179,7 @@ export function createFileController(ctx: AppContext): FileController {
       ctx.disk?.onEvent(event.type, event.path)
       return
     }
-    // Edi › Settings… changed a preference the page applies. The shell has
+    // Settings… changed a preference the page applies. The shell has
     // already stored it, so it is adopted rather than saved again.
     if (event.type === 'preferenceChanged' && typeof event.name === 'string') {
       if (adoptPreference(event.name, event.value) && event.name === 'hoverBand') {

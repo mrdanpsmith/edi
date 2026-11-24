@@ -75,7 +75,7 @@ own, or for `source: "git"` the repository the document is in.
 ## Documents tracked by git
 
 A document in a git repository already has a history: the commits that changed
-it. When **Include git commits in Version History** is on in Edi › Settings…
+it. When **Include git commits in Version History** is on in Settings…
 (the `gitHistory` preference, on by default), Version History lists those commits beside Edi's
 own versions. The reader is `backend/githistory.py`; the merge is
 `history.list_combined`.

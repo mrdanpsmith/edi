@@ -591,8 +591,9 @@ def test_pick_image_import_path_cancel_returns_none(visible, qtbot):
     assert result["value"] == "null"
 
 
-#: The app actions, in order: in the Edi menu, or on macOS appended to Help (with
-#: no separators), which Qt moves them out of into the application menu.
+#: The app actions, in order. On macOS they are appended to Help (with no
+#: separators), which Qt moves them out of into the application menu; elsewhere
+#: each sits where Linux and Windows keep it (see `_build_app_actions`).
 APP_ACTIONS = ["&About Edi…", "Check for &Updates…", "&Settings…", "&Quit Edi"]
 
 
@@ -600,13 +601,19 @@ def _labels(menu):
     return [action.text() for action in menu.actions()]
 
 
-def test_the_menu_bar_is_edi_file_edit_insert_view_window_help(visible):
+def _app_actions(window):
+    return (window._about_action, window._check_updates_action,
+            window._settings_action, window._quit_action)
+
+
+def test_the_menu_bar_is_file_edit_insert_view_window_help(visible):
     from backend.files import trash_name
 
     window = visible
-    titles = _labels(window.menuBar())
-    expected = ["&File", "&Edit", "&Insert", "&View", "&Window", "&Help"]
-    assert titles == (expected if sys.platform == "darwin" else ["&Edi", *expected])
+    mac = sys.platform == "darwin"
+    # No menu named after the app: on Linux and Windows File comes first, and
+    # the app actions sit in File, Edit and Help.
+    assert _labels(window.menuBar()) == ["&File", "&Edit", "&Insert", "&View", "&Window", "&Help"]
 
     assert _labels(window._file_menu) == [
         "&New", "&Open…", "Open &Path…", "Open &Recent",
@@ -620,6 +627,7 @@ def test_the_menu_bar_is_edi_file_edit_insert_view_window_help(visible):
         "&Export HTML…", "&Print…",
         "",
         f"Move to {trash_name()}…",
+        *([] if mac else ["", "&Quit Edi"]),
     ]
     assert _labels(window._edit_menu) == [
         "&Undo", "&Redo",
@@ -631,6 +639,7 @@ def test_the_menu_bar_is_edi_file_edit_insert_view_window_help(visible):
         "&Encrypt Selection…",
         "",
         "&Find…", "&Replace…",
+        *([] if mac else ["", "&Settings…"]),
     ]
     assert _labels(window._insert_menu) == [
         "&Table…", "&Kanban Board…", "&Image…",
@@ -646,26 +655,20 @@ def test_the_menu_bar_is_edi_file_edit_insert_view_window_help(visible):
     ]
     # The static part: the tab list after it is the page's open tabs.
     window_items = ["New &Tab", "&Close Tab", "", "&Next Tab", "&Previous Tab"]
-    if sys.platform == "darwin":
+    if mac:
         window_items = ["&Minimize", "&Zoom", "", *window_items]
     assert _labels(window._window_menu)[: len(window_items)] == window_items
 
-    if sys.platform == "darwin":
-        assert window._app_menu is window._help_menu
-        assert _labels(window._help_menu) == ["&Edi Guide…", "&Formula Reference…", *APP_ACTIONS]
+    help_items = ["&Edi Guide…", "&Formula Reference…"]
+    if mac:
+        assert _labels(window._help_menu) == [*help_items, *APP_ACTIONS]
     else:
-        assert _labels(window._help_menu) == ["&Edi Guide…", "&Formula Reference…"]
-        assert _labels(window._app_menu) == [
-            "&About Edi…", "Check for &Updates…", "", "&Settings…", "", "&Quit Edi",
-        ]
+        assert _labels(window._help_menu) == [*help_items, "", "&About Edi…", "Check for &Updates…"]
+    assert [action.text() for action in _app_actions(window)] == APP_ACTIONS
 
 
 def test_the_app_actions_carry_the_roles_that_put_them_in_the_macos_app_menu(visible):
-    roles = {
-        action.text(): action.menuRole()
-        for action in visible._app_menu.actions()
-        if action.text() in APP_ACTIONS
-    }
+    roles = {action.text(): action.menuRole() for action in _app_actions(visible)}
     assert roles == {
         "&About Edi…": QAction.MenuRole.AboutRole,
         "Check for &Updates…": QAction.MenuRole.ApplicationSpecificRole,
@@ -690,7 +693,7 @@ def test_the_menu_bar_keys(visible, qtbot):
     assert shell_shortcuts["&Save"] == "Ctrl+S", shell_shortcuts
     assert shell_shortcuts["Save &As…"] == "Ctrl+Shift+S", shell_shortcuts
 
-    app_shortcuts = {action.text(): action.shortcut().toString() for action in window._app_menu.actions()}
+    app_shortcuts = {action.text(): action.shortcut().toString() for action in _app_actions(window)}
     assert app_shortcuts["&Settings…"] == "Ctrl+,", app_shortcuts
     assert app_shortcuts["&Quit Edi"] == "Ctrl+Q", app_shortcuts
 
@@ -1059,8 +1062,7 @@ def test_ctrl_shift_e_reaches_the_page(window):
     # second owner of an object that already has one, and letting that wrapper go
     # deletes the menu out from under every later test.
     for menu in (window._file_menu, window._edit_menu, window._insert_menu,
-                 window._view_menu, window._window_menu, window._help_menu,
-                 window._app_menu):
+                 window._view_menu, window._window_menu, window._help_menu):
         for item in menu.actions():
             # A `\t` in a label is how Qt is told a shortcut, and it shows up in
             # the text as well — which is exactly how this went wrong: the Export
@@ -1157,10 +1159,7 @@ def test_help_menu_edi_guide_action_invokes_js_command(visible, qtbot):
 
 def test_about_action_opens_dialog_with_logo_and_version(visible, qtbot):
     window = visible
-    about_action = next(
-        action for action in window._app_menu.actions() if "About" in action.text()
-    )
-    about_action.trigger()
+    window._about_action.trigger()
 
     dialog = {"value": None}
 
@@ -1344,7 +1343,7 @@ def _open_message_box(window, timeout=5):
 
 
 def test_check_for_updates_says_what_it_found(window):
-    """Edi › Check for Updates… answers in a dialog: newer, current or failed."""
+    """Check for Updates… answers in a dialog: newer, current or failed."""
     window._check_for_updates(manual=True, fetch=lambda: "99.0.0")
     box = _open_message_box(window)
     assert box.text() == f"Edi 99.0.0 is available. You have {__version__}."
@@ -9000,8 +8999,7 @@ def test_who_owns_each_edit_menu_key(window):
     """
     shell = {
         a.text(): a.shortcut().toString()
-        for menu in (window._file_menu, window._window_menu, window._app_menu)
-        for a in menu.actions()
+        for a in (*window._file_menu.actions(), *window._window_menu.actions(), *_app_actions(window))
     }
     for label, sequence in (("&New", "Ctrl+N"), ("New &Tab", "Ctrl+T"),
                             ("&Open…", "Ctrl+O"), ("&Save", "Ctrl+S"),

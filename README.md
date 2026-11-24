@@ -172,19 +172,20 @@ between runs (`~/.config/Edi/Edi.conf`).
 
 | Menu | Items |
 | --- | --- |
-| **Edi** | About Edi…, Check for Updates…, Settings…, Quit Edi |
-| **File** | New, Open…, Open Path…, Open Recent ▸, Save, Save As…, Revert, Rename or Move…, Copy File Path, Version History…, Export HTML…, Print…, Move to Trash… |
-| **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Encrypt Selection…, Find…, Replace… |
+| **File** | New, Open…, Open Path…, Open Recent ▸, Save, Save As…, Revert, Rename or Move…, Copy File Path, Version History…, Export HTML…, Print…, Move to Trash…, Quit Edi |
+| **Edit** | Undo, Redo, Cut, Copy, Copy as Markdown, Paste, Paste as Markdown, Select All, Encrypt Selection…, Find…, Replace…, Settings… |
 | **Insert** | Table…, Kanban Board…, Image…, Import Spreadsheet…, Import Text File… |
 | **View** | Toolbar, Zoom In, Zoom Out, Reset Zoom, Zoom ▸ |
 | **Window** | New Tab, Close Tab, Next Tab, Previous Tab, then each open tab |
-| **Help** | Edi Guide…, Formula Reference… |
+| **Help** | Edi Guide…, Formula Reference…, About Edi…, Check for Updates… |
 
-On macOS the Edi menu is the system's application menu, and the Window menu
-also has Minimize and Zoom. Next and Previous Tab are `Ctrl+Tab` and
-`Ctrl+Shift+Tab` on every platform, macOS included.
+On macOS, About Edi…, Check for Updates…, Settings… and Quit Edi are in the
+system's Edi menu instead, and the Window menu also has Minimize and Zoom.
+Next and Previous Tab are `Ctrl+Tab` and `Ctrl+Shift+Tab` on every platform,
+macOS included.
 
-`Edi → Settings…` (`Ctrl+,`) holds the options and the stored-data actions:
+`Edit → Settings…` (`Ctrl+,`; `Edi → Settings…` on macOS) holds the options
+and the stored-data actions:
 
 - **Show the hover band** marks the block the pointer is over; it is on by
   default.
@@ -314,10 +315,10 @@ the details.
 There is no in-app updater — install the newest release artifact. Your settings
 and documents are never touched.
 
-`Edi → Check for Updates…` asks GitHub for the newest release and says whether
-it is newer than yours. On a release candidate it also looks at newer
-candidates; on a release it never offers one. **Check for updates automatically**
-in `Edi → Settings…` does the same
+`Help → Check for Updates…` (`Edi → Check for Updates…` on macOS) asks GitHub
+for the newest release and says whether it is newer than yours. On a release
+candidate it also looks at newer candidates; on a release it never offers one.
+**Check for updates automatically** in Settings does the same
 at launch, at most once a day, and shows "Edi X.Y.Z is available" in the status
 bar when there is one. It is off until you turn it on, because the request
 tells GitHub your address; it sends nothing else about you.

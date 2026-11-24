@@ -28,7 +28,9 @@ describe('buildHelpGuideMarkdown', () => {
   })
 
   it('says where the settings are and what they hold', () => {
-    expect(guide).toContain('`Edi → Settings…` (`Ctrl+,`)')
+    expect(guide).toContain('`Edit → Settings…` (`Ctrl+,`)')
+    expect(guide).toContain('On a Mac it is `Edi → Settings…`.')
+    expect(guide).toContain('`Help → Check for Updates…`')
     expect(guide).toContain('**Show the hover band** in Settings')
     expect(guide).toContain('**Check for updates automatically** in Settings')
     expect(guide).not.toContain('View → Hover Band')

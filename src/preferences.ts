@@ -1,6 +1,6 @@
 /**
- * Preferences that outlive a run: the toolbar row, the options in Edi ›
- * Settings… that the page applies, and the document zoom level.
+ * Preferences that outlive a run: the toolbar row, the options in Settings…
+ * that the page applies, and the document zoom level.
  *
  * **The store is the shell's, not the page's.** `window.ediPreferences` is
  * injected by `backend/window.py`'s document-creation script before this bundle

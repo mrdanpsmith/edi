@@ -3,7 +3,7 @@
 Edi has no updater: a new version is installed the way the first one was
 (README, "Upgrading"). What it can do is notice one. Asking GitHub tells GitHub
 the reader's address and that they run Edi, so it happens only when the reader
-asks: Edi › Check for Updates…, or, once they turn on Settings › Check for
+asks: Check for Updates…, or, once they turn on Settings › Check for
 updates automatically, at most once a day at launch.
 
 The request is the shell's, made with ``urllib`` from a worker thread, never the

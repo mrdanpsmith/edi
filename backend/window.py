@@ -469,20 +469,17 @@ class MainWindow(QMainWindow):
         return action
 
     def _build_menus(self) -> None:
-        """Edi · File · Edit · Insert · View · Window · Help.
+        """File · Edit · Insert · View · Window · Help.
 
-        The Edi menu holds what belongs to the app rather than a document:
-        About, Check for Updates, Settings and Quit. On macOS those four go in
-        the system's application menu instead; see ``_build_app_actions``.
+        No menu is named after the app on Linux or Windows, so File comes first,
+        where it is on those platforms. The app's own actions (About, Check for
+        Updates, Settings, Quit) go where those platforms keep them; on macOS
+        they go in the system's application menu. See ``_build_app_actions``.
         """
         menubar = self.menuBar()
 
         # Keep Python references: PySide6 hands ownership of addMenu() results
         # to Python, and dropping them garbage-collects the C++ menus.
-        # `_app_menu` is whichever menu holds the app actions: the Edi menu,
-        # or on macOS the Help menu, which Qt then moves them out of.
-        self._app_menu = None if sys.platform == "darwin" else menubar.addMenu("&Edi")
-
         self._file_menu = menubar.addMenu("&File")
         file_menu = self._file_menu
         for label, command in (
@@ -682,52 +679,59 @@ class MainWindow(QMainWindow):
         self._link_command(reference_action, "formulaReference")
         help_menu.addAction(reference_action)
 
-        if self._app_menu is None:
-            self._app_menu = help_menu
-        self._build_app_actions(self._app_menu)
+        self._build_app_actions()
 
-    def _build_app_actions(self, menu) -> None:
-        """About, Check for Updates, Settings and Quit, into ``menu``.
+    def _build_app_actions(self) -> None:
+        """About, Check for Updates, Settings and Quit.
 
-        Each carries a menu role, which is what puts it in the application menu
-        on macOS (with Cmd+, and Cmd+Q, and "Quit Edi" spelled Qt's way) and is
-        ignored elsewhere. On macOS ``menu`` is Help, which they leave, so no
-        separators go in: they would trail the Help items there. Like Quit
-        always has, none of these carries a command name: each is the shell's
-        own, never routed to the page.
+        On Linux and Windows each goes where those platforms keep it, after a
+        separator: About and Check for Updates at the end of Help, Settings at
+        the end of Edit, Quit at the end of File.
+
+        Each also carries a menu role, which is what puts it in the application
+        menu on macOS (with Cmd+, and Cmd+Q, and "Quit Edi" spelled Qt's way)
+        and is ignored elsewhere. On macOS all four are appended to Help, which
+        Qt then moves them out of, so no separators go in: they would trail the
+        Help items there. Like Quit always has, none of these carries a command
+        name: each is the shell's own, never routed to the page.
         """
-        separate = menu is not self._help_menu
-
         about_action = QAction("&About Edi…", self)
         about_action.setMenuRole(QAction.MenuRole.AboutRole)
         about_action.triggered.connect(lambda _checked=False: self._show_about())
-        menu.addAction(about_action)
+        self._about_action = about_action
 
         # The shell's own, like the request it makes (`backend/updates.py`).
         check_action = QAction("Check for &Updates…", self)
         check_action.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
         check_action.triggered.connect(lambda _checked=False: self._check_for_updates(manual=True))
-        menu.addAction(check_action)
-
-        if separate:
-            menu.addSeparator()
+        self._check_updates_action = check_action
 
         settings_action = QAction("&Settings…", self)
         settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
         settings_action.setShortcut(QKeySequence("Ctrl+,"))
         settings_action.setShortcutContext(Qt.WindowShortcut)  # pyright: ignore[reportAttributeAccessIssue]
         settings_action.triggered.connect(lambda _checked=False: self._show_settings())
-        menu.addAction(settings_action)
         self._settings_action = settings_action
-
-        if separate:
-            menu.addSeparator()
 
         quit_action = QAction("&Quit Edi", self)
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.setShortcut(QKeySequence("Ctrl+Q"))
         quit_action.triggered.connect(self.close)
-        menu.addAction(quit_action)
+        self._quit_action = quit_action
+
+        if sys.platform == "darwin":
+            for action in (about_action, check_action, settings_action, quit_action):
+                self._help_menu.addAction(action)
+            return
+
+        for menu, actions in (
+            (self._help_menu, (about_action, check_action)),
+            (self._edit_menu, (settings_action,)),
+            (self._file_menu, (quit_action,)),
+        ):
+            menu.addSeparator()
+            for action in actions:
+                menu.addAction(action)
 
     def _build_window_menu(self, menu) -> None:
         """Window: the tabs, then (refilled each time it opens) the tab list.
@@ -777,7 +781,7 @@ class MainWindow(QMainWindow):
         menu.aboutToShow.connect(self._refresh_window_menu)
 
     def _show_settings(self) -> SettingsDialog:
-        """Edi › Settings…: the options and the stored-data actions. Non-blocking.
+        """Settings…: the options and the stored-data actions. Non-blocking.
 
         Hover band and git commits are page preferences, so they go through
         ``change_page_preference``; the update check is the shell's own setting.
@@ -876,7 +880,7 @@ class MainWindow(QMainWindow):
     def _check_for_updates(self, manual: bool, fetch=None) -> UpdateCheck:
         """Ask GitHub for the newest release, off the main thread.
 
-        Edi › Check for Updates… answers in a dialog either way; the automatic
+        Check for Updates… answers in a dialog either way; the automatic
         check says nothing unless there is a newer version, and then only in the
         page's status bar. ``fetch`` replaces the request, for tests.
         """

@@ -1,7 +1,7 @@
 /**
  * The hover band — the faint band behind the block under the pointer, which is
  * how the page says *which block would Alt+click alter?* — as a persisted
- * option in Edi › Settings…, on by default.
+ * option in Settings…, on by default.
  *
  * The band is a stylesheet affordance and nothing else: one `::before` rule in
  * `src/styles/block-hover.css`, keyed off the control cluster's own block list. So this

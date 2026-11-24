@@ -70,7 +70,7 @@ command enters the menubar. It calls `setData(command)` on the action and wires
 The gate is therefore the menu **as built**, not a regex over the source.
 `_MenusOnly` also gives the window one recent document and one open tab, so
 the dynamic `openRecent` and `activateTab` items are built and walked too. The
-Edi menu's items (About, Check for Updates, Settings, Quit) and macOS's
+app actions (About, Check for Updates, Settings, Quit) and macOS's
 Minimize and Zoom carry no name because they are not commands the page
 implements. Neither do the Settings dialog's data actions, which are the
 shell's own.

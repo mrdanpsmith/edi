@@ -1,4 +1,4 @@
-"""Edi › Settings…: the app's options and its stored-data actions.
+"""Settings…: the app's options and its stored-data actions.
 
 A native dialog, never a page in the editor, for the same reason the actions it
 holds are the shell's own: nothing running in the page can list, wipe or write

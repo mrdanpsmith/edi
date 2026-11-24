@@ -26,10 +26,11 @@ the preview renders it live — and a few block types go much further.
   Version History…` can still recover it after the Trash is emptied.
 - File actions also live as toolbar buttons; hide that row with
   `View → Toolbar`.
-- `Edi → Settings…` (`Ctrl+,`) holds Edi's options and lets you manage or
+- `Edit → Settings…` (`Ctrl+,`) holds Edi's options and lets you manage or
   forget what it has stored: version history, recent documents, allowed image
-  sites and approved code. On a Mac the `Edi` menu is the application menu.
-- `Edi → Check for Updates…` tells you whether a newer Edi is out. Turn on
+  sites and approved code. On a Mac it is `Edi → Settings…`.
+- `Help → Check for Updates…` (`Edi → Check for Updates…` on a Mac) tells you
+  whether a newer Edi is out. Turn on
   **Check for updates automatically** in Settings to have Edi look at launch,
   once a day; a newer version shows in the status bar. It's off by default
   because the check contacts GitHub.
