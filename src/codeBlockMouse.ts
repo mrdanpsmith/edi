@@ -84,8 +84,11 @@ export function codeBlockMousePlugin(): Plugin {
         escaped = null
         const target = event.target instanceof Element ? event.target : null
         fromCode = target?.closest('.cm-content') ? codeEditorBlockOf(view, target) : null
+        // Not the run output either: a drag there is the browser's own selection of
+        // its text, and moving the head past the block would replace it with one
+        // of the whole block.
         fromText = fromCode === null && target !== null && view.dom.contains(target) &&
-          target.closest('.cm-editor') === null
+          target.closest('.cm-editor, .exec-output') === null
       }
 
       /**

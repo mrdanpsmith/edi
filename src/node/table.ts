@@ -22,6 +22,10 @@ import { TableNodeView, spreadsheetViews } from './tableSheet'
 function focusSpreadsheetGrid(view: EditorView): void {
   requestAnimationFrame(() => {
     const grid = view.dom.querySelector<HTMLElement>('.ss-grid')
+    // By now the reader may already be in the sheet: a cell being edited holds
+    // focus in its input, and taking focus back to the grid would end that edit.
+    const sheet = grid?.closest('.spreadsheet')
+    if (sheet?.contains(document.activeElement)) return
     grid?.focus()
   })
 }

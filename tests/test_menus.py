@@ -30,6 +30,11 @@ def test_linux_and_windows_have_no_app_menu_and_keep_the_actions_where_they_expe
     assert _labels(window._help_menu) == [
         "&Edi Guide…", "&Formula Reference…", "", "&About Edi…", "Check for &Updates…",
     ]
+    # Edit's document commands leave their keys to the page; Settings, the shell's
+    # own, keeps a real shortcut there (`test_who_owns_each_edit_menu_key`).
+    keys = {a.text(): a.shortcut().toString() for a in window._edit_menu.actions() if not a.isSeparator()}
+    assert keys.pop("&Settings…") == "Ctrl+,"
+    assert set(keys.values()) == {""}, keys
 
 
 def test_macos_appends_the_app_actions_to_help_for_qt_to_move(qapp, monkeypatch):

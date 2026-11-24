@@ -22,6 +22,7 @@ import { fileName, UNTITLED } from './files'
 import { copyMermaidAsImage, saveMermaidAsImage } from './mermaid'
 import { spreadsheetMenuEntries } from './node/table'
 import { pressTarget } from './press'
+import { runOutputSelectionText } from './runOutputSelection'
 import { getActive } from './state'
 import { applyLink } from './toolbar'
 import { promptForLink } from './urlDialog'
@@ -203,6 +204,12 @@ export function createContextMenuController(
     // enabled-but-no-op Redo just looks broken.
     const undoable = !!view && undoDepth(view.state) > 0
     const redoable = !!view && redoDepth(view.state) > 0
+    // Text selected in a run's output, read while the menu opens, the one moment
+    // the reader's selection is certainly still the page's (the menu keeps focus
+    // where it is for a right-click there; see `onContextMenu` in `main.ts`). The
+    // output is not the document's, so there is nothing to cut.
+    const outputText = runOutputSelectionText()
+    const copyOutput = outputText === null ? null : () => void copyText(outputText)
     const entries: ContextMenuEntry[] = [
       { type: 'item', label: 'Undo', disabled: !undoable, onSelect: () => edit.undo() },
       { type: 'item', label: 'Redo', disabled: !redoable, onSelect: () => edit.redo() },
@@ -210,20 +217,20 @@ export function createContextMenuController(
       {
         type: 'item',
         label: 'Cut',
-        disabled: !edit.hasSelection(),
+        disabled: outputText !== null || !edit.hasSelection(),
         onSelect: () => edit.cut(),
       },
       {
         type: 'item',
         label: 'Copy',
         disabled: !edit.hasSelection(),
-        onSelect: () => edit.copy(),
+        onSelect: copyOutput ?? (() => edit.copy()),
       },
       {
         type: 'item',
         label: 'Copy as Markdown',
         disabled: !edit.hasSelection(),
-        onSelect: () => edit.copyAsMarkdown(),
+        onSelect: copyOutput ?? (() => edit.copyAsMarkdown()),
       },
       { type: 'item', label: 'Paste', onSelect: () => void edit.paste() },
       { type: 'item', label: 'Paste as Markdown', onSelect: () => void edit.pasteAsMarkdown() },

@@ -199,7 +199,11 @@ Use it before pushing. It catches two classes of failure that a host Python
 3.14 venv can hide: Python 3.10 syntax gates and tests that depend on
 `gsettings`/dconf/GNOME state the container does not have. It runs as your uid,
 calls the baked venv directly (do not symlink it over `.venv`), and points
-`XDG_CONFIG_HOME`/`NPM_CONFIG_CACHE` at gitignored directories.
+`XDG_CONFIG_HOME`/`NPM_CONFIG_CACHE` at gitignored directories. Its `npm ci`
+installs into `build/ci-node_modules`, mounted over the checkout's
+`node_modules`: the Linux native bindings it installs (rolldown, esbuild) would
+otherwise replace a macOS or Windows host's own, and the host's next `npm run
+build` fails with `Cannot find module '@rolldown/binding-darwin-universal'`.
 
 A stale local image — built before a tool such as bandit or pip-audit was baked
 into `/opt/edi/venv` — otherwise fails mid-run with a cryptic "No such file or

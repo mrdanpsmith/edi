@@ -434,12 +434,19 @@ export function styleCss(style: Style): string {
 export class TerminalOutput {
   readonly screen = new TerminalScreen()
   private lineElements: HTMLElement[] = []
+  private log = ''
 
   constructor(private readonly element: HTMLElement) {
     element.textContent = ''
   }
 
+  /** Everything written, escape sequences included: writing it again redraws this screen. */
+  get written(): string {
+    return this.log
+  }
+
   write(text: string): void {
+    this.log += text
     this.screen.write(text)
     this.render()
   }

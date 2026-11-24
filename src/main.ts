@@ -460,8 +460,12 @@ export function init(roots: AppRoots): () => void {
     const entries = menus.buildContextMenu(event)
     if (entries.length === 0) return
     const target = event.target instanceof Element ? event.target : null
+    // A run's output is selected by the browser, not the editor
+    // (`src/runOutputSelection.ts`). Focus moving to the menu and back would hand
+    // it to the editor, which writes its own selection back into the page: the
+    // reader's selection goes, and the view scrolls to the editor's caret.
     const preserveFocus =
-      target !== null && target.closest('.ss-edit-input, .ss-fx-input') !== null
+      target !== null && target.closest('.ss-edit-input, .ss-fx-input, .exec-output') !== null
     ctx.contextMenu ??= new ContextMenu()
     ctx.contextMenu.show(entries, event.clientX, event.clientY, { preserveFocus })
   }

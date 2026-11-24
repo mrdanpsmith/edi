@@ -2016,6 +2016,103 @@ def test_a_code_block_runs_only_after_the_reader_agrees(visible, tmp_path):
 # --- Right-click on a link (src/editor.ts, src/main.ts) ---------------------------
 
 
+@pytest.mark.parametrize("shebang", ["#!/usr/bin/env python3", "#!/bin/sh"])
+def test_copying_run_output_from_the_context_menu_keeps_the_view_and_the_selection(visible, shebang):
+    """A real drag across a run's output, a real right-click, and Copy.
+
+    The output is selected by the browser, not the editor, whose own selection
+    stays near the top of the document. Picking an item used to hand focus back
+    to the editor, which wrote that selection into the page: the reader's
+    selection went, and QtWebEngine scrolled to the editor's caret, the top of
+    the document. Chromium alone does not scroll there, so this is the test of it.
+    Both renderers: CodeMirror (a grammar) and the plain `<pre>`.
+    """
+    from PySide6.QtTest import QTest
+
+    window = visible
+    window._bridge.approvals.forget()
+    filler = "\n\n".join(f"paragraph {i}" for i in range(60))
+    source = (
+        "print('first output line'); print('second output line')"
+        if "python" in shebang
+        else "echo first output line; echo second output line"
+    )
+    _set_document(window, f"# Copy\n\n{filler}\n\n```\n{shebang}\n{source}\n```\n\nbelow\n", "Copy")
+    # Each probe answers with something: `_dump` waits for a non-empty object.
+    _dump(window, "(() => { document.querySelector('.exec-run').click(); return { clicked: true }; })()")
+    _run_prompt(window).run_button.click()
+
+    def output_text():
+        return _dump(window, "(() => ({ t: (document.querySelector('.exec-output') || {}).textContent || '' }))()")["t"]
+
+    assert _pump_until(lambda: "second" in output_text(), timeout=20), output_text()
+
+    # The editor has focus, its caret at the top; the reader scrolls to the output.
+    window._web.setFocus()
+    _dump(window, "(() => { document.querySelector('.ProseMirror').focus(); return { focused: true } })()")
+    _settle(window)
+    _dump(window, "(() => { document.querySelector('.exec-output').scrollIntoView({ block: 'center' });"
+                  " return { scrolled: true } })()")
+    _settle(window)
+
+    lines = _dump(
+        window,
+        """(() => { const l = document.querySelectorAll('.exec-output .term-line');
+          const a = l[0].getBoundingClientRect(), b = l[1].getBoundingClientRect();
+          return { ax: a.left + 50, ay: a.top + a.height / 2, bx: b.left + 60, by: b.top + b.height / 2 } })()""",
+    )
+    proxy = window._web.focusProxy()
+    start = QPoint(int(lines["ax"]), int(lines["ay"]))
+    end = QPoint(int(lines["bx"]), int(lines["by"]))
+    QTest.mousePress(proxy, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    for step in range(1, 11):
+        QTest.mouseMove(proxy, QPoint(start.x() + (end.x() - start.x()) * step // 10,
+                                      start.y() + (end.y() - start.y()) * step // 10))
+    QTest.mouseRelease(proxy, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+    _settle(window)
+
+    def view():
+        return _dump(
+            window,
+            "(() => ({ top: document.querySelector('#editor-container').scrollTop,"
+            " selected: document.getSelection().toString() }))()",
+        )
+
+    before = view()
+    assert before["selected"] == "utput line\nsecond o", before
+    assert before["top"] > 0, before
+
+    point = QPoint(int(lines["ax"]) + 20, int(lines["ay"]))
+    QTest.mousePress(proxy, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, point)
+    QTest.mouseRelease(proxy, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, point)
+    _settle(window)
+    copy = _dump(
+        window,
+        """(() => { const item = [...document.querySelectorAll('.edi-context-menu button')]
+            .find((b) => b.textContent.trim() === 'Copy');
+          const r = item ? item.getBoundingClientRect() : null;
+          return r ? { x: r.left + 10, y: r.top + r.height / 2 } : { missing: true } })()""",
+    )
+    assert not copy.get("missing"), "the context menu offered no Copy"
+    QGuiApplication.clipboard().clear()
+    at = QPoint(int(copy["x"]), int(copy["y"]))
+    QTest.mousePress(proxy, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, at)
+    QTest.mouseRelease(proxy, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, at)
+
+    assert _pump_until(lambda: QGuiApplication.clipboard().text() == "utput line\nsecond o", timeout=5), (
+        QGuiApplication.clipboard().text()
+    )
+    # The focus handler's selection write is a timer of its own; let it run.
+    _settle(window)
+    assert view() == before
+
+    # Leave the window as it was found: the scroller snapping back to the top
+    # under the next test's document is a `scroll`, which closes an open menu.
+    _dump(window, "(() => { document.querySelector('#editor-container').scrollTop = 0;"
+                  " document.getSelection().removeAllRanges(); return { reset: true } })()")
+    _settle(window)
+
+
 def test_right_click_edits_a_link_and_never_opens_it(window, monkeypatch):
     """A real right-click on a link offers to edit it, and does not follow it.
 
@@ -8016,6 +8113,52 @@ def test_ctrl_c_copies_the_cells_when_a_sheet_is_live_and_the_document_when_it_i
         f"the document is not copyable again after leaving the sheet: {doc[:120]!r}")
 
 
+def test_a_cell_edit_begun_as_the_sheet_opens_survives_its_first_frame(window):
+    """The grid takes focus a frame after the sheet opens; an edit begun before that keeps it.
+
+    `focusSpreadsheetGrid` focuses the grid in the next animation frame. A cell edit
+    begun inside that frame holds focus in its input, and taking focus back to the
+    grid blurred the input and ended the edit: the editor opened and was gone a frame
+    later. On a slow machine that is a test (or a reader) pressing F2 straight after
+    Alt+click. So the open, the cell press and F2 run here in one task, before any
+    frame, and the input must still be there once the page has settled.
+    """
+    _dump(window, "(() => { window.ediSetContent(%s); return { d: 1 }; })()"
+          % json.dumps(WORKING_STATE_DOC))
+    _wait(window, "(() => ({ t: !!document.querySelector('#editor-container .ss-plain') }))()",
+          lambda d: d.get("t") is True, timeout=25)
+    _settle(window)
+    begun = _dump(window, """(() => {
+      const press = (el, init) => {
+        const r = el.getBoundingClientRect();
+        const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        return { x, y, ...init };
+      };
+      const plain = document.querySelector('#editor-container .ss-plain-table td');
+      plain.dispatchEvent(new MouseEvent('click',
+        { bubbles: true, cancelable: true, button: 0, altKey: true, ...press(plain, {}) }));
+      const cell = document.querySelector('#editor-container .spreadsheet .ss-grid td:nth-child(2)');
+      if (!cell) return { noSheet: true };
+      const at = press(cell, {});
+      const target = document.elementFromPoint(at.x, at.y) || cell;
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        target.dispatchEvent(new MouseEvent(type,
+          { bubbles: true, cancelable: true, button: 0, clientX: at.x, clientY: at.y }));
+      }
+      const grid = document.querySelector('#editor-container .spreadsheet .ss-grid');
+      grid.focus();
+      grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
+      return { editing: !!document.querySelector('#editor-container .spreadsheet .ss-edit-input') };
+    })()""")
+    assert begun == {"editing": True}, begun
+    _settle(window)
+    after = _dump(window, """(() => {
+      const input = document.querySelector('#editor-container .spreadsheet .ss-edit-input');
+      return { editing: !!input, focused: !!input && document.activeElement === input };
+    })()""")
+    assert after == {"editing": True, "focused": True}, after
+
+
 def test_escape_leaves_a_sheet_and_escape_in_a_cell_does_not(window):
     """Escape is a ladder in a sheet: reject the cell, then leave.
 
@@ -9010,11 +9153,16 @@ def test_who_owns_each_edit_menu_key(window):
 
     # The document commands are the page's, and must hold no shortcut that would
     # shadow it — including inside a CodeMirror buffer, where the page is the only
-    # thing that knows what is selected.
-    for action in window._edit_menu.actions():
+    # thing that knows what is selected. They are the Edit menu's actions that name
+    # a page command; Settings sits at the end of Edit on Linux and Windows and is
+    # the shell's own, so it keeps its real `Ctrl+,` (checked above).
+    page_commands = [a for a in window._edit_menu.actions() if isinstance(a.data(), str) and a.data()]
+    assert len(page_commands) >= 10, [a.text() for a in page_commands]
+    for action in page_commands:
         assert action.shortcut().isEmpty(), (
             f"{action.text()!r} holds {action.shortcut().toString()!r}, which would "
             "shadow the page's own handling")
+    for action in window._edit_menu.actions():
         assert "\t" not in action.text(), (
             f"{action.text()!r} advertises a key that does not work")
 
@@ -9757,6 +9905,9 @@ def test_a_press_in_a_document_with_nowhere_to_type_creates_nothing(window):
     assert not opened.get("noButton"), opened
     _wait(window, "(() => ({ s: !!document.querySelector('#editor-container .ss-grid') }))()",
           lambda d: d.get("s") is True, timeout=15)
+    # The grid takes focus a frame after it is drawn (`focusSpreadsheetGrid`), so
+    # its existing is not yet the caret being in it.
+    _settle(window)
     focus = _dump(window, """(() => ({
       grid: !!document.querySelector('#editor-container .ss-grid'),
       /** Inside the grid rather than anywhere else — the sheet *is* the typing surface, which is

@@ -218,9 +218,9 @@ progress lines that rewrite themselves. Two halves make that work.
 `backend/exec.py`). stdout and stderr each get a pty of their own, sized 80×24,
 with `TERM=xterm-256color` and `COLORTERM=truecolor`. Tools decide whether to
 color, and how wide to draw a progress bar, from exactly those: given pipes, most
-print plain text and line-buffered interpreters hold output until exit. The two
-ptys keep stdout and stderr distinguishable, since the page marks a run that
-wrote to stderr. Each read is sent as it arrives rather than a line at a time,
+print plain text and line-buffered interpreters hold output until exit. Two
+ptys rather than one keep stdout and stderr apart in the run's result. Each
+read is sent as it arrives rather than a line at a time,
 and only `\r\n` is folded to `\n`: a lone `\r` is how a progress line returns to
 its start, so it must reach the page, and a line that has not ended yet must
 show. Windows has no pty, so both streams are pipes there and most tools print
@@ -249,7 +249,46 @@ progress bar updating its last line many times a second redraws that line
 alone.
 
 When the run ends, what streamed stays, interleaved as it arrived, and how the
-run ended ("Process exited with code 1") is appended below it.
+run ended ("Process exited with code 1") is appended below it. Only how it ended
+marks the output as an error (`exec-error`, a red top edge): a non-zero exit, a
+run that was stopped or timed out, or one that never started. Output on stderr
+does not, because tools write progress bars and logs there.
+
+The output's text is the reader's to select, with a drag or a double-click, and
+the selection is the browser's own. `codeBlockMousePlugin` does not count a press
+in `.exec-output` as a drag from the document's text, which would otherwise
+extend into the highlighted block it sits in and select the whole block.
+
+Copying that selection cannot go through the editor, whose selection is still
+wherever it was before the drag. `runOutputSelectionText`
+(`src/runOutputSelection.ts`) answers when both ends of the browser selection
+are in one output, and Copy (`Ctrl+C`, Edit → Copy, the context menu), Copy as
+Markdown and "is anything selected" ask it before the editor; Cut does nothing
+there, and the context menu disables it.
+
+**A right-click in the output opens the context menu without moving focus**
+(`preserveFocus`, `onContextMenu` in `src/main.ts`), as one in a spreadsheet
+cell's input does. The menu otherwise takes focus and hands it back when an item
+is picked, and the editor getting focus back writes its own selection into the
+page: the reader's selection goes, and QtWebEngine scrolls to the editor's caret,
+which is usually the top of the document. Chromium does not scroll there, so the
+window test covers it
+(`test_copying_run_output_from_the_context_menu_keeps_the_view_and_the_selection`).
+
+**A finished run is kept with its tab** (`src/runResults.ts`). Switching tabs
+swaps the editor state, which rebuilds every node view, and the output lived only
+in the view. So a run, when it ends, is recorded in plugin state: its raw output
+(escape sequences included), its status lines, whether it failed, and the code it
+ran. A rebuilt view replays the record into a new `TerminalOutput`. Recording is
+a transaction with no steps, so it neither dirties the file nor enters undo, like
+a block mode. Records are keyed by the block's position and mapped through
+edits; one is dropped when its block goes or its code changes, which is also when
+the view clears its output. A block view can be reused across a swap without its
+`update` being called (an identical block in the same place in the other
+document), so the plugin's own view asks every live block view to show the
+state's record whenever the records change, and again when the plugin view is
+made for a new state. A run still in progress when the tab is left is stopped,
+and its output is not kept.
 
 ## Tests
 
@@ -261,7 +300,9 @@ run ended ("Process exited with code 1") is appended below it.
 | Backspace / Delete / Esc | `src/codeBlockDelete.test.ts` | `tests/browser/edit-blocks.browser.test.ts` (`code block keys`) |
 | Raw blocks and raw inline code: parse, serialize, paste | `src/markdown.test.ts`, `src/schema.test.ts` | `tests/browser/code-block-keys.browser.test.ts`, `tests/browser/code-block-mouse.browser.test.ts` (`raw block`) |
 | Frame press and drags | — | `tests/browser/code-block-mouse.browser.test.ts` |
-| Run output: colors, `\r` and cursor moves | `src/terminal.test.ts`, `src/runnable-block.test.ts` | — (the run's terminal: `tests/test_exec.py`) |
+| Run output: colors, `\r` and cursor moves, the error mark | `src/terminal.test.ts`, `src/runnable-block.test.ts` | — (the run's terminal: `tests/test_exec.py`) |
+| Selecting and copying run output | `src/runOutputSelection.test.ts` | `tests/browser/run-output.browser.test.ts`; the scroll in QtWebEngine: `tests/window/test_window.py` |
+| Run output kept across a tab switch | `src/runnable-block.test.ts` (`a finished run kept with its tab`) | — |
 
 The focus, caret and pointer behaviour only exists with real layout and input,
 which is why most of it is tested in the browser project and not in jsdom. A

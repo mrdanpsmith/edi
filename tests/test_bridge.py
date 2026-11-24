@@ -1033,7 +1033,11 @@ def test_run_code_block_streamed_without_pty(monkeypatch):
     assert result["stopped"] is False
     assert result["stdout"] == "piped dumb\n"
     assert result["stderr"] == "err\n"
-    assert ("stdout", "piped dumb\n") in events
+    # Streamed as read, so the chunks fall wherever the child's writes did (an
+    # unbuffered Python writes `print`'s items one at a time): what arrived, in
+    # order, is the output.
+    assert "".join(text for stream, text in events if stream == "stdout") == "piped dumb\n"
+    assert "".join(text for stream, text in events if stream == "stderr") == "err\n"
 
 
 def test_invalid_payload_replies_error(bridge):

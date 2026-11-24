@@ -50,7 +50,9 @@ def _dump(win, script):
 
     Every probe here must therefore evaluate to an *object*: a bare array comes
     back as an empty string rather than as JSON, and a probe that returns one
-    fails as a `JSONDecodeError` about a value the reader never saw.
+    fails as a `JSONDecodeError` about a value the reader never saw. **And a
+    non-empty one**: the answer is waited for until it holds something, so a
+    script run for its effect that returns `{}` costs the whole timeout.
     """
     js = win._web.page().runJavaScript
     out = {}

@@ -11,9 +11,10 @@
 #
 # The image is built from Dockerfile.ci once (then reused from the Docker cache);
 # the checkout is mounted read-write at /builds/edi and the same env vars and
-# commands as the real job run inside it. Written artifacts (node_modules/,
-# dist/, coverage/, .npm/, build/) all land on gitignored paths, so the checkout
-# stays clean.
+# commands as the real job run inside it. Written artifacts (dist/, coverage/,
+# .npm/, build/) all land on gitignored paths, so the checkout stays clean, and
+# the container installs into its own node_modules (build/ci-node_modules,
+# mounted over the checkout's), so the host's keeps its own platform's binaries.
 #
 # Usage: ./scripts/simulate-ci-test.sh [--pytest-only] [--rebuild-image]
 #
@@ -163,6 +164,14 @@ CACHE_DIR="$ROOT/build/ci-cache"
 rm -rf "$CONFIG_DIR" "$CACHE_DIR"
 mkdir -p "$CONFIG_DIR" "$CACHE_DIR"
 
+# The container's `node_modules` is its own, mounted over the checkout's. `npm
+# ci` there installs Linux native bindings (rolldown, esbuild); on a macOS or
+# Windows host, writing them into the shared directory would replace the host's
+# own and break its next `npm run build`. `npm ci` empties the directory before
+# installing, so keeping it between runs saves nothing and costs nothing.
+NODE_MODULES_DIR="$ROOT/build/ci-node_modules"
+mkdir -p "$NODE_MODULES_DIR"
+
 print_step "Running CI \`test\` job simulation in $IMAGE (Python 3.10, headless, no gsettings)"
 
 # Stopping the run must stop the container. Without this, Ctrl+C during a
@@ -196,6 +205,7 @@ trap 'on_signal 129' HUP
 docker run --rm --init --name "$CONTAINER" "${PLATFORM[@]}" \
   -e "TINI_KILL_PROCESS_GROUP=1" \
   -v "$ROOT:/builds/edi" \
+  -v "$NODE_MODULES_DIR:/builds/edi/node_modules" \
   -w /builds/edi \
   -u "$(id -u):$(id -g)" \
   -e "HOME=/builds/edi" \

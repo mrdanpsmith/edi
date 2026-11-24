@@ -27,6 +27,7 @@ import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { blockDragPlugin } from './blockDrag'
 import { pressPlugin } from './press'
 import { codeBlockNodeViewPlugin } from './node/execblock'
+import { runResultsPlugin } from './runResults'
 import { codeBlockExitPlugin } from './codeBlockExit'
 import { codeBlockDeleteKeymap } from './codeBlockDelete'
 import { codeBlockMousePlugin } from './codeBlockMouse'
@@ -459,6 +460,8 @@ export function createBlockEditor(
     taskClickPlugin(),
     blockTypeSelectPlugin(),
     codeBlockNodeViewPlugin,
+    // Each block's last run, kept with this state so a tab switch keeps it.
+    runResultsPlugin,
     searchPlugin(),
     new Plugin({
       props: {

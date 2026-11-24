@@ -27,6 +27,7 @@ import { blockNodeView, BLOCK_NODE_TYPES } from './blockview'
 import { codeBlockNodeViewPlugin } from './node/execblock'
 import { blockModePlugin } from './block-modes'
 import { createBlockEditor } from './editor'
+import { undoDepth } from 'prosemirror-history'
 
 const invokeMock = invoke as ReturnType<typeof vi.fn>
 const invokeStreamMock = invokeStream as ReturnType<typeof vi.fn>
@@ -201,7 +202,7 @@ describe('runnable code block node view', () => {
     view.destroy()
   })
 
-  it('shows an error output when the stream carries stderr', async () => {
+  it('marks a run that exits non-zero as an error, once it has ended', async () => {
     const handle = streamHandle({
       exitCode: 1,
       stdout: '',
@@ -216,7 +217,8 @@ describe('runnable code block node view', () => {
 
     const out = view.dom.querySelector('.exec-output') as HTMLElement
     handle._emit({ id: handle.id, kind: 'output', stream: 'stderr', text: 'boom\n' })
-    expect(out.classList.contains('exec-error')).toBe(true)
+    // stderr alone says nothing yet: the exit code does.
+    expect(out.classList.contains('exec-error')).toBe(false)
 
     handle._finish()
     await new Promise((r) => setTimeout(r, 0))
@@ -224,6 +226,23 @@ describe('runnable code block node view', () => {
     expect(out.classList.contains('exec-error')).toBe(true)
     expect(out.textContent).toContain('exited with code 1')
 
+    view.destroy()
+  })
+
+  it('does not mark a run that wrote to stderr but exited 0', async () => {
+    // pip, curl and tqdm draw their progress on stderr.
+    const handle = streamHandle({ exitCode: 0, stdout: '', stderr: '100%\n', timedOut: false })
+    invokeStreamMock.mockReturnValue(handle)
+
+    const view = makeView('```\n#!/bin/sh\n./download\n```')
+    ;(view.dom.querySelector('.exec-run') as HTMLButtonElement).click()
+    const out = view.dom.querySelector('.exec-output') as HTMLElement
+    handle._emit({ id: handle.id, kind: 'output', stream: 'stderr', text: '100%\n' })
+    handle._finish()
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(out.textContent).toBe('100%')
+    expect(out.classList.contains('exec-error')).toBe(false)
     view.destroy()
   })
 
@@ -306,6 +325,95 @@ describe('runnable code block node view', () => {
     expect(outB.textContent).not.toContain('Hello from Python!')
 
     editor.destroy()
+  })
+
+  describe('a finished run kept with its tab', () => {
+    const DOC_A = 'Intro\n\n```\n#!/bin/sh\necho hi\n```\n\nOutro'
+
+    async function runAndFinish(host: HTMLElement, output: string, exitCode = 0): Promise<void> {
+      const handle = streamHandle({ exitCode, stdout: output, stderr: '', timedOut: false })
+      invokeStreamMock.mockReturnValueOnce(handle)
+      ;(host.querySelector('.exec-run') as HTMLButtonElement).click()
+      handle._emit({ id: handle.id, kind: 'output', stream: 'stdout', text: output })
+      handle._finish()
+      await new Promise((r) => setTimeout(r, 0))
+    }
+
+    function setUp() {
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      const onChange = vi.fn()
+      const editor = createBlockEditor(host, '', { onChange })
+      editor.setMarkdown(DOC_A)
+      const output = () => host.querySelector('.exec-output') as HTMLElement
+      return { host, editor, onChange, output }
+    }
+
+    it('comes back when the tab does, colors and status included', async () => {
+      const { host, editor, output } = setUp()
+      await runAndFinish(host, '\x1b[31mred\x1b[0m\n', 2)
+      const tabA = editor.getState()
+
+      editor.setMarkdown('# another file')
+      expect(host.querySelector('.exec-output')).toBeNull()
+      editor.applyState(tabA)
+
+      expect(output().hidden).toBe(false)
+      expect(output().textContent).toBe('red\nProcess exited with code 2')
+      expect((output().querySelector('.term-line span') as HTMLElement).style.color).toBe('var(--term-1)')
+      expect(output().classList.contains('exec-error')).toBe(true)
+      editor.destroy()
+    })
+
+    it('is not shown in another tab whose block has the same text', async () => {
+      const { host, editor, output } = setUp()
+      await runAndFinish(host, 'from tab A\n')
+      const tabA = editor.getState()
+
+      // The same document in a second tab: ProseMirror may reuse the block's view.
+      editor.setMarkdown(DOC_A)
+      expect(output().hidden).toBe(true)
+      expect(output().textContent).toBe('')
+
+      editor.applyState(tabA)
+      expect(output().textContent).toBe('from tab A')
+      editor.destroy()
+    })
+
+    it('survives edits elsewhere and goes when the block\'s code changes', async () => {
+      const { host, editor, output } = setUp()
+      await runAndFinish(host, 'kept\n')
+      const view = editor.getView()
+
+      view.dispatch(view.state.tr.insertText('More intro. ', 1))
+      editor.applyState(editor.getState())
+      const moved = editor.getState()
+      editor.setMarkdown('# elsewhere')
+      editor.applyState(moved)
+      expect(output().textContent).toBe('kept')
+
+      let codePos = -1
+      view.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'code_block') codePos = pos
+      })
+      const codeEnd = codePos + 1 + view.state.doc.nodeAt(codePos)!.content.size
+      view.dispatch(view.state.tr.insertText('\necho more', codeEnd))
+      const edited = editor.getState()
+      editor.setMarkdown('# elsewhere')
+      editor.applyState(edited)
+      expect(output().hidden).toBe(true)
+      editor.destroy()
+    })
+
+    it('neither dirties the file nor enters undo', async () => {
+      const { host, editor, onChange, output } = setUp()
+      onChange.mockClear()
+      await runAndFinish(host, 'quiet\n')
+      expect(onChange).not.toHaveBeenCalled()
+      expect(undoDepth(editor.getState())).toBe(0)
+      expect(output().textContent).toBe('quiet')
+      editor.destroy()
+    })
   })
 
   it('stops the backend process when switching documents mid-run', async () => {

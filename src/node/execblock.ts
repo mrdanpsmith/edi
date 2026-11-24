@@ -18,6 +18,7 @@ import { collectFormulaBlocks, formulaDefsKey, subscribeFormulaEnv } from '../fo
 import { buildDocumentFunctions, countDefinitions, type FormulaDefIssue } from '../formulaDsl'
 import { CHECK_ICON, COPY_ICON, RUN_ICON, STOP_ICON, paintIcon } from '../icons'
 import { TerminalOutput } from '../terminal'
+import { keepsRuns, recordRun, runRecordAt, runsChanged, type RunRecord } from '../runResults'
 
 // A runnable code block is an ordinary `code_block` whose first line starts
 // with `#!`. Code blocks whose language tag (or shebang) resolves to a code
@@ -216,6 +217,8 @@ class RunnableBlockNodeView implements NodeView {
   private output: HTMLPreElement | null = null
   /** The current run's screen, drawn into `output` (`src/terminal.ts`). */
   private terminal: TerminalOutput | null = null
+  /** The kept run `output` is showing (`src/runResults.ts`), or null. */
+  private shownRecord: RunRecord | null = null
   private outputCopy: HTMLButtonElement | null = null
   private controlsLayer: HTMLElement | null = null
   private controls: BlockControls | null = null
@@ -227,7 +230,6 @@ class RunnableBlockNodeView implements NodeView {
   private activeHandle: StreamHandle<CodeResult> | null = null
   private runStopped = false
   private runEpoch = 0
-  private sawErrorOutput = false
 
   constructor(node: ProseNode, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -235,6 +237,9 @@ class RunnableBlockNodeView implements NodeView {
     this.getPos = getPos
     this.shebang = shebangOfNode(node)
     this.lastContent = node.textContent
+    let live = liveBlockViews.get(view)
+    if (!live) liveBlockViews.set(view, (live = new Set()))
+    live.add(this)
 
     this.dom = document.createElement('div')
     this.dom.className = 'runnable-block'
@@ -366,6 +371,7 @@ class RunnableBlockNodeView implements NodeView {
 
     layer.appendChild(outputWrap)
     this.dom.appendChild(layer)
+    this.restoreOutput()
   }
 
   /** Keep the ProseMirror document in lock-step with the embedded editor.
@@ -474,6 +480,7 @@ class RunnableBlockNodeView implements NodeView {
     this.runButton = null
     this.output = null
     this.terminal = null
+    this.shownRecord = null
     this.outputCopy = null
   }
 
@@ -496,8 +503,12 @@ class RunnableBlockNodeView implements NodeView {
     // run's output would land on the new document's fresh result cell.
     const epoch = this.runEpoch
     const source = sourceOf(this.node.textContent, shebang)
+    // The previous run is replaced: a tab switch mid-run (which stops it) must
+    // not bring the old output back.
+    const pos = this.getPos()
+    this.shownRecord = null
+    if (pos !== undefined) recordRun(this.view, pos, null)
     this.runStopped = false
-    this.sawErrorOutput = false
     this.output.hidden = false
     this.output.classList.remove('exec-error')
     // Interleaved as it arrives, the way a terminal shows stdout and stderr.
@@ -514,13 +525,9 @@ class RunnableBlockNodeView implements NodeView {
       this.activeHandle = handle
       handle.onChunk((event) => {
         if (!this.output || epoch !== this.runEpoch) return
-        if (event.kind === 'output' && event.text) {
-          terminal.write(event.text)
-          if (event.stream === 'stderr') {
-            this.sawErrorOutput = true
-            this.output.classList.add('exec-error')
-          }
-        }
+        // stderr is not a failure: progress bars and logs are written there.
+        // How the run ended says whether it failed (`showOutput`).
+        if (event.kind === 'output' && event.text) terminal.write(event.text)
       })
       const result = await handle.result
       if (epoch !== this.runEpoch) return
@@ -563,8 +570,8 @@ class RunnableBlockNodeView implements NodeView {
   private showOutput(cached: CodeResult | { error: string }): void {
     const out = this.output
     if (!out) return
-    let terminal = this.terminal
-    if (!terminal || 'error' in cached) terminal = this.terminal = new TerminalOutput(out)
+    const terminal = this.terminal && !('error' in cached) ? this.terminal : new TerminalOutput(out)
+    this.terminal = terminal
     const status: string[] = []
     if ('error' in cached) {
       status.push(`Error: ${cached.error}`)
@@ -577,12 +584,59 @@ class RunnableBlockNodeView implements NodeView {
       if (cached.exitCode && cached.exitCode !== 0) status.push(`Process exited with code ${cached.exitCode}`)
     }
     terminal.appendStatus(status)
-    out.classList.toggle(
-      'exec-error',
-      'error' in cached ||
-        this.sawErrorOutput ||
-        (!('error' in cached) && (cached as CodeResult).exitCode !== 0),
-    )
+    // A failure is a run that did not exit 0: it exited non-zero, was killed
+    // (stopped or timed out, so no exit code), or never started.
+    const failed = 'error' in cached || cached.exitCode !== 0
+    out.classList.toggle('exec-error', failed)
+    // Kept with the editor state, so the output outlives this view: a tab
+    // switch rebuilds every node view (`src/runResults.ts`).
+    const pos = this.getPos()
+    if (pos !== undefined) {
+      const record = { source: this.node.textContent, output: terminal.written, status, failed }
+      this.shownRecord = record
+      recordRun(this.view, pos, record)
+    }
+  }
+
+  /** Draw the block's last run, as it ended, when this view is built after it (a tab switch). */
+  private restoreOutput(): void {
+    const pos = this.getPos()
+    if (!this.output || pos === undefined) return
+    const record = runRecordAt(this.view.state, pos)
+    if (record === null) return
+    this.output.hidden = false
+    if (this.outputCopy) this.outputCopy.style.display = ''
+    const terminal = new TerminalOutput(this.output)
+    terminal.write(record.output)
+    terminal.appendStatus(record.status)
+    this.terminal = terminal
+    this.output.classList.toggle('exec-error', record.failed)
+    this.shownRecord = record
+  }
+
+  /**
+   * Show the run the editor state holds for this block, when it is not the one
+   * on screen. ProseMirror reuses this view across a tab switch when the other
+   * document has an identical block in the same place, without calling `update`,
+   * and then the output on screen is the other tab's. So the plugin's view asks
+   * every live block view whenever the kept runs change
+   * (`codeBlockNodeViewPlugin`).
+   */
+  syncOutput(): void {
+    if (this.running || !this.output || !keepsRuns(this.view.state)) return
+    const pos = this.getPos()
+    const record = pos === undefined ? null : runRecordAt(this.view.state, pos)
+    if (record === this.shownRecord) return
+    if (record !== null) {
+      this.restoreOutput()
+      return
+    }
+    this.output.hidden = true
+    this.output.textContent = ''
+    this.output.classList.remove('exec-error')
+    if (this.outputCopy) this.outputCopy.style.display = 'none'
+    this.terminal = null
+    this.shownRecord = null
   }
 
   update(node: ProseNode): boolean {
@@ -656,6 +710,7 @@ class RunnableBlockNodeView implements NodeView {
   }
 
   destroy(): void {
+    liveBlockViews.get(this.view)?.delete(this)
     this.unsubscribeEnv?.()
     // clearControls stops any in-flight run (sends stopCodeBlock to kill the
     // backend process) and tears the DOM down.
@@ -669,6 +724,9 @@ export function isRunnableCodeBlock(node: ProseNode): boolean {
 }
 
 const codeBlockNodeViewKey = new PluginKey<number | null>('EDI_CODEBLOCK_NODEVIEW')
+
+/** Each editor's live block views, for `syncOutput`; weak, so a closed editor takes its set with it. */
+const liveBlockViews = new WeakMap<EditorView, Set<RunnableBlockNodeView>>()
 
 /**
  * **A fence typed in prose puts the caret in the new block's CodeMirror.**
@@ -740,12 +798,22 @@ export const codeBlockNodeViewPlugin = new Plugin<number | null>({
       return typeof pos === 'number' ? pos : null
     },
   },
-  view: () => ({
-    update(view, prev) {
-      focusOpenedFence(view)
-      handCaretToCodeEditor(view, prev)
-    },
-  }),
+  view: (created) => {
+    const syncOutputs = (view: EditorView): void => {
+      for (const blockView of liveBlockViews.get(view) ?? []) blockView.syncOutput()
+    }
+    // A document swap (a tab switch) brings a state with its own plugin
+    // instances, so ProseMirror makes this view again rather than updating it,
+    // after the block views have been reused or rebuilt.
+    syncOutputs(created)
+    return {
+      update(view, prev) {
+        focusOpenedFence(view)
+        handCaretToCodeEditor(view, prev)
+        if (runsChanged(prev, view.state)) syncOutputs(view)
+      },
+    }
+  },
   props: {
     nodeViews: {
       code_block(node: ProseNode, view: EditorView, getPos: () => number | undefined): NodeView {

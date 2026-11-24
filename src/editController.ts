@@ -14,6 +14,7 @@ import { snapshotMermaidHtml } from './mermaid-export'
 import { computeSpreadsheet } from './spreadsheet'
 import { formulaEnvFor } from './formulaDefs'
 import { plainTableSelectionText } from './tableTextSelection'
+import { runOutputSelectionText } from './runOutputSelection'
 import type { AppContext } from './appContext'
 
 export interface EditController {
@@ -125,6 +126,10 @@ function richSelectionHtml(
  * It is deliberately **text, not the table's markdown**: what is selected is what was
  * drawn, and a fragment of a cell is not a table. `Ctrl+Shift+C` is the key that copies
  * markdown, and it still copies the editor's own selection.
+ *
+ * **A run's output is the other selection the editor cannot see**
+ * (`src/runOutputSelection.ts`): it is not document content at all, so Copy and
+ * Copy as Markdown both copy its text, and Cut leaves it alone.
  */
 export function createEditController(ctx: AppContext): EditController {
   let richClipboardTicket = 0
@@ -182,6 +187,8 @@ export function createEditController(ctx: AppContext): EditController {
     // else in the document. Refusing is the only answer that cannot delete a selection
     // nobody made.
     if (plainTableSelectionText() !== null) return
+    // Nor of a run's output, which is not the document's to delete from.
+    if (runOutputSelectionText() !== null) return
     if (view.state.selection.empty) return
     view.focus()
     const { dom, text } = richSelectionHtml(view)
@@ -193,6 +200,11 @@ export function createEditController(ctx: AppContext): EditController {
   function copy(): void {
     const view = focusedEditor(ctx)
     if (!view) return
+    const outputText = runOutputSelectionText()
+    if (outputText !== null) {
+      void copyText(outputText)
+      return
+    }
     const tableText = plainTableSelectionText()
     if (tableText !== null) {
       void copyText(tableText)
@@ -206,7 +218,14 @@ export function createEditController(ctx: AppContext): EditController {
 
   function copyAsMarkdown(): void {
     const view = focusedEditor(ctx)
-    if (!view || view.state.selection.empty) return
+    if (!view) return
+    // A run's output has no markdown of its own: its text is what it is.
+    const outputText = runOutputSelectionText()
+    if (outputText !== null) {
+      void copyText(outputText)
+      return
+    }
+    if (view.state.selection.empty) return
     view.focus()
     void copyText(selectionMarkdownFor(view))
   }
@@ -320,7 +339,7 @@ export function createEditController(ctx: AppContext): EditController {
    * that leaves behind, which is worse.
    */
   function hasEditorSelection(): boolean {
-    if (plainTableSelectionText() !== null) return true
+    if (runOutputSelectionText() !== null || plainTableSelectionText() !== null) return true
     const selection = focusedEditor(ctx)?.state.selection
     return !!selection && !selection.empty
   }
